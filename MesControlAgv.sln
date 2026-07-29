@@ -1,0 +1,64 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{142BDF93-A26F-433F-A124-2B7CA35EDC08}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MesControlAgv.Domain", "src\MesControlAgv.Domain\MesControlAgv.Domain.csproj", "{E0F229AF-BA57-4295-AFB6-103CDCB989FD}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MesControlAgv.Mes", "src\MesControlAgv.Mes\MesControlAgv.Mes.csproj", "{62BA6970-F458-4C25-A8C0-D6048820B9AC}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MesControlAgv.Adapter", "src\MesControlAgv.Adapter\MesControlAgv.Adapter.csproj", "{F2793693-40D8-4154-8975-8254189CBD15}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MesControlAgv.Simulator", "src\MesControlAgv.Simulator\MesControlAgv.Simulator.csproj", "{25A357DD-20C2-4E7D-8096-6A10B700C551}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MesControlAgv.Wpf", "src\MesControlAgv.Wpf\MesControlAgv.Wpf.csproj", "{CF6617EA-DEFB-4CB5-AF34-C4E2F64F2852}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{9FF26AA0-A553-422E-B721-FBA880F0D11E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MesControlAgv.Domain.Tests", "tests\MesControlAgv.Domain.Tests\MesControlAgv.Domain.Tests.csproj", "{DD0CB1A6-29EB-459D-92CA-8D90266B9656}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E0F229AF-BA57-4295-AFB6-103CDCB989FD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E0F229AF-BA57-4295-AFB6-103CDCB989FD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E0F229AF-BA57-4295-AFB6-103CDCB989FD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E0F229AF-BA57-4295-AFB6-103CDCB989FD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{62BA6970-F458-4C25-A8C0-D6048820B9AC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{62BA6970-F458-4C25-A8C0-D6048820B9AC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{62BA6970-F458-4C25-A8C0-D6048820B9AC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{62BA6970-F458-4C25-A8C0-D6048820B9AC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{F2793693-40D8-4154-8975-8254189CBD15}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F2793693-40D8-4154-8975-8254189CBD15}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F2793693-40D8-4154-8975-8254189CBD15}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F2793693-40D8-4154-8975-8254189CBD15}.Release|Any CPU.Build.0 = Release|Any CPU
+		{25A357DD-20C2-4E7D-8096-6A10B700C551}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{25A357DD-20C2-4E7D-8096-6A10B700C551}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{25A357DD-20C2-4E7D-8096-6A10B700C551}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{25A357DD-20C2-4E7D-8096-6A10B700C551}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CF6617EA-DEFB-4CB5-AF34-C4E2F64F2852}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CF6617EA-DEFB-4CB5-AF34-C4E2F64F2852}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CF6617EA-DEFB-4CB5-AF34-C4E2F64F2852}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CF6617EA-DEFB-4CB5-AF34-C4E2F64F2852}.Release|Any CPU.Build.0 = Release|Any CPU
+		{DD0CB1A6-29EB-459D-92CA-8D90266B9656}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DD0CB1A6-29EB-459D-92CA-8D90266B9656}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{DD0CB1A6-29EB-459D-92CA-8D90266B9656}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{DD0CB1A6-29EB-459D-92CA-8D90266B9656}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{E0F229AF-BA57-4295-AFB6-103CDCB989FD} = {142BDF93-A26F-433F-A124-2B7CA35EDC08}
+		{62BA6970-F458-4C25-A8C0-D6048820B9AC} = {142BDF93-A26F-433F-A124-2B7CA35EDC08}
+		{F2793693-40D8-4154-8975-8254189CBD15} = {142BDF93-A26F-433F-A124-2B7CA35EDC08}
+		{25A357DD-20C2-4E7D-8096-6A10B700C551} = {142BDF93-A26F-433F-A124-2B7CA35EDC08}
+		{CF6617EA-DEFB-4CB5-AF34-C4E2F64F2852} = {142BDF93-A26F-433F-A124-2B7CA35EDC08}
+		{DD0CB1A6-29EB-459D-92CA-8D90266B9656} = {9FF26AA0-A553-422E-B721-FBA880F0D11E}
+	EndGlobalSection
+EndGlobal

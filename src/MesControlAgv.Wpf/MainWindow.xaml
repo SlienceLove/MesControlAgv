@@ -1,0 +1,13 @@
+<Window x:Class="MesControlAgv.Wpf.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="MES Control AGV"
+        Width="960"
+        Height="640">
+    <Grid>
+        <TextBlock HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   FontSize="28"
+                   Text="MES Control AGV" />
+    </Grid>
+</Window>

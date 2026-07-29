@@ -1,0 +1,19 @@
+# Build output
+bin/
+obj/
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+
+# IDE and user settings
+.vs/
+*.user
+*.suo
+
+# Local configuration
+appsettings.Local.json
+
+# Original requirements documents remain local
+*.docx
