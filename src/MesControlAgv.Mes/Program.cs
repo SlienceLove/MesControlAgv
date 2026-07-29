@@ -8,8 +8,11 @@ var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("Mes") ?? "Data Source=data/mes.db";
 
 builder.Services.AddDbContext<MesDbContext>(options => options.UseSqlite(connectionString));
+builder.Services.AddHttpClient<IAdapterClient, AdapterClient>(client =>
+    client.BaseAddress = new Uri(builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5001/"));
 builder.Services.AddScoped<TaskRepository>();
 builder.Services.AddScoped<TaskService>();
+builder.Services.AddHostedService<RecoveryService>();
 
 var app = builder.Build();
 
@@ -42,6 +45,24 @@ app.MapPost("/api/tasks", async (
         return Results.UnprocessableEntity(new { detail = exception.Message });
     }
 });
+
+app.MapPost("/api/tasks/{taskId:guid}/arrived", async (Guid taskId, TaskService service, CancellationToken cancellationToken) =>
+    Results.Ok(await service.RecordArrivalAsync(taskId, cancellationToken)));
+
+app.MapPost("/api/tasks/{taskId:guid}/confirm-pickup", async (Guid taskId, OperatorActionRequest request, TaskService service, CancellationToken cancellationToken) =>
+    Results.Ok(await service.ConfirmPickupAsync(taskId, request.OperatorName, cancellationToken)));
+
+app.MapPost("/api/tasks/{taskId:guid}/confirm-dropoff", async (Guid taskId, OperatorActionRequest request, TaskService service, CancellationToken cancellationToken) =>
+    Results.Ok(await service.ConfirmDropoffAsync(taskId, request.OperatorName, cancellationToken)));
+
+app.MapPost("/api/tasks/{taskId:guid}/retry", async (Guid taskId, TaskService service, CancellationToken cancellationToken) =>
+    Results.Ok(await service.RetryAsync(taskId, cancellationToken)));
+
+app.MapPost("/api/tasks/{taskId:guid}/cancel", async (Guid taskId, OperatorActionRequest request, TaskService service, CancellationToken cancellationToken) =>
+    Results.Ok(await service.CancelAsync(taskId, request.OperatorName, cancellationToken)));
+
+app.MapPost("/api/tasks/{taskId:guid}/recover", async (Guid taskId, TaskService service, CancellationToken cancellationToken) =>
+    Results.Ok(await service.RecoverAsync(taskId, cancellationToken)));
 
 app.MapGet("/api/tasks", async (TaskService service, CancellationToken cancellationToken) =>
     Results.Ok(await service.ListAsync(cancellationToken)));

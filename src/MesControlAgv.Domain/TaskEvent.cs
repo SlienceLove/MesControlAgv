@@ -13,9 +13,12 @@ public enum TaskEvent
     ResumeRequested,
     DeviceFailed,
     Timeout,
+    RetryRequested,
     CancelConfirmed,
     ReconciledMoving,
+    ReconciledMovingToDropoff,
     ReconciledPickupArrived,
     ReconciledDropoffArrived,
-    ReconciledCompleted
+    ReconciledCompleted,
+    ReconciledFailed
 }

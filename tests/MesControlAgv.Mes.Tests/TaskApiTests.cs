@@ -38,12 +38,12 @@ public sealed class TaskApiTests : IClassFixture<MesWebApplicationFactory>
         var task = await response.Content.ReadFromJsonAsync<TaskResponse>();
 
         Assert.NotNull(task);
-        Assert.Equal("Created", task.Status);
+        Assert.Equal("MovingToPickup", task.Status);
 
         var detail = await _client.GetFromJsonAsync<TaskDetailResponse>($"/api/tasks/{task.Id}");
         Assert.NotNull(detail);
-        Assert.Single(detail.Events);
-        Assert.Equal("TaskCreated", detail.Events[0].EventType);
+        Assert.Contains(detail.Events, taskEvent => taskEvent.EventType == "TaskCreated");
+        Assert.Contains(detail.Events, taskEvent => taskEvent.EventType == "PickupMoveStarted");
     }
 
     [Fact]

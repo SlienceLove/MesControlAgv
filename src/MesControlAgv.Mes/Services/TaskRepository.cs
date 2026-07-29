@@ -43,6 +43,33 @@ public sealed class TaskRepository(MesDbContext database)
             .OrderBy(taskEvent => taskEvent.CreatedAt)
             .ToListAsync(cancellationToken);
 
+    public Task<List<TransportTask>> ListByStatusAsync(MesControlAgv.Domain.TaskStatus status, CancellationToken cancellationToken) =>
+        database.TransportTasks.Where(task => task.Status == status).ToListAsync(cancellationToken);
+
+    public async Task<TransportTask> SetActiveTargetAsync(
+        Guid taskId,
+        string targetStationId,
+        CancellationToken cancellationToken)
+    {
+        var task = await GetAsync(taskId, cancellationToken)
+            ?? throw new KeyNotFoundException($"Task {taskId} was not found.");
+        task.ActiveTargetStationId = targetStationId;
+        task.UpdatedAt = DateTime.UtcNow;
+        await database.SaveChangesAsync(cancellationToken);
+        return task;
+    }
+
+    public async Task<TransportTask> IncrementRetryAsync(Guid taskId, CancellationToken cancellationToken)
+    {
+        var task = await GetAsync(taskId, cancellationToken)
+            ?? throw new KeyNotFoundException($"Task {taskId} was not found.");
+        task.RetryCount++;
+        task.LastError = null;
+        task.UpdatedAt = DateTime.UtcNow;
+        await database.SaveChangesAsync(cancellationToken);
+        return task;
+    }
+
     public async Task<TransportTask> ApplyEventAsync(
         Guid taskId,
         TaskEvent taskEvent,

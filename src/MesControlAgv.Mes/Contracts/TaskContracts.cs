@@ -19,3 +19,5 @@ public sealed record TaskEventResponse(
 public sealed record TaskDetailResponse(TaskResponse Task, IReadOnlyList<TaskEventResponse> Events);
 
 public sealed record StationResponse(int Code, string Name, string AgvStationId, bool Enabled);
+
+public sealed record OperatorActionRequest(string OperatorName);

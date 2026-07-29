@@ -18,5 +18,7 @@ public sealed class TransportTask
 
     public int RetryCount { get; set; }
 
+    public string? ActiveTargetStationId { get; set; }
+
     public string? LastError { get; set; }
 }

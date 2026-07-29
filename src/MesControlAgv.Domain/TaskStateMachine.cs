@@ -10,6 +10,8 @@ public static class TaskStateMachine
         {
             [(TaskStatus.Created, TaskEvent.DispatchRequested)] = TaskStatus.Dispatching,
             [(TaskStatus.Dispatching, TaskEvent.PickupMoveStarted)] = TaskStatus.MovingToPickup,
+            [(TaskStatus.Dispatching, TaskEvent.DropoffMoveStarted)] = TaskStatus.MovingToDropoff,
+            [(TaskStatus.Dispatching, TaskEvent.DeviceFailed)] = TaskStatus.Failed,
             [(TaskStatus.MovingToPickup, TaskEvent.PickupArrived)] = TaskStatus.WaitingPickupConfirmation,
             [(TaskStatus.WaitingPickupConfirmation, TaskEvent.PickupConfirmed)] = TaskStatus.MovingToDropoff,
             [(TaskStatus.MovingToDropoff, TaskEvent.DropoffArrived)] = TaskStatus.WaitingDropoffConfirmation,
@@ -19,13 +21,16 @@ public static class TaskStateMachine
             [(TaskStatus.Paused, TaskEvent.ResumeRequested)] = TaskStatus.MovingToPickup,
             [(TaskStatus.MovingToPickup, TaskEvent.DeviceFailed)] = TaskStatus.Failed,
             [(TaskStatus.MovingToDropoff, TaskEvent.DeviceFailed)] = TaskStatus.Failed,
+            [(TaskStatus.Failed, TaskEvent.RetryRequested)] = TaskStatus.Dispatching,
             [(TaskStatus.Dispatching, TaskEvent.Timeout)] = TaskStatus.Unknown,
             [(TaskStatus.MovingToPickup, TaskEvent.Timeout)] = TaskStatus.Unknown,
             [(TaskStatus.MovingToDropoff, TaskEvent.Timeout)] = TaskStatus.Unknown,
             [(TaskStatus.Unknown, TaskEvent.ReconciledMoving)] = TaskStatus.MovingToPickup,
+            [(TaskStatus.Unknown, TaskEvent.ReconciledMovingToDropoff)] = TaskStatus.MovingToDropoff,
             [(TaskStatus.Unknown, TaskEvent.ReconciledPickupArrived)] = TaskStatus.WaitingPickupConfirmation,
             [(TaskStatus.Unknown, TaskEvent.ReconciledDropoffArrived)] = TaskStatus.WaitingDropoffConfirmation,
-            [(TaskStatus.Unknown, TaskEvent.ReconciledCompleted)] = TaskStatus.Completed
+            [(TaskStatus.Unknown, TaskEvent.ReconciledCompleted)] = TaskStatus.Completed,
+            [(TaskStatus.Unknown, TaskEvent.ReconciledFailed)] = TaskStatus.Failed
         };
 
     public static TaskStatus Transition(TaskStatus current, TaskEvent taskEvent)

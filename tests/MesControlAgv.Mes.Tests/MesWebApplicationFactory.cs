@@ -1,4 +1,5 @@
 using MesControlAgv.Mes.Data;
+using MesControlAgv.Mes.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -19,7 +20,9 @@ public sealed class MesWebApplicationFactory : WebApplicationFactory<Program>
         {
             services.RemoveAll<DbContextOptions<MesDbContext>>();
             services.RemoveAll<MesDbContext>();
+            services.RemoveAll<IAdapterClient>();
             services.AddDbContext<MesDbContext>(options => options.UseSqlite($"Data Source={_databasePath}"));
+            services.AddScoped<IAdapterClient, TestAdapterClient>();
         });
     }
 }
