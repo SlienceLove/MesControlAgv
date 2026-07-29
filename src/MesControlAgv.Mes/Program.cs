@@ -24,6 +24,9 @@ using (var scope = app.Services.CreateScope())
 
 app.MapGet("/health", () => Results.Ok(new { service = "mes", status = "ok" }));
 
+app.MapGet("/api/agv", async (IAdapterClient adapter, CancellationToken cancellationToken) =>
+    Results.Ok(await adapter.GetSnapshotAsync(cancellationToken)));
+
 app.MapGet("/api/stations", () => Results.Ok(Stations.All.Select(station => new StationResponse(
     station.Code,
     station.Name,
