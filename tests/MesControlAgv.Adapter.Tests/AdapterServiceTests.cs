@@ -134,6 +134,36 @@ public class AdapterServiceTests
         Assert.Equal(1, simulator.StatusCalls);
     }
 
+    [Fact]
+    public async Task Cancel_persists_only_after_device_confirms_cancellation()
+    {
+        var taskId = Guid.NewGuid();
+        var simulator = new FakeSimulatorClient { CancelState = "moving" };
+        var (service, database) = CreateServiceWithDatabase(simulator);
+        await service.DispatchAsync(taskId, "SAMPLE_01", CancellationToken.None);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.CancelAsync(taskId, CancellationToken.None));
+
+        var persisted = await database.Tasks.FindAsync([taskId]);
+        Assert.NotNull(persisted);
+        Assert.Equal("moving", persisted.State);
+        Assert.Equal(1, simulator.CancelCalls);
+    }
+
+    [Fact]
+    public async Task Cancel_persists_confirmed_device_cancellation()
+    {
+        var taskId = Guid.NewGuid();
+        var simulator = new FakeSimulatorClient();
+        var (service, database) = CreateServiceWithDatabase(simulator);
+        await service.DispatchAsync(taskId, "SAMPLE_01", CancellationToken.None);
+
+        var result = await service.CancelAsync(taskId, CancellationToken.None);
+
+        Assert.Equal("cancelled", result!.State);
+        Assert.Equal("cancelled", (await database.Tasks.FindAsync([taskId]))!.State);
+    }
+
     private static AdapterService CreateService(FakeSimulatorClient simulator)
     {
         return CreateServiceWithDatabase(simulator).Service;
@@ -153,11 +183,14 @@ internal sealed class FakeSimulatorClient : ISimulatorClient
 {
     private int _navigateCalls;
     private int _statusCalls;
+    private int _cancelCalls;
 
     public int NavigateCalls => Volatile.Read(ref _navigateCalls);
     public int StatusCalls => Volatile.Read(ref _statusCalls);
+    public int CancelCalls => Volatile.Read(ref _cancelCalls);
     public bool ThrowTimeout { get; init; }
     public bool ReturnFailed { get; init; }
+    public string? CancelState { get; init; } = "cancelled";
     public AgvSnapshotResponse Snapshot { get; set; } = new(true, "adapter", "CHARGE_01", null);
     public AdapterTaskResponse? ReconciledTask { get; init; }
     public TaskCompletionSource<bool>? NavigationStarted { get; init; }
@@ -178,5 +211,13 @@ internal sealed class FakeSimulatorClient : ISimulatorClient
         if (ThrowTimeout) throw new TimeoutException();
         if (AllowNavigation is not null) await AllowNavigation.Task.WaitAsync(cancellationToken);
         return new AdapterTaskResponse(taskId, $"device-{taskId:N}", stationId, ReturnFailed ? "failed" : "moving", ReturnFailed ? "device unavailable" : null);
+    }
+
+    public Task<AdapterTaskResponse?> CancelAsync(Guid taskId, CancellationToken cancellationToken)
+    {
+        Interlocked.Increment(ref _cancelCalls);
+        return Task.FromResult(CancelState is null
+            ? null
+            : new AdapterTaskResponse(taskId, $"device-{taskId:N}", "SAMPLE_01", CancelState, null));
     }
 }

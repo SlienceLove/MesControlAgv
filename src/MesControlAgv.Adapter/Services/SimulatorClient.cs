@@ -26,4 +26,12 @@ public sealed class SimulatorClient(HttpClient client) : ISimulatorClient
         return await response.Content.ReadFromJsonAsync<AdapterTaskResponse>(cancellationToken)
             ?? throw new InvalidOperationException("Simulator returned no task.");
     }
+
+    public async Task<AdapterTaskResponse?> CancelAsync(Guid taskId, CancellationToken cancellationToken)
+    {
+        var response = await client.PostAsync($"commands/{taskId}/cancel", null, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<AdapterTaskResponse>(cancellationToken);
+    }
 }

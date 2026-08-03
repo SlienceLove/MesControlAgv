@@ -29,6 +29,19 @@ app.MapGet("/tasks/{taskId:guid}", (Guid taskId, SimulatorState state) =>
     return task is null ? Results.NotFound() : Results.Ok(ToResponse(task));
 });
 
+app.MapPost("/commands/{taskId:guid}/cancel", (Guid taskId, SimulatorState state) =>
+{
+    try
+    {
+        var task = state.Cancel(taskId);
+        return task is null ? Results.NotFound() : Results.Ok(ToResponse(task));
+    }
+    catch (InvalidOperationException exception)
+    {
+        return Results.Conflict(new { detail = exception.Message });
+    }
+});
+
 app.MapGet("/snapshot", (SimulatorState state) => Results.Ok(new SnapshotResponse(
     state.Online,
     state.ControlOwner,

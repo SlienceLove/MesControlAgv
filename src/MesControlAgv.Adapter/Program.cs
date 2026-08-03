@@ -35,13 +35,20 @@ app.MapGet("/tasks/{taskId:guid}", async (Guid taskId, AdapterService service, C
 app.MapPost("/tasks/{taskId:guid}/{action}", async (Guid taskId, string action, AdapterService service, CancellationToken cancellationToken) =>
 {
     if (action is not ("pause" or "resume" or "cancel")) return Results.NotFound();
-    var task = action switch
+    try
     {
-        "pause" => await service.PauseAsync(taskId, cancellationToken),
-        "resume" => await service.ResumeAsync(taskId, cancellationToken),
-        _ => await service.CancelAsync(taskId, cancellationToken)
-    };
-    return task is null ? Results.NotFound() : Results.Ok(task);
+        var task = action switch
+        {
+            "pause" => await service.PauseAsync(taskId, cancellationToken),
+            "resume" => await service.ResumeAsync(taskId, cancellationToken),
+            _ => await service.CancelAsync(taskId, cancellationToken)
+        };
+        return task is null ? Results.NotFound() : Results.Ok(task);
+    }
+    catch (ControlUnavailableException exception)
+    {
+        return Results.Conflict(new { detail = exception.Message });
+    }
 });
 
 app.MapGet("/agv/snapshot", async (ISimulatorClient simulator, CancellationToken cancellationToken) => Results.Ok(await simulator.GetSnapshotAsync(cancellationToken)));

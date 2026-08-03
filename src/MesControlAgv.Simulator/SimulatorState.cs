@@ -32,6 +32,18 @@ public sealed class SimulatorState
 
     public SimulatedTask? GetTask(Guid taskId) => _tasks.GetValueOrDefault(taskId);
 
+    public SimulatedTask? Cancel(Guid taskId)
+    {
+        EnsureAvailable();
+        if (ControlOwner != "adapter") throw new InvalidOperationException($"AGV control owner is {ControlOwner}.");
+        if (!_tasks.TryGetValue(taskId, out var task)) return null;
+
+        var cancelled = task with { State = "cancelled", LastError = null };
+        _tasks[taskId] = cancelled;
+        if (CurrentTaskId == taskId) CurrentTaskId = null;
+        return cancelled;
+    }
+
     public void ApplyControl(string mode)
     {
         switch (mode)

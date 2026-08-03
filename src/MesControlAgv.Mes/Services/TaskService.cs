@@ -35,6 +35,11 @@ public sealed class TaskService(TaskRepository repository, IAdapterClient adapte
 
     public async Task<TaskResponse> RetryAsync(Guid taskId, CancellationToken cancellationToken)
     {
+        var current = await repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
+        if (current.Status != DomainTaskStatus.Failed)
+        {
+            throw new InvalidTaskTransitionException(current.Status, TaskEvent.RetryRequested);
+        }
         var task = await repository.IncrementRetryAsync(taskId, cancellationToken);
         await repository.ApplyEventAsync(taskId, TaskEvent.RetryRequested, new { retry = task.RetryCount }, cancellationToken);
         var target = task.ActiveTargetStationId ?? throw new InvalidOperationException("Task has no target station.");
@@ -77,6 +82,7 @@ public sealed class TaskService(TaskRepository repository, IAdapterClient adapte
 
     public async Task ReconcileIncompleteAsync(CancellationToken cancellationToken)
     {
+        var unknownTasks = await repository.ListByStatusAsync(DomainTaskStatus.Unknown, cancellationToken);
         foreach (var status in new[] { DomainTaskStatus.Dispatching, DomainTaskStatus.MovingToPickup, DomainTaskStatus.MovingToDropoff })
         {
             var tasks = await repository.ListByStatusAsync(status, cancellationToken);
@@ -85,23 +91,59 @@ public sealed class TaskService(TaskRepository repository, IAdapterClient adapte
                 await repository.ApplyEventAsync(task.Id, TaskEvent.Timeout, new { source = "startup-recovery" }, cancellationToken);
                 try
                 {
-                    await RecoverAsync(task.Id, cancellationToken);
+                    await RecoverWithRetryAsync(task.Id, cancellationToken);
                 }
                 catch (InvalidOperationException)
+                {
+                }
+                catch (HttpRequestException)
+                {
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
                 }
             }
         }
 
-        var unknownTasks = await repository.ListByStatusAsync(DomainTaskStatus.Unknown, cancellationToken);
         foreach (var task in unknownTasks)
         {
             try
             {
-                await RecoverAsync(task.Id, cancellationToken);
+                await RecoverWithRetryAsync(task.Id, cancellationToken);
             }
             catch (InvalidOperationException)
             {
+            }
+            catch (HttpRequestException)
+            {
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+            }
+        }
+    }
+
+    private static readonly TimeSpan[] RecoveryBackoff =
+    [
+        TimeSpan.FromMilliseconds(50),
+        TimeSpan.FromMilliseconds(100)
+    ];
+
+    private async Task<TaskResponse> RecoverWithRetryAsync(Guid taskId, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await RecoverAsync(taskId, cancellationToken);
+            }
+            catch (HttpRequestException) when (attempt < RecoveryBackoff.Length)
+            {
+                await Task.Delay(RecoveryBackoff[attempt], cancellationToken);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && attempt < RecoveryBackoff.Length)
+            {
+                await Task.Delay(RecoveryBackoff[attempt], cancellationToken);
             }
         }
     }
@@ -132,7 +174,7 @@ public sealed class TaskService(TaskRepository repository, IAdapterClient adapte
             task = await repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
             if (response.State == "failed")
             {
-                await repository.ApplyEventAsync(taskId, TaskEvent.DeviceFailed, response, cancellationToken);
+                await repository.ApplyEventAsync(taskId, TaskEvent.DeviceFailed, response, cancellationToken, response.LastError);
             }
             else if (task.Status == DomainTaskStatus.Dispatching)
             {
@@ -141,7 +183,7 @@ public sealed class TaskService(TaskRepository repository, IAdapterClient adapte
         }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or TimeoutException)
         {
-            await repository.ApplyEventAsync(taskId, TaskEvent.Timeout, new { error = exception.Message }, cancellationToken);
+            await repository.ApplyEventAsync(taskId, TaskEvent.Timeout, new { error = exception.Message }, cancellationToken, exception.Message);
         }
     }
 

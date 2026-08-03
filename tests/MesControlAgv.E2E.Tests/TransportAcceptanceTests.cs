@@ -76,6 +76,7 @@ public sealed class TransportAcceptanceTests
         var retried = await service.RetryAsync(failed.Id, CancellationToken.None);
 
         Assert.Equal("Failed", failed.Status);
+        Assert.Equal("blocked aisle", failed.LastError);
         Assert.Equal("MovingToPickup", retried.Status);
         Assert.Equal(1, retried.RetryCount);
         Assert.Equal(adapter.OperationIds[0], adapter.OperationIds[1]);
@@ -93,6 +94,7 @@ public sealed class TransportAcceptanceTests
         var recovered = await service.RecoverAsync(unknown.Id, CancellationToken.None);
 
         Assert.Equal("Unknown", unknown.Status);
+        Assert.Equal("adapter timeout", unknown.LastError);
         Assert.Equal("MovingToPickup", recovered.Status);
         Assert.Single(adapter.OperationIds);
     }
@@ -143,7 +145,7 @@ internal sealed class AcceptanceAdapter : IAdapterClient
         Targets.Add(targetStationId);
         var task = new AdapterTask(operationId, operationId.ToString("N"), targetStationId, NextDispatchState, NextDispatchError);
         _tasks[operationId] = task;
-        if (ThrowTimeout) throw new TimeoutException();
+        if (ThrowTimeout) throw new TimeoutException("adapter timeout");
         return Task.FromResult(task);
     }
 

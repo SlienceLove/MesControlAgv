@@ -121,8 +121,23 @@ public sealed class AdapterService(AdapterDbContext database, ISimulatorClient s
     public async Task<AdapterTaskResponse?> ResumeAsync(Guid taskId, CancellationToken cancellationToken) =>
         await UpdateStateAsync(taskId, "moving", cancellationToken);
 
-    public async Task<AdapterTaskResponse?> CancelAsync(Guid taskId, CancellationToken cancellationToken) =>
-        await UpdateStateAsync(taskId, "cancelled", cancellationToken);
+    public async Task<AdapterTaskResponse?> CancelAsync(Guid taskId, CancellationToken cancellationToken)
+    {
+        var snapshot = await simulator.GetSnapshotAsync(cancellationToken);
+        if (!snapshot.Online || snapshot.ControlOwner != "adapter") throw new ControlUnavailableException(snapshot.ControlOwner);
+
+        var task = await database.Tasks.FindAsync([taskId], cancellationToken);
+        if (task is null) return null;
+
+        var deviceTask = await simulator.CancelAsync(taskId, cancellationToken);
+        if (deviceTask?.State != "cancelled") throw new InvalidOperationException("Simulator did not confirm cancellation.");
+
+        task.State = deviceTask.State;
+        task.DeviceTaskId = deviceTask.DeviceTaskId;
+        task.LastError = deviceTask.LastError;
+        await database.SaveChangesAsync(cancellationToken);
+        return ToResponse(task);
+    }
 
     private async Task<AdapterTaskResponse?> UpdateStateAsync(Guid taskId, string state, CancellationToken cancellationToken)
     {

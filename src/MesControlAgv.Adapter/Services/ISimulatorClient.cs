@@ -7,6 +7,7 @@ public interface ISimulatorClient
     Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken);
     Task<AdapterTaskResponse?> GetTaskAsync(Guid taskId, CancellationToken cancellationToken);
     Task<AdapterTaskResponse> NavigateAsync(Guid taskId, string stationId, CancellationToken cancellationToken);
+    Task<AdapterTaskResponse?> CancelAsync(Guid taskId, CancellationToken cancellationToken);
 }
 
 public sealed class ControlUnavailableException(string owner)

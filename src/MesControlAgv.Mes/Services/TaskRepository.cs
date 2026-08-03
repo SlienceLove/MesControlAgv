@@ -63,6 +63,10 @@ public sealed class TaskRepository(MesDbContext database)
     {
         var task = await GetAsync(taskId, cancellationToken)
             ?? throw new KeyNotFoundException($"Task {taskId} was not found.");
+        if (task.Status != MesControlAgv.Domain.TaskStatus.Failed)
+        {
+            throw new InvalidTaskTransitionException(task.Status, TaskEvent.RetryRequested);
+        }
         task.RetryCount++;
         task.LastError = null;
         task.UpdatedAt = DateTime.UtcNow;
@@ -74,12 +78,17 @@ public sealed class TaskRepository(MesDbContext database)
         Guid taskId,
         TaskEvent taskEvent,
         object payload,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? error = null)
     {
         var task = await GetAsync(taskId, cancellationToken)
             ?? throw new KeyNotFoundException($"Task {taskId} was not found.");
 
         task.Status = TaskStateMachine.Transition(task.Status, taskEvent);
+        if (taskEvent is TaskEvent.DeviceFailed or TaskEvent.Timeout)
+        {
+            task.LastError = error;
+        }
         task.UpdatedAt = DateTime.UtcNow;
         database.TaskEvents.Add(new TaskEventRecord
         {
