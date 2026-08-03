@@ -10,7 +10,7 @@ public sealed class AdapterService(AdapterDbContext database, ISimulatorClient s
     public async Task<AdapterTaskResponse> DispatchAsync(Guid taskId, string targetStationId, CancellationToken cancellationToken)
     {
         var existing = await database.Tasks.FindAsync([taskId], cancellationToken);
-        if (existing is not null) return ToResponse(existing);
+        if (existing is not null && existing.State != "failed") return ToResponse(existing);
 
         var snapshot = await simulator.GetSnapshotAsync(cancellationToken);
         if (!snapshot.Online || snapshot.ControlOwner != "adapter") throw new ControlUnavailableException(snapshot.ControlOwner);
@@ -23,8 +23,23 @@ public sealed class AdapterService(AdapterDbContext database, ISimulatorClient s
                 ?? new AdapterTaskResponse(taskId, taskId.ToString("N"), targetStationId, "unknown", "timeout");
         }
 
-        var task = new AdapterTask { TaskId = taskId, DeviceTaskId = response.DeviceTaskId, TargetStationId = targetStationId, State = response.State, LastError = response.LastError };
-        database.Tasks.Add(task);
+        var task = new AdapterTask
+        {
+            TaskId = taskId,
+            DeviceTaskId = response.DeviceTaskId,
+            TargetStationId = targetStationId,
+            State = response.State,
+            LastError = response.LastError
+        };
+        if (existing is null)
+        {
+            database.Tasks.Add(task);
+        }
+        else
+        {
+            database.Entry(existing).State = EntityState.Detached;
+            database.Tasks.Update(task);
+        }
         await database.SaveChangesAsync(cancellationToken);
         return ToResponse(task);
     }
@@ -32,7 +47,17 @@ public sealed class AdapterService(AdapterDbContext database, ISimulatorClient s
     public async Task<AdapterTaskResponse?> GetAsync(Guid taskId, CancellationToken cancellationToken)
     {
         var task = await database.Tasks.FindAsync([taskId], cancellationToken);
-        return task is null ? null : ToResponse(task);
+        if (task is null) return null;
+
+        var deviceTask = await simulator.GetTaskAsync(taskId, cancellationToken);
+        if (deviceTask is not null)
+        {
+            task.State = deviceTask.State;
+            task.LastError = deviceTask.LastError;
+            await database.SaveChangesAsync(cancellationToken);
+        }
+
+        return ToResponse(task);
     }
 
     public async Task<AdapterTaskResponse?> PauseAsync(Guid taskId, CancellationToken cancellationToken) =>

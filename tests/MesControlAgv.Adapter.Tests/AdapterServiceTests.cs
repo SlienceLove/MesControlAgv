@@ -1,5 +1,6 @@
 using MesControlAgv.Adapter.Contracts;
 using MesControlAgv.Adapter.Data;
+using MesControlAgv.Adapter.Entities;
 using MesControlAgv.Adapter.Services;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,6 +20,31 @@ public class AdapterServiceTests
 
         Assert.Equal(first.DeviceTaskId, second.DeviceTaskId);
         Assert.Equal(1, simulator.NavigateCalls);
+    }
+
+    [Fact]
+    public async Task Failed_persisted_dispatch_retries_navigation_with_same_task_id()
+    {
+        var taskId = Guid.NewGuid();
+        var simulator = new FakeSimulatorClient();
+        var (service, database) = CreateServiceWithDatabase(simulator);
+        database.Tasks.Add(new AdapterTask
+        {
+            TaskId = taskId,
+            DeviceTaskId = "device-failed",
+            TargetStationId = "SAMPLE_01",
+            State = "failed",
+            LastError = "device unavailable"
+        });
+        await database.SaveChangesAsync();
+
+        var result = await service.DispatchAsync(taskId, "SAMPLE_01", CancellationToken.None);
+        var persisted = await database.Tasks.FindAsync([taskId]);
+
+        Assert.Equal("moving", result.State);
+        Assert.Equal(1, simulator.NavigateCalls);
+        Assert.NotNull(persisted);
+        Assert.Equal("moving", persisted.State);
     }
 
     [Fact]
@@ -48,12 +74,36 @@ public class AdapterServiceTests
         Assert.Equal(1, simulator.StatusCalls);
     }
 
+    [Fact]
+    public async Task Get_task_refreshes_persisted_state_from_device()
+    {
+        var taskId = Guid.NewGuid();
+        var simulator = new FakeSimulatorClient
+        {
+            ReconciledTask = new AdapterTaskResponse(taskId, "device-1", "SAMPLE_01", "arrived", null)
+        };
+        var service = CreateService(simulator);
+        await service.DispatchAsync(taskId, "SAMPLE_01", CancellationToken.None);
+
+        var task = await service.GetAsync(taskId, CancellationToken.None);
+
+        Assert.NotNull(task);
+        Assert.Equal("arrived", task.State);
+        Assert.Equal(1, simulator.StatusCalls);
+    }
+
     private static AdapterService CreateService(FakeSimulatorClient simulator)
+    {
+        return CreateServiceWithDatabase(simulator).Service;
+    }
+
+    private static (AdapterService Service, AdapterDbContext Database) CreateServiceWithDatabase(FakeSimulatorClient simulator)
     {
         var options = new DbContextOptionsBuilder<AdapterDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .Options;
-        return new AdapterService(new AdapterDbContext(options), simulator);
+        var database = new AdapterDbContext(options);
+        return (new AdapterService(database, simulator), database);
     }
 }
 
