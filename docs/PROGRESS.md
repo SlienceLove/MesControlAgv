@@ -5,7 +5,7 @@
 ## 已完成
 
 - 技术基线：`.NET 8 + WPF`，旧技术方案已清理。
-- 固定端口：Simulator `5183`、Adapter `5041`、MES `5045`。
+- 固定端口契约：已完成；Simulator `5183`、Adapter `5041`、MES `5045`。
 - MES 任务状态、SQLite 持久化、审计事件和 WPF 中控流程已完成。
 - Adapter 已覆盖固定操作 ID、失败重试、超时对账和同任务并发幂等。
 - 固定路线：`SAMPLE_01 -> ST_PREP_01`。
@@ -17,7 +17,7 @@ dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1
 dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
-结果：构建 0 警告、0 错误；Domain 7、MES 8、Adapter 8、WPF 3、E2E 8、Simulator 1，共 35 项通过。
+结果：构建 0 警告、0 错误；Domain 7、MES 8、Adapter 8、WPF 3、E2E 8、Simulator 1，共 35 项通过（包括十任务场景）。
 
 Windows 应用控制策略可能阻止 `bin/Debug` 下未签名的服务 EXE。自动化测试加载 DLL，服务启动脚本使用系统签名的 `dotnet.exe` 直接加载 Web DLL。
 

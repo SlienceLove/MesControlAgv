@@ -34,12 +34,19 @@ Windows 应用控制策略可能拦截 `bin/Debug` 下未签名的服务 `.exe`�
 
 启动脚本会按 Simulator -> Adapter -> MES 的依赖顺序，在无窗口模式下加载三个 Web DLL：
 
+在 PowerShell 窗口 1 中按以下顺序启动服务、执行验证，并在验证完成后停止服务：
+
 ```powershell
 .\scripts\run-local.ps1
-$env:MES_BASE_URL = 'http://localhost:5045/'
-dotnet run --project src/MesControlAgv.Wpf
 .\scripts\verify-local.ps1
 .\scripts\stop-local.ps1
+```
+
+在单独的 PowerShell 窗口 2 中设置 MES 地址并以前台方式运行 WPF 客户端；保持此窗口运行期间窗口 1 的服务不要停止：
+
+```powershell
+$env:MES_BASE_URL = 'http://localhost:5045/'
+dotnet run --project src/MesControlAgv.Wpf
 ```
 
 服务端点：
