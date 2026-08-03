@@ -23,6 +23,22 @@ public class AdapterServiceTests
     }
 
     [Fact]
+    public async Task Duplicate_dispatch_checks_control_owner_before_returning_persisted_operation()
+    {
+        var simulator = new FakeSimulatorClient();
+        var service = CreateService(simulator);
+        var taskId = Guid.NewGuid();
+
+        await service.DispatchAsync(taskId, "SAMPLE_01", CancellationToken.None);
+        simulator.Snapshot = new(false, "roboshop", null, null);
+
+        await Assert.ThrowsAsync<ControlUnavailableException>(() => service.DispatchAsync(
+            taskId, "SAMPLE_01", CancellationToken.None));
+
+        Assert.Equal(1, simulator.NavigateCalls);
+    }
+
+    [Fact]
     public async Task Failed_persisted_dispatch_retries_navigation_with_same_task_id()
     {
         var taskId = Guid.NewGuid();
@@ -45,6 +61,32 @@ public class AdapterServiceTests
         Assert.Equal(1, simulator.NavigateCalls);
         Assert.NotNull(persisted);
         Assert.Equal("moving", persisted.State);
+    }
+
+    [Fact]
+    public async Task Concurrent_dispatches_do_not_retry_a_failed_in_flight_operation()
+    {
+        var taskId = Guid.NewGuid();
+        var navigationStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowNavigation = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var simulator = new FakeSimulatorClient
+        {
+            ReturnFailed = true,
+            NavigationStarted = navigationStarted,
+            AllowNavigation = allowNavigation
+        };
+        var service = CreateService(simulator);
+
+        var first = service.DispatchAsync(taskId, "SAMPLE_01", CancellationToken.None);
+        await navigationStarted.Task;
+        var second = service.DispatchAsync(taskId, "SAMPLE_01", CancellationToken.None);
+        Assert.False(second.IsCompleted);
+
+        allowNavigation.TrySetResult(true);
+        var results = await Task.WhenAll(first, second);
+
+        Assert.All(results, result => Assert.Equal("failed", result.State));
+        Assert.Equal(1, simulator.NavigateCalls);
     }
 
     [Fact]
@@ -109,24 +151,32 @@ public class AdapterServiceTests
 
 internal sealed class FakeSimulatorClient : ISimulatorClient
 {
-    public int NavigateCalls { get; private set; }
-    public int StatusCalls { get; private set; }
+    private int _navigateCalls;
+    private int _statusCalls;
+
+    public int NavigateCalls => Volatile.Read(ref _navigateCalls);
+    public int StatusCalls => Volatile.Read(ref _statusCalls);
     public bool ThrowTimeout { get; init; }
-    public AgvSnapshotResponse Snapshot { get; init; } = new(true, "adapter", "CHARGE_01", null);
+    public bool ReturnFailed { get; init; }
+    public AgvSnapshotResponse Snapshot { get; set; } = new(true, "adapter", "CHARGE_01", null);
     public AdapterTaskResponse? ReconciledTask { get; init; }
+    public TaskCompletionSource<bool>? NavigationStarted { get; init; }
+    public TaskCompletionSource<bool>? AllowNavigation { get; init; }
 
     public Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken) => Task.FromResult(Snapshot);
 
     public Task<AdapterTaskResponse?> GetTaskAsync(Guid taskId, CancellationToken cancellationToken)
     {
-        StatusCalls++;
+        Interlocked.Increment(ref _statusCalls);
         return Task.FromResult(ReconciledTask);
     }
 
-    public Task<AdapterTaskResponse> NavigateAsync(Guid taskId, string stationId, CancellationToken cancellationToken)
+    public async Task<AdapterTaskResponse> NavigateAsync(Guid taskId, string stationId, CancellationToken cancellationToken)
     {
-        NavigateCalls++;
+        Interlocked.Increment(ref _navigateCalls);
+        NavigationStarted?.TrySetResult(true);
         if (ThrowTimeout) throw new TimeoutException();
-        return Task.FromResult(new AdapterTaskResponse(taskId, $"device-{taskId:N}", stationId, "moving", null));
+        if (AllowNavigation is not null) await AllowNavigation.Task.WaitAsync(cancellationToken);
+        return new AdapterTaskResponse(taskId, $"device-{taskId:N}", stationId, ReturnFailed ? "failed" : "moving", ReturnFailed ? "device unavailable" : null);
     }
 }
