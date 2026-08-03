@@ -1,15 +1,17 @@
 # AGV MES MVP
 
-面向实验室自动化的 .NET 8 MVP：系统编排单台 AGV 的固定搬运路线 `SAMPLE_01 → ST_PREP_01`，并提供模拟设备、可审计的 MES 服务和 WPF 中控看板。
+面向实验室自动化的 `.NET 8 + WPF` MVP：系统编排单台 AGV 的固定搬运路线 `SAMPLE_01 -> ST_PREP_01`，并提供 Simulator、可审计的 MES 服务、Adapter 和 WPF 中控看板。
 
-MES 是业务状态与审计事件的唯一写入者；Adapter 隔离设备协议、控制权与幂等派单；Simulator 仅用于开发和验收。
+MES 是任务状态和审计事件的唯一写入者；Adapter 隔离设备协议、控制权和幂等派单；Simulator 仅用于开发和验收。
 
 ## 前置条件
 
-- Windows 10/11（WPF 中控客户端为 Windows 桌面应用）
+- Windows 10/11
 - .NET 8 SDK
 
 ## 构建与测试
+
+在仓库根目录执行：
 
 ```powershell
 dotnet restore MesControlAgv.sln
@@ -17,48 +19,63 @@ dotnet build MesControlAgv.sln --no-restore
 dotnet test MesControlAgv.sln --no-build
 ```
 
-## 本地启动
+当前自动化基线为 35 项通过测试，包括十任务连续搬运和 Adapter 并发幂等场景。实时冒烟脚本是独立的进程级检查，不计入自动化测试数量。
 
-按依赖顺序启动服务，每条命令使用独立 PowerShell 窗口：
+如果默认共享编译器在本机失败，使用以下串行构建和测试命令：
 
 ```powershell
-dotnet run --project src/MesControlAgv.Simulator --launch-profile http
-dotnet run --project src/MesControlAgv.Adapter --launch-profile http
-dotnet run --project src/MesControlAgv.Mes --launch-profile http
+dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1
+dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
-也可以一次启动三个服务进程：
+Windows 应用控制策略可能拦截 `bin/Debug` 下未签名的服务 `.exe`。不要双击服务 apphost；使用下面的启动脚本，或用系统签名的 `dotnet.exe` 直接加载 DLL。
+
+## 本地启动
+
+启动脚本会按 Simulator -> Adapter -> MES 的依赖顺序，在无窗口模式下加载三个 Web DLL：
 
 ```powershell
 .\scripts\run-local.ps1
-```
-
-再启动 WPF 中控客户端：
-
-```powershell
 $env:MES_BASE_URL = 'http://localhost:5045/'
 dotnet run --project src/MesControlAgv.Wpf
+.\scripts\verify-local.ps1
+.\scripts\stop-local.ps1
 ```
 
-开发环境已配置 Adapter 调用 Simulator (`http://localhost:5183/`)，MES 调用 Adapter (`http://localhost:5041/`)。
+服务端点：
+
+| Service | URL |
+|---|---|
+| Simulator | `http://localhost:5183` |
+| Adapter | `http://localhost:5041` |
+| MES | `http://localhost:5045` |
+
+Adapter 调用 Simulator，MES 调用 Adapter，WPF 调用 MES。`run-local.ps1` 将服务 PID 写入临时状态文件，`stop-local.ps1` 只停止该文件记录的 `dotnet.exe` 进程，不会关闭 Rider 的其他进程。
+
+如果需要手动启动单个 Web 服务，先构建解决方案，然后从对应项目目录执行 DLL：
+
+```powershell
+dotnet .\bin\Debug\net8.0\MesControlAgv.Adapter.dll --urls http://localhost:5041 --environment Development
+dotnet .\bin\Debug\net8.0\MesControlAgv.Mes.dll --urls http://localhost:5045 --environment Development
+```
 
 ## 正常搬运演示
 
-1. 在 WPF 中选择 **创建 SAMPLE_01 → ST_PREP_01 任务**。
-2. 任务进入前往 `SAMPLE_01` 的状态。
-3. 选中任务，点击 **模拟到站**，再点击 **确认取货**。
-4. 任务进入前往 `ST_PREP_01` 的状态。
-5. 点击 **模拟到站**，再点击 **确认放货**。任务变为 `Completed`。
-6. 用 `GET /api/tasks/{taskId}` 查询 MES，可查看按时间排序的审计事件。
+按以下顺序完成一条正常搬运：创建 `SAMPLE_01 -> ST_PREP_01` 任务，模拟到达 `SAMPLE_01`，确认取货，模拟到达 `ST_PREP_01`，确认放货，最后检查任务详情中的审计事件时间线。
 
-## 故障注入与恢复演示
+WPF 中的创建任务、模拟到站、确认取货和确认放货按钮对应这些操作。任务完成后，可以用 `GET /api/tasks/{taskId}` 查看事件时间线。
+
+## 故障注入与恢复
 
 Simulator 提供开发用控制端点 `POST /controls/{mode}`：
 
-- `fail`：下一次导航返回设备失败；
-- `timeout`：下一次导航在命令边界超时；
-- `offline` / `recover`：模拟 AGV 离线或恢复在线；
-- `arrive`：将当前模拟任务标记为已到站。
+- `fail`：下一次导航变为 `Failed`。
+- `timeout`：已接收的导航仍可查询；Adapter 会先对账设备状态，能确定时 MES 直接恢复到对应移动状态，无法确定时才进入 `Unknown`。
+- `offline`：AGV 离线时拒绝导航。
+- `recover`：Simulator 恢复在线。
+- `arrive`：当前 Simulator 任务变为已到站。
+
+失败重试使用现有 MES 任务和现有搬运腿的操作 ID。超时恢复先查询 Adapter 的设备任务状态，绝不盲目发送第二次导航。
 
 示例：
 
@@ -66,18 +83,16 @@ Simulator 提供开发用控制端点 `POST /controls/{mode}`：
 Invoke-RestMethod -Method Post http://localhost:5183/controls/fail
 ```
 
-然后创建任务。任务将进入 `Failed`，可在 WPF 中点击 **失败后重试**；同一搬运腿会使用相同的幂等操作 ID。若注入 `timeout`，创建任务后调用 `POST /api/tasks/{taskId}/recover`：MES 会先向 Adapter 对账，不会直接重复导航。
-
 ## 持久化与边界
 
-从各项目目录启动时，SQLite 文件位于：
+SQLite 文件位置为：
 
 - MES：`data/mes.db`
 - Adapter：`data/adapter.db`
 
-MES 保存任务状态和完整事件审计；Adapter 保存设备操作与幂等映射；Simulator 为内存实现，仅适用于开发和验收。
+MES 保存任务状态和完整事件审计；Adapter 保存设备操作和幂等映射；Simulator 为内存实现，仅适用于开发和验收。
 
-对接真实 AGV 时，只需替换 Adapter 中的 `ISimulatorClient` 实现。MES 生命周期、事件审计、WPF 中控与 MES→Adapter API 契约无需变更。
+对接真实 AGV 时，只需在确认厂商协议和控制权规则后替换 Adapter 的设备客户端实现。MES 生命周期、事件审计、WPF 中控和 MES -> Adapter API 契约无需变更。
 
 ## 固定站点
 
