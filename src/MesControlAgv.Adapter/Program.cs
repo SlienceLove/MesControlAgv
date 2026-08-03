@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("Adapter") ?? "Data Source=data/adapter.db";
-var simulatorUrl = builder.Configuration["Simulator:BaseUrl"] ?? "http://localhost:5002/";
+var simulatorUrl = builder.Configuration["Simulator:BaseUrl"] ?? "http://localhost:5183/";
 
 builder.Services.AddDbContext<AdapterDbContext>(options => options.UseSqlite(connectionString));
 builder.Services.AddHttpClient<ISimulatorClient, SimulatorClient>(client => client.BaseAddress = new Uri(simulatorUrl));

@@ -9,7 +9,8 @@ var connectionString = builder.Configuration.GetConnectionString("Mes") ?? "Data
 
 builder.Services.AddDbContext<MesDbContext>(options => options.UseSqlite(connectionString));
 builder.Services.AddHttpClient<IAdapterClient, AdapterClient>(client =>
-    client.BaseAddress = new Uri(builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5001/"));
+    client.BaseAddress = new Uri(
+        builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5041/"));
 builder.Services.AddScoped<TaskRepository>();
 builder.Services.AddScoped<TaskService>();
 builder.Services.AddHostedService<RecoveryService>();
