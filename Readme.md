@@ -34,12 +34,11 @@ Windows 应用控制策略可能拦截 `bin/Debug` 下未签名的服务 `.exe`�
 
 启动脚本会按 Simulator -> Adapter -> MES 的依赖顺序，在无窗口模式下加载三个 Web DLL：
 
-在 PowerShell 窗口 1 中按以下顺序启动服务、执行验证，并在验证完成后停止服务：
+在 PowerShell 窗口 1 中按以下顺序启动服务并执行服务级验证：
 
 ```powershell
 .\scripts\run-local.ps1
 .\scripts\verify-local.ps1
-.\scripts\stop-local.ps1
 ```
 
 在单独的 PowerShell 窗口 2 中设置 MES 地址并以前台方式运行 WPF 客户端；保持此窗口运行期间窗口 1 的服务不要停止：
@@ -47,6 +46,12 @@ Windows 应用控制策略可能拦截 `bin/Debug` 下未签名的服务 `.exe`�
 ```powershell
 $env:MES_BASE_URL = 'http://localhost:5045/'
 dotnet run --project src/MesControlAgv.Wpf
+```
+
+完成 WPF 验证后先关闭窗口 2 中的 WPF 客户端。最后回到窗口 1 清理服务：
+
+```powershell
+.\scripts\stop-local.ps1
 ```
 
 服务端点：
@@ -77,9 +82,13 @@ WPF 中的创建任务、模拟到站、确认取货和确认放货按钮对应�
 Simulator 提供开发用控制端点 `POST /controls/{mode}`：
 
 - `fail`：下一次导航变为 `Failed`。
+
 - `timeout`：已接收的导航仍可查询；Adapter 会先对账设备状态，能确定时 MES 直接恢复到对应移动状态，无法确定时才进入 `Unknown`。
+
 - `offline`：AGV 离线时拒绝导航。
+
 - `recover`：Simulator 恢复在线。
+
 - `arrive`：当前 Simulator 任务变为已到站。
 
 失败重试使用现有 MES 任务和现有搬运腿的操作 ID。超时恢复先查询 Adapter 的设备任务状态，绝不盲目发送第二次导航。
