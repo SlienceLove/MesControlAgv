@@ -6,6 +6,9 @@
         Height="720"
         MinWidth="960"
         MinHeight="620">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+    </Window.Resources>
     <Grid Margin="20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -58,20 +61,78 @@
                     <DataGridTextColumn Width="*" Header="错误" Binding="{Binding LastError}" />
                 </DataGrid.Columns>
             </DataGrid>
-            <Border Grid.Column="1" Margin="16,0,0,0" Padding="16" Background="#F6F8FA" CornerRadius="6">
-                <StackPanel>
-                    <TextBlock FontSize="18" FontWeight="SemiBold" Text="任务操作" />
-                    <Button Margin="0,16,0,0" MinHeight="36" Command="{Binding CreateTaskCommand}" Content="创建 SAMPLE_01 → ST_PREP_01 任务" />
-                    <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding ArriveCommand}" Content="模拟到站" />
-                    <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding ConfirmPickupCommand}" Content="确认取货" />
-                    <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding ConfirmDropoffCommand}" Content="确认放货" />
-                    <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding RetryCommand}" Content="失败后重试" />
-                    <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding CancelCommand}" Content="取消任务" />
-                    <Separator Margin="0,16,0,12" />
-                    <TextBlock FontWeight="SemiBold" Text="操作提示" />
-                    <TextBlock Margin="0,4,0,0" Foreground="#B42318" TextWrapping="Wrap" Text="{Binding Message}" />
-                </StackPanel>
-            </Border>
+            <Grid Grid.Column="1" Margin="16,0,0,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0" Padding="16" Background="#F6F8FA" CornerRadius="6">
+                    <StackPanel>
+                        <TextBlock FontSize="18" FontWeight="SemiBold" Text="任务操作" />
+                        <Button Margin="0,16,0,0" MinHeight="36" Command="{Binding CreateTaskCommand}" Content="创建 SAMPLE_01 → ST_PREP_01 任务" />
+                        <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding ArriveCommand}" Content="模拟到站" />
+                        <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding ConfirmPickupCommand}" Content="确认取货" />
+                        <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding ConfirmDropoffCommand}" Content="确认放货" />
+                        <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding RetryCommand}" Content="失败后重试" />
+                        <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding RecoverCommand}" Content="恢复查询" />
+                        <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding CancelCommand}" Content="取消任务" />
+                        <Separator Margin="0,16,0,12" />
+                        <TextBlock FontWeight="SemiBold" Text="操作提示" />
+                        <TextBlock Margin="0,4,0,0" Foreground="#B42318" TextWrapping="Wrap" Text="{Binding Message}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Row="1" Margin="0,12,0,0" Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <TextBlock FontSize="16" FontWeight="SemiBold" Text="任务详情" />
+                        <StackPanel Grid.Row="1" Margin="0,8,0,8">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Foreground="Gray" Text="任务 ID：" />
+                                <TextBlock Text="{Binding SelectedTask.Id}" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                            <StackPanel Margin="0,4,0,0" Orientation="Horizontal">
+                                <TextBlock Foreground="Gray" Text="状态：" />
+                                <TextBlock Text="{Binding SelectedTask.Status}" />
+                            </StackPanel>
+                        </StackPanel>
+                        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl ItemsSource="{Binding TaskEvents}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,0,0,8" Padding="8" Background="#F6F8FA" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="4">
+                                            <StackPanel>
+                                                <TextBlock FontWeight="SemiBold" Text="{Binding EventType}" />
+                                                <TextBlock Margin="0,2,0,0" Foreground="Gray" Text="{Binding CreatedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" />
+                                                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding Payload}" />
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Row="2" Margin="0,12,0,0" Padding="12" Background="#FFF8E1" CornerRadius="6" Visibility="{Binding IsSimulatorPanelVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <StackPanel>
+                        <TextBlock FontWeight="SemiBold" Text="开发模拟器" />
+                        <WrapPanel Margin="0,8,0,0">
+                            <Button Margin="0,0,6,6" MinWidth="72" Command="{Binding SimulatorArriveCommand}" Content="到站" />
+                            <Button Margin="0,0,6,6" MinWidth="90" Command="{Binding SimulatorFailCommand}" Content="下一次失败" />
+                            <Button Margin="0,0,6,6" MinWidth="90" Command="{Binding SimulatorTimeoutCommand}" Content="下一次超时" />
+                            <Button Margin="0,0,6,6" MinWidth="72" Command="{Binding SimulatorOfflineCommand}" Content="离线" />
+                            <Button Margin="0,0,6,6" MinWidth="72" Command="{Binding SimulatorRecoverCommand}" Content="上线" />
+                        </WrapPanel>
+                    </StackPanel>
+                </Border>
+            </Grid>
         </Grid>
 
         <TextBlock Grid.Row="2" Margin="0,16,0,0" Foreground="Gray" Text="界面每 2 秒从 MES 刷新；取货与放货需要人工确认后才会推进。" />

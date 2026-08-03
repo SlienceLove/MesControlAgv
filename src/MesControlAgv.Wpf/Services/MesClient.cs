@@ -9,6 +9,15 @@ public sealed class MesClient(HttpClient client) : IMesClient
         await client.GetFromJsonAsync<List<DashboardTask>>("api/tasks", cancellationToken)
         ?? [];
 
+    public async Task<DashboardTaskDetail?> GetTaskDetailAsync(Guid taskId, CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync($"api/tasks/{taskId}", cancellationToken);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<DashboardTaskDetail>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no task detail.");
+    }
+
     public async Task<AgvDashboardSnapshot> GetAgvSnapshotAsync(CancellationToken cancellationToken) =>
         await client.GetFromJsonAsync<AgvDashboardSnapshot>("api/agv", cancellationToken)
         ?? throw new InvalidOperationException("MES returned no AGV snapshot.");
@@ -27,6 +36,9 @@ public sealed class MesClient(HttpClient client) : IMesClient
 
     public Task<DashboardTask> RetryAsync(Guid taskId, CancellationToken cancellationToken) =>
         PostAsync($"api/tasks/{taskId}/retry", null, cancellationToken);
+
+    public Task<DashboardTask> RecoverAsync(Guid taskId, CancellationToken cancellationToken) =>
+        PostAsync($"api/tasks/{taskId}/recover", null, cancellationToken);
 
     public Task<DashboardTask> CancelAsync(Guid taskId, string operatorName, CancellationToken cancellationToken) =>
         PostAsync($"api/tasks/{taskId}/cancel", new { operatorName }, cancellationToken);

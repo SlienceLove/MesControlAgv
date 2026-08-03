@@ -19,7 +19,7 @@ dotnet build MesControlAgv.sln --no-restore
 dotnet test MesControlAgv.sln --no-build
 ```
 
-当前自动化基线为 35 项通过测试，包括十任务连续搬运和 Adapter 并发幂等场景。实时冒烟脚本是独立的进程级检查，不计入自动化测试数量。
+当前自动化基线为 44 项通过测试，包括十任务连续搬运、Adapter 并发幂等、任务恢复和 WPF 看板行为。实时冒烟脚本是独立的进程级检查，不计入自动化测试数量。
 
 如果默认共享编译器在本机失败，使用以下串行构建和测试命令：
 
@@ -75,7 +75,7 @@ dotnet .\bin\Debug\net8.0\MesControlAgv.Mes.dll --urls http://localhost:5045 --e
 
 按以下顺序完成一条正常搬运：创建 `SAMPLE_01 -> ST_PREP_01` 任务，模拟到达 `SAMPLE_01`，确认取货，模拟到达 `ST_PREP_01`，确认放货，最后检查任务详情中的审计事件时间线。
 
-WPF 中的创建任务、模拟到站、确认取货和确认放货按钮对应这些操作。任务完成后，可以用 `GET /api/tasks/{taskId}` 查看事件时间线。
+WPF 中的创建任务、模拟到站、确认取货和确认放货按钮对应这些操作。任务详情区会显示审计事件时间线，`Unknown` 任务可执行恢复查询；Debug 构建还提供模拟器到站、失败、超时、离线和恢复控制。任务完成后，可以用 `GET /api/tasks/{taskId}` 查看事件时间线。
 
 ## 故障注入与恢复
 

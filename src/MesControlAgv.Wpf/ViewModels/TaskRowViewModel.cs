@@ -16,3 +16,16 @@ public sealed record TaskRowViewModel(
         task.RetryCount,
         task.LastError);
 }
+
+public sealed record TaskEventRowViewModel(
+    Guid Id,
+    string EventType,
+    string Payload,
+    DateTime CreatedAt)
+{
+    public static TaskEventRowViewModel From(Services.DashboardTaskEvent taskEvent) => new(
+        taskEvent.Id,
+        taskEvent.EventType,
+        taskEvent.Payload,
+        taskEvent.CreatedAt);
+}
