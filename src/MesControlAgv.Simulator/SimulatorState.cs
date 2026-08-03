@@ -14,7 +14,8 @@ public sealed class SimulatorState
     {
         EnsureAvailable();
         if (ControlOwner != "adapter") throw new InvalidOperationException($"AGV control owner is {ControlOwner}.");
-        if (_nextFault == "timeout") { _nextFault = null; throw new TimeoutException(); }
+        var timeout = _nextFault == "timeout";
+        if (timeout) _nextFault = null;
         if (_nextFault == "fail")
         {
             _nextFault = null;
@@ -25,6 +26,7 @@ public sealed class SimulatorState
         var task = new SimulatedTask(taskId, stationId, "moving", null);
         _tasks[taskId] = task;
         CurrentTaskId = taskId;
+        if (timeout) throw new TimeoutException();
         return task;
     }
 

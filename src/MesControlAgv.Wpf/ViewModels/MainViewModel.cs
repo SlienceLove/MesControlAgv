@@ -22,12 +22,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public MainViewModel(IMesClient mes)
     {
         _mes = mes;
-        CreateTaskCommand = new AsyncCommand(CreateTaskAsync);
-        ArriveCommand = new AsyncCommand(ArriveAsync, () => SelectedTask?.Status is "MovingToPickup" or "MovingToDropoff");
-        ConfirmPickupCommand = new AsyncCommand(ConfirmPickupAsync, () => SelectedTask?.Status == "WaitingPickupConfirmation");
-        ConfirmDropoffCommand = new AsyncCommand(ConfirmDropoffAsync, () => SelectedTask?.Status == "WaitingDropoffConfirmation");
-        RetryCommand = new AsyncCommand(RetryAsync, () => SelectedTask?.Status == "Failed");
-        CancelCommand = new AsyncCommand(CancelAsync, () => SelectedTask is { Status: not "Completed" and not "Cancelled" });
+        CreateTaskCommand = new AsyncCommand(() => ExecuteActionAsync(CreateTaskAsync));
+        ArriveCommand = new AsyncCommand(() => ExecuteActionAsync(ArriveAsync), () => SelectedTask?.Status is "MovingToPickup" or "MovingToDropoff");
+        ConfirmPickupCommand = new AsyncCommand(() => ExecuteActionAsync(ConfirmPickupAsync), () => SelectedTask?.Status == "WaitingPickupConfirmation");
+        ConfirmDropoffCommand = new AsyncCommand(() => ExecuteActionAsync(ConfirmDropoffAsync), () => SelectedTask?.Status == "WaitingDropoffConfirmation");
+        RetryCommand = new AsyncCommand(() => ExecuteActionAsync(RetryAsync), () => SelectedTask?.Status == "Failed");
+        CancelCommand = new AsyncCommand(() => ExecuteActionAsync(CancelAsync), () => SelectedTask is { Status: not "Completed" and not "Cancelled" });
     }
 
     public ObservableCollection<TaskRowViewModel> Tasks { get; } = [];
@@ -116,6 +116,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         if (SelectedTask is not null) await _mes.CancelAsync(SelectedTask.Id, "wpf-operator", _shutdown.Token);
         await RefreshAsync();
+    }
+
+    private async Task ExecuteActionAsync(Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch (Exception exception)
+        {
+            Message = exception.Message;
+        }
     }
 
     private async Task RefreshLoopAsync(CancellationToken cancellationToken)
