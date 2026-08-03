@@ -6,12 +6,19 @@ using System.Collections.Generic;
 
 namespace MesControlAgv.Adapter.Services;
 
-public sealed class AdapterService(AdapterDbContext database, ISimulatorClient simulator)
+public sealed class AdapterService(AdapterDbContext database, IAgvDeviceClient device)
 {
     private static readonly object DispatchGatesLock = new();
     private static readonly Dictionary<Guid, DispatchGate> DispatchGates = new();
 
-    public async Task<AdapterTaskResponse> DispatchAsync(Guid taskId, string targetStationId, CancellationToken cancellationToken)
+    public Task<AdapterTaskResponse> DispatchAsync(Guid taskId, string targetStationId, CancellationToken cancellationToken) =>
+        DispatchAsync(taskId, null, targetStationId, cancellationToken);
+
+    public async Task<AdapterTaskResponse> DispatchAsync(
+        Guid taskId,
+        string? sourceStationId,
+        string targetStationId,
+        CancellationToken cancellationToken)
     {
         var gate = AcquireDispatchGate(taskId);
         var acquired = false;
@@ -29,17 +36,18 @@ public sealed class AdapterService(AdapterDbContext database, ISimulatorClient s
                 acquired = true;
             }
 
-            var snapshot = await simulator.GetSnapshotAsync(cancellationToken);
+            await device.EnsureControlAsync(cancellationToken);
+            var snapshot = await device.GetSnapshotAsync(cancellationToken);
             if (!snapshot.Online || snapshot.ControlOwner != "adapter") throw new ControlUnavailableException(snapshot.ControlOwner);
 
             var existing = await database.Tasks.FindAsync([taskId], cancellationToken);
             if (existing is not null && (existing.State != "failed" || waited)) return ToResponse(existing);
 
             AdapterTaskResponse response;
-            try { response = await simulator.NavigateAsync(taskId, targetStationId, cancellationToken); }
+            try { response = await device.NavigateAsync(taskId, sourceStationId, targetStationId, cancellationToken); }
             catch (TimeoutException)
             {
-                response = await simulator.GetTaskAsync(taskId, cancellationToken)
+                response = await device.GetTaskAsync(taskId, cancellationToken)
                     ?? new AdapterTaskResponse(taskId, taskId.ToString("N"), targetStationId, "unknown", "timeout");
             }
 
@@ -104,7 +112,7 @@ public sealed class AdapterService(AdapterDbContext database, ISimulatorClient s
         var task = await database.Tasks.FindAsync([taskId], cancellationToken);
         if (task is null) return null;
 
-        var deviceTask = await simulator.GetTaskAsync(taskId, cancellationToken);
+        var deviceTask = await device.GetTaskAsync(taskId, cancellationToken);
         if (deviceTask is not null)
         {
             task.State = deviceTask.State;
@@ -115,21 +123,30 @@ public sealed class AdapterService(AdapterDbContext database, ISimulatorClient s
         return ToResponse(task);
     }
 
-    public async Task<AdapterTaskResponse?> PauseAsync(Guid taskId, CancellationToken cancellationToken) =>
-        await UpdateStateAsync(taskId, "paused", cancellationToken);
+    public async Task<AdapterTaskResponse?> PauseAsync(Guid taskId, CancellationToken cancellationToken)
+    {
+        await device.EnsureControlAsync(cancellationToken);
+        var deviceTask = await device.PauseAsync(taskId, cancellationToken);
+        return await PersistDeviceStateAsync(taskId, deviceTask, "paused", cancellationToken);
+    }
 
-    public async Task<AdapterTaskResponse?> ResumeAsync(Guid taskId, CancellationToken cancellationToken) =>
-        await UpdateStateAsync(taskId, "moving", cancellationToken);
+    public async Task<AdapterTaskResponse?> ResumeAsync(Guid taskId, CancellationToken cancellationToken)
+    {
+        await device.EnsureControlAsync(cancellationToken);
+        var deviceTask = await device.ResumeAsync(taskId, cancellationToken);
+        return await PersistDeviceStateAsync(taskId, deviceTask, "moving", cancellationToken);
+    }
 
     public async Task<AdapterTaskResponse?> CancelAsync(Guid taskId, CancellationToken cancellationToken)
     {
-        var snapshot = await simulator.GetSnapshotAsync(cancellationToken);
+        await device.EnsureControlAsync(cancellationToken);
+        var snapshot = await device.GetSnapshotAsync(cancellationToken);
         if (!snapshot.Online || snapshot.ControlOwner != "adapter") throw new ControlUnavailableException(snapshot.ControlOwner);
 
         var task = await database.Tasks.FindAsync([taskId], cancellationToken);
         if (task is null) return null;
 
-        var deviceTask = await simulator.CancelAsync(taskId, cancellationToken);
+        var deviceTask = await device.CancelAsync(taskId, cancellationToken);
         if (deviceTask?.State != "cancelled") throw new InvalidOperationException("Simulator did not confirm cancellation.");
 
         task.State = deviceTask.State;
@@ -139,11 +156,17 @@ public sealed class AdapterService(AdapterDbContext database, ISimulatorClient s
         return ToResponse(task);
     }
 
-    private async Task<AdapterTaskResponse?> UpdateStateAsync(Guid taskId, string state, CancellationToken cancellationToken)
+    private async Task<AdapterTaskResponse?> PersistDeviceStateAsync(
+        Guid taskId,
+        AdapterTaskResponse? deviceTask,
+        string fallbackState,
+        CancellationToken cancellationToken)
     {
         var task = await database.Tasks.FindAsync([taskId], cancellationToken);
         if (task is null) return null;
-        task.State = state;
+        task.State = deviceTask?.State ?? fallbackState;
+        task.DeviceTaskId = deviceTask?.DeviceTaskId ?? task.DeviceTaskId;
+        task.LastError = deviceTask?.LastError;
         await database.SaveChangesAsync(cancellationToken);
         return ToResponse(task);
     }

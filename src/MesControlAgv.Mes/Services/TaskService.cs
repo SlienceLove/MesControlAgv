@@ -71,7 +71,7 @@ public sealed class TaskService(TaskRepository repository, IAdapterClient adapte
         var device = await adapter.GetTaskAsync(operationId, cancellationToken);
         var reconciliation = device?.State switch
         {
-            "moving" => pickup ? TaskEvent.ReconciledMoving : TaskEvent.ReconciledMovingToDropoff,
+            "accepted" or "moving" => pickup ? TaskEvent.ReconciledMoving : TaskEvent.ReconciledMovingToDropoff,
             "arrived" => pickup ? TaskEvent.ReconciledPickupArrived : TaskEvent.ReconciledDropoffArrived,
             "completed" => TaskEvent.ReconciledCompleted,
             "failed" => TaskEvent.ReconciledFailed,
@@ -170,7 +170,10 @@ public sealed class TaskService(TaskRepository repository, IAdapterClient adapte
         var operationId = started == TaskEvent.PickupMoveStarted ? TransportOperationIds.Pickup(taskId) : TransportOperationIds.Dropoff(taskId);
         try
         {
-            var response = await adapter.DispatchAsync(operationId, targetStationId, cancellationToken);
+            var sourceStationId = Stations.Get(task.SourceStationCode).AgvStationId;
+            var response = adapter is IRouteAwareAdapterClient routeAware
+                ? await routeAware.DispatchAsync(operationId, sourceStationId, targetStationId, cancellationToken)
+                : await adapter.DispatchAsync(operationId, targetStationId, cancellationToken);
             task = await repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
             if (response.State == "failed")
             {

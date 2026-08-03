@@ -6,9 +6,21 @@ using Microsoft.EntityFrameworkCore;
 var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("Adapter") ?? "Data Source=data/adapter.db";
 var simulatorUrl = builder.Configuration["Simulator:BaseUrl"] ?? "http://localhost:5183/";
+var agvDriver = builder.Configuration["Agv:Driver"] ?? "simulator";
 
 builder.Services.AddDbContext<AdapterDbContext>(options => options.UseSqlite(connectionString));
-builder.Services.AddHttpClient<ISimulatorClient, SimulatorClient>(client => client.BaseAddress = new Uri(simulatorUrl));
+builder.Services.Configure<TcpAgvOptions>(builder.Configuration.GetSection("Agv:Tcp"));
+builder.Services.AddHttpClient<SimulatorClient>(client => client.BaseAddress = new Uri(simulatorUrl));
+if (string.Equals(agvDriver, "tcp", StringComparison.OrdinalIgnoreCase))
+{
+    builder.Services.AddSingleton<TcpAgvClient>();
+    builder.Services.AddSingleton<IAgvDeviceClient>(services => services.GetRequiredService<TcpAgvClient>());
+    builder.Services.AddHostedService(services => services.GetRequiredService<TcpAgvClient>());
+}
+else
+{
+    builder.Services.AddSingleton<IAgvDeviceClient>(services => services.GetRequiredService<SimulatorClient>());
+}
 builder.Services.AddScoped<AdapterService>();
 
 var app = builder.Build();
@@ -22,7 +34,7 @@ app.MapGet("/health", () => Results.Ok(new { service = "adapter", status = "ok" 
 
 app.MapPost("/tasks/{taskId:guid}/dispatch", async (Guid taskId, DispatchRequest request, AdapterService service, CancellationToken cancellationToken) =>
 {
-    try { return Results.Ok(await service.DispatchAsync(taskId, request.TargetStationId, cancellationToken)); }
+    try { return Results.Ok(await service.DispatchAsync(taskId, request.SourceStationId, request.TargetStationId, cancellationToken)); }
     catch (ControlUnavailableException exception) { return Results.Conflict(new { detail = exception.Message }); }
 });
 
@@ -51,10 +63,10 @@ app.MapPost("/tasks/{taskId:guid}/{action}", async (Guid taskId, string action, 
     }
 });
 
-app.MapGet("/agv/snapshot", async (ISimulatorClient simulator, CancellationToken cancellationToken) => Results.Ok(await simulator.GetSnapshotAsync(cancellationToken)));
+app.MapGet("/agv/snapshot", async (IAgvDeviceClient device, CancellationToken cancellationToken) => Results.Ok(await device.GetSnapshotAsync(cancellationToken)));
 
 app.Run();
 
-public sealed record DispatchRequest(string TargetStationId);
+public sealed record DispatchRequest(string TargetStationId, string? SourceStationId = null);
 
 public partial class Program;

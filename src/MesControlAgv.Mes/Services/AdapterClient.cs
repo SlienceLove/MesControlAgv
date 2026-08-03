@@ -15,11 +15,30 @@ public interface IAdapterClient
     Task<AdapterSnapshot> GetSnapshotAsync(CancellationToken cancellationToken);
 }
 
-public sealed class AdapterClient(HttpClient client) : IAdapterClient
+public interface IRouteAwareAdapterClient
+{
+    Task<AdapterTask> DispatchAsync(
+        Guid operationId,
+        string sourceStationId,
+        string targetStationId,
+        CancellationToken cancellationToken);
+}
+
+public sealed class AdapterClient(HttpClient client) : IAdapterClient, IRouteAwareAdapterClient
 {
     public async Task<AdapterTask> DispatchAsync(Guid operationId, string targetStationId, CancellationToken cancellationToken)
+        => await DispatchAsync(operationId, null, targetStationId, cancellationToken);
+
+    public async Task<AdapterTask> DispatchAsync(
+        Guid operationId,
+        string? sourceStationId,
+        string targetStationId,
+        CancellationToken cancellationToken)
     {
-        var response = await client.PostAsJsonAsync($"tasks/{operationId}/dispatch", new { targetStationId }, cancellationToken);
+        object request = sourceStationId is null
+            ? new { targetStationId }
+            : new { sourceStationId, targetStationId };
+        var response = await client.PostAsJsonAsync($"tasks/{operationId}/dispatch", request, cancellationToken);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<AdapterTask>(cancellationToken)
             ?? throw new InvalidOperationException("Adapter returned no dispatch result.");

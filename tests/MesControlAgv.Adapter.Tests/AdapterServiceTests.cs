@@ -23,6 +23,18 @@ public class AdapterServiceTests
     }
 
     [Fact]
+    public async Task Route_aware_dispatch_forwards_the_source_station()
+    {
+        var simulator = new FakeSimulatorClient();
+        var service = CreateService(simulator);
+        var taskId = Guid.NewGuid();
+
+        await service.DispatchAsync(taskId, "SAMPLE_01", "ST_PREP_01", CancellationToken.None);
+
+        Assert.Equal("SAMPLE_01", simulator.SourceStationId);
+    }
+
+    [Fact]
     public async Task Duplicate_dispatch_checks_control_owner_before_returning_persisted_operation()
     {
         var simulator = new FakeSimulatorClient();
@@ -188,13 +200,18 @@ internal sealed class FakeSimulatorClient : ISimulatorClient
     public int NavigateCalls => Volatile.Read(ref _navigateCalls);
     public int StatusCalls => Volatile.Read(ref _statusCalls);
     public int CancelCalls => Volatile.Read(ref _cancelCalls);
+    public string? SourceStationId { get; private set; }
     public bool ThrowTimeout { get; init; }
     public bool ReturnFailed { get; init; }
     public string? CancelState { get; init; } = "cancelled";
+    public string PauseState { get; init; } = "paused";
+    public string ResumeState { get; init; } = "moving";
     public AgvSnapshotResponse Snapshot { get; set; } = new(true, "adapter", "CHARGE_01", null);
     public AdapterTaskResponse? ReconciledTask { get; init; }
     public TaskCompletionSource<bool>? NavigationStarted { get; init; }
     public TaskCompletionSource<bool>? AllowNavigation { get; init; }
+
+    public Task EnsureControlAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     public Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken) => Task.FromResult(Snapshot);
 
@@ -204,14 +221,21 @@ internal sealed class FakeSimulatorClient : ISimulatorClient
         return Task.FromResult(ReconciledTask);
     }
 
-    public async Task<AdapterTaskResponse> NavigateAsync(Guid taskId, string stationId, CancellationToken cancellationToken)
+    public async Task<AdapterTaskResponse> NavigateAsync(Guid taskId, string? sourceStationId, string stationId, CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref _navigateCalls);
+        SourceStationId = sourceStationId;
         NavigationStarted?.TrySetResult(true);
         if (ThrowTimeout) throw new TimeoutException();
         if (AllowNavigation is not null) await AllowNavigation.Task.WaitAsync(cancellationToken);
         return new AdapterTaskResponse(taskId, $"device-{taskId:N}", stationId, ReturnFailed ? "failed" : "moving", ReturnFailed ? "device unavailable" : null);
     }
+
+    public Task<AdapterTaskResponse?> PauseAsync(Guid taskId, CancellationToken cancellationToken) =>
+        Task.FromResult<AdapterTaskResponse?>(new AdapterTaskResponse(taskId, $"device-{taskId:N}", "SAMPLE_01", PauseState, null));
+
+    public Task<AdapterTaskResponse?> ResumeAsync(Guid taskId, CancellationToken cancellationToken) =>
+        Task.FromResult<AdapterTaskResponse?>(new AdapterTaskResponse(taskId, $"device-{taskId:N}", "SAMPLE_01", ResumeState, null));
 
     public Task<AdapterTaskResponse?> CancelAsync(Guid taskId, CancellationToken cancellationToken)
     {

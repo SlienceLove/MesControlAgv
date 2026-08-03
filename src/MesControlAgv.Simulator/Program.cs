@@ -42,6 +42,18 @@ app.MapPost("/commands/{taskId:guid}/cancel", (Guid taskId, SimulatorState state
     }
 });
 
+app.MapPost("/commands/{taskId:guid}/pause", (Guid taskId, SimulatorState state) =>
+{
+    var task = state.Pause(taskId);
+    return task is null ? Results.NotFound() : Results.Ok(ToResponse(task));
+});
+
+app.MapPost("/commands/{taskId:guid}/resume", (Guid taskId, SimulatorState state) =>
+{
+    var task = state.Resume(taskId);
+    return task is null ? Results.NotFound() : Results.Ok(ToResponse(task));
+});
+
 app.MapGet("/snapshot", (SimulatorState state) => Results.Ok(new SnapshotResponse(
     state.Online,
     state.ControlOwner,

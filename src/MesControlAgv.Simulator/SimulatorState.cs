@@ -44,6 +44,22 @@ public sealed class SimulatorState
         return cancelled;
     }
 
+    public SimulatedTask? Pause(Guid taskId)
+    {
+        if (!_tasks.TryGetValue(taskId, out var task)) return null;
+        var paused = task with { State = "paused" };
+        _tasks[taskId] = paused;
+        return paused;
+    }
+
+    public SimulatedTask? Resume(Guid taskId)
+    {
+        if (!_tasks.TryGetValue(taskId, out var task)) return null;
+        var resumed = task with { State = "moving" };
+        _tasks[taskId] = resumed;
+        return resumed;
+    }
+
     public void ApplyControl(string mode)
     {
         switch (mode)

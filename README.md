@@ -19,7 +19,7 @@ dotnet build MesControlAgv.sln --no-restore
 dotnet test MesControlAgv.sln --no-build
 ```
 
-当前自动化基线为 44 项通过测试，包括十任务连续搬运、Adapter 并发幂等、任务恢复和 WPF 看板行为。实时冒烟脚本是独立的进程级检查，不计入自动化测试数量。
+当前自动化基线为 49 项通过测试，包括十任务连续搬运、Adapter 并发幂等、TCP 协议帧、真实驱动请求链路、安全门禁、任务恢复和 WPF 看板行为。实时冒烟脚本是独立的进程级检查，不计入自动化测试数量。
 
 如果默认共享编译器在本机失败，使用以下串行构建和测试命令：
 
@@ -108,7 +108,7 @@ SQLite 文件位置为：
 
 MES 保存任务状态和完整事件审计；Adapter 保存设备操作和幂等映射；Simulator 为内存实现，仅适用于开发和验收。
 
-对接真实 AGV 时，只需在确认厂商协议和控制权规则后替换 Adapter 的设备客户端实现。MES 生命周期、事件审计、WPF 中控和 MES -> Adapter API 契约无需变更。
+对接真实 AGV 时，Adapter 已提供按厂商 TCP API 实现的可配置设备客户端；默认仍使用 Simulator。配置 `Agv:Driver` 为 `tcp` 并填写机器人 IP 前，请先完成地图站点、固件版本和控制权规则确认。详细协议映射与现场验收清单见 [真实 AGV TCP Adapter](docs/AGV-TCP-ADAPTER.md)。MES 生命周期、事件审计、WPF 中控和 MES -> Adapter API 契约无需变更。
 
 ## 固定站点
 
