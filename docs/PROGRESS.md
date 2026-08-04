@@ -31,11 +31,11 @@ dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1
 dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
-The suite contains 69 tests after addition of experiment workflow management, AGV communications, batch-import coverage, and KPI dashboard coverage. The serial build passed on 2026-08-04 with 0 warnings and 0 errors, and all 69 tests passed in this environment across Domain, MES, Adapter, Simulator, E2E, and WPF.
+The suite contains 71 tests after addition of experiment workflow management, AGV communications, batch-import coverage, KPI dashboard coverage, and task-monitor date filtering. The serial build passed on 2026-08-04 with 0 warnings and 0 errors, and all 71 tests passed in this environment across Domain, MES, Adapter, Simulator, E2E, and WPF.
 
 ## Live verification
 
-The three service processes were started with the built DLLs for process-level validation. Health checks, the planning endpoint, and the normal transport flow passed; `scripts/verify-local.ps1` created a task, simulated pickup/dropoff arrival, confirmed both operations, and observed `COMPLETED` with required audit events. All three services are currently listening on Simulator `5183`, Adapter `5041`, and MES `5045`. The physical-robot run has not been completed.
+The three service processes were started with the built DLLs for process-level validation. Health checks, the planning endpoint, and the normal transport flow passed; `scripts/verify-local.ps1` created a task, simulated pickup/dropoff arrival, confirmed both operations, and observed `COMPLETED` with required audit events. The three services were listening on Simulator `5183`, Adapter `5041`, and MES `5045` during live verification; they are not required to remain running after verification. The physical-robot run has not been completed.
 
 The 2026-08-04 WPF Debug EXE verification also succeeded. The task-monitor refresh message, `每 2 秒从 MES 刷新`, is now fixed at the bottom of the monitoring layout in outer `Grid.Row="2"` and has hit testing disabled, so it no longer overlays the task list or prevents task clicks.
 
@@ -74,6 +74,16 @@ No third-party chart package was added. The donut and trend charts are rendered 
 
 ## Extension verification
 
-On 2026-08-04, the serial solution build passed with 0 warnings and 0 errors. All 69 tests passed: Domain 12, MES 16, Adapter 16, WPF 14, E2E 7, and Simulator 4. The WPF XAML was also compiled successfully. Batch import parser coverage includes CSV quoting, UTF-8 BOM, XLSX shared strings/numeric cells, Chinese headers, validation issues, and priority/planned-time sorting.
+On 2026-08-04, the serial Debug and Release solution builds passed with 0 warnings and 0 errors. All 71 tests passed: Domain 12, MES 17, Adapter 16, WPF 18, E2E 7, and Simulator 4. The WPF XAML was also compiled successfully. Batch import parser coverage includes CSV quoting, UTF-8 BOM, XLSX shared strings/numeric cells, Chinese headers, validation issues, and priority/planned-time sorting.
 
 The extension has been verified against the Simulator path. Physical AGV connection and vendor-specific on-site acceptance remain outstanding; before using `Agv:Driver=tcp`, validate the robot IP, firmware, map/station IDs, control ownership, safety gates, and movement behavior in an isolated acceptance environment.
+
+## 2026-08-04 extension: task monitor date filtering and timestamps
+
+The MES task list endpoint now accepts `GET /api/tasks?date=yyyy-MM-dd`; when the query is omitted it defaults to the current UTC date, so a newly opened WPF task monitor does not load the entire historical task table. The WPF monitor has a date picker with query/refresh actions, and its two-second refresh loop preserves the selected date. KPI data now uses the same selected date as the task list.
+
+Task responses now expose `CreatedAt` and nullable `EndedAt`. The task grid displays both fields; `EndedAt` is populated when a task reaches `Completed`, `Cancelled`, or `Failed`, and is cleared when a failed task is retried. Existing SQLite databases are upgraded at startup with the nullable `EndedAt` column.
+
+After creating a task, WPF refreshes the selected date and selects the newly created task instead of retaining an older moving task. This prevents the common Debug-simulator mistake of sending an arrival control to a stale task. Simulator control failures now preserve the backend JSON `detail`, so an HTTP 409 is shown with the actionable reason rather than only the generic status text.
+
+The date-filter API, timestamp serialization, terminal end-time behavior, WPF selection behavior, KPI date propagation, and simulator error-detail handling are covered by automated tests.

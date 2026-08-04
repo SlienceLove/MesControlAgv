@@ -16,7 +16,9 @@ public sealed record TaskResponse(
     string? LastError,
     int Priority = 0,
     string? Description = null,
-    string? ExternalId = null);
+    string? ExternalId = null,
+    DateTime CreatedAt = default,
+    DateTime? EndedAt = null);
 
 public sealed record TaskEventResponse(
     Guid Id,

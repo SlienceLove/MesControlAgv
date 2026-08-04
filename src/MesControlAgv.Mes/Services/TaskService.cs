@@ -157,8 +157,11 @@ public sealed class TaskService(TaskRepository repository, IAdapterClient adapte
         return new TaskDetailResponse(ToResponse(task), events.Select(ToResponse).ToList());
     }
 
-    public async Task<IReadOnlyList<TaskResponse>> ListAsync(CancellationToken cancellationToken) =>
-        (await repository.ListAsync(cancellationToken)).Select(ToResponse).ToList();
+    public async Task<IReadOnlyList<TaskResponse>> ListAsync(DateOnly date, CancellationToken cancellationToken) =>
+        (await repository.ListAsync(date, cancellationToken)).Select(ToResponse).ToList();
+
+    public Task<IReadOnlyList<TaskResponse>> ListAsync(CancellationToken cancellationToken) =>
+        ListAsync(DateOnly.FromDateTime(DateTime.UtcNow), cancellationToken);
 
     private async Task DispatchLegAsync(Guid taskId, TaskEvent started, string targetStationId, CancellationToken cancellationToken)
     {
@@ -235,7 +238,18 @@ public sealed class TaskService(TaskRepository repository, IAdapterClient adapte
         _ => $"\u7CFB\u7EDF\u5F02\u5E38\uFF1A{exception.Message}"
     };
 
-    public static TaskResponse ToResponse(TransportTask task) => new(task.Id, task.SourceStationCode, task.TargetStationCode, task.Status.ToString(), task.RetryCount, task.LastError, task.Priority, task.Description, task.ExternalId);
+    public static TaskResponse ToResponse(TransportTask task) => new(
+        task.Id,
+        task.SourceStationCode,
+        task.TargetStationCode,
+        task.Status.ToString(),
+        task.RetryCount,
+        task.LastError,
+        task.Priority,
+        task.Description,
+        task.ExternalId,
+        task.CreatedAt,
+        task.EndedAt);
     private static TaskEventResponse ToResponse(TaskEventRecord taskEvent) => new(taskEvent.Id, taskEvent.EventType, taskEvent.Payload, taskEvent.CreatedAt);
 }
 

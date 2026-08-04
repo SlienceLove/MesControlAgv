@@ -39,11 +39,35 @@ public sealed class TaskApiTests : IClassFixture<MesWebApplicationFactory>
 
         Assert.NotNull(task);
         Assert.Equal("MovingToPickup", task.Status);
+        Assert.True(task.CreatedAt > DateTime.UtcNow.AddMinutes(-1));
+        Assert.Null(task.EndedAt);
 
         var detail = await _client.GetFromJsonAsync<TaskDetailResponse>($"/api/tasks/{task.Id}");
         Assert.NotNull(detail);
         Assert.Contains(detail.Events, taskEvent => taskEvent.EventType == "TaskCreated");
         Assert.Contains(detail.Events, taskEvent => taskEvent.EventType == "PickupMoveStarted");
+    }
+
+    [Fact]
+    public async Task List_tasks_filters_by_the_requested_utc_date_and_defaults_to_today()
+    {
+        var createResponse = await _client.PostAsJsonAsync("/api/tasks", new
+        {
+            sourceStationCode = 2,
+            targetStationCode = 4
+        });
+        createResponse.EnsureSuccessStatusCode();
+        var created = await createResponse.Content.ReadFromJsonAsync<TaskResponse>();
+        Assert.NotNull(created);
+
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var todayTasks = await _client.GetFromJsonAsync<List<TaskResponse>>("/api/tasks");
+        var filteredTasks = await _client.GetFromJsonAsync<List<TaskResponse>>($"/api/tasks?date={today:yyyy-MM-dd}");
+        var oldTasks = await _client.GetFromJsonAsync<List<TaskResponse>>("/api/tasks?date=2000-01-01");
+
+        Assert.Contains(todayTasks!, task => task.Id == created.Id);
+        Assert.Contains(filteredTasks!, task => task.Id == created.Id);
+        Assert.DoesNotContain(oldTasks!, task => task.Id == created.Id);
     }
 
     [Fact]
@@ -57,7 +81,7 @@ public sealed class TaskApiTests : IClassFixture<MesWebApplicationFactory>
     }
 }
 
-public sealed record TaskResponse(Guid Id, int SourceStationCode, int TargetStationCode, string Status, int RetryCount, string? LastError);
+public sealed record TaskResponse(Guid Id, int SourceStationCode, int TargetStationCode, string Status, int RetryCount, string? LastError, DateTime CreatedAt, DateTime? EndedAt);
 public sealed record TaskDetailResponse(TaskResponse Task, List<TaskEventResponse> Events);
 public sealed record TaskEventResponse(string EventType);
 public sealed record StationResponse(int Code, string Name, string AgvStationId, bool Enabled);

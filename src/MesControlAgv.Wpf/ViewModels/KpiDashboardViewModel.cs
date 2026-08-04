@@ -27,9 +27,12 @@ public sealed class KpiDashboardViewModel : INotifyPropertyChanged
     public string LastUpdated { get => _lastUpdated; private set => SetField(ref _lastUpdated, value); }
     public string CompletionRate => TaskSummary.Total == 0 ? "0%" : $"{TaskSummary.Completed * 100.0 / TaskSummary.Total:0}%";
 
-    public async Task RefreshAsync(IMesClient client, CancellationToken cancellationToken)
+    public Task RefreshAsync(IMesClient client, CancellationToken cancellationToken) =>
+        RefreshAsync(client, Date, cancellationToken);
+
+    public async Task RefreshAsync(IMesClient client, DateOnly date, CancellationToken cancellationToken)
     {
-        var dashboard = await client.GetKpiDashboardAsync(Date, cancellationToken);
+        var dashboard = await client.GetKpiDashboardAsync(date, cancellationToken);
         Date = dashboard.Date;
         TaskSummary = dashboard.TaskSummary;
         SampleSummary = dashboard.SampleSummary;

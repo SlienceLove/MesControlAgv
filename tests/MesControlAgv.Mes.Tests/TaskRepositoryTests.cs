@@ -21,5 +21,7 @@ public class TaskRepositoryTests
         Assert.Equal(MesControlAgv.Domain.TaskStatus.Created, task.Status);
         Assert.Single(events);
         Assert.Equal("TaskCreated", events[0].EventType);
+        Assert.True(task.CreatedAt <= DateTime.UtcNow);
+        Assert.Null(task.EndedAt);
     }
 }

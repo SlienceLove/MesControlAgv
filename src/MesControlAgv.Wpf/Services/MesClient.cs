@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 
@@ -6,8 +6,11 @@ namespace MesControlAgv.Wpf.Services;
 
 public sealed class MesClient(HttpClient client) : IMesClient
 {
-    public async Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken) =>
-        await client.GetFromJsonAsync<List<DashboardTask>>("api/tasks", cancellationToken) ?? [];
+    public Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken) =>
+        GetTasksAsync(DateOnly.FromDateTime(DateTime.UtcNow), cancellationToken);
+
+    public async Task<IReadOnlyList<DashboardTask>> GetTasksAsync(DateOnly date, CancellationToken cancellationToken) =>
+        await client.GetFromJsonAsync<List<DashboardTask>>($"api/tasks?date={date:yyyy-MM-dd}", cancellationToken) ?? [];
 
     public async Task<KpiDashboard> GetKpiDashboardAsync(DateOnly date, CancellationToken cancellationToken) =>
         await client.GetFromJsonAsync<KpiDashboard>($"api/dashboard/kpi?date={date:yyyy-MM-dd}", cancellationToken)

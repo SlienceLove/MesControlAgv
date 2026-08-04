@@ -20,6 +20,8 @@ public sealed class TransportTask
 
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
 
+    public DateTime? EndedAt { get; set; }
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
     public int RetryCount { get; set; }

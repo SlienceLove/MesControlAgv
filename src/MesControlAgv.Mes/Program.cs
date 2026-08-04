@@ -130,8 +130,8 @@ app.MapPost("/api/tasks/{taskId:guid}/cancel", async (Guid taskId, OperatorActio
 app.MapPost("/api/tasks/{taskId:guid}/recover", async (Guid taskId, TaskService service, CancellationToken cancellationToken) =>
     Results.Ok(await service.RecoverAsync(taskId, cancellationToken)));
 
-app.MapGet("/api/tasks", async (TaskService service, CancellationToken cancellationToken) =>
-    Results.Ok(await service.ListAsync(cancellationToken)));
+app.MapGet("/api/tasks", async (DateOnly? date, TaskService service, CancellationToken cancellationToken) =>
+    Results.Ok(await service.ListAsync(date ?? DateOnly.FromDateTime(DateTime.UtcNow), cancellationToken)));
 
 app.MapGet("/api/tasks/{taskId:guid}", async (
     Guid taskId,
@@ -157,7 +157,8 @@ static async Task EnsureTaskColumnsAsync(MesDbContext database)
     {
         (Name: "Priority", Sql: "INTEGER NOT NULL DEFAULT 0"),
         (Name: "Description", Sql: "TEXT NULL"),
-        (Name: "ExternalId", Sql: "TEXT NULL")
+        (Name: "ExternalId", Sql: "TEXT NULL"),
+        (Name: "EndedAt", Sql: "TEXT NULL")
     })
     {
         if (columns.Contains(definition.Name)) continue;

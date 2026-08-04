@@ -42,12 +42,20 @@ public sealed class TaskRepository(MesDbContext database)
     public Task<TransportTask?> GetAsync(Guid taskId, CancellationToken cancellationToken) =>
         database.TransportTasks.SingleOrDefaultAsync(task => task.Id == taskId, cancellationToken);
 
-    public Task<List<TransportTask>> ListAsync(CancellationToken cancellationToken) =>
-        database.TransportTasks
+    public Task<List<TransportTask>> ListAsync(DateOnly date, CancellationToken cancellationToken)
+    {
+        var start = date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+        var end = start.AddDays(1);
+        return database.TransportTasks
+            .Where(task => task.CreatedAt >= start && task.CreatedAt < end)
             .OrderByDescending(task => task.Priority)
             .ThenBy(task => task.CreatedAt)
             .ThenByDescending(task => task.UpdatedAt)
             .ToListAsync(cancellationToken);
+    }
+
+    public Task<List<TransportTask>> ListAsync(CancellationToken cancellationToken) =>
+        ListAsync(DateOnly.FromDateTime(DateTime.UtcNow), cancellationToken);
 
     public Task<List<TaskEventRecord>> GetEventsAsync(Guid taskId, CancellationToken cancellationToken) =>
         database.TaskEvents
@@ -81,6 +89,7 @@ public sealed class TaskRepository(MesDbContext database)
         }
         task.RetryCount++;
         task.LastError = null;
+        task.EndedAt = null;
         task.UpdatedAt = DateTime.UtcNow;
         await database.SaveChangesAsync(cancellationToken);
         return task;
@@ -101,6 +110,18 @@ public sealed class TaskRepository(MesDbContext database)
         {
             task.LastError = error;
         }
+
+        if (task.Status is MesControlAgv.Domain.TaskStatus.Completed
+            or MesControlAgv.Domain.TaskStatus.Cancelled
+            or MesControlAgv.Domain.TaskStatus.Failed)
+        {
+            task.EndedAt = DateTime.UtcNow;
+        }
+        else if (taskEvent == TaskEvent.RetryRequested)
+        {
+            task.EndedAt = null;
+        }
+
         task.UpdatedAt = DateTime.UtcNow;
         database.TaskEvents.Add(new TaskEventRecord
         {

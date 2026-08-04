@@ -9,7 +9,9 @@ public sealed record DashboardTask(
     string? LastError,
     int Priority = 0,
     string? Description = null,
-    string? ExternalId = null);
+    string? ExternalId = null,
+    DateTime CreatedAt = default,
+    DateTime? EndedAt = null);
 
 public sealed record AgvDashboardSnapshot(
     bool Online,
@@ -25,6 +27,7 @@ public sealed record DashboardTaskDetail(DashboardTask Task, IReadOnlyList<Dashb
 public interface IMesClient
 {
     Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken);
+    Task<IReadOnlyList<DashboardTask>> GetTasksAsync(DateOnly date, CancellationToken cancellationToken) => GetTasksAsync(cancellationToken);
     Task<KpiDashboard> GetKpiDashboardAsync(DateOnly date, CancellationToken cancellationToken);
     Task<DashboardTaskDetail?> GetTaskDetailAsync(Guid taskId, CancellationToken cancellationToken);
     Task<AgvDashboardSnapshot> GetAgvSnapshotAsync(CancellationToken cancellationToken);

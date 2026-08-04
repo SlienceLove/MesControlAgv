@@ -26,6 +26,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _agvStation = "-";
     private string _message = string.Empty;
     private string _batchStatus = "请选择 CSV 或 XLSX 文件导入任务";
+    private DateTime? _taskFilterDate = DateTime.UtcNow.Date;
 
     public MainViewModel(IMesClient mes, ISimulatorControlClient? simulator = null)
     {
@@ -46,6 +47,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         SimulatorOfflineCommand = new AsyncCommand(() => ExecuteActionAsync(() => ApplySimulatorControlAsync("offline")), () => _simulator is not null);
         SimulatorRecoverCommand = new AsyncCommand(() => ExecuteActionAsync(() => ApplySimulatorControlAsync("recover")), () => _simulator is not null);
         RefreshAgvCommand = new AsyncCommand(() => ExecuteActionAsync(RefreshAgvAsync));
+        QueryTasksCommand = new AsyncCommand(() => ExecuteActionAsync(() => RefreshAsync()));
+        RefreshTasksCommand = new AsyncCommand(() => ExecuteActionAsync(() => RefreshAsync()));
         PauseAgvCommand = new AsyncCommand(() => ExecuteActionAsync(() => ExecuteAgvCommandAsync("pause")), CanControlSelectedAgv);
         ResumeAgvCommand = new AsyncCommand(() => ExecuteActionAsync(() => ExecuteAgvCommandAsync("resume")), CanControlSelectedAgv);
         CancelAgvCommand = new AsyncCommand(() => ExecuteActionAsync(() => ExecuteAgvCommandAsync("cancel")), CanControlSelectedAgv);
@@ -85,6 +88,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public string Message { get => _message; private set => SetField(ref _message, value); }
     public string BatchStatus { get => _batchStatus; private set => SetField(ref _batchStatus, value); }
 
+    public DateTime? TaskFilterDate
+    {
+        get => _taskFilterDate;
+        set
+        {
+            if (value is not { } date) return;
+            SetField(ref _taskFilterDate, date.Date);
+        }
+    }
+
+    private DateOnly CurrentTaskDate => DateOnly.FromDateTime(TaskFilterDate ?? DateTime.UtcNow.Date);
+
 #if DEBUG
     public bool IsSimulatorPanelVisible => _simulator is not null;
 #else
@@ -104,6 +119,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ICommand SimulatorOfflineCommand { get; }
     public ICommand SimulatorRecoverCommand { get; }
     public ICommand RefreshAgvCommand { get; }
+    public ICommand QueryTasksCommand { get; }
+    public ICommand RefreshTasksCommand { get; }
     public ICommand PauseAgvCommand { get; }
     public ICommand ResumeAgvCommand { get; }
     public ICommand CancelAgvCommand { get; }
@@ -117,14 +134,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _refreshLoop = RefreshLoopAsync(_shutdown.Token);
     }
 
-    public async Task RefreshAsync()
+    public async Task RefreshAsync(Guid? preferredTaskId = null)
     {
         try
         {
-            var tasks = await _mes.GetTasksAsync(_shutdown.Token);
+            var tasks = await _mes.GetTasksAsync(CurrentTaskDate, _shutdown.Token);
             var fleet = await _mes.GetAgvFleetAsync(_shutdown.Token);
-            await Kpi.RefreshAsync(_mes, _shutdown.Token);
-            var selectedId = SelectedTask?.Id;
+            await Kpi.RefreshAsync(_mes, CurrentTaskDate, _shutdown.Token);
+            var selectedId = preferredTaskId ?? SelectedTask?.Id;
             Tasks.Clear();
             foreach (var task in tasks) Tasks.Add(TaskRowViewModel.From(task));
             CancelPendingDetailRefresh();
@@ -250,7 +267,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         await RefreshAsync();
     }
 
-    private async Task CreateTaskAsync() { await _mes.CreateTaskAsync(_shutdown.Token); await RefreshAsync(); }
+    private async Task CreateTaskAsync()
+    {
+        var created = await _mes.CreateTaskAsync(_shutdown.Token);
+        await RefreshAsync(created.Id);
+    }
 
     private async Task ArriveAsync()
     {

@@ -19,6 +19,19 @@ public class MainViewModelTests
     }
 
     [Fact]
+    public void Task_row_exposes_created_and_ended_times()
+    {
+        var createdAt = DateTime.UtcNow.AddMinutes(-5);
+        var endedAt = DateTime.UtcNow;
+        var task = new DashboardTask(Guid.NewGuid(), 2, 4, "Completed", 0, null, CreatedAt: createdAt, EndedAt: endedAt);
+
+        var row = TaskRowViewModel.From(task);
+
+        Assert.Equal(createdAt, row.CreatedAt);
+        Assert.Equal(endedAt, row.EndedAt);
+    }
+
+    [Fact]
     public void System_error_status_exposes_the_reason_to_the_operator()
     {
         var task = new DashboardTask(Guid.NewGuid(), 2, 4, "Unknown", 0, "Adapter 通信异常：连接超时");
@@ -33,16 +46,47 @@ public class MainViewModelTests
     public async Task Refresh_populates_dashboard_and_enables_arrival_for_moving_task()
     {
         var task = new DashboardTask(Guid.NewGuid(), 2, 4, "MovingToPickup", 0, null);
-        using var viewModel = new MainViewModel(new FakeMesClient([task]));
+        var client = new FakeMesClient([task]);
+        using var viewModel = new MainViewModel(client);
 
         await viewModel.RefreshAsync();
 
         Assert.Equal("MES 已连接", viewModel.ConnectionStatus);
         Assert.Equal("在线 / adapter", viewModel.AgvStatus);
         Assert.Single(viewModel.Tasks);
+        Assert.Equal(DateOnly.FromDateTime(DateTime.UtcNow), client.LastRequestedDate);
+        Assert.Equal(DateOnly.FromDateTime(DateTime.UtcNow), client.LastRequestedKpiDate);
         Assert.Equal(1, viewModel.Kpi.TaskSummary.Total);
         Assert.True(viewModel.ArriveCommand.CanExecute(null));
         Assert.False(viewModel.ConfirmPickupCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task Refresh_uses_the_selected_task_date()
+    {
+        var task = new DashboardTask(Guid.NewGuid(), 2, 4, "MovingToPickup", 0, null);
+        var client = new FakeMesClient([task]);
+        using var viewModel = new MainViewModel(client)
+        {
+            TaskFilterDate = DateTime.UtcNow.Date.AddDays(-1)
+        };
+
+        await viewModel.RefreshAsync();
+
+        Assert.Equal(DateOnly.FromDateTime(DateTime.UtcNow.Date.AddDays(-1)), client.LastRequestedDate);
+    }
+
+    [Fact]
+    public async Task Refresh_can_select_the_newly_created_task_after_reloading_the_date()
+    {
+        var existing = new DashboardTask(Guid.NewGuid(), 2, 4, "Completed", 0, null);
+        var created = new DashboardTask(Guid.NewGuid(), 2, 4, "MovingToPickup", 0, null);
+        using var viewModel = new MainViewModel(new FakeMesClient([existing, created]));
+
+        await viewModel.RefreshAsync();
+        await viewModel.RefreshAsync(created.Id);
+
+        Assert.Equal(created.Id, viewModel.SelectedTask?.Id);
     }
 
     [Fact]
@@ -74,9 +118,18 @@ public class MainViewModelTests
 
 internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesClient
 {
+    public DateOnly? LastRequestedDate { get; private set; }
+    public DateOnly? LastRequestedKpiDate { get; private set; }
+
     public Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken) => Task.FromResult(tasks);
+    public Task<IReadOnlyList<DashboardTask>> GetTasksAsync(DateOnly date, CancellationToken cancellationToken)
+    {
+        LastRequestedDate = date;
+        return Task.FromResult(tasks);
+    }
     public Task<KpiDashboard> GetKpiDashboardAsync(DateOnly date, CancellationToken cancellationToken)
     {
+        LastRequestedKpiDate = date;
         var completed = tasks.Count(task => task.Status == "Completed");
         var failed = tasks.Count(task => task.Status == "Failed");
         var cancelled = tasks.Count(task => task.Status == "Cancelled");

@@ -45,6 +45,7 @@ public class TransportWorkflowTests
         var retried = await service.RetryAsync(task.Id, CancellationToken.None);
 
         Assert.Equal("MovingToDropoff", retried.Status);
+        Assert.Null(retried.EndedAt);
     }
 
     [Fact]
@@ -104,6 +105,7 @@ public class TransportWorkflowTests
         var cancelled = await service.CancelAsync(task.Id, "operator", CancellationToken.None);
 
         Assert.Equal("Cancelled", cancelled.Status);
+        Assert.NotNull(cancelled.EndedAt);
     }
 
     [Fact]

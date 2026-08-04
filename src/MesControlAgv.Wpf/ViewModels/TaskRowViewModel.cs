@@ -8,7 +8,9 @@ public sealed record TaskRowViewModel(
     int TargetStationCode,
     string Status,
     int RetryCount,
-    string? LastError)
+    string? LastError,
+    DateTime CreatedAt = default,
+    DateTime? EndedAt = null)
 {
     public string SourceStationName => GetStationName(SourceStationCode);
     public string TargetStationName => GetStationName(TargetStationCode);
@@ -42,7 +44,9 @@ public sealed record TaskRowViewModel(
         task.TargetStationCode,
         task.Status,
         task.RetryCount,
-        task.LastError);
+        task.LastError,
+        task.CreatedAt,
+        task.EndedAt);
 
     private static string GetStationName(int code)
     {
