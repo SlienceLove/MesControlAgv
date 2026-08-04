@@ -21,3 +21,10 @@ public sealed record TaskDetailResponse(TaskResponse Task, IReadOnlyList<TaskEve
 public sealed record StationResponse(int Code, string Name, string AgvStationId, bool Enabled);
 
 public sealed record OperatorActionRequest(string OperatorName);
+
+public sealed record PlanPathRequest(
+    string FromStationId,
+    string ToStationId,
+    IReadOnlyCollection<string>? BlockedStations = null);
+
+public sealed record PlannedPathResponse(IReadOnlyList<string> Stations, double Cost);

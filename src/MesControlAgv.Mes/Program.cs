@@ -11,6 +11,7 @@ builder.Services.AddDbContext<MesDbContext>(options => options.UseSqlite(connect
 builder.Services.AddHttpClient<IAdapterClient, AdapterClient>(client =>
     client.BaseAddress = new Uri(
         builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5041/"));
+builder.Services.AddSingleton(new PathPlanner(AgvMap.Default));
 builder.Services.AddScoped<TaskRepository>();
 builder.Services.AddScoped<TaskService>();
 builder.Services.AddHostedService<RecoveryService>();
@@ -27,6 +28,36 @@ app.MapGet("/health", () => Results.Ok(new { service = "mes", status = "ok" }));
 
 app.MapGet("/api/agv", async (IAdapterClient adapter, CancellationToken cancellationToken) =>
     Results.Ok(await adapter.GetSnapshotAsync(cancellationToken)));
+
+app.MapGet("/api/agvs/fleet", async (IAdapterClient adapter, CancellationToken cancellationToken) =>
+{
+    if (adapter is IFleetAwareAdapterClient fleet)
+    {
+        return Results.Ok(await fleet.GetFleetSnapshotAsync(cancellationToken));
+    }
+
+    return Results.Ok(new[] { await adapter.GetSnapshotAsync(cancellationToken) });
+});
+
+app.MapGet("/api/map", () => Results.Ok(new
+{
+    stations = Stations.All,
+    edges = AgvMap.Default.Edges
+}));
+
+app.MapPost("/api/planning/path", (PlanPathRequest request, PathPlanner planner) =>
+{
+    try
+    {
+        var path = planner.Plan(
+            request.FromStationId,
+            request.ToStationId,
+            request.BlockedStations?.ToHashSet(StringComparer.Ordinal));
+        return Results.Ok(new PlannedPathResponse(path.Stations, path.Cost));
+    }
+    catch (KeyNotFoundException exception) { return Results.NotFound(new { detail = exception.Message }); }
+    catch (InvalidOperationException exception) { return Results.UnprocessableEntity(new { detail = exception.Message }); }
+});
 
 app.MapGet("/api/stations", () => Results.Ok(Stations.All.Select(station => new StationResponse(
     station.Code,

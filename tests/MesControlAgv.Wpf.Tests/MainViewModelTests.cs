@@ -6,6 +6,30 @@ namespace MesControlAgv.Wpf.Tests;
 public class MainViewModelTests
 {
     [Fact]
+    public void Task_row_exposes_operator_friendly_task_description()
+    {
+        var task = new DashboardTask(Guid.NewGuid(), 2, 4, "MovingToPickup", 0, null);
+
+        var row = TaskRowViewModel.From(task);
+
+        Assert.Equal("样品位", row.SourceStationName);
+        Assert.Equal("液体前处理工作站", row.TargetStationName);
+        Assert.Equal("从样品位取货，运送至液体前处理工作站", row.TaskDescription);
+        Assert.Equal("前往取货站", row.StatusDescription);
+    }
+
+    [Fact]
+    public void System_error_status_exposes_the_reason_to_the_operator()
+    {
+        var task = new DashboardTask(Guid.NewGuid(), 2, 4, "Unknown", 0, "Adapter 通信异常：连接超时");
+
+        var row = TaskRowViewModel.From(task);
+
+        Assert.Equal("系统异常", row.StatusDescription);
+        Assert.Equal("原因：Adapter 通信异常：连接超时", row.ErrorDescription);
+    }
+
+    [Fact]
     public async Task Refresh_populates_dashboard_and_enables_arrival_for_moving_task()
     {
         var task = new DashboardTask(Guid.NewGuid(), 2, 4, "MovingToPickup", 0, null);

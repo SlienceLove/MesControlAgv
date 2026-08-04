@@ -2,14 +2,16 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="AGV MES 中控"
-        Width="1180"
-        Height="720"
-        MinWidth="960"
-        MinHeight="620">
+        Width="1420"
+        Height="860"
+        MinWidth="1180"
+        MinHeight="720">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
     </Window.Resources>
-    <Grid Margin="20">
+        <TabControl Margin="20" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <TabItem Header="任务监控" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+<Grid Margin="0">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -41,27 +43,28 @@
             </Border>
         </Grid>
 
-        <Grid Grid.Row="1">
+        <Grid Grid.Row="1" MinHeight="0" ClipToBounds="True">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="310" />
             </Grid.ColumnDefinitions>
-            <DataGrid ItemsSource="{Binding Tasks}"
+            <DataGrid Grid.Column="0" ItemsSource="{Binding Tasks}"
                       SelectedItem="{Binding SelectedTask}"
                       AutoGenerateColumns="False"
                       CanUserAddRows="False"
                       IsReadOnly="True"
                       SelectionMode="Single">
                 <DataGrid.Columns>
-                    <DataGridTextColumn Width="*" Header="任务 ID" Binding="{Binding Id}" />
-                    <DataGridTextColumn Width="90" Header="起点" Binding="{Binding SourceStationCode}" />
-                    <DataGridTextColumn Width="90" Header="终点" Binding="{Binding TargetStationCode}" />
-                    <DataGridTextColumn Width="160" Header="状态" Binding="{Binding Status}" />
+                    <DataGridTextColumn Width="240" Header="任务 ID" Binding="{Binding Id}" />
+                    <DataGridTextColumn Width="2*" Header="任务内容" Binding="{Binding TaskDescription}" />
+                    <DataGridTextColumn Width="150" Header="起点站" Binding="{Binding SourceStationName}" />
+                    <DataGridTextColumn Width="170" Header="终点站" Binding="{Binding TargetStationName}" />
+                    <DataGridTextColumn Width="140" Header="状态" Binding="{Binding StatusDescription}" />
                     <DataGridTextColumn Width="70" Header="重试" Binding="{Binding RetryCount}" />
-                    <DataGridTextColumn Width="*" Header="错误" Binding="{Binding LastError}" />
+                    <DataGridTextColumn Width="*" Header="错误" Binding="{Binding ErrorDescription}" />
                 </DataGrid.Columns>
             </DataGrid>
-            <Grid Grid.Column="1" Margin="16,0,0,0">
+            <Grid Grid.Column="1" Margin="16,0,0,0" MinHeight="0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
@@ -72,7 +75,7 @@
                     <StackPanel>
                         <TextBlock FontSize="18" FontWeight="SemiBold" Text="任务操作" />
                         <Button Margin="0,16,0,0" MinHeight="36" Command="{Binding CreateTaskCommand}" Content="创建 SAMPLE_01 → ST_PREP_01 任务" />
-                        <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding ArriveCommand}" Content="模拟到站" />
+                        <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding ArriveCommand}" Content="仿真到站并通知 MES" />
                         <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding ConfirmPickupCommand}" Content="确认取货" />
                         <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding ConfirmDropoffCommand}" Content="确认放货" />
                         <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding RetryCommand}" Content="失败后重试" />
@@ -93,14 +96,17 @@
                         </Grid.RowDefinitions>
                         <TextBlock FontSize="16" FontWeight="SemiBold" Text="任务详情" />
                         <StackPanel Grid.Row="1" Margin="0,8,0,8">
+                            <TextBlock FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding SelectedTask.TaskDescription}" />
+                            <TextBlock Margin="0,6,0,0" Foreground="Gray" Text="{Binding SelectedTask.RouteDescription}" />
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Foreground="Gray" Text="任务 ID：" />
                                 <TextBlock Text="{Binding SelectedTask.Id}" TextTrimming="CharacterEllipsis" />
                             </StackPanel>
                             <StackPanel Margin="0,4,0,0" Orientation="Horizontal">
                                 <TextBlock Foreground="Gray" Text="状态：" />
-                                <TextBlock Text="{Binding SelectedTask.Status}" />
+                                <TextBlock Text="{Binding SelectedTask.StatusDescription}" />
                             </StackPanel>
+                            <TextBlock Margin="0,4,0,0" Foreground="#B42318" TextWrapping="Wrap" Text="{Binding SelectedTask.ErrorDescription}" />
                         </StackPanel>
                         <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
                             <ItemsControl ItemsSource="{Binding TaskEvents}">
@@ -124,7 +130,7 @@
                     <StackPanel>
                         <TextBlock FontWeight="SemiBold" Text="开发模拟器" />
                         <WrapPanel Margin="0,8,0,0">
-                            <Button Margin="0,0,6,6" MinWidth="72" Command="{Binding SimulatorArriveCommand}" Content="到站" />
+                            <Button Margin="0,0,6,6" MinWidth="110" Command="{Binding SimulatorArriveCommand}" Content="底层到站" />
                             <Button Margin="0,0,6,6" MinWidth="90" Command="{Binding SimulatorFailCommand}" Content="下一次失败" />
                             <Button Margin="0,0,6,6" MinWidth="90" Command="{Binding SimulatorTimeoutCommand}" Content="下一次超时" />
                             <Button Margin="0,0,6,6" MinWidth="72" Command="{Binding SimulatorOfflineCommand}" Content="离线" />
@@ -134,7 +140,148 @@
                 </Border>
             </Grid>
         </Grid>
+        <TextBlock Grid.Row="2" Margin="0,16,0,0" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False" Foreground="Gray" Text="界面每 2 秒从 MES 刷新；取货与放货需要人工确认后才会推进。" />
 
-        <TextBlock Grid.Row="2" Margin="0,16,0,0" Foreground="Gray" Text="界面每 2 秒从 MES 刷新；取货与放货需要人工确认后才会推进。" />
-    </Grid>
+
+        </Grid>
+        </TabItem>
+    <TabItem Header="实验流程管理" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <Grid Margin="0,12,0,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <DockPanel Margin="0,0,0,12">
+                <StackPanel DockPanel.Dock="Left">
+                    <TextBlock FontSize="22" FontWeight="SemiBold" Text="实验流程管理" />
+                    <TextBlock Margin="0,4,0,0" Foreground="Gray" Text="可预设、编辑并通过拖拽编排实验步骤" />
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.NewWorkflowCommand}" Content="新建流程" />
+                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.CopyWorkflowCommand}" Content="复制" />
+                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.DeleteWorkflowCommand}" Content="删除" />
+                    <Button Margin="6,0,0,0" Padding="14,7" Background="#1769AA" Foreground="White" Command="{Binding WorkflowEditor.SaveCommand}" Content="保存" />
+                </StackPanel>
+            </DockPanel>
+
+            <Grid Grid.Row="1" MinHeight="0" ClipToBounds="True">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="190" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="270" />
+                </Grid.ColumnDefinitions>
+
+                <Border Padding="12" Background="#F6F8FA" CornerRadius="6">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <TextBlock FontSize="16" FontWeight="SemiBold" Text="流程预设" />
+                        <ListBox Grid.Row="1" Margin="0,8,0,16" ItemsSource="{Binding WorkflowEditor.Workflows}" SelectedItem="{Binding WorkflowEditor.SelectedWorkflow}" DisplayMemberPath="Name" />
+                        <TextBlock Grid.Row="2" FontSize="16" FontWeight="SemiBold" Text="步骤工具箱" />
+                        <ListBox x:Name="WorkflowPalette" Grid.Row="3" Margin="0,8,0,0" ItemsSource="{Binding WorkflowEditor.NodeTypeOptions}" DisplayMemberPath="DisplayName" PreviewMouseMove="WorkflowPalette_PreviewMouseMove">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="Padding" Value="8,6" />
+                                    <Setter Property="Margin" Value="0,0,0,4" />
+                                    <Setter Property="Background" Value="White" />
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                        </ListBox>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Column="1" Margin="12,0" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <Border Padding="12" Background="#F6F8FA">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock FontSize="17" FontWeight="SemiBold" Text="{Binding WorkflowEditor.SelectedWorkflow.Name}" />
+                                <TextBlock Margin="12,2,0,0" Foreground="Gray" Text="拖拽步骤到画布，节点可自由调整位置" />
+                            </StackPanel>
+                        </Border>
+                        <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" AllowDrop="True" DragOver="WorkflowCanvas_DragOver" Drop="WorkflowCanvas_Drop">
+                            <Grid Width="1500" Height="720" Background="#FBFCFE">
+                                <Canvas x:Name="WorkflowLinksCanvas" Width="1500" Height="720" IsHitTestVisible="False" />
+                                <ItemsControl x:Name="WorkflowNodes" Width="1500" Height="720" ItemsSource="{Binding WorkflowEditor.Nodes}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <Canvas />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemContainerStyle>
+                                        <Style TargetType="ContentPresenter">
+                                            <Setter Property="Canvas.Left" Value="{Binding X, Mode=TwoWay}" />
+                                            <Setter Property="Canvas.Top" Value="{Binding Y, Mode=TwoWay}" />
+                                        </Style>
+                                    </ItemsControl.ItemContainerStyle>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Width="170" MinHeight="82" Padding="10" Background="#E8F1FF" BorderBrush="#4285C5" BorderThickness="1.5" CornerRadius="8" Cursor="Hand" MouseLeftButtonDown="WorkflowNode_MouseLeftButtonDown" MouseMove="WorkflowNode_MouseMove" MouseLeftButtonUp="WorkflowNode_MouseLeftButtonUp">
+                                                <StackPanel>
+                                                    <DockPanel>
+                                                        <TextBlock FontSize="13" Foreground="#315B87" Text="{Binding TypeDescription}" />
+                                                         <TextBlock DockPanel.Dock="Right" Foreground="#6B7280" Text="{Binding Order, StringFormat={}#{0}}" />
+                                                    </DockPanel>
+                                                    <TextBlock Margin="0,5,0,0" FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding Name}" />
+                                                    <TextBlock Margin="0,3,0,0" Foreground="#586174" FontSize="11" TextWrapping="Wrap" Text="{Binding TargetStation}" />
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Grid>
+                        </ScrollViewer>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Column="2" Padding="12" Background="#F6F8FA" CornerRadius="6">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                            <TextBlock FontSize="16" FontWeight="SemiBold" Text="流程属性" />
+                            <TextBlock Margin="0,12,0,4" Foreground="Gray" Text="流程名称" />
+                            <TextBox Text="{Binding WorkflowEditor.SelectedWorkflow.Name, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Margin="0,10,0,4" Foreground="Gray" Text="流程说明" />
+                            <TextBox MinHeight="54" AcceptsReturn="True" TextWrapping="Wrap" Text="{Binding WorkflowEditor.SelectedWorkflow.Description, UpdateSourceTrigger=PropertyChanged}" />
+                            <Separator Margin="0,14" />
+                            <TextBlock FontSize="16" FontWeight="SemiBold" Text="节点属性" />
+                            <ListBox Margin="0,8,0,10" MaxHeight="120" ItemsSource="{Binding WorkflowEditor.Nodes}" SelectedItem="{Binding WorkflowEditor.SelectedNode}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Width="28" Foreground="Gray" Text="{Binding Order}" />
+                                            <TextBlock Text="{Binding Name}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <StackPanel Orientation="Horizontal">
+                                <Button Padding="10,5" Command="{Binding WorkflowEditor.MoveNodeLeftCommand}" Content="左移" />
+                                <Button Margin="6,0,0,0" Padding="10,5" Command="{Binding WorkflowEditor.MoveNodeRightCommand}" Content="右移" />
+                                <Button Margin="6,0,0,0" Padding="10,5" Command="{Binding WorkflowEditor.AddNodeCommand}" Content="添加" />
+                                <Button Margin="6,0,0,0" Padding="10,5" Command="{Binding WorkflowEditor.DeleteNodeCommand}" Content="删除" />
+                            </StackPanel>
+                            <TextBlock Margin="0,12,0,4" Foreground="Gray" Text="节点类型" />
+                            <ComboBox ItemsSource="{Binding WorkflowEditor.NodeTypeOptions}" DisplayMemberPath="DisplayName" SelectedValuePath="Value" SelectedValue="{Binding WorkflowEditor.SelectedNode.Type, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Margin="0,10,0,4" Foreground="Gray" Text="节点名称" />
+                            <TextBox Text="{Binding WorkflowEditor.SelectedNode.Name, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Margin="0,10,0,4" Foreground="Gray" Text="节点说明" />
+                            <TextBox MinHeight="58" AcceptsReturn="True" TextWrapping="Wrap" Text="{Binding WorkflowEditor.SelectedNode.Description, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Margin="0,10,0,4" Foreground="Gray" Text="目标站点" />
+                            <TextBox Text="{Binding WorkflowEditor.SelectedNode.TargetStation, UpdateSourceTrigger=PropertyChanged}" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
+            </Grid>
+            <TextBlock Grid.Row="2" Margin="0,10,0,0" Foreground="Gray" Text="修改后点击保存，流程会持久化到本地 JSON 文件。" />
+        </Grid>
+    </TabItem>
+    </TabControl>
 </Window>

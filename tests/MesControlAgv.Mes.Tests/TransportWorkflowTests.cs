@@ -1,3 +1,4 @@
+using System.Net;
 using MesControlAgv.Domain;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Services;
@@ -19,6 +20,31 @@ public class TransportWorkflowTests
 
         Assert.Equal("MovingToDropoff", updated.Status);
         Assert.Equal("ST_PREP_01", adapter.LastTargetStationId);
+    }
+
+    [Fact]
+    public async Task Adapter_conflict_during_dropoff_dispatch_marks_task_failed_with_reason()
+    {
+        var adapter = new FakeAdapterClient();
+        var service = CreateService(adapter);
+        var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        await service.RecordArrivalAsync(task.Id, CancellationToken.None);
+        adapter.DispatchException = new AdapterHttpException(
+            HttpStatusCode.Conflict,
+            "No online, idle AGV controlled by adapter is available.");
+
+        var failed = await service.ConfirmPickupAsync(task.Id, "operator", CancellationToken.None);
+
+        Assert.Equal("Failed", failed.Status);
+        Assert.Equal("没有可用的空闲 AGV。", failed.LastError);
+        var detail = await service.GetDetailAsync(task.Id, CancellationToken.None);
+        Assert.NotNull(detail);
+        Assert.Contains(detail.Events, item => item.EventType == "DeviceFailed");
+
+        adapter.DispatchException = null;
+        var retried = await service.RetryAsync(task.Id, CancellationToken.None);
+
+        Assert.Equal("MovingToDropoff", retried.Status);
     }
 
     [Fact]
@@ -151,6 +177,7 @@ internal sealed class FakeAdapterClient : IAdapterClient
     public AdapterTask? Reconciled { get; set; }
     public string? CancelState { get; set; }
     public bool ThrowTimeout { get; set; }
+    public Exception? DispatchException { get; set; }
     public bool ThrowGetHttpRequest { get; set; }
     public bool ThrowGetTaskCancellation { get; set; }
     public int GetTaskCalls { get; private set; }
@@ -160,6 +187,7 @@ internal sealed class FakeAdapterClient : IAdapterClient
     {
         OperationIds.Add(operationId);
         LastTargetStationId = targetStationId;
+        if (DispatchException is not null) return Task.FromException<AdapterTask>(DispatchException);
         var task = new AdapterTask(operationId, operationId.ToString("N"), targetStationId, DispatchState, DispatchState == "failed" ? "failure" : null);
         return ThrowTimeout
             ? Task.FromException<AdapterTask>(new TimeoutException("adapter timeout"))

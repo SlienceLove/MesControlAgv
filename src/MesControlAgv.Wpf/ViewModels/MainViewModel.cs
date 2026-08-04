@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
+using MesControlAgv.Domain;
 using MesControlAgv.Wpf.Infrastructure;
 using MesControlAgv.Wpf.Services;
 
@@ -26,6 +27,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         _mes = mes;
         _simulator = simulator;
+        WorkflowEditor = new WorkflowEditorViewModel(new WorkflowStore());
         CreateTaskCommand = new AsyncCommand(() => ExecuteActionAsync(CreateTaskAsync));
         ArriveCommand = new AsyncCommand(() => ExecuteActionAsync(ArriveAsync), () => SelectedTask?.Status is "MovingToPickup" or "MovingToDropoff");
         ConfirmPickupCommand = new AsyncCommand(() => ExecuteActionAsync(ConfirmPickupAsync), () => SelectedTask?.Status == "WaitingPickupConfirmation");
@@ -42,6 +44,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public ObservableCollection<TaskRowViewModel> Tasks { get; } = [];
     public ObservableCollection<TaskEventRowViewModel> TaskEvents { get; } = [];
+    public WorkflowEditorViewModel WorkflowEditor { get; }
 
     public TaskRowViewModel? SelectedTask
     {
@@ -124,7 +127,18 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private async Task ArriveAsync()
     {
-        if (SelectedTask is not null) await _mes.MarkArrivedAsync(SelectedTask.Id, _shutdown.Token);
+        if (SelectedTask is not null)
+        {
+            if (_simulator is not null)
+            {
+                var deviceTaskId = SelectedTask.Status == "MovingToDropoff"
+                    ? TransportOperationIds.Dropoff(SelectedTask.Id)
+                    : TransportOperationIds.Pickup(SelectedTask.Id);
+                await _simulator.ApplyControlAsync(deviceTaskId, "arrive", _shutdown.Token);
+            }
+
+            await _mes.MarkArrivedAsync(SelectedTask.Id, _shutdown.Token);
+        }
         await RefreshAsync();
     }
 

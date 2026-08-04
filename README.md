@@ -1,6 +1,6 @@
 # AGV MES MVP
 
-面向实验室自动化的 `.NET 8 + WPF` MVP：系统编排单台 AGV 的固定搬运路线 `SAMPLE_01 -> ST_PREP_01`，并提供 Simulator、可审计的 MES 服务、Adapter 和 WPF 中控看板。
+面向实验室自动化的 `.NET 8 + WPF` MVP：系统支持多台仿真 AGV 的任务分配、地图路径规划和 `SAMPLE_01 -> ST_PREP_01` 搬运流程，并提供 Simulator、可审计的 MES 服务、Adapter 和 WPF 中控看板。
 
 MES 是任务状态和审计事件的唯一写入者；Adapter 隔离设备协议、控制权和幂等派单；Simulator 仅用于开发和验收。
 
@@ -19,7 +19,7 @@ dotnet build MesControlAgv.sln --no-restore
 dotnet test MesControlAgv.sln --no-build
 ```
 
-当前自动化基线为 49 项通过测试，包括十任务连续搬运、Adapter 并发幂等、TCP 协议帧、真实驱动请求链路、安全门禁、任务恢复和 WPF 看板行为。实时冒烟脚本是独立的进程级检查，不计入自动化测试数量。
+当前自动化基线为 56 项通过测试，包括路径规划、多 AGV 调度、十任务连续搬运、Adapter 并发幂等、TCP 协议帧、真实驱动请求链路、安全门禁、任务恢复和 WPF 看板行为。实时冒烟脚本是独立的进程级检查，不计入自动化测试数量。
 
 如果默认共享编译器在本机失败，使用以下串行构建和测试命令：
 
@@ -29,6 +29,14 @@ dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
 Windows 应用控制策略可能拦截 `bin/Debug` 下未签名的服务 `.exe`。不要双击服务 apphost；使用下面的启动脚本，或用系统签名的 `dotnet.exe` 直接加载 DLL。
+
+如果事件日志 `Microsoft-Windows-CodeIntegrity/Operational` 出现事件 3077/3033，且包含
+`PolicyName=VerifiedAndReputableDesktop`、策略 GUID
+`0283ac0f-fff1-49ae-ada1-8a933130cad6`，则当前计算机的 Smart App Control/企业代码完整性策略
+会连本地生成的业务 DLL 和测试 DLL 一起拦截。此时不是测试断言或项目依赖错误，`Unblock-File`
+也不能解决（本地构建文件通常没有 Zone.Identifier）。开发机需要由管理员为开发目录或开发签名证书
+配置允许规则，或者在 Windows 安全中心允许的情况下关闭 Smart App Control；受企业管理的机器应使用
+已签名构建或未启用该策略的开发环境。
 
 ## 本地启动
 
@@ -63,6 +71,27 @@ dotnet run --project src/MesControlAgv.Wpf
 | MES | `http://localhost:5045` |
 
 Adapter 调用 Simulator，MES 调用 Adapter，WPF 调用 MES。`run-local.ps1` 将服务 PID 写入临时状态文件，`stop-local.ps1` 只停止该文件记录的 `dotnet.exe` 进程，不会关闭 Rider 的其他进程。
+
+## 多 AGV 与路径规划
+
+开发环境的 Simulator 默认提供 `AGV-01`、`AGV-02` 和 `AGV-03`。Adapter 每次派单都会读取车队状态，过滤离线、忙碌或非 Adapter 控制的车辆，再按当前站点到任务路线的最短路径成本选择 AGV；返回结果包含 `agvId` 和 `path`。真实 TCP 驱动仍以单车方式运行，后续可在同一 Fleet 边界内扩展设备实例。
+
+查看车队状态和当前地图：
+
+```powershell
+Invoke-RestMethod http://localhost:5041/agvs
+Invoke-RestMethod http://localhost:5045/api/agvs/fleet
+Invoke-RestMethod http://localhost:5045/api/map
+```
+
+请求路径规划：
+
+```powershell
+$body = @{ fromStationId = 'CHARGE_01'; toStationId = 'ST_PREP_01' } | ConvertTo-Json
+Invoke-RestMethod -Method Post http://localhost:5045/api/planning/path -ContentType 'application/json' -Body $body
+```
+
+调度使用固定地图上的 Dijkstra 最短路径，并对相反方向的活动路段进行冲突过滤；取货和放货站点可以被多个 AGV 预约。地图和调度仍是仿真能力，真实 AGV 到场后必须先完成现场站点、控制权和安全参数确认。
 
 如果需要手动启动单个 Web 服务，先构建解决方案，然后从对应项目目录执行 DLL：
 

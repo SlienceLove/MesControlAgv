@@ -176,6 +176,26 @@ public class AdapterServiceTests
         Assert.Equal("cancelled", (await database.Tasks.FindAsync([taskId]))!.State);
     }
 
+    [Fact]
+    public async Task Fleet_dispatch_assigns_idle_agvs_and_preserves_assignment_on_duplicate()
+    {
+        var fleet = new FakeFleetClient();
+        var device = new FakeSimulatorClient();
+        var (service, _) = CreateFleetService(device, fleet);
+        var firstTaskId = Guid.NewGuid();
+        var secondTaskId = Guid.NewGuid();
+
+        var first = await service.DispatchAsync(firstTaskId, "SAMPLE_01", "ST_PREP_01", CancellationToken.None);
+        var second = await service.DispatchAsync(secondTaskId, "SAMPLE_01", "ST_PREP_01", CancellationToken.None);
+        var duplicate = await service.DispatchAsync(firstTaskId, "SAMPLE_01", "ST_PREP_01", CancellationToken.None);
+
+        Assert.Equal("AGV-01", first.AgvId);
+        Assert.Equal("AGV-02", second.AgvId);
+        Assert.Equal(first.AgvId, duplicate.AgvId);
+        Assert.NotEmpty(first.Path!);
+        Assert.Equal(2, fleet.NavigateCalls);
+    }
+
     private static AdapterService CreateService(FakeSimulatorClient simulator)
     {
         return CreateServiceWithDatabase(simulator).Service;
@@ -188,6 +208,19 @@ public class AdapterServiceTests
             .Options;
         var database = new AdapterDbContext(options);
         return (new AdapterService(database, simulator), database);
+    }
+
+    private static (AdapterService Service, AdapterDbContext Database) CreateFleetService(
+        FakeSimulatorClient simulator,
+        FakeFleetClient fleet)
+    {
+        var options = new DbContextOptionsBuilder<AdapterDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+        var database = new AdapterDbContext(options);
+        var scheduler = new MesControlAgv.Domain.MultiAgvScheduler(
+            new MesControlAgv.Domain.PathPlanner(MesControlAgv.Domain.AgvMap.Default));
+        return (new AdapterService(database, simulator, fleet, scheduler), database);
     }
 }
 
@@ -244,4 +277,49 @@ internal sealed class FakeSimulatorClient : ISimulatorClient
             ? null
             : new AdapterTaskResponse(taskId, $"device-{taskId:N}", "SAMPLE_01", CancelState, null));
     }
+}
+
+internal sealed class FakeFleetClient : IAgvFleetDeviceClient
+{
+    private readonly Dictionary<string, AgvSnapshotResponse> _snapshots = new(StringComparer.Ordinal)
+    {
+        ["AGV-01"] = new(true, "adapter", "CHARGE_01", null, "AGV-01"),
+        ["AGV-02"] = new(true, "adapter", "CHARGE_01", null, "AGV-02"),
+        ["AGV-03"] = new(true, "adapter", "CHARGE_01", null, "AGV-03")
+    };
+    private readonly Dictionary<(string AgvId, Guid TaskId), AdapterTaskResponse> _tasks = [];
+
+    public int NavigateCalls { get; private set; }
+
+    public Task<IReadOnlyList<AgvSnapshotResponse>> GetFleetSnapshotAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<AgvSnapshotResponse>>(_snapshots.Values.ToArray());
+
+    public Task<AdapterTaskResponse?> GetTaskAsync(string agvId, Guid taskId, CancellationToken cancellationToken) =>
+        Task.FromResult(_tasks.GetValueOrDefault((agvId, taskId)));
+
+    public Task<AdapterTaskResponse> NavigateAsync(
+        string agvId,
+        Guid taskId,
+        string? sourceStationId,
+        string stationId,
+        IReadOnlyList<string>? path,
+        CancellationToken cancellationToken)
+    {
+        NavigateCalls++;
+        var task = new AdapterTaskResponse(taskId, taskId.ToString("N"), stationId, "moving", null, agvId, path);
+        _tasks[(agvId, taskId)] = task;
+        _snapshots[agvId] = _snapshots[agvId] with { CurrentTaskId = taskId };
+        return Task.FromResult(task);
+    }
+
+    public Task<AdapterTaskResponse?> PauseAsync(string agvId, Guid taskId, CancellationToken cancellationToken) =>
+        Task.FromResult<AdapterTaskResponse?>(_tasks.GetValueOrDefault((agvId, taskId)));
+
+    public Task<AdapterTaskResponse?> ResumeAsync(string agvId, Guid taskId, CancellationToken cancellationToken) =>
+        Task.FromResult<AdapterTaskResponse?>(_tasks.GetValueOrDefault((agvId, taskId)));
+
+    public Task<AdapterTaskResponse?> CancelAsync(string agvId, Guid taskId, CancellationToken cancellationToken) =>
+        Task.FromResult<AdapterTaskResponse?>(_tasks.GetValueOrDefault((agvId, taskId)) is { } task
+            ? task with { State = "cancelled" }
+            : null);
 }

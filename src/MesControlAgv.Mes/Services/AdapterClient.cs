@@ -1,11 +1,37 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using MesControlAgv.Domain;
 
 namespace MesControlAgv.Mes.Services;
 
-public sealed record AdapterTask(Guid TaskId, string DeviceTaskId, string TargetStationId, string State, string? LastError);
-public sealed record AdapterSnapshot(bool Online, string ControlOwner, string? CurrentStationId, Guid? CurrentTaskId);
+public sealed record AdapterTask(
+    Guid TaskId,
+    string DeviceTaskId,
+    string TargetStationId,
+    string State,
+    string? LastError,
+    string AgvId = "AGV-01",
+    IReadOnlyList<string>? Path = null);
+
+public sealed record AdapterSnapshot(
+    bool Online,
+    string ControlOwner,
+    string? CurrentStationId,
+    Guid? CurrentTaskId,
+    string AgvId = "AGV-01");
+
+public sealed class AdapterHttpException(HttpStatusCode responseStatusCode, string? detail)
+    : HttpRequestException(BuildMessage(responseStatusCode, detail), null, responseStatusCode)
+{
+    public HttpStatusCode ResponseStatusCode { get; } = responseStatusCode;
+    public string? Detail { get; } = detail;
+
+    private static string BuildMessage(HttpStatusCode statusCode, string? detail) =>
+        string.IsNullOrWhiteSpace(detail)
+            ? $"Adapter returned HTTP {(int)statusCode} ({statusCode})."
+            : $"Adapter returned HTTP {(int)statusCode} ({statusCode}): {detail}";
+}
 
 public interface IAdapterClient
 {
@@ -24,7 +50,12 @@ public interface IRouteAwareAdapterClient
         CancellationToken cancellationToken);
 }
 
-public sealed class AdapterClient(HttpClient client) : IAdapterClient, IRouteAwareAdapterClient
+public interface IFleetAwareAdapterClient
+{
+    Task<IReadOnlyList<AdapterSnapshot>> GetFleetSnapshotAsync(CancellationToken cancellationToken);
+}
+
+public sealed class AdapterClient(HttpClient client) : IAdapterClient, IRouteAwareAdapterClient, IFleetAwareAdapterClient
 {
     public async Task<AdapterTask> DispatchAsync(Guid operationId, string targetStationId, CancellationToken cancellationToken)
         => await DispatchAsync(operationId, null, targetStationId, cancellationToken);
@@ -39,7 +70,7 @@ public sealed class AdapterClient(HttpClient client) : IAdapterClient, IRouteAwa
             ? new { targetStationId }
             : new { sourceStationId, targetStationId };
         var response = await client.PostAsJsonAsync($"tasks/{operationId}/dispatch", request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, cancellationToken);
         return await response.Content.ReadFromJsonAsync<AdapterTask>(cancellationToken)
             ?? throw new InvalidOperationException("Adapter returned no dispatch result.");
     }
@@ -48,7 +79,7 @@ public sealed class AdapterClient(HttpClient client) : IAdapterClient, IRouteAwa
     {
         var response = await client.GetAsync($"tasks/{operationId}", cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, cancellationToken);
         return await response.Content.ReadFromJsonAsync<AdapterTask>(cancellationToken);
     }
 
@@ -56,24 +87,43 @@ public sealed class AdapterClient(HttpClient client) : IAdapterClient, IRouteAwa
     {
         var response = await client.PostAsync($"tasks/{operationId}/cancel", null, cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, cancellationToken);
         return await response.Content.ReadFromJsonAsync<AdapterTask>(cancellationToken);
     }
 
     public async Task<AdapterSnapshot> GetSnapshotAsync(CancellationToken cancellationToken) =>
         await client.GetFromJsonAsync<AdapterSnapshot>("agv/snapshot", cancellationToken)
         ?? throw new InvalidOperationException("Adapter returned no AGV snapshot.");
-}
 
-public static class TransportOperationIds
-{
-    public static Guid Pickup(Guid taskId) => Derive(taskId, "pickup");
-    public static Guid Dropoff(Guid taskId) => Derive(taskId, "dropoff");
+    public async Task<IReadOnlyList<AdapterSnapshot>> GetFleetSnapshotAsync(CancellationToken cancellationToken) =>
+        await client.GetFromJsonAsync<IReadOnlyList<AdapterSnapshot>>("agvs", cancellationToken)
+        ?? throw new InvalidOperationException("Adapter returned no AGV fleet.");
 
-    private static Guid Derive(Guid taskId, string leg)
+    private static async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
-        var bytes = System.Security.Cryptography.SHA256.HashData(
-            System.Text.Encoding.UTF8.GetBytes($"{taskId:N}:{leg}"));
-        return new Guid(bytes[..16]);
+        if (response.IsSuccessStatusCode) return;
+
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        throw new AdapterHttpException(response.StatusCode, ExtractDetail(body));
+    }
+
+    private static string? ExtractDetail(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            if (document.RootElement.TryGetProperty("detail", out var detail)
+                && detail.ValueKind == JsonValueKind.String)
+            {
+                return detail.GetString();
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return body;
     }
 }

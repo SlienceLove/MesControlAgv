@@ -1,3 +1,4 @@
+using System.Net;
 using MesControlAgv.Domain;
 using MesControlAgv.Mes.Contracts;
 using MesControlAgv.Mes.Entities;
@@ -184,11 +185,55 @@ public sealed class TaskService(TaskRepository repository, IAdapterClient adapte
                 await repository.ApplyEventAsync(taskId, started, response, cancellationToken);
             }
         }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or TimeoutException)
+        catch (AdapterHttpException exception) when (exception.ResponseStatusCode == HttpStatusCode.Conflict)
         {
-            await repository.ApplyEventAsync(taskId, TaskEvent.Timeout, new { error = exception.Message }, cancellationToken, exception.Message);
+            var error = DescribeAdapterConflict(exception);
+            await repository.ApplyEventAsync(
+                taskId,
+                TaskEvent.DeviceFailed,
+                new { source = "adapter", statusCode = (int)exception.ResponseStatusCode, reason = error, detail = exception.Detail },
+                cancellationToken,
+                error);
+        }
+        catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            var error = DescribeSystemFailure(exception);
+            await repository.ApplyEventAsync(taskId, TaskEvent.Timeout, new { error }, cancellationToken, error);
+        }
+        catch (TimeoutException exception)
+        {
+            var error = DescribeSystemFailure(exception);
+            await repository.ApplyEventAsync(taskId, TaskEvent.Timeout, new { error }, cancellationToken, error);
+        }
+        catch (HttpRequestException exception)
+        {
+            var error = DescribeSystemFailure(exception);
+            await repository.ApplyEventAsync(taskId, TaskEvent.Timeout, new { error }, cancellationToken, error);
         }
     }
+
+    private static string DescribeAdapterConflict(AdapterHttpException exception)
+    {
+        return exception.Detail switch
+        {
+            "No online, idle AGV controlled by adapter is available." => "没有可用的空闲 AGV。",
+            "All available AGVs are blocked by active route reservations." => "所有可用 AGV 的路径都被当前任务占用。",
+            { } detail when detail.StartsWith("AGV control owner", StringComparison.Ordinal) => $"AGV 控制权不可用：{detail}",
+            { } detail when !string.IsNullOrWhiteSpace(detail) => $"AGV 暂时无法接收任务：{detail}",
+            _ => "AGV 暂时无法接收任务（Adapter 返回 409 冲突）。"
+        };
+    }
+
+    private static string DescribeSystemFailure(Exception exception) => exception switch
+    {
+        AdapterHttpException adapter => string.IsNullOrWhiteSpace(adapter.Detail)
+            ? $"Adapter 通信异常（HTTP {(int)adapter.ResponseStatusCode}）。"
+            : $"Adapter 通信异常：{adapter.Detail}",
+        TimeoutException => "AGV 响应超时，暂时无法确认设备状态。",
+        TaskCanceledException => "AGV 请求超时或被取消，暂时无法确认设备状态。",
+        HttpRequestException => $"Adapter 通信失败：{exception.Message}",
+        _ => $"系统异常：{exception.Message}"
+    };
 
     public static TaskResponse ToResponse(TransportTask task) => new(task.Id, task.SourceStationCode, task.TargetStationCode, task.Status.ToString(), task.RetryCount, task.LastError);
     private static TaskEventResponse ToResponse(TaskEventRecord taskEvent) => new(taskEvent.Id, taskEvent.EventType, taskEvent.Payload, taskEvent.CreatedAt);

@@ -94,7 +94,7 @@ public sealed class TransportAcceptanceTests
         var recovered = await service.RecoverAsync(unknown.Id, CancellationToken.None);
 
         Assert.Equal("Unknown", unknown.Status);
-        Assert.Equal("adapter timeout", unknown.LastError);
+        Assert.Equal("AGV 响应超时，暂时无法确认设备状态。", unknown.LastError);
         Assert.Equal("MovingToPickup", recovered.Status);
         Assert.Single(adapter.OperationIds);
     }
