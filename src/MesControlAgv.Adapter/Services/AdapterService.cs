@@ -147,6 +147,27 @@ public sealed class AdapterService
         return [await _device.GetSnapshotAsync(cancellationToken)];
     }
 
+    public async Task<AdapterTaskResponse?> ExecuteCommandAsync(
+        string agvId,
+        string command,
+        Guid? requestedTaskId,
+        CancellationToken cancellationToken)
+    {
+        var snapshots = await GetFleetAsync(cancellationToken);
+        var snapshot = snapshots.SingleOrDefault(item => StringComparer.Ordinal.Equals(item.AgvId, agvId))
+            ?? throw new KeyNotFoundException($"AGV {agvId} is not configured.");
+        var taskId = requestedTaskId ?? snapshot.CurrentTaskId
+            ?? throw new InvalidOperationException($"AGV {agvId} has no active task.");
+
+        return command.Trim().ToLowerInvariant() switch
+        {
+            "pause" or "stop" => await PauseAsync(taskId, cancellationToken),
+            "resume" or "continue" => await ResumeAsync(taskId, cancellationToken),
+            "cancel" => await CancelAsync(taskId, cancellationToken),
+            _ => throw new ArgumentOutOfRangeException(nameof(command), command, "Supported commands: pause, resume, cancel.")
+        };
+    }
+
     public async Task<AdapterTaskResponse?> PauseAsync(Guid taskId, CancellationToken cancellationToken)
     {
         var task = await _database.Tasks.FindAsync([taskId], cancellationToken);

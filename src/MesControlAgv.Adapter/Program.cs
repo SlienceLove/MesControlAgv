@@ -85,6 +85,22 @@ app.MapPost("/tasks/{taskId:guid}/{action}", async (Guid taskId, string action, 
 app.MapGet("/agv/snapshot", async (IAgvDeviceClient device, CancellationToken cancellationToken) => Results.Ok(await device.GetSnapshotAsync(cancellationToken)));
 app.MapGet("/agvs", async (AdapterService service, CancellationToken cancellationToken) => Results.Ok(await service.GetFleetAsync(cancellationToken)));
 
+app.MapPost("/agvs/{agvId}/command", async (
+    string agvId,
+    AgvCommandRequest request,
+    AdapterService service,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        return Results.Ok(await service.ExecuteCommandAsync(agvId, request.Command, request.TaskId, cancellationToken));
+    }
+    catch (ControlUnavailableException exception) { return Results.Conflict(new { detail = exception.Message }); }
+    catch (AgvUnavailableException exception) { return Results.Conflict(new { detail = exception.Message }); }
+    catch (KeyNotFoundException exception) { return Results.NotFound(new { detail = exception.Message }); }
+    catch (InvalidOperationException exception) { return Results.UnprocessableEntity(new { detail = exception.Message }); }
+});
+
 app.Run();
 
 static string ResolveSqliteConnectionString(string connectionString)

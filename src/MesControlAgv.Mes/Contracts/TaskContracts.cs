@@ -1,6 +1,11 @@
 namespace MesControlAgv.Mes.Contracts;
 
-public sealed record CreateTaskRequest(int SourceStationCode, int TargetStationCode);
+public sealed record CreateTaskRequest(
+    int SourceStationCode,
+    int TargetStationCode,
+    int Priority = 0,
+    string? Description = null,
+    string? ExternalId = null);
 
 public sealed record TaskResponse(
     Guid Id,
@@ -8,7 +13,10 @@ public sealed record TaskResponse(
     int TargetStationCode,
     string Status,
     int RetryCount,
-    string? LastError);
+    string? LastError,
+    int Priority = 0,
+    string? Description = null,
+    string? ExternalId = null);
 
 public sealed record TaskEventResponse(
     Guid Id,
@@ -28,3 +36,5 @@ public sealed record PlanPathRequest(
     IReadOnlyCollection<string>? BlockedStations = null);
 
 public sealed record PlannedPathResponse(IReadOnlyList<string> Stations, double Cost);
+
+public sealed record AgvCommandRequest(string Command, Guid? TaskId = null);

@@ -15,4 +15,11 @@ public sealed class TestAdapterClient : IAdapterClient
 
     public Task<AdapterSnapshot> GetSnapshotAsync(CancellationToken cancellationToken) =>
         Task.FromResult(new AdapterSnapshot(true, "adapter", "CHARGE_01", null));
+
+    public Task<AdapterTask?> ExecuteAgvCommandAsync(
+        string agvId,
+        string command,
+        Guid? taskId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<AdapterTask?>(null);
 }

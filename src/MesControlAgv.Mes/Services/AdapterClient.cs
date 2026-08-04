@@ -39,6 +39,7 @@ public interface IAdapterClient
     Task<AdapterTask?> GetTaskAsync(Guid operationId, CancellationToken cancellationToken);
     Task<AdapterTask?> CancelAsync(Guid operationId, CancellationToken cancellationToken);
     Task<AdapterSnapshot> GetSnapshotAsync(CancellationToken cancellationToken);
+    Task<AdapterTask?> ExecuteAgvCommandAsync(string agvId, string command, Guid? taskId, CancellationToken cancellationToken);
 }
 
 public interface IRouteAwareAdapterClient
@@ -94,6 +95,21 @@ public sealed class AdapterClient(HttpClient client) : IAdapterClient, IRouteAwa
     public async Task<AdapterSnapshot> GetSnapshotAsync(CancellationToken cancellationToken) =>
         await client.GetFromJsonAsync<AdapterSnapshot>("agv/snapshot", cancellationToken)
         ?? throw new InvalidOperationException("Adapter returned no AGV snapshot.");
+
+    public async Task<AdapterTask?> ExecuteAgvCommandAsync(
+        string agvId,
+        string command,
+        Guid? taskId,
+        CancellationToken cancellationToken)
+    {
+        var response = await client.PostAsJsonAsync(
+            $"agvs/{Uri.EscapeDataString(agvId)}/command",
+            new { command, taskId },
+            cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        await EnsureSuccessAsync(response, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<AdapterTask>(cancellationToken);
+    }
 
     public async Task<IReadOnlyList<AdapterSnapshot>> GetFleetSnapshotAsync(CancellationToken cancellationToken) =>
         await client.GetFromJsonAsync<IReadOnlyList<AdapterSnapshot>>("agvs", cancellationToken)

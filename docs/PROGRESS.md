@@ -10,7 +10,7 @@ MES owns task state, SQLite persistence, and audit events. Adapter owns device p
 
 The WPF dashboard includes task detail and audit-event timeline loading, task-operation descriptions, explicit exception reasons, `UNKNOWN` recovery, and a development-only simulator control panel. Release builds hide simulator controls. The Adapter now also contains a configuration-selected vendor TCP driver; Simulator remains the default. The development Simulator now exposes three virtual AGVs, while the shared Domain layer provides shortest-path planning and multi-AGV assignment.
 
-Task state handling now distinguishes a known execution failure from an unresolved device result. Adapter conflicts such as no available AGV, path conflicts, and duplicate control are persisted as `FAILED` with a Chinese reason and remain retryable. Timeouts and communication failures remain `UNKNOWN` only when the device result cannot be confirmed, and the WPF dashboard shows `绯荤粺寮傚父` together with the stored reason instead of `鐘舵€佹湭鐭.
+Task state handling now distinguishes a known execution failure from an unresolved device result. Adapter conflicts such as no available AGV, path conflicts, and duplicate control are persisted as `FAILED` with a Chinese reason and remain retryable. Timeouts and communication failures remain `UNKNOWN` only when the device result cannot be confirmed, and the WPF dashboard shows `系统异常` together with the stored reason instead of `状态未知`.
 
 Simulator arrival controls accept a specific transport operation ID. WPF updates the simulator AGV first and then notifies MES, so the correct AGV is released after arrival and the normal flow can continue through `MOVING_TO_DROPOFF` to `COMPLETED`.
 
@@ -31,7 +31,7 @@ dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1
 dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
-The suite contains 65 tests after addition of experiment workflow management and the latest WPF layout regression coverage. The serial build passed on 2026-08-04 with 0 warnings and 0 errors, and all 65 tests passed in this environment across Domain, MES, Adapter, Simulator, E2E, and WPF.
+The suite contains 68 tests after addition of experiment workflow management, AGV communications, and batch-import coverage. The serial build passed on 2026-08-04 with 0 warnings and 0 errors, and all 68 tests passed in this environment across Domain, MES, Adapter, Simulator, E2E, and WPF.
 
 ## Live verification
 
@@ -55,3 +55,17 @@ The vendor protocol is now implemented behind the Adapter driver boundary, but n
 6. Confirm relocation parameters, control-ownership fields, safety fields, and forklift/lift/roller DI/DO mappings.
 7. In an isolated environment, set `Agv:Driver=tcp` and run staged TCP connectivity, read-only status, control-ownership, and movement acceptance checks.
 8. Keep Simulator as the default until the vendor values and on-site safety acceptance are complete.
+
+## 2026-08-04 extension: AGV communications and batch task import
+
+The WPF control center now includes an `AGV 通讯与调度` tab. It reads the MES fleet snapshot every two seconds and displays each AGV ID, online state, control owner, current station, and current task. When an AGV is online and has an active task, the operator can send `pause`, `resume`, or `cancel` for that task. These commands travel through WPF -> MES -> Adapter -> Simulator/vendor driver; no unverified free-driving or emergency-stop behavior is exposed in this MVP screen.
+
+The WPF control center also includes a `批量任务导入` tab. CSV and XLSX files are parsed without an additional NuGet dependency. Supported columns include task ID, source station, target station, description, priority, and planned time, with Chinese and English aliases. Valid rows are sorted by priority descending, planned time ascending, and source row number. Import issues are retained for review, priority can be edited in the preview grid, and valid rows can be submitted sequentially to the existing MES task API with the task ID stored as `ExternalId`. Source and target stations accept numeric codes, configured AGV station IDs, or station names.
+
+Task responses now include `Priority`, `Description`, and `ExternalId`; old SQLite databases are upgraded at startup when these columns are missing. The WPF command client supports fleet snapshots and AGV task commands while retaining compatibility with existing test clients.
+
+## Extension verification
+
+On 2026-08-04, the serial solution build passed with 0 warnings and 0 errors. All 68 tests passed: Domain 12, MES 15, Adapter 16, WPF 14, E2E 7, and Simulator 4. The WPF XAML was also compiled successfully. Batch import parser coverage includes CSV quoting, UTF-8 BOM, XLSX shared strings/numeric cells, Chinese headers, validation issues, and priority/planned-time sorting.
+
+The extension has been verified against the Simulator path. Physical AGV connection and vendor-specific on-site acceptance remain outstanding; before using `Agv:Driver=tcp`, validate the robot IP, firmware, map/station IDs, control ownership, safety gates, and movement behavior in an isolated acceptance environment.

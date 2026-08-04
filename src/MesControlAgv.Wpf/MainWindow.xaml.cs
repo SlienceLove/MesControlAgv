@@ -2,6 +2,7 @@ using System.Collections.Specialized;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using Microsoft.Win32;
 using System.Windows.Media;
 using System.Windows.Shapes;
 using MesControlAgv.Wpf.ViewModels;
@@ -24,6 +25,17 @@ public partial class MainWindow : Window
         DataContextChanged += MainWindow_DataContextChanged;
     }
 
+    private async void ImportBatch_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel viewModel) return;
+        var dialog = new OpenFileDialog
+        {
+            Filter = "任务文件 (*.xlsx;*.csv)|*.xlsx;*.csv|Excel 文件 (*.xlsx)|*.xlsx|CSV 文件 (*.csv)|*.csv",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+        if (dialog.ShowDialog(this) == true) await viewModel.ImportBatchFileAsync(dialog.FileName);
+    }
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         AttachWorkflowEditor();

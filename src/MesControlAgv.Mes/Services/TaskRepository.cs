@@ -8,15 +8,23 @@ namespace MesControlAgv.Mes.Services;
 
 public sealed class TaskRepository(MesDbContext database)
 {
+    public Task<TransportTask> CreateAsync(int sourceStationCode, int targetStationCode, CancellationToken cancellationToken) =>
+        CreateAsync(sourceStationCode, targetStationCode, 0, null, null, cancellationToken);
     public async Task<TransportTask> CreateAsync(
         int sourceStationCode,
         int targetStationCode,
+        int priority,
+        string? description,
+        string? externalId,
         CancellationToken cancellationToken)
     {
         var task = new TransportTask
         {
             SourceStationCode = sourceStationCode,
-            TargetStationCode = targetStationCode
+            TargetStationCode = targetStationCode,
+            Priority = priority,
+            Description = description,
+            ExternalId = externalId
         };
 
         database.TransportTasks.Add(task);
@@ -35,7 +43,11 @@ public sealed class TaskRepository(MesDbContext database)
         database.TransportTasks.SingleOrDefaultAsync(task => task.Id == taskId, cancellationToken);
 
     public Task<List<TransportTask>> ListAsync(CancellationToken cancellationToken) =>
-        database.TransportTasks.OrderByDescending(task => task.UpdatedAt).ToListAsync(cancellationToken);
+        database.TransportTasks
+            .OrderByDescending(task => task.Priority)
+            .ThenBy(task => task.CreatedAt)
+            .ThenByDescending(task => task.UpdatedAt)
+            .ToListAsync(cancellationToken);
 
     public Task<List<TaskEventRecord>> GetEventsAsync(Guid taskId, CancellationToken cancellationToken) =>
         database.TaskEvents

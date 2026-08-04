@@ -212,4 +212,11 @@ internal sealed class FakeAdapterClient : IAdapterClient
             ? null
             : new AdapterTask(operationId, operationId.ToString("N"), "SAMPLE_01", CancelState, null));
     public Task<AdapterSnapshot> GetSnapshotAsync(CancellationToken cancellationToken) => Task.FromResult(new AdapterSnapshot(true, "adapter", null, null));
+
+    public Task<AdapterTask?> ExecuteAgvCommandAsync(
+        string agvId,
+        string command,
+        Guid? taskId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<AdapterTask?>(null);
 }

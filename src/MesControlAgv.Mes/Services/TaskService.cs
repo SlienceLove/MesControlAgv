@@ -11,7 +11,7 @@ public sealed class TaskService(TaskRepository repository, IAdapterClient adapte
     public async Task<TaskResponse> CreateAsync(CreateTaskRequest request, CancellationToken cancellationToken)
     {
         if (request is not { SourceStationCode: 2, TargetStationCode: 4 }) throw new UnsupportedRouteException();
-        var task = await repository.CreateAsync(request.SourceStationCode, request.TargetStationCode, cancellationToken);
+        var task = await repository.CreateAsync(request.SourceStationCode, request.TargetStationCode, request.Priority, request.Description, request.ExternalId, cancellationToken);
         await DispatchLegAsync(task.Id, TaskEvent.PickupMoveStarted, Stations.Get(request.SourceStationCode).AgvStationId, cancellationToken);
         return ToResponse((await repository.GetAsync(task.Id, cancellationToken))!);
     }
@@ -216,26 +216,26 @@ public sealed class TaskService(TaskRepository repository, IAdapterClient adapte
     {
         return exception.Detail switch
         {
-            "No online, idle AGV controlled by adapter is available." => "没有可用的空闲 AGV。",
-            "All available AGVs are blocked by active route reservations." => "所有可用 AGV 的路径都被当前任务占用。",
-            { } detail when detail.StartsWith("AGV control owner", StringComparison.Ordinal) => $"AGV 控制权不可用：{detail}",
-            { } detail when !string.IsNullOrWhiteSpace(detail) => $"AGV 暂时无法接收任务：{detail}",
-            _ => "AGV 暂时无法接收任务（Adapter 返回 409 冲突）。"
+            "No online, idle AGV controlled by adapter is available." => "\u6CA1\u6709\u53EF\u7528\u7684\u7A7A\u95F2 AGV\u3002",
+            "All available AGVs are blocked by active route reservations." => "\u6240\u6709\u53EF\u7528 AGV \u7684\u8DEF\u5F84\u90FD\u88AB\u5F53\u524D\u4EFB\u52A1\u5360\u7528\u3002",
+            { } detail when detail.StartsWith("AGV control owner", StringComparison.Ordinal) => $"AGV \u63A7\u5236\u6743\u4E0D\u53EF\u7528\uFF1A{detail}",
+            { } detail when !string.IsNullOrWhiteSpace(detail) => $"AGV \u6682\u65F6\u65E0\u6CD5\u63A5\u6536\u4EFB\u52A1\uFF1A{detail}",
+            _ => "AGV \u6682\u65F6\u65E0\u6CD5\u63A5\u6536\u4EFB\u52A1\uFF08Adapter \u8FD4\u56DE 409 \u51B2\u7A81\uFF09\u3002"
         };
     }
 
     private static string DescribeSystemFailure(Exception exception) => exception switch
     {
         AdapterHttpException adapter => string.IsNullOrWhiteSpace(adapter.Detail)
-            ? $"Adapter 通信异常（HTTP {(int)adapter.ResponseStatusCode}）。"
-            : $"Adapter 通信异常：{adapter.Detail}",
-        TimeoutException => "AGV 响应超时，暂时无法确认设备状态。",
-        TaskCanceledException => "AGV 请求超时或被取消，暂时无法确认设备状态。",
-        HttpRequestException => $"Adapter 通信失败：{exception.Message}",
-        _ => $"系统异常：{exception.Message}"
+            ? $"Adapter \u901A\u4FE1\u5F02\u5E38\uFF08HTTP {(int)adapter.ResponseStatusCode}\uFF09\u3002"
+            : $"Adapter \u901A\u4FE1\u5F02\u5E38\uFF1A{adapter.Detail}",
+        TimeoutException => "AGV \u54CD\u5E94\u8D85\u65F6\uFF0C\u6682\u65F6\u65E0\u6CD5\u786E\u8BA4\u8BBE\u5907\u72B6\u6001\u3002",
+        TaskCanceledException => "AGV \u8BF7\u6C42\u8D85\u65F6\u6216\u88AB\u53D6\u6D88\uFF0C\u6682\u65F6\u65E0\u6CD5\u786E\u8BA4\u8BBE\u5907\u72B6\u6001\u3002",
+        HttpRequestException => $"Adapter \u901A\u4FE1\u5931\u8D25\uFF1A{exception.Message}",
+        _ => $"\u7CFB\u7EDF\u5F02\u5E38\uFF1A{exception.Message}"
     };
 
-    public static TaskResponse ToResponse(TransportTask task) => new(task.Id, task.SourceStationCode, task.TargetStationCode, task.Status.ToString(), task.RetryCount, task.LastError);
+    public static TaskResponse ToResponse(TransportTask task) => new(task.Id, task.SourceStationCode, task.TargetStationCode, task.Status.ToString(), task.RetryCount, task.LastError, task.Priority, task.Description, task.ExternalId);
     private static TaskEventResponse ToResponse(TaskEventRecord taskEvent) => new(taskEvent.Id, taskEvent.EventType, taskEvent.Payload, taskEvent.CreatedAt);
 }
 

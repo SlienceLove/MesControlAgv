@@ -22,6 +22,7 @@ using (var scope = app.Services.CreateScope())
 {
     var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
     await database.Database.EnsureCreatedAsync();
+    await EnsureTaskColumnsAsync(database);
 }
 
 app.MapGet("/health", () => Results.Ok(new { service = "mes", status = "ok" }));
@@ -37,6 +38,23 @@ app.MapGet("/api/agvs/fleet", async (IAdapterClient adapter, CancellationToken c
     }
 
     return Results.Ok(new[] { await adapter.GetSnapshotAsync(cancellationToken) });
+});
+
+app.MapPost("/api/agvs/{agvId}/command", async (
+    string agvId,
+    AgvCommandRequest request,
+    IAdapterClient adapter,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var result = await adapter.ExecuteAgvCommandAsync(agvId, request.Command, request.TaskId, cancellationToken);
+        return result is null ? Results.NotFound() : Results.Ok(result);
+    }
+    catch (AdapterHttpException exception)
+    {
+        return Results.Json(new { detail = exception.Detail ?? exception.Message }, statusCode: (int?)exception.ResponseStatusCode);
+    }
 });
 
 app.MapGet("/api/map", () => Results.Ok(new
@@ -110,6 +128,31 @@ app.MapGet("/api/tasks/{taskId:guid}", async (
     var task = await service.GetDetailAsync(taskId, cancellationToken);
     return task is null ? Results.NotFound() : Results.Ok(task);
 });
+
+static async Task EnsureTaskColumnsAsync(MesDbContext database)
+{
+    var connection = database.Database.GetDbConnection();
+    await connection.OpenAsync();
+    await using var command = connection.CreateCommand();
+    command.CommandText = "PRAGMA table_info(TransportTasks);";
+    var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    await using var reader = await command.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) columns.Add(reader.GetString(1));
+    await reader.CloseAsync();
+
+    foreach (var definition in new[]
+    {
+        (Name: "Priority", Sql: "INTEGER NOT NULL DEFAULT 0"),
+        (Name: "Description", Sql: "TEXT NULL"),
+        (Name: "ExternalId", Sql: "TEXT NULL")
+    })
+    {
+        if (columns.Contains(definition.Name)) continue;
+        await using var alter = connection.CreateCommand();
+        alter.CommandText = $"ALTER TABLE TransportTasks ADD COLUMN {definition.Name} {definition.Sql};";
+        await alter.ExecuteNonQueryAsync();
+    }
+}
 
 app.Run();
 

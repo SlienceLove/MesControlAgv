@@ -10,6 +10,12 @@ public sealed class TransportTask
 
     public int TargetStationCode { get; init; }
 
+    public int Priority { get; set; }
+
+    public string? Description { get; set; }
+
+    public string? ExternalId { get; set; }
+
     public MesControlAgv.Domain.TaskStatus Status { get; set; } = MesControlAgv.Domain.TaskStatus.Created;
 
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;

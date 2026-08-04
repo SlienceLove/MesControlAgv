@@ -15,3 +15,7 @@ public sealed record AgvSnapshotResponse(
     string? CurrentStationId,
     Guid? CurrentTaskId,
     string AgvId = "AGV-01");
+
+public sealed record AgvCommandRequest(
+    string Command,
+    Guid? TaskId = null);

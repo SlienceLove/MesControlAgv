@@ -19,6 +19,9 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.HasKey(task => task.Id);
             entity.Property(task => task.Status).HasConversion<string>();
             entity.Property(task => task.LastError).HasMaxLength(2048);
+            entity.Property(task => task.Description).HasMaxLength(2048);
+            entity.Property(task => task.ExternalId).HasMaxLength(256);
+            entity.HasIndex(task => new { task.Status, task.Priority, task.CreatedAt });
         });
 
         modelBuilder.Entity<TaskEventRecord>(entity =>
