@@ -1,4 +1,4 @@
-namespace MesControlAgv.Wpf.Services;
+﻿namespace MesControlAgv.Wpf.Services;
 
 public sealed record DashboardTask(
     Guid Id,
@@ -25,6 +25,7 @@ public sealed record DashboardTaskDetail(DashboardTask Task, IReadOnlyList<Dashb
 public interface IMesClient
 {
     Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken);
+    Task<KpiDashboard> GetKpiDashboardAsync(DateOnly date, CancellationToken cancellationToken);
     Task<DashboardTaskDetail?> GetTaskDetailAsync(Guid taskId, CancellationToken cancellationToken);
     Task<AgvDashboardSnapshot> GetAgvSnapshotAsync(CancellationToken cancellationToken);
     async Task<IReadOnlyList<AgvDashboardSnapshot>> GetAgvFleetAsync(CancellationToken cancellationToken) => [await GetAgvSnapshotAsync(cancellationToken)];

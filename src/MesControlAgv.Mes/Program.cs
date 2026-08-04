@@ -14,6 +14,7 @@ builder.Services.AddHttpClient<IAdapterClient, AdapterClient>(client =>
 builder.Services.AddSingleton(new PathPlanner(AgvMap.Default));
 builder.Services.AddScoped<TaskRepository>();
 builder.Services.AddScoped<TaskService>();
+builder.Services.AddScoped<KpiDashboardService>();
 builder.Services.AddHostedService<RecoveryService>();
 
 var app = builder.Build();
@@ -29,6 +30,18 @@ app.MapGet("/health", () => Results.Ok(new { service = "mes", status = "ok" }));
 
 app.MapGet("/api/agv", async (IAdapterClient adapter, CancellationToken cancellationToken) =>
     Results.Ok(await adapter.GetSnapshotAsync(cancellationToken)));
+
+app.MapGet("/api/dashboard/kpi", async (DateOnly? date, KpiDashboardService service, CancellationToken cancellationToken) =>
+{
+    var dashboard = await service.GetAsync(date ?? DateOnly.FromDateTime(DateTime.UtcNow), cancellationToken);
+    return Results.Ok(new KpiDashboardResponse(
+        dashboard.Date,
+        new(dashboard.TaskSummary.Total, dashboard.TaskSummary.Running, dashboard.TaskSummary.Completed, dashboard.TaskSummary.Failed, dashboard.TaskSummary.Cancelled),
+        dashboard.TaskTrend.Select(point => new KpiTaskTrendPointResponse(point.Hour, point.Created, point.Completed)).ToList(),
+        new(dashboard.SampleSummary.Total, dashboard.SampleSummary.Waiting, dashboard.SampleSummary.Processing, dashboard.SampleSummary.Completed, dashboard.SampleSummary.Failed, dashboard.SampleSummary.Cancelled, dashboard.SampleSummary.DataSource),
+        dashboard.Consumables.Select(item => new KpiConsumableResponse(item.Name, item.Remaining, item.Capacity, item.Status, item.DataSource)).ToList(),
+        dashboard.Instruments.Select(item => new KpiInstrumentStatusResponse(item.Name, item.Status, item.Online, item.Detail, item.DataSource)).ToList()));
+});
 
 app.MapGet("/api/agvs/fleet", async (IAdapterClient adapter, CancellationToken cancellationToken) =>
 {

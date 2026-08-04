@@ -31,7 +31,7 @@ dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1
 dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
-The suite contains 68 tests after addition of experiment workflow management, AGV communications, and batch-import coverage. The serial build passed on 2026-08-04 with 0 warnings and 0 errors, and all 68 tests passed in this environment across Domain, MES, Adapter, Simulator, E2E, and WPF.
+The suite contains 69 tests after addition of experiment workflow management, AGV communications, batch-import coverage, and KPI dashboard coverage. The serial build passed on 2026-08-04 with 0 warnings and 0 errors, and all 69 tests passed in this environment across Domain, MES, Adapter, Simulator, E2E, and WPF.
 
 ## Live verification
 
@@ -64,8 +64,16 @@ The WPF control center also includes a `批量任务导入` tab. CSV and XLSX fi
 
 Task responses now include `Priority`, `Description`, and `ExternalId`; old SQLite databases are upgraded at startup when these columns are missing. The WPF command client supports fleet snapshots and AGV task commands while retaining compatibility with existing test clients.
 
+## 2026-08-04 extension: KPI dashboard
+
+The WPF control center now includes a `KPI 看板` tab. It presents today's task total, running/completed/failed counts and completion rate, plus a native WPF donut chart for task status and a 24-hour created/completed trend chart. The dashboard also shows sample-processing information, consumable remaining status, and instrument/AGV operating status. The existing two-second refresh cycle refreshes KPI data together with the task-monitoring screen.
+
+KPI aggregation is exposed by MES at `GET /api/dashboard/kpi?date=yyyy-MM-dd` and is calculated from the persisted transport-task data. Sample statistics currently describe transport-task status aggregation and include a data-source note. Consumable inventory is explicitly marked `未接入` until a site inventory interface is available; real laboratory instrument status is also not fabricated and is marked as not yet connected. Current instrument/AGV status is sourced from the Adapter/AGV snapshot, and the Simulator remains the default runtime path.
+
+No third-party chart package was added. The donut and trend charts are rendered by WPF controls, keeping the MVP dependency surface unchanged.
+
 ## Extension verification
 
-On 2026-08-04, the serial solution build passed with 0 warnings and 0 errors. All 68 tests passed: Domain 12, MES 15, Adapter 16, WPF 14, E2E 7, and Simulator 4. The WPF XAML was also compiled successfully. Batch import parser coverage includes CSV quoting, UTF-8 BOM, XLSX shared strings/numeric cells, Chinese headers, validation issues, and priority/planned-time sorting.
+On 2026-08-04, the serial solution build passed with 0 warnings and 0 errors. All 69 tests passed: Domain 12, MES 16, Adapter 16, WPF 14, E2E 7, and Simulator 4. The WPF XAML was also compiled successfully. Batch import parser coverage includes CSV quoting, UTF-8 BOM, XLSX shared strings/numeric cells, Chinese headers, validation issues, and priority/planned-time sorting.
 
 The extension has been verified against the Simulator path. Physical AGV connection and vendor-specific on-site acceptance remain outstanding; before using `Agv:Driver=tcp`, validate the robot IP, firmware, map/station IDs, control ownership, safety gates, and movement behavior in an isolated acceptance environment.

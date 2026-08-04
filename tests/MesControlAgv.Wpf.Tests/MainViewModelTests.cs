@@ -40,6 +40,7 @@ public class MainViewModelTests
         Assert.Equal("MES 已连接", viewModel.ConnectionStatus);
         Assert.Equal("在线 / adapter", viewModel.AgvStatus);
         Assert.Single(viewModel.Tasks);
+        Assert.Equal(1, viewModel.Kpi.TaskSummary.Total);
         Assert.True(viewModel.ArriveCommand.CanExecute(null));
         Assert.False(viewModel.ConfirmPickupCommand.CanExecute(null));
     }
@@ -74,6 +75,20 @@ public class MainViewModelTests
 internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesClient
 {
     public Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken) => Task.FromResult(tasks);
+    public Task<KpiDashboard> GetKpiDashboardAsync(DateOnly date, CancellationToken cancellationToken)
+    {
+        var completed = tasks.Count(task => task.Status == "Completed");
+        var failed = tasks.Count(task => task.Status == "Failed");
+        var cancelled = tasks.Count(task => task.Status == "Cancelled");
+        var running = tasks.Count - completed - failed - cancelled;
+        return Task.FromResult(new KpiDashboard(
+            date,
+            new KpiTaskSummary(tasks.Count, running, completed, failed, cancelled),
+            [],
+            new KpiSampleSummary(0, 0, 0, 0, 0, 0, "test"),
+            [],
+            []));
+    }
     public Task<DashboardTaskDetail?> GetTaskDetailAsync(Guid taskId, CancellationToken cancellationToken) =>
         Task.FromResult<DashboardTaskDetail?>(new DashboardTaskDetail(
             tasks[0],

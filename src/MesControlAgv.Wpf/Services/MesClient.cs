@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 
@@ -8,6 +8,10 @@ public sealed class MesClient(HttpClient client) : IMesClient
 {
     public async Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken) =>
         await client.GetFromJsonAsync<List<DashboardTask>>("api/tasks", cancellationToken) ?? [];
+
+    public async Task<KpiDashboard> GetKpiDashboardAsync(DateOnly date, CancellationToken cancellationToken) =>
+        await client.GetFromJsonAsync<KpiDashboard>($"api/dashboard/kpi?date={date:yyyy-MM-dd}", cancellationToken)
+        ?? throw new InvalidOperationException("MES returned no KPI dashboard.");
 
     public async Task<DashboardTaskDetail?> GetTaskDetailAsync(Guid taskId, CancellationToken cancellationToken)
     {
