@@ -31,7 +31,7 @@ dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1
 dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
-The suite contains 71 tests after addition of experiment workflow management, AGV communications, batch-import coverage, KPI dashboard coverage, and task-monitor date filtering. The serial build passed on 2026-08-04 with 0 warnings and 0 errors, and all 71 tests passed in this environment across Domain, MES, Adapter, Simulator, E2E, and WPF.
+The suite contains 79 tests after addition of experiment workflow management, AGV communications, batch-import coverage, KPI dashboard coverage, task-monitor date filtering, the application-boundary migration, and the first capability/module-boundary slice. The serial Release build passed on 2026-08-04 with 0 warnings and 0 errors, and all 79 tests passed in this environment: Domain 12, MES 18, Adapter 16, WPF 22, E2E 7, and Simulator 4.
 
 ## Live verification
 
@@ -87,3 +87,73 @@ Task responses now expose `CreatedAt` and nullable `EndedAt`. The task grid disp
 After creating a task, WPF refreshes the selected date and selects the newly created task instead of retaining an older moving task. This prevents the common Debug-simulator mistake of sending an arrival control to a stale task. Simulator control failures now preserve the backend JSON `detail`, so an HTTP 409 is shown with the actionable reason rather than only the generic status text.
 
 The date-filter API, timestamp serialization, terminal end-time behavior, WPF selection behavior, KPI date propagation, and simulator error-detail handling are covered by automated tests.
+
+## 2026-08-04 extension: standard platformization refactor preparation
+
+The product direction has been clarified: this project is not intended to be copied into separate customer applications. The current WPF control center is the MVP baseline for a standard, productized control-center platform. Future customers should be able to reuse the standard functions and add site-specific devices, workflows, scheduling rules, reports, and UI modules through configuration, profiles, strategies, and controlled extensions.
+
+The current architecture is suitable for continuing MVP validation and physical AGV integration, but it is not yet platform-grade for deep customer customization. The main coupling points identified are fixed stations/maps and workflow assumptions in the Domain/MES boundary, the broad responsibility of the WPF `MainViewModel`, duplicated API/device/UI DTO shapes, direct service registration without a module registry, and the workflow editor being persisted locally without a versioned execution contract.
+
+The agreed target is an incremental “shared platform + standard modules + customer extensions” structure:
+
+```text
+Platform Core / Contracts / Application / Device Abstractions
+        -> WPF Shell + Standard Modules
+        -> Customer Profile + Customer Workflow/Driver/UI Modules
+        -> Infrastructure Drivers for Simulator, Vendor TCP, instruments and PLCs
+```
+
+The current five-project split remains usable as an intermediate structure. Physical project splitting will follow after interface boundaries stabilize. The dependency rule is that Domain and Application do not depend on WPF, databases, or vendor protocols; WPF calls application use cases; device protocols remain behind driver interfaces; and customer differences are not implemented as customer-specific branches in core services.
+
+### Agreed extension boundaries
+
+- `IAgvDriver`: connection, snapshot, dispatch, pause, resume, cancel, and vendor-error conversion.
+- Device capabilities: UI and application services check supported operations instead of testing vendor names.
+- `IWorkflowDefinition`: versioned, validated workflow definitions for standard and customer processes.
+- Scheduling strategy: pluggable AGV selection and route policy.
+- `IControlCenterModule`: service, view, command, menu, and permission registration for standard and customer modules.
+- Profile/configuration: driver selection, AGV IDs, stations, maps, feature flags, timeouts, permissions, and display options.
+
+The workflow editor must eventually feed a runtime workflow executor. Saving a draggable JSON definition alone is not sufficient for a production template; definitions require identity, version, validation, publish status, migration behavior, and auditable execution.
+
+The first boundary implementation is now in place. `src/MesControlAgv.Contracts` owns the shared task, KPI, station, AGV snapshot, command, and planning response/request records. `src/MesControlAgv.Application` owns the use-case interfaces `ITaskApplicationService`, `IKpiDashboardApplicationService`, and the normalized AGV gateway ports. MES implements those application interfaces; Adapter remains the HTTP/TCP infrastructure implementation of the AGV ports; WPF deserializes shared contracts and maps them to UI models.
+
+The current dependency direction is: `Application -> Contracts + Domain`; `MES -> Application + Contracts + Domain`; `Adapter -> Contracts + Domain`; and `WPF -> Contracts + Domain`. The MES-side `AdapterClient` implements the Application gateway ports while the Adapter service remains the device-protocol boundary. The boundary is intentionally incremental: a complete workflow executor, plugin loader, profile system, and physical-device protocol acceptance are still future work.
+
+The next platformization slice is also in place. `AgvCapabilitiesResponse` is now part of the shared device snapshot contract; Adapter normalizes capability metadata for fleet and single-snapshot responses, and WPF gates pause/resume/cancel commands from the declared capabilities instead of assuming every AGV supports every command. The WPF shell now has a `ControlCenterModuleRegistry` with standard module IDs for task monitoring, AGV communications, batch import, KPI, and workflow design. It is currently a registration boundary, while view/service composition remains the next step.
+
+### Refactor preparation backlog
+
+#### P0 — before the first deep customer customization
+
+- [x] Establish the first shared Contracts boundary for tasks, KPI, stations, device snapshots, commands, and planning responses. Error/workflow/audit contracts remain to be expanded.
+- [x] Introduce the Application/use-case layer for task and KPI boundaries; WPF no longer owns MES state transitions.
+- [ ] Move fixed stations, map data, device parameters, and timeouts toward Profile/configuration or persistence.
+- [ ] Split `MainViewModel` into task-monitor, AGV, batch-import, KPI, workflow, and future alarm/device modules.
+- [x] Establish the first device capability model and WPF module registry; vendor-specific `IAgvDriver` implementation remains.
+- [ ] Add workflow version, validation, publish status, and runtime execution entry points.
+
+#### P1 — platform capability enhancement
+
+- [ ] Add workflow executor, scheduling strategy, unified alarms, and richer audit contracts.
+- [ ] Add specialized abstractions for instruments, barcode scanners, PLCs, and other site devices.
+- [ ] Add API/plugin compatibility versions and a customer Profile model.
+- [ ] Add contract tests shared by Simulator and vendor drivers.
+
+#### P2 — customer delivery readiness
+
+- [ ] Define extension packaging, compatibility checks, configuration migration, and database migration.
+- [ ] Provide a standard-module and customer-extension sample.
+- [ ] Define production plugin whitelist/signing, audit, rollback, and release procedures.
+- [ ] Complete physical-device, instrument, workflow, and safety acceptance checklists.
+
+### Platformization acceptance criteria
+
+1. Adding another AGV vendor requires a new driver without changing Domain, standard task services, or WPF pages.
+2. Adding a customer workflow requires a workflow definition, strategy, or customer module rather than a copied application.
+3. Customer pages are loaded through module registration, Profile, and permissions.
+4. Station names, map, AGV count, device endpoints, timeouts, and feature flags can change without editing platform core code.
+5. Platform upgrades preserve or migrate customer profiles, workflow versions, and data, with a rollback path.
+6. Device commands remain capability-checked, idempotent, timeout-aware, and auditable.
+
+This entry records architecture preparation only. No production refactor has been claimed complete, and the Simulator remains the default until physical AGV acceptance is finished.
