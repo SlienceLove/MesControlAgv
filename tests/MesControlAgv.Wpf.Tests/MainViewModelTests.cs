@@ -129,8 +129,21 @@ public class MainViewModelTests
 
 internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesClient
 {
+    private readonly List<DashboardStation> _stations = [];
+
     public DateOnly? LastRequestedDate { get; private set; }
     public DateOnly? LastRequestedKpiDate { get; private set; }
+    public int GetStationsCallCount { get; private set; }
+    public DashboardPlannedPath? PlannedPath { get; set; }
+    public (string FromStationId, string ToStationId, IReadOnlyCollection<string>? BlockedStations)? LastPlanRequest { get; private set; }
+    public (int SourceStationCode, int TargetStationCode, int Priority, string? Description, string? ExternalId)? LastCreateRequest { get; private set; }
+    public IReadOnlyList<DashboardStation> Stations => _stations;
+
+    public void SetStations(params DashboardStation[] stations)
+    {
+        _stations.Clear();
+        _stations.AddRange(stations);
+    }
 
     public Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken) => Task.FromResult(tasks);
     public Task<IReadOnlyList<DashboardTask>> GetTasksAsync(DateOnly date, CancellationToken cancellationToken)
@@ -158,7 +171,26 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
             tasks[0],
             [new DashboardTaskEvent(Guid.NewGuid(), "Timeout", "{\"source\":\"test\"}", DateTime.UtcNow)]));
     public Task<AgvDashboardSnapshot> GetAgvSnapshotAsync(CancellationToken cancellationToken) => Task.FromResult(new AgvDashboardSnapshot(true, "adapter", "SAMPLE_01", null));
+    public Task<IReadOnlyList<DashboardStation>> GetStationsAsync(CancellationToken cancellationToken)
+    {
+        GetStationsCallCount++;
+        return Task.FromResult<IReadOnlyList<DashboardStation>>(_stations);
+    }
+    public Task<DashboardPlannedPath> PlanPathAsync(
+        string fromStationId,
+        string toStationId,
+        IReadOnlyCollection<string>? blockedStations,
+        CancellationToken cancellationToken)
+    {
+        LastPlanRequest = (fromStationId, toStationId, blockedStations);
+        return Task.FromResult(PlannedPath ?? new DashboardPlannedPath([fromStationId, toStationId], 1));
+    }
     public Task<DashboardTask> CreateTaskAsync(CancellationToken cancellationToken) => Task.FromResult(tasks[0]);
+    public Task<DashboardTask> CreateTaskAsync(int sourceStationCode, int targetStationCode, int priority, string? description, string? externalId, CancellationToken cancellationToken)
+    {
+        LastCreateRequest = (sourceStationCode, targetStationCode, priority, description, externalId);
+        return Task.FromResult(tasks[0]);
+    }
     public Task<DashboardTask> MarkArrivedAsync(Guid taskId, CancellationToken cancellationToken) => Task.FromResult(tasks[0]);
     public Task<DashboardTask> ConfirmPickupAsync(Guid taskId, string operatorName, CancellationToken cancellationToken) => Task.FromResult(tasks[0]);
     public Task<DashboardTask> ConfirmDropoffAsync(Guid taskId, string operatorName, CancellationToken cancellationToken) => Task.FromResult(tasks[0]);

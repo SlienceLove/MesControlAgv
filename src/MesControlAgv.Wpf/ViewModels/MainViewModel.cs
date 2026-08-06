@@ -28,6 +28,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _message = string.Empty;
     private string _batchStatus = "\u8BF7\u9009\u62E9 CSV \u6216 XLSX \u6587\u4EF6\u5BFC\u5165\u4EFB\u52A1";
     private DateTime? _taskFilterDate = DateTime.UtcNow.Date;
+    private DashboardStation? _newTaskSourceStation;
+    private DashboardStation? _newTaskTargetStation;
+    private int _newTaskPriority;
+    private string _newTaskDescription = string.Empty;
+    private string _newTaskExternalId = string.Empty;
+    private string _operatorName = Environment.UserName;
+    private DashboardPlannedPath? _plannedRoute;
+    private string _routePreview = "\u8BF7\u9009\u62E9\u8D77\u70B9\u548C\u7EC8\u70B9\u540E\u9884\u89C8\u8DEF\u7EBF\u3002";
+    private bool _stationsLoaded;
 
     public MainViewModel(IMesClient mes, ISimulatorControlClient? simulator = null, ControlCenterModuleRegistry? moduleRegistry = null)
     {
@@ -37,13 +46,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         WorkflowEditor = new WorkflowEditorViewModel(new WorkflowStore());
         _modules = new ControlCenterViewModel(WorkflowEditor, ModuleRegistry);
         Kpi = _modules.KpiDashboard;
-        CreateTaskCommand = new AsyncCommand(() => ExecuteActionAsync(CreateTaskAsync));
+        CreateTaskCommand = new AsyncCommand(() => ExecuteActionAsync(CreateTaskAsync), CanCreateTask);
+        PlanRouteCommand = new AsyncCommand(() => ExecuteActionAsync(PlanRouteAsync), CanPlanRoute);
         ArriveCommand = new AsyncCommand(() => ExecuteActionAsync(ArriveAsync), () => SelectedTask?.Status is "MovingToPickup" or "MovingToDropoff");
-        ConfirmPickupCommand = new AsyncCommand(() => ExecuteActionAsync(ConfirmPickupAsync), () => SelectedTask?.Status == "WaitingPickupConfirmation");
-        ConfirmDropoffCommand = new AsyncCommand(() => ExecuteActionAsync(ConfirmDropoffAsync), () => SelectedTask?.Status == "WaitingDropoffConfirmation");
+        ConfirmPickupCommand = new AsyncCommand(() => ExecuteActionAsync(ConfirmPickupAsync), () => HasOperator && SelectedTask?.Status == "WaitingPickupConfirmation");
+        ConfirmDropoffCommand = new AsyncCommand(() => ExecuteActionAsync(ConfirmDropoffAsync), () => HasOperator && SelectedTask?.Status == "WaitingDropoffConfirmation");
         RetryCommand = new AsyncCommand(() => ExecuteActionAsync(RetryAsync), () => SelectedTask?.Status == "Failed");
         RecoverCommand = new AsyncCommand(() => ExecuteActionAsync(RecoverAsync), () => SelectedTask?.Status == "Unknown");
-        CancelCommand = new AsyncCommand(() => ExecuteActionAsync(CancelAsync), () => SelectedTask is { Status: not "Completed" and not "Cancelled" });
+        CancelCommand = new AsyncCommand(() => ExecuteActionAsync(CancelAsync), () => HasOperator && SelectedTask is { Status: not "Completed" and not "Cancelled" });
         SimulatorArriveCommand = new AsyncCommand(() => ExecuteActionAsync(() => ApplySimulatorControlAsync("arrive")), () => _simulator is not null);
         SimulatorFailCommand = new AsyncCommand(() => ExecuteActionAsync(() => ApplySimulatorControlAsync("fail")), () => _simulator is not null);
         SimulatorTimeoutCommand = new AsyncCommand(() => ExecuteActionAsync(() => ApplySimulatorControlAsync("timeout")), () => _simulator is not null);
@@ -71,6 +81,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ObservableCollection<AgvRowViewModel> Agvs => _modules.AgvCommunication.Agvs;
     public ObservableCollection<BatchTaskRowViewModel> BatchTasks => _modules.BatchImport.BatchTasks;
     public ObservableCollection<string> BatchImportIssues => _modules.BatchImport.BatchImportIssues;
+    public ObservableCollection<DashboardStation> AvailableStations { get; } = [];
     public WorkflowEditorViewModel WorkflowEditor { get; }
     public KpiDashboardViewModel Kpi { get; }
     public ControlCenterModuleRegistry ModuleRegistry { get; }
@@ -130,6 +141,58 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
     public string Message { get => _message; private set => SetField(ref _message, value); }
+    public DashboardStation? NewTaskSourceStation
+    {
+        get => _newTaskSourceStation;
+        set
+        {
+            if (!SetField(ref _newTaskSourceStation, value)) return;
+            InvalidateRoutePreview();
+        }
+    }
+    public DashboardStation? NewTaskTargetStation
+    {
+        get => _newTaskTargetStation;
+        set
+        {
+            if (!SetField(ref _newTaskTargetStation, value)) return;
+            InvalidateRoutePreview();
+        }
+    }
+    public int NewTaskPriority
+    {
+        get => _newTaskPriority;
+        set => SetField(ref _newTaskPriority, value);
+    }
+    public string NewTaskDescription
+    {
+        get => _newTaskDescription;
+        set => SetField(ref _newTaskDescription, value ?? string.Empty);
+    }
+    public string NewTaskExternalId
+    {
+        get => _newTaskExternalId;
+        set => SetField(ref _newTaskExternalId, value ?? string.Empty);
+    }
+    public string OperatorName
+    {
+        get => _operatorName;
+        set
+        {
+            if (!SetField(ref _operatorName, value ?? string.Empty)) return;
+            RefreshCommandState();
+        }
+    }
+    public DashboardPlannedPath? PlannedRoute
+    {
+        get => _plannedRoute;
+        private set => SetField(ref _plannedRoute, value);
+    }
+    public string RoutePreview
+    {
+        get => _routePreview;
+        private set => SetField(ref _routePreview, value);
+    }
     public string BatchStatus
     {
         get => _batchStatus;
@@ -159,6 +222,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 #endif
 
     public ICommand CreateTaskCommand { get; }
+    public ICommand PlanRouteCommand { get; }
     public ICommand ArriveCommand { get; }
     public ICommand ConfirmPickupCommand { get; }
     public ICommand ConfirmDropoffCommand { get; }
@@ -190,6 +254,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         try
         {
+            if (!_stationsLoaded) await LoadStationsAsync();
             var tasks = await _mes.GetTasksAsync(CurrentTaskDate, _shutdown.Token);
             var fleet = await _mes.GetAgvFleetAsync(_shutdown.Token);
             await Kpi.RefreshAsync(_mes, CurrentTaskDate, _shutdown.Token);
@@ -226,58 +291,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         UpdateAgvs(fleet);
         BatchStatus = $"AGV \u72B6\u6001\u5DF2\u5237\u65B0\uFF1A{fleet.Count} \u53F0";
     }
-
-    #if false
-    public Task ImportBatchFileAsync(string filePath)
-    {
-        try
-        {
-            var result = _batchParser.Parse(filePath);
-            BatchTasks.Clear();
-            BatchImportIssues.Clear();
-            foreach (var issue in result.Issues) BatchImportIssues.Add($"�?{issue.SourceRowNumber} 琛岋細{issue.Message}");
-            foreach (var task in result.Tasks) BatchTasks.Add(new BatchTaskRowViewModel(task));
-            BatchStatus = $"宸插鍏?{BatchTasks.Count} 鏉′换鍔★紝闂�?{BatchImportIssues.Count} 鏉★紱鍙紪杈戜紭鍏堢骇鍚庢彁浜?;
-            RefreshBatchCommandState();
-        }
-        catch (Exception exception)
-        {
-            BatchStatus = $"瀵煎叆澶辫触锛歿exception.Message}";
-            Message = exception.Message;
-        }
-        return Task.CompletedTask;
-    }
-
-    private async Task SubmitBatchAsync()
-    {
-        SortBatchTasks();
-        var submitted = 0;
-        foreach (var task in BatchTasks.Where(task => task.Status == "寰呮彁浜?).ToList())
-        {
-            if (!TryResolveStationCode(task.SourceStation, out var source) ||
-                !TryResolveStationCode(task.TargetStation, out var target))
-            {
-                task.MarkFailed("璧风�?缁堢偣蹇呴』鏄暟瀛楃紪鐮併€丄GV 绔欑�?ID 鎴栫珯鐐瑰悕�?);
-                continue;
-            }
-
-            try
-            {
-                await _mes.CreateTaskAsync(source, target, task.Priority, task.Description, task.TaskId, _shutdown.Token);
-                task.MarkSubmitted();
-                submitted++;
-            }
-            catch (Exception exception)
-            {
-                task.MarkFailed(exception.Message);
-            }
-        }
-        BatchStatus = $"鎵归噺鎻愪氦瀹屾垚锛氭垚�?{submitted} 鏉★紝寰呮彁�?{BatchTasks.Count(task => task.Status == "寰呮彁浜?)} �?;
-        RefreshBatchCommandState();
-        await RefreshAsync();
-    }
-
-    #endif
 
     public Task ImportBatchFileAsync(string filePath)
     {
@@ -321,7 +334,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             }
         }
 
-        var pending = BatchTasks.Count(task => task.Status == "���ύ");
+        var pending = BatchTasks.Count(task => task.Status == "���ύ");
         BatchStatus = $"Batch submission complete: {submitted} succeeded, {pending} pending";
         RefreshBatchCommandState();
         await RefreshAsync();
@@ -375,9 +388,66 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         await RefreshAsync();
     }
 
+    private async Task LoadStationsAsync()
+    {
+        var sourceCode = NewTaskSourceStation?.Code;
+        var targetCode = NewTaskTargetStation?.Code;
+        var stations = await _mes.GetStationsAsync(_shutdown.Token);
+
+        AvailableStations.Clear();
+        foreach (var station in stations.Where(station => station.Enabled).OrderBy(station => station.Code))
+        {
+            AvailableStations.Add(station);
+        }
+        _stationsLoaded = true;
+
+        NewTaskSourceStation = sourceCode is { } source
+            ? AvailableStations.FirstOrDefault(station => station.Code == source)
+            : null;
+        NewTaskTargetStation = targetCode is { } target
+            ? AvailableStations.FirstOrDefault(station => station.Code == target)
+            : null;
+        RefreshCreateTaskCommandState();
+    }
+
+    private bool CanPlanRoute() =>
+        NewTaskSourceStation is { Enabled: true } source &&
+        NewTaskTargetStation is { Enabled: true } target &&
+        source.Code != target.Code;
+
+    private bool CanCreateTask() => CanPlanRoute();
+    private bool HasOperator => !string.IsNullOrWhiteSpace(OperatorName);
+
+    private async Task PlanRouteAsync()
+    {
+        if (NewTaskSourceStation is not { } source || NewTaskTargetStation is not { } target) return;
+
+        PlannedRoute = null;
+        RoutePreview = "\u6B63\u5728\u8BA1\u7B97\u8DEF\u7EBF...";
+        try
+        {
+            var path = await _mes.PlanPathAsync(source.AgvStationId, target.AgvStationId, null, _shutdown.Token);
+            PlannedRoute = path;
+            RoutePreview = $"{string.Join(" \u2192 ", path.Stations)}\uFF08\u6210\u672C {path.Cost:0.##}\uFF09";
+        }
+        catch (Exception exception)
+        {
+            RoutePreview = $"\u8DEF\u7EBF\u9884\u89C8\u5931\u8D25\uFF1A{exception.Message}";
+            throw;
+        }
+    }
+
     private async Task CreateTaskAsync()
     {
-        var created = await _mes.CreateTaskAsync(_shutdown.Token);
+        if (NewTaskSourceStation is not { } source || NewTaskTargetStation is not { } target) return;
+
+        var created = await _mes.CreateTaskAsync(
+            source.Code,
+            target.Code,
+            NewTaskPriority,
+            NormalizeOptionalText(NewTaskDescription),
+            NormalizeOptionalText(NewTaskExternalId),
+            _shutdown.Token);
         TaskFilterDate = DateTime.UtcNow.Date;
         await RefreshAsync(created.Id);
     }
@@ -396,11 +466,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         await RefreshAsync();
     }
 
-    private async Task ConfirmPickupAsync() { if (SelectedTask is not null) await _mes.ConfirmPickupAsync(SelectedTask.Id, "wpf-operator", _shutdown.Token); await RefreshAsync(); }
-    private async Task ConfirmDropoffAsync() { if (SelectedTask is not null) await _mes.ConfirmDropoffAsync(SelectedTask.Id, "wpf-operator", _shutdown.Token); await RefreshAsync(); }
+    private async Task ConfirmPickupAsync() { if (SelectedTask is not null) await _mes.ConfirmPickupAsync(SelectedTask.Id, OperatorName.Trim(), _shutdown.Token); await RefreshAsync(); }
+    private async Task ConfirmDropoffAsync() { if (SelectedTask is not null) await _mes.ConfirmDropoffAsync(SelectedTask.Id, OperatorName.Trim(), _shutdown.Token); await RefreshAsync(); }
     private async Task RetryAsync() { if (SelectedTask is not null) await _mes.RetryAsync(SelectedTask.Id, _shutdown.Token); await RefreshAsync(); }
     private async Task RecoverAsync() { if (SelectedTask is not null) await _mes.RecoverAsync(SelectedTask.Id, _shutdown.Token); await RefreshAsync(); }
-    private async Task CancelAsync() { if (SelectedTask is not null) await _mes.CancelAsync(SelectedTask.Id, "wpf-operator", _shutdown.Token); await RefreshAsync(); }
+    private async Task CancelAsync() { if (SelectedTask is not null) await _mes.CancelAsync(SelectedTask.Id, OperatorName.Trim(), _shutdown.Token); await RefreshAsync(); }
     private async Task ApplySimulatorControlAsync(string mode) { if (_simulator is null) return; await _simulator.ApplyControlAsync(mode, _shutdown.Token); await RefreshAsync(); }
 
     private async Task ExecuteActionAsync(Func<Task> action)
@@ -419,6 +489,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         foreach (var command in new[] { ArriveCommand, ConfirmPickupCommand, ConfirmDropoffCommand, RetryCommand, RecoverCommand, CancelCommand }.OfType<AsyncCommand>()) command.RaiseCanExecuteChanged();
     }
+
+    private void InvalidateRoutePreview()
+    {
+        PlannedRoute = null;
+        RoutePreview = "\u8BF7\u9009\u62E9\u8D77\u70B9\u548C\u7EC8\u70B9\u540E\u9884\u89C8\u8DEF\u7EBF\u3002";
+        RefreshCreateTaskCommandState();
+    }
+
+    private void RefreshCreateTaskCommandState()
+    {
+        foreach (var command in new[] { PlanRouteCommand, CreateTaskCommand }.OfType<AsyncCommand>()) command.RaiseCanExecuteChanged();
+    }
+
+    private static string? NormalizeOptionalText(string value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private void RefreshAgvCommandState()
     {

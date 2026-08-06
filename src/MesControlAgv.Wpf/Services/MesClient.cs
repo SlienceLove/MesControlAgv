@@ -5,6 +5,7 @@ using MesControlAgv.Contracts;
 using ContractAgvSnapshot = MesControlAgv.Contracts.AgvSnapshotResponse;
 using ContractAgvTask = MesControlAgv.Contracts.AgvTaskResponse;
 using ContractKpiDashboard = MesControlAgv.Contracts.KpiDashboardResponse;
+using ContractPlannedPath = MesControlAgv.Contracts.PlannedPathResponse;
 using ContractTaskDetail = MesControlAgv.Contracts.TaskDetailResponse;
 using ContractTaskResponse = MesControlAgv.Contracts.TaskResponse;
 
@@ -40,6 +41,32 @@ public sealed class MesClient(HttpClient client) : IMesClient
         return new DashboardTaskDetail(
             ToDashboardTask(detail.Task),
             detail.Events.Select(item => new DashboardTaskEvent(item.Id, item.EventType, item.Payload, item.CreatedAt)).ToList());
+    }
+
+    public async Task<IReadOnlyList<DashboardStation>> GetStationsAsync(CancellationToken cancellationToken)
+    {
+        var stations = await client.GetFromJsonAsync<List<StationResponse>>("api/stations", cancellationToken) ?? [];
+        return stations.Select(station => new DashboardStation(
+            station.Code,
+            station.Name,
+            station.AgvStationId,
+            station.Enabled)).ToList();
+    }
+
+    public async Task<DashboardPlannedPath> PlanPathAsync(
+        string fromStationId,
+        string toStationId,
+        IReadOnlyCollection<string>? blockedStations,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.PostAsJsonAsync(
+            "api/planning/path",
+            new PlanPathRequest(fromStationId, toStationId, blockedStations),
+            cancellationToken);
+        response.EnsureSuccessStatusCode();
+        var path = await response.Content.ReadFromJsonAsync<ContractPlannedPath>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no planned path.");
+        return new DashboardPlannedPath(path.Stations, path.Cost);
     }
 
     public async Task<AgvDashboardSnapshot> GetAgvSnapshotAsync(CancellationToken cancellationToken)

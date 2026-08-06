@@ -29,6 +29,8 @@ public sealed record AgvDashboardSnapshot(
 public sealed record AgvCommandResult(Guid TaskId, string DeviceTaskId, string TargetStationId, string State, string? LastError, string AgvId = "AGV-01", IReadOnlyList<string>? Path = null);
 public sealed record DashboardTaskEvent(Guid Id, string EventType, string Payload, DateTime CreatedAt);
 public sealed record DashboardTaskDetail(DashboardTask Task, IReadOnlyList<DashboardTaskEvent> Events);
+public sealed record DashboardStation(int Code, string Name, string AgvStationId, bool Enabled);
+public sealed record DashboardPlannedPath(IReadOnlyList<string> Stations, double Cost);
 
 public interface IMesClient
 {
@@ -36,6 +38,14 @@ public interface IMesClient
     Task<IReadOnlyList<DashboardTask>> GetTasksAsync(DateOnly date, CancellationToken cancellationToken) => GetTasksAsync(cancellationToken);
     Task<KpiDashboard> GetKpiDashboardAsync(DateOnly date, CancellationToken cancellationToken);
     Task<DashboardTaskDetail?> GetTaskDetailAsync(Guid taskId, CancellationToken cancellationToken);
+    Task<IReadOnlyList<DashboardStation>> GetStationsAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<DashboardStation>>([]);
+    Task<DashboardPlannedPath> PlanPathAsync(
+        string fromStationId,
+        string toStationId,
+        IReadOnlyCollection<string>? blockedStations,
+        CancellationToken cancellationToken) =>
+        Task.FromException<DashboardPlannedPath>(new NotSupportedException("Path planning is not supported by this MES client."));
     Task<AgvDashboardSnapshot> GetAgvSnapshotAsync(CancellationToken cancellationToken);
     async Task<IReadOnlyList<AgvDashboardSnapshot>> GetAgvFleetAsync(CancellationToken cancellationToken) => [await GetAgvSnapshotAsync(cancellationToken)];
     Task<AgvCommandResult?> ExecuteAgvCommandAsync(string agvId, string command, Guid? taskId, CancellationToken cancellationToken) => Task.FromResult<AgvCommandResult?>(null);
