@@ -25,6 +25,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\MesControlAgv.Mes\MesControlAgv.Mes.csproj" />
     <ProjectReference Include="..\..\src\MesControlAgv.Adapter\MesControlAgv.Adapter.csproj" Aliases="AdapterApp" />
+    <ProjectReference Include="..\..\src\MesControlAgv.Simulator\MesControlAgv.Simulator.csproj" />
   </ItemGroup>
 
 </Project>

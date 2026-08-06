@@ -74,6 +74,20 @@ public sealed class TaskRepository(MesDbContext database)
     public Task<List<TransportTask>> ListByStatusAsync(MesControlAgv.Domain.TaskStatus status, CancellationToken cancellationToken) =>
         database.TransportTasks.Where(task => task.Status == status).ToListAsync(cancellationToken);
 
+    public Task<List<TransportTask>> ListActiveAssignedAsync(CancellationToken cancellationToken) =>
+        database.TransportTasks
+            .Where(task => task.ActiveAgvId != null
+                && task.ActiveDeviceTaskId != null
+                && (task.Status == MesControlAgv.Domain.TaskStatus.Dispatching
+                    || task.Status == MesControlAgv.Domain.TaskStatus.MovingToPickup
+                    || task.Status == MesControlAgv.Domain.TaskStatus.MovingToDropoff
+                    || task.Status == MesControlAgv.Domain.TaskStatus.WaitingPickupConfirmation
+                    || task.Status == MesControlAgv.Domain.TaskStatus.WaitingDropoffConfirmation
+                    || task.Status == MesControlAgv.Domain.TaskStatus.Paused
+                    || task.Status == MesControlAgv.Domain.TaskStatus.Unknown))
+            .OrderByDescending(task => task.UpdatedAt)
+            .ToListAsync(cancellationToken);
+
     public async Task<TransportTask> SetActiveTargetAsync(
         Guid taskId,
         string targetStationId,

@@ -17,6 +17,7 @@ public interface ITaskApplicationService
     Task<TaskResponse> CancelAsync(Guid taskId, string operatorName, CancellationToken cancellationToken);
     Task<TaskResponse> RecoverAsync(Guid taskId, CancellationToken cancellationToken);
     Task<TaskResponse?> RecordAgvCommandAsync(Guid operationId, string command, AgvTaskResponse result, CancellationToken cancellationToken);
+    Task<IReadOnlyList<AgvFleetStatusResponse>> GetFleetStatusAsync(CancellationToken cancellationToken);
     Task ReconcileIncompleteAsync(CancellationToken cancellationToken);
     Task ReconcileActiveAsync(CancellationToken cancellationToken);
     Task<TaskDetailResponse?> GetDetailAsync(Guid taskId, CancellationToken cancellationToken);

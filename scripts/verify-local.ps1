@@ -76,7 +76,15 @@ if ($completed.status -ne 'Completed') { throw "Unexpected terminal status: $($c
 
 $detail = Invoke-RestMethod -Uri "$mes/api/tasks/$($task.id)"
 $eventTypes = @($detail.events | ForEach-Object { $_.eventType })
-foreach ($requiredEvent in @('PickupConfirmed', 'DropoffConfirmed')) {
+foreach ($requiredEvent in @(
+    'TaskCreated',
+    'DispatchRequested',
+    'PauseRequested',
+    'ResumeRequested',
+    'PickupArrived',
+    'PickupConfirmed',
+    'DropoffArrived',
+    'DropoffConfirmed')) {
     if ($eventTypes -notcontains $requiredEvent) { throw "Missing audit event: $requiredEvent" }
 }
 

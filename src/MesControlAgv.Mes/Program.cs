@@ -212,6 +212,9 @@ app.MapGet("/api/agvs/fleet", async (IAgvGateway adapter, CancellationToken canc
     return Results.Ok(new[] { await adapter.GetSnapshotAsync(cancellationToken) });
 });
 
+app.MapGet("/api/agvs/fleet/status", async (ITaskApplicationService service, CancellationToken cancellationToken) =>
+    Results.Ok(await service.GetFleetStatusAsync(cancellationToken)));
+
 app.MapPost("/api/agvs/{agvId}/command", async (
     string agvId,
     AgvCommandRequest request,

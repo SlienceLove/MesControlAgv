@@ -50,6 +50,10 @@ public sealed class TaskCreationViewModelTests
         viewModel.NewTaskDescription = "Urgent preparation transfer";
         viewModel.NewTaskExternalId = "WPF-ORDER-42";
 
+        Assert.False(viewModel.CreateTaskCommand.CanExecute(null));
+        viewModel.PlanRouteCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.PlannedRoute is not null);
+        Assert.True(viewModel.CreateTaskCommand.CanExecute(null));
         viewModel.CreateTaskCommand.Execute(null);
 
         await WaitUntilAsync(() => client.LastCreateRequest is not null);
@@ -87,6 +91,71 @@ public sealed class TaskCreationViewModelTests
 
         await WaitUntilAsync(() => client.DispatchCallCount == 1);
         Assert.Equal(task.Id, client.LastDispatchTaskId);
+    }
+
+    [Fact]
+    public async Task Dispatch_refreshes_selected_task_and_reports_execution_assignment()
+    {
+        var created = new DashboardTask(Guid.NewGuid(), 2, 4, "Created", 0, null);
+        var dispatched = created with
+        {
+            Status = "MovingToPickup",
+            ActiveAgvId = "AGV-02",
+            ActiveDeviceTaskId = "pickup-device-42",
+            ActivePath = ["SAMPLE_01", "ST_OPEN_01", "ST_PREP_01"]
+        };
+        var client = new FakeMesClient([created]) { DispatchResult = dispatched };
+        client.SetStations(
+            new DashboardStation(2, "Sample", "SAMPLE_01", true),
+            new DashboardStation(4, "Preparation", "ST_PREP_01", true));
+        using var viewModel = new MainViewModel(client);
+
+        await viewModel.RefreshAsync();
+        viewModel.DispatchTaskCommand.Execute(null);
+
+        await WaitUntilAsync(() => viewModel.SelectedTask?.Status == "MovingToPickup");
+        Assert.Equal("AGV-02", viewModel.SelectedTask?.AssignedAgvDescription);
+        Assert.Equal("pickup-device-42", viewModel.SelectedTask?.DeviceTaskDescription);
+        Assert.Contains("ST_OPEN_01", viewModel.SelectedTask?.CurrentPathDescription);
+        Assert.Contains("已派发", viewModel.ActionStatus, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Operator_validation_disables_manual_confirmation_and_cancel()
+    {
+        var task = new DashboardTask(Guid.NewGuid(), 2, 4, "WaitingPickupConfirmation", 0, null);
+        using var viewModel = new MainViewModel(new FakeMesClient([task]));
+
+        await viewModel.RefreshAsync();
+        viewModel.OperatorName = "  ";
+
+        Assert.False(viewModel.ConfirmPickupCommand.CanExecute(null));
+        Assert.False(viewModel.CancelCommand.CanExecute(null));
+        Assert.Contains("操作员", viewModel.OperatorValidationMessage, StringComparison.Ordinal);
+
+        viewModel.OperatorName = "operator-1";
+        Assert.True(viewModel.ConfirmPickupCommand.CanExecute(null));
+        Assert.True(viewModel.CancelCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task Dispatch_failure_remains_visible_after_background_refresh()
+    {
+        var task = new DashboardTask(Guid.NewGuid(), 2, 4, "Created", 0, null);
+        var client = new FakeMesClient([task])
+        {
+            DispatchException = new InvalidOperationException("No online idle AGV is available.")
+        };
+        using var viewModel = new MainViewModel(client);
+
+        await viewModel.RefreshAsync();
+        viewModel.DispatchTaskCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.Message.Contains("No online", StringComparison.Ordinal));
+
+        Assert.Equal("操作失败", viewModel.ActionStatus);
+        await viewModel.RefreshAsync();
+        Assert.Contains("No online idle AGV", viewModel.Message, StringComparison.Ordinal);
+        Assert.True(viewModel.DispatchTaskCommand.CanExecute(null));
     }
 
     private static FakeMesClient CreateClient()

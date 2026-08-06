@@ -9,7 +9,12 @@ public sealed class TestAdapterClient : IAgvGateway
         Task.FromResult(new AgvTaskResponse(operationId, operationId.ToString("N"), targetStationId, "moving", null));
 
     public Task<AgvTaskResponse?> GetTaskAsync(Guid operationId, CancellationToken cancellationToken) =>
-        Task.FromResult<AgvTaskResponse?>(null);
+        Task.FromResult<AgvTaskResponse?>(new AgvTaskResponse(
+            operationId,
+            operationId.ToString("N"),
+            "SAMPLE_01",
+            "moving",
+            null));
 
     public Task<AgvTaskResponse?> CancelAsync(Guid operationId, CancellationToken cancellationToken) =>
         Task.FromResult<AgvTaskResponse?>(null);

@@ -25,7 +25,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _connectionStatus = "\u6B63\u5728\u8FDE\u63A5 MES";
     private string _agvStatus = "\u672A\u77E5";
     private string _agvStation = "-";
+    private string _agvExecutionStatus = "\u65E0\u6D3B\u52A8\u8FD0\u8F93\u4EFB\u52A1";
     private string _message = string.Empty;
+    private string _actionStatus = "\u8BF7\u521B\u5EFA\u4EFB\u52A1\uFF0C\u7136\u540E\u4ECE\u4EFB\u52A1\u5217\u8868\u4E2D\u663E\u5F0F\u6D3E\u53D1\u3002";
     private string _batchStatus = "\u8BF7\u9009\u62E9 CSV \u6216 XLSX \u6587\u4EF6\u5BFC\u5165\u4EFB\u52A1";
     private DateTime? _taskFilterDate = DateTime.UtcNow.Date;
     private DashboardStation? _newTaskSourceStation;
@@ -142,6 +144,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
     public string Message { get => _message; private set => SetField(ref _message, value); }
+    public string ActionStatus { get => _actionStatus; private set => SetField(ref _actionStatus, value); }
     public DashboardStation? NewTaskSourceStation
     {
         get => _newTaskSourceStation;
@@ -150,6 +153,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             if (!SetField(ref _newTaskSourceStation, value)) return;
             InvalidateRoutePreview();
         }
+    }
+    public string AgvExecutionStatus
+    {
+        get => _agvExecutionStatus;
+        private set => SetField(ref _agvExecutionStatus, value);
     }
     public DashboardStation? NewTaskTargetStation
     {
@@ -163,7 +171,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public int NewTaskPriority
     {
         get => _newTaskPriority;
-        set => SetField(ref _newTaskPriority, value);
+        set
+        {
+            if (!SetField(ref _newTaskPriority, value)) return;
+            RefreshCreateTaskCommandState();
+        }
     }
     public string NewTaskDescription
     {
@@ -182,8 +194,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             if (!SetField(ref _operatorName, value ?? string.Empty)) return;
             RefreshCommandState();
+            OnPropertyChanged(nameof(HasValidOperator));
+            OnPropertyChanged(nameof(OperatorValidationMessage));
         }
     }
+    public bool HasValidOperator => HasOperator;
+    public string OperatorValidationMessage => HasOperator
+        ? string.Empty
+        : "\u8BF7\u8F93\u5165\u64CD\u4F5C\u5458\u540E\u518D\u786E\u8BA4\u3001\u53D6\u6D88\u4EFB\u52A1\u3002";
     public DashboardPlannedPath? PlannedRoute
     {
         get => _plannedRoute;
@@ -194,6 +212,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         get => _routePreview;
         private set => SetField(ref _routePreview, value);
     }
+    public string TaskFormStatus => GetTaskFormStatus();
     public string BatchStatus
     {
         get => _batchStatus;
@@ -267,7 +286,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             if (!_stationsLoaded) await LoadStationsAsync();
             var tasks = await _mes.GetTasksAsync(CurrentTaskDate, _shutdown.Token);
-            var fleet = await _mes.GetAgvFleetAsync(_shutdown.Token);
+            var fleetStatus = await _mes.GetAgvFleetStatusAsync(_shutdown.Token);
+            var fleet = fleetStatus.Select(item => item.Snapshot).ToList();
             await Kpi.RefreshAsync(_mes, CurrentTaskDate, _shutdown.Token);
             var selectedId = preferredTaskId ?? SelectedTask?.Id;
             Tasks.Clear();
@@ -287,7 +307,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             var primary = fleet.FirstOrDefault();
             AgvStatus = primary is null ? "\u65E0 AGV \u6570\u636E" : primary.Online ? $"\u5728\u7EBF / {primary.ControlOwner}" : "\u79BB\u7EBF";
             AgvStation = primary?.CurrentStationId ?? "-";
-            Message = string.Empty;
+            var primaryStatus = fleetStatus.FirstOrDefault();
+            AgvExecutionStatus = primaryStatus?.ActiveTask is not { } active
+                ? "\u65E0\u6D3B\u52A8\u8FD0\u8F93\u4EFB\u52A1"
+                : $"MES {active.MesStatus} / \u8BBE\u5907 {active.DeviceState ?? "\u672A\u77E5"} -> {active.TargetStationId ?? "-"}";
         }
         catch (Exception exception)
         {
@@ -298,7 +321,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public async Task RefreshAgvAsync()
     {
-        var fleet = await _mes.GetAgvFleetAsync(_shutdown.Token);
+        var fleetStatus = await _mes.GetAgvFleetStatusAsync(_shutdown.Token);
+        var fleet = fleetStatus.Select(item => item.Snapshot).ToList();
         UpdateAgvs(fleet);
         BatchStatus = $"AGV \u72B6\u6001\u5DF2\u5237\u65B0\uFF1A{fleet.Count} \u53F0";
     }
@@ -424,9 +448,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private bool CanPlanRoute() =>
         NewTaskSourceStation is { Enabled: true } source &&
         NewTaskTargetStation is { Enabled: true } target &&
-        source.Code != target.Code;
+        source.Code != target.Code &&
+        AvailableStations.Any(station => station.Code == source.Code) &&
+        AvailableStations.Any(station => station.Code == target.Code);
 
-    private bool CanCreateTask() => CanPlanRoute();
+    private bool CanCreateTask() =>
+        CanPlanRoute() &&
+        NewTaskPriority >= 0 &&
+        PlannedRoute is { Stations.Count: >= 2 } route &&
+        string.Equals(route.Stations[0], NewTaskSourceStation!.AgvStationId, StringComparison.Ordinal) &&
+        string.Equals(route.Stations[^1], NewTaskTargetStation!.AgvStationId, StringComparison.Ordinal);
     private bool CanDispatchTask() => SelectedTask?.Status == "Created";
     private bool HasOperator => !string.IsNullOrWhiteSpace(OperatorName);
     private bool CanApplyManualArrival() =>
@@ -441,12 +472,19 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         try
         {
             var path = await _mes.PlanPathAsync(source.AgvStationId, target.AgvStationId, null, _shutdown.Token);
+            if (NewTaskSourceStation?.Code != source.Code || NewTaskTargetStation?.Code != target.Code)
+            {
+                RoutePreview = "\u7AD9\u70B9\u5DF2\u53D8\u66F4\uFF0C\u8BF7\u91CD\u65B0\u9884\u89C8\u8DEF\u7EBF\u3002";
+                return;
+            }
             PlannedRoute = path;
             RoutePreview = $"{string.Join(" \u2192 ", path.Stations)}\uFF08\u6210\u672C {path.Cost:0.##}\uFF09";
+            RefreshCreateTaskCommandState();
         }
         catch (Exception exception)
         {
             RoutePreview = $"\u8DEF\u7EBF\u9884\u89C8\u5931\u8D25\uFF1A{exception.Message}";
+            RefreshCreateTaskCommandState();
             throw;
         }
     }
@@ -463,6 +501,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             NormalizeOptionalText(NewTaskExternalId),
             _shutdown.Token);
         TaskFilterDate = DateTime.UtcNow.Date;
+        ActionStatus = $"\u4EFB\u52A1 {created.Id} \u5DF2\u521B\u5EFA\uFF0C\u8BF7\u5728\u4EFB\u52A1\u5217\u8868\u4E2D\u663E\u5F0F\u6D3E\u53D1\u3002";
         await RefreshAsync(created.Id);
     }
 
@@ -471,6 +510,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         if (SelectedTask is null || SelectedTask.Status != "Created") return;
 
         var dispatched = await _mes.DispatchTaskAsync(SelectedTask.Id, _shutdown.Token);
+        ActionStatus = $"\u4EFB\u52A1 {dispatched.Id} \u5DF2\u6D3E\u53D1\uFF0C\u7B49\u5F85 AGV \u6267\u884C\u3002";
         await RefreshAsync(dispatched.Id);
     }
 
@@ -484,17 +524,52 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         await RefreshAsync();
     }
 
-    private async Task ConfirmPickupAsync() { if (SelectedTask is not null) await _mes.ConfirmPickupAsync(SelectedTask.Id, OperatorName.Trim(), _shutdown.Token); await RefreshAsync(); }
-    private async Task ConfirmDropoffAsync() { if (SelectedTask is not null) await _mes.ConfirmDropoffAsync(SelectedTask.Id, OperatorName.Trim(), _shutdown.Token); await RefreshAsync(); }
-    private async Task RetryAsync() { if (SelectedTask is not null) await _mes.RetryAsync(SelectedTask.Id, _shutdown.Token); await RefreshAsync(); }
-    private async Task RecoverAsync() { if (SelectedTask is not null) await _mes.RecoverAsync(SelectedTask.Id, _shutdown.Token); await RefreshAsync(); }
-    private async Task CancelAsync() { if (SelectedTask is not null) await _mes.CancelAsync(SelectedTask.Id, OperatorName.Trim(), _shutdown.Token); await RefreshAsync(); }
+    private async Task ConfirmPickupAsync()
+    {
+        if (SelectedTask is null) return;
+        await _mes.ConfirmPickupAsync(SelectedTask.Id, OperatorName.Trim(), _shutdown.Token);
+        ActionStatus = $"\u4EFB\u52A1 {SelectedTask.Id} \u5DF2\u786E\u8BA4\u53D6\u8D27\uFF0C\u7EE7\u7EED\u524D\u5F80\u653E\u8D27\u7AD9\u3002";
+        await RefreshAsync();
+    }
+    private async Task ConfirmDropoffAsync()
+    {
+        if (SelectedTask is null) return;
+        await _mes.ConfirmDropoffAsync(SelectedTask.Id, OperatorName.Trim(), _shutdown.Token);
+        ActionStatus = $"\u4EFB\u52A1 {SelectedTask.Id} \u5DF2\u786E\u8BA4\u653E\u8D27\uFF0C\u6D41\u7A0B\u5DF2\u5B8C\u6210\u3002";
+        await RefreshAsync();
+    }
+    private async Task RetryAsync()
+    {
+        if (SelectedTask is null) return;
+        await _mes.RetryAsync(SelectedTask.Id, _shutdown.Token);
+        ActionStatus = $"\u4EFB\u52A1 {SelectedTask.Id} \u5DF2\u91CD\u8BD5\uFF0C\u7B49\u5F85 AGV \u6267\u884C\u3002";
+        await RefreshAsync();
+    }
+    private async Task RecoverAsync()
+    {
+        if (SelectedTask is null) return;
+        await _mes.RecoverAsync(SelectedTask.Id, _shutdown.Token);
+        ActionStatus = $"\u4EFB\u52A1 {SelectedTask.Id} \u5DF2\u91CD\u65B0\u8BFB\u53D6\u72B6\u6001\u3002";
+        await RefreshAsync();
+    }
+    private async Task CancelAsync()
+    {
+        if (SelectedTask is null) return;
+        await _mes.CancelAsync(SelectedTask.Id, OperatorName.Trim(), _shutdown.Token);
+        ActionStatus = $"\u4EFB\u52A1 {SelectedTask.Id} \u5DF2\u53D6\u6D88\u3002";
+        await RefreshAsync();
+    }
     private async Task ApplySimulatorControlAsync(string mode) { if (!IsSimulatorPanelVisible || _simulator is null) return; await _simulator.ApplyControlAsync(mode, _shutdown.Token); await RefreshAsync(); }
 
     private async Task ExecuteActionAsync(Func<Task> action)
     {
+        Message = string.Empty;
         try { await action(); }
-        catch (Exception exception) { Message = exception.Message; }
+        catch (Exception exception)
+        {
+            ActionStatus = "\u64CD\u4F5C\u5931\u8D25";
+            Message = exception.Message;
+        }
     }
 
     private async Task RefreshLoopAsync(CancellationToken cancellationToken)
@@ -518,6 +593,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private void RefreshCreateTaskCommandState()
     {
         foreach (var command in new[] { PlanRouteCommand, CreateTaskCommand }.OfType<AsyncCommand>()) command.RaiseCanExecuteChanged();
+        OnPropertyChanged(nameof(TaskFormStatus));
+    }
+
+    private string GetTaskFormStatus()
+    {
+        if (NewTaskSourceStation is null || NewTaskTargetStation is null) return "\u8BF7\u9009\u62E9\u8D77\u70B9\u548C\u7EC8\u70B9\u3002";
+        if (NewTaskSourceStation.Code == NewTaskTargetStation.Code) return "\u8D77\u70B9\u548C\u7EC8\u70B9\u4E0D\u80FD\u76F8\u540C\u3002";
+        if (NewTaskPriority < 0) return "\u4F18\u5148\u7EA7\u4E0D\u80FD\u4E3A\u8D1F\u6570\u3002";
+        return PlannedRoute is null ? "\u8BF7\u5148\u9884\u89C8\u5E76\u786E\u8BA4\u8DEF\u7EBF\u3002" : "\u8DEF\u7EBF\u5DF2\u786E\u8BA4\uFF0C\u53EF\u521B\u5EFA\u4EFB\u52A1\u3002";
     }
 
     private static string? NormalizeOptionalText(string value) =>
@@ -542,7 +626,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private async Task RefreshSelectedTaskDetailAsync(Guid? taskId, CancellationToken cancellationToken)
     {
-        try { await LoadTaskDetailAsync(taskId, cancellationToken); if (taskId == SelectedTask?.Id) Message = string.Empty; }
+        try { await LoadTaskDetailAsync(taskId, cancellationToken); }
         catch (OperationCanceledException) { }
         catch (Exception exception) { Message = exception.Message; }
     }
@@ -574,4 +658,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
         return true;
     }
+
+    private void OnPropertyChanged(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
 }

@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using MesControlAgv.Contracts;
 using ContractAgvSnapshot = MesControlAgv.Contracts.AgvSnapshotResponse;
+using ContractAgvFleetStatus = MesControlAgv.Contracts.AgvFleetStatusResponse;
 using ContractAgvTask = MesControlAgv.Contracts.AgvTaskResponse;
 using ContractKpiDashboard = MesControlAgv.Contracts.KpiDashboardResponse;
 using ContractPlannedPath = MesControlAgv.Contracts.PlannedPathResponse;
@@ -80,6 +81,24 @@ public sealed class MesClient(HttpClient client) : IMesClient
     {
         var snapshots = await client.GetFromJsonAsync<List<ContractAgvSnapshot>>("api/agvs/fleet", cancellationToken) ?? [];
         return snapshots.Select(ToDashboardSnapshot).ToList();
+    }
+
+    public async Task<IReadOnlyList<AgvFleetDashboardStatus>> GetAgvFleetStatusAsync(CancellationToken cancellationToken)
+    {
+        var statuses = await client.GetFromJsonAsync<List<ContractAgvFleetStatus>>("api/agvs/fleet/status", cancellationToken) ?? [];
+        return statuses.Select(status => new AgvFleetDashboardStatus(
+            ToDashboardSnapshot(status.Snapshot),
+            status.ActiveTask is null
+                ? null
+                : new AgvActiveTaskStatus(
+                    status.ActiveTask.TransportTaskId,
+                    status.ActiveTask.OperationId,
+                    status.ActiveTask.MesStatus,
+                    status.ActiveTask.DeviceTaskId,
+                    status.ActiveTask.DeviceState,
+                    status.ActiveTask.TargetStationId,
+                    status.ActiveTask.LastError,
+                    status.ActiveTask.Path))).ToList();
     }
 
     public async Task<AgvCommandResult?> ExecuteAgvCommandAsync(

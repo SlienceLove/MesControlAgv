@@ -26,6 +26,20 @@ public sealed record AgvDashboardSnapshot(
     string AgvId = "AGV-01",
     AgvCapabilitiesResponse? Capabilities = null);
 
+public sealed record AgvActiveTaskStatus(
+    Guid TransportTaskId,
+    Guid OperationId,
+    string MesStatus,
+    string? DeviceTaskId,
+    string? DeviceState,
+    string? TargetStationId,
+    string? LastError,
+    IReadOnlyList<string>? Path);
+
+public sealed record AgvFleetDashboardStatus(
+    AgvDashboardSnapshot Snapshot,
+    AgvActiveTaskStatus? ActiveTask);
+
 public sealed record AgvCommandResult(Guid TaskId, string DeviceTaskId, string TargetStationId, string State, string? LastError, string AgvId = "AGV-01", IReadOnlyList<string>? Path = null);
 public sealed record DashboardTaskEvent(Guid Id, string EventType, string Payload, DateTime CreatedAt);
 public sealed record DashboardTaskDetail(DashboardTask Task, IReadOnlyList<DashboardTaskEvent> Events);
@@ -48,6 +62,10 @@ public interface IMesClient
         Task.FromException<DashboardPlannedPath>(new NotSupportedException("Path planning is not supported by this MES client."));
     Task<AgvDashboardSnapshot> GetAgvSnapshotAsync(CancellationToken cancellationToken);
     async Task<IReadOnlyList<AgvDashboardSnapshot>> GetAgvFleetAsync(CancellationToken cancellationToken) => [await GetAgvSnapshotAsync(cancellationToken)];
+    async Task<IReadOnlyList<AgvFleetDashboardStatus>> GetAgvFleetStatusAsync(CancellationToken cancellationToken) =>
+        (await GetAgvFleetAsync(cancellationToken))
+            .Select(snapshot => new AgvFleetDashboardStatus(snapshot, null))
+            .ToList();
     Task<AgvCommandResult?> ExecuteAgvCommandAsync(string agvId, string command, Guid? taskId, CancellationToken cancellationToken) => Task.FromResult<AgvCommandResult?>(null);
     Task<DashboardTask> CreateTaskAsync(CancellationToken cancellationToken);
     Task<DashboardTask> CreateTaskAsync(int sourceStationCode, int targetStationCode, int priority, string? description, string? externalId, CancellationToken cancellationToken);

@@ -1,7 +1,9 @@
 ﻿using MesControlAgv.Application;
 using MesControlAgv.Contracts;
+using MesControlAgv.Domain;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Services;
+using MesControlAgv.Simulator;
 using Microsoft.EntityFrameworkCore;
 
 namespace MesControlAgv.E2E.Tests;
@@ -28,6 +30,64 @@ public sealed class TransportAcceptanceTests
         Assert.Equal(["SAMPLE_01", "ST_PREP_01"], adapter.Targets);
         Assert.NotNull(detail);
         Assert.Contains(detail.Events, item => item.EventType == "PickupConfirmed");
+        Assert.Contains(detail.Events, item => item.EventType == "DropoffConfirmed");
+    }
+
+    [Fact]
+    public async Task Simulator_full_loop_covers_dispatch_pause_resume_arrivals_and_audit()
+    {
+        var simulator = new SimulatorState();
+        var adapter = new SimulatorAcceptanceAdapter(simulator);
+        var service = CreateService(adapter);
+
+        var created = await service.CreateAsync(new CreateTaskRequest(2, 4), CancellationToken.None);
+        Assert.Equal("Created", created.Status);
+
+        var dispatched = await service.DispatchAsync(created.Id, CancellationToken.None);
+        var pickupOperation = TransportOperationIds.Pickup(created.Id);
+        Assert.Equal("MovingToPickup", dispatched.Status);
+        Assert.Equal("moving", simulator.GetTask(pickupOperation)!.State);
+
+        var pausedDevice = simulator.Pause(pickupOperation)!;
+        var paused = await service.RecordAgvCommandAsync(
+            pickupOperation,
+            "pause",
+            new AgvTaskResponse(pickupOperation, pickupOperation.ToString("N"), pausedDevice.TargetStationId, pausedDevice.State, pausedDevice.LastError),
+            CancellationToken.None);
+        Assert.Equal("Paused", paused?.Status);
+
+        var resumedDevice = simulator.Resume(pickupOperation)!;
+        var resumed = await service.RecordAgvCommandAsync(
+            pickupOperation,
+            "resume",
+            new AgvTaskResponse(pickupOperation, pickupOperation.ToString("N"), resumedDevice.TargetStationId, resumedDevice.State, resumedDevice.LastError),
+            CancellationToken.None);
+        Assert.Equal("MovingToPickup", resumed?.Status);
+
+        simulator.ApplyControl(pickupOperation, "arrive");
+        var pickupWaiting = await service.RecordArrivalAsync(created.Id, CancellationToken.None);
+        Assert.Equal("WaitingPickupConfirmation", pickupWaiting.Status);
+
+        var dropoffMoving = await service.ConfirmPickupAsync(created.Id, "simulator-e2e", CancellationToken.None);
+        var dropoffOperation = TransportOperationIds.Dropoff(created.Id);
+        Assert.Equal("MovingToDropoff", dropoffMoving.Status);
+        Assert.Equal("moving", simulator.GetTask(dropoffOperation)!.State);
+
+        simulator.ApplyControl(dropoffOperation, "arrive");
+        var dropoffWaiting = await service.RecordArrivalAsync(created.Id, CancellationToken.None);
+        var completed = await service.ConfirmDropoffAsync(created.Id, "simulator-e2e", CancellationToken.None);
+
+        Assert.Equal("WaitingDropoffConfirmation", dropoffWaiting.Status);
+        Assert.Equal("Completed", completed.Status);
+        var detail = await service.GetDetailAsync(created.Id, CancellationToken.None);
+        Assert.NotNull(detail);
+        Assert.Contains(detail.Events, item => item.EventType == "TaskCreated");
+        Assert.Contains(detail.Events, item => item.EventType == "DispatchRequested");
+        Assert.Contains(detail.Events, item => item.EventType == "PauseRequested");
+        Assert.Contains(detail.Events, item => item.EventType == "ResumeRequested");
+        Assert.Contains(detail.Events, item => item.EventType == "PickupArrived");
+        Assert.Contains(detail.Events, item => item.EventType == "PickupConfirmed");
+        Assert.Contains(detail.Events, item => item.EventType == "DropoffArrived");
         Assert.Contains(detail.Events, item => item.EventType == "DropoffConfirmed");
     }
 
@@ -124,7 +184,7 @@ public sealed class TransportAcceptanceTests
         Assert.Contains(detail.Events, item => item.EventType == "ReconciledMoving");
     }
 
-    private TaskService CreateService(AcceptanceAdapter adapter)
+    private TaskService CreateService(IAgvGateway adapter)
     {
         var options = new DbContextOptionsBuilder<MesDbContext>()
             .UseSqlite($"Data Source={_databasePath}")
@@ -177,6 +237,40 @@ internal sealed class AcceptanceAdapter : IAgvGateway
         string command,
         Guid? taskId,
         CancellationToken cancellationToken) =>
+        Task.FromResult<AgvTaskResponse?>(null);
+}
+
+internal sealed class SimulatorAcceptanceAdapter(SimulatorState simulator) : IAgvGateway
+{
+    public Task<AgvTaskResponse> DispatchAsync(Guid operationId, string targetStationId, CancellationToken cancellationToken)
+    {
+        var task = simulator.Navigate(operationId, targetStationId);
+        return Task.FromResult(new AgvTaskResponse(task.TaskId, task.TaskId.ToString("N"), task.TargetStationId, task.State, task.LastError, task.AgvId, task.Path));
+    }
+
+    public Task<AgvTaskResponse?> GetTaskAsync(Guid operationId, CancellationToken cancellationToken)
+    {
+        var task = simulator.GetTask(operationId);
+        return Task.FromResult(task is null
+            ? null
+            : (AgvTaskResponse?)new AgvTaskResponse(task.TaskId, task.TaskId.ToString("N"), task.TargetStationId, task.State, task.LastError, task.AgvId, task.Path));
+    }
+
+    public Task<AgvTaskResponse?> CancelAsync(Guid operationId, CancellationToken cancellationToken)
+    {
+        var task = simulator.Cancel(operationId);
+        return Task.FromResult(task is null
+            ? null
+            : (AgvTaskResponse?)new AgvTaskResponse(task.TaskId, task.TaskId.ToString("N"), task.TargetStationId, task.State, task.LastError, task.AgvId, task.Path));
+    }
+
+    public Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken)
+    {
+        var snapshot = simulator.GetSnapshot("AGV-01");
+        return Task.FromResult(new AgvSnapshotResponse(snapshot.Online, snapshot.ControlOwner, snapshot.CurrentStationId, snapshot.CurrentTaskId, snapshot.AgvId));
+    }
+
+    public Task<AgvTaskResponse?> ExecuteAgvCommandAsync(string agvId, string command, Guid? taskId, CancellationToken cancellationToken) =>
         Task.FromResult<AgvTaskResponse?>(null);
 }
 

@@ -17,36 +17,12 @@ public sealed record TaskRowViewModel(
 {
     public string SourceStationName => GetStationName(SourceStationCode);
     public string TargetStationName => GetStationName(TargetStationCode);
-    #if false
-    public string RouteDescription => $"{SourceStationName} → {TargetStationName}";
-    public string TaskDescription => $"从{SourceStationName}取货，运送至{TargetStationName}";
-    public string StatusDescription => Status switch
-    {
-        "Created" => "待派发",
-        "Dispatching" => "正在派发",
-        "MovingToPickup" => "前往取货站",
-        "WaitingPickupConfirmation" => "等待确认取货",
-        "MovingToDropoff" => "前往放货站",
-        "WaitingDropoffConfirmation" => "等待确认放货",
-        "Completed" => "已完成",
-        "Paused" => "已暂停",
-        "Failed" => "执行失败",
-        "Unknown" => "系统异常",
-        "Cancelled" => "已取消",
-        _ => Status
-    };
-
-    public string ErrorDescription => Status == "Unknown" && string.IsNullOrWhiteSpace(LastError)
-        ? "原因：无法确认 AGV 当前状态。"
-        : string.IsNullOrWhiteSpace(LastError)
-            ? string.Empty
-            : $"原因：{LastError}";
-
-    #endif
     public string RouteDescription => $"{SourceStationName} -> {TargetStationName}";
     public string CurrentPathDescription => ActivePath is { Count: > 0 }
         ? string.Join(" -> ", ActivePath)
-        : string.Empty;
+        : "尚未分配执行路径";
+    public string AssignedAgvDescription => string.IsNullOrWhiteSpace(ActiveAgvId) ? "尚未分配" : ActiveAgvId;
+    public string DeviceTaskDescription => string.IsNullOrWhiteSpace(ActiveDeviceTaskId) ? "尚未创建" : ActiveDeviceTaskId;
     public string TaskDescription => $"从{SourceStationName}取货，运送至{TargetStationName}";
     public string StatusDescription => Status switch
     {

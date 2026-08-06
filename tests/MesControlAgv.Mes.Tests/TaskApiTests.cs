@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
+using MesControlAgv.Contracts;
+using MesControlAgv.Domain;
 using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace MesControlAgv.Mes.Tests;
@@ -83,6 +85,31 @@ public sealed class TaskApiTests : IClassFixture<MesWebApplicationFactory>
         var second = await _client.PostAsync($"/api/tasks/{created.Id}/dispatch", null);
 
         Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
+    }
+
+    [Fact]
+    public async Task Fleet_execution_status_correlates_the_agv_with_its_active_mes_task()
+    {
+        var create = await _client.PostAsJsonAsync("/api/tasks", new
+        {
+            sourceStationCode = 2,
+            targetStationCode = 4
+        });
+        var created = await create.Content.ReadFromJsonAsync<TaskResponse>();
+        Assert.NotNull(created);
+        var dispatch = await _client.PostAsync($"/api/tasks/{created.Id}/dispatch", null);
+        dispatch.EnsureSuccessStatusCode();
+
+        var fleet = await _client.GetFromJsonAsync<List<AgvFleetStatusResponse>>("/api/agvs/fleet/status");
+        var status = Assert.Single(fleet!);
+
+        Assert.True(status.Snapshot.Online);
+        Assert.Equal("adapter", status.Snapshot.ControlOwner);
+        Assert.NotNull(status.ActiveTask);
+        Assert.Equal(created.Id, status.ActiveTask.TransportTaskId);
+        Assert.Equal("MovingToPickup", status.ActiveTask.MesStatus);
+        Assert.Equal("moving", status.ActiveTask.DeviceState);
+        Assert.Equal(TransportOperationIds.Pickup(created.Id), status.ActiveTask.OperationId);
     }
 
     [Fact]

@@ -208,6 +208,59 @@ public sealed class TaskService : ITaskApplicationService
         return ToResponse(updated);
     }
 
+    public async Task<IReadOnlyList<AgvFleetStatusResponse>> GetFleetStatusAsync(CancellationToken cancellationToken)
+    {
+        var snapshots = _adapter is IFleetAwareAgvGateway fleet
+            ? await fleet.GetFleetSnapshotAsync(cancellationToken)
+            : [await _adapter.GetSnapshotAsync(cancellationToken)];
+        var activeTasks = await _repository.ListActiveAssignedAsync(cancellationToken);
+
+        var results = new List<AgvFleetStatusResponse>(snapshots.Count);
+        foreach (var snapshot in snapshots)
+        {
+            var task = activeTasks.FirstOrDefault(candidate =>
+                StringComparer.Ordinal.Equals(candidate.ActiveAgvId, snapshot.AgvId));
+            if (task is null)
+            {
+                results.Add(new AgvFleetStatusResponse(snapshot, null));
+                continue;
+            }
+
+            var operationId = GetActiveOperationId(task);
+            AgvTaskResponse? device = null;
+            string? deviceReadError = null;
+            try
+            {
+                device = await _adapter.GetTaskAsync(operationId, cancellationToken);
+            }
+            catch (AdapterHttpException exception)
+            {
+                deviceReadError = exception.Detail ?? exception.Message;
+            }
+            catch (HttpRequestException exception)
+            {
+                deviceReadError = exception.Message;
+            }
+            catch (TimeoutException exception)
+            {
+                deviceReadError = exception.Message;
+            }
+            results.Add(new AgvFleetStatusResponse(
+                snapshot,
+                new AgvActiveTaskStatusResponse(
+                    task.Id,
+                    operationId,
+                    task.Status.ToString(),
+                    device?.DeviceTaskId ?? task.ActiveDeviceTaskId,
+                    device?.State,
+                    task.ActiveTargetStationId,
+                    device?.LastError ?? deviceReadError ?? task.LastError,
+                    DeserializePath(task.ActivePathJson))));
+        }
+
+        return results;
+    }
+
     public async Task ReconcileIncompleteAsync(CancellationToken cancellationToken)
     {
         var unknownTasks = await _repository.ListByStatusAsync(DomainTaskStatus.Unknown, cancellationToken);
@@ -589,6 +642,9 @@ public sealed class TaskService : ITaskApplicationService
             task.ActiveTargetStationId,
             GetEnabledStation(task.TargetStationCode).AgvStationId,
             StringComparison.Ordinal);
+
+    private Guid GetActiveOperationId(TransportTask task) =>
+        IsDropoffLeg(task) ? TransportOperationIds.Dropoff(task.Id) : TransportOperationIds.Pickup(task.Id);
 
     private Station GetEnabledStation(int code)
     {

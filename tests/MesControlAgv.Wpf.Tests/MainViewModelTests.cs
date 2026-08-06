@@ -51,6 +51,29 @@ public class MainViewModelTests
     }
 
     [Fact]
+    public void Task_row_exposes_assignment_and_path_or_explicit_placeholders()
+    {
+        var assigned = TaskRowViewModel.From(new DashboardTask(
+            Guid.NewGuid(),
+            2,
+            4,
+            "MovingToPickup",
+            0,
+            null,
+            ActiveAgvId: "AGV-03",
+            ActiveDeviceTaskId: "device-task-3",
+            ActivePath: ["SAMPLE_01", "ST_PREP_01"]));
+        var pending = TaskRowViewModel.From(new DashboardTask(Guid.NewGuid(), 2, 4, "Created", 0, null));
+
+        Assert.Equal("AGV-03", assigned.AssignedAgvDescription);
+        Assert.Equal("device-task-3", assigned.DeviceTaskDescription);
+        Assert.Contains("ST_PREP_01", assigned.CurrentPathDescription, StringComparison.Ordinal);
+        Assert.Equal("尚未分配", pending.AssignedAgvDescription);
+        Assert.Equal("尚未创建", pending.DeviceTaskDescription);
+        Assert.Equal("尚未分配执行路径", pending.CurrentPathDescription);
+    }
+
+    [Fact]
     public async Task Physical_mode_keeps_status_visible_and_blocks_manual_arrival()
     {
         var task = new DashboardTask(Guid.NewGuid(), 2, 4, "MovingToPickup", 0, null);
@@ -72,6 +95,61 @@ public class MainViewModelTests
         viewModel.ArriveCommand.Execute(null);
         Assert.Equal(0, client.MarkArrivedCallCount);
         Assert.False(viewModel.ConfirmPickupCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task Refresh_displays_correlated_mes_and_device_execution_state()
+    {
+        var taskId = Guid.NewGuid();
+        var client = new FakeMesClient([
+            new DashboardTask(taskId, 2, 4, "MovingToPickup", 0, null, ActiveAgvId: "AGV-01")
+        ])
+        {
+            FleetStatus = [new AgvFleetDashboardStatus(
+                new AgvDashboardSnapshot(true, "adapter", "SAMPLE_01", taskId),
+                new AgvActiveTaskStatus(
+                    taskId,
+                    Guid.NewGuid(),
+                    "MovingToPickup",
+                    "device-01",
+                    "moving",
+                    "ST_PREP_01",
+                    null,
+                    ["SAMPLE_01", "ST_PREP_01"]))]
+        };
+        using var viewModel = new MainViewModel(client);
+
+        await viewModel.RefreshAsync();
+
+        Assert.Contains("MovingToPickup", viewModel.AgvExecutionStatus, StringComparison.Ordinal);
+        Assert.Contains("moving", viewModel.AgvExecutionStatus, StringComparison.Ordinal);
+        Assert.Contains("ST_PREP_01", viewModel.AgvExecutionStatus, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Selected_agv_pause_command_is_sent_through_mes_to_adapter()
+    {
+        var operationId = Guid.NewGuid();
+        var client = new FakeMesClient([
+            new DashboardTask(Guid.NewGuid(), 2, 4, "MovingToPickup", 0, null, ActiveAgvId: "AGV-01", ActiveDeviceTaskId: operationId.ToString("N"))
+        ])
+        {
+            FleetStatus = [new AgvFleetDashboardStatus(
+                new AgvDashboardSnapshot(true, "adapter", "SAMPLE_01", operationId),
+                null)],
+            CommandResult = new AgvCommandResult(operationId, operationId.ToString("N"), "SAMPLE_01", "paused", null)
+        };
+        using var viewModel = new MainViewModel(client);
+
+        await viewModel.RefreshAsync();
+
+        Assert.True(viewModel.PauseAgvCommand.CanExecute(null));
+        viewModel.PauseAgvCommand.Execute(null);
+        await WaitUntilAsync(() => client.AgvCommandCallCount == 1);
+
+        Assert.Equal("AGV-01", client.LastAgvCommand?.AgvId);
+        Assert.Equal("pause", client.LastAgvCommand?.Command);
+        Assert.Equal(operationId, client.LastAgvCommand?.TaskId);
     }
 
     [Fact]
@@ -191,6 +269,12 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
     public int MarkArrivedCallCount { get; private set; }
     public int DispatchCallCount { get; private set; }
     public Guid? LastDispatchTaskId { get; private set; }
+    public DashboardTask? DispatchResult { get; set; }
+    public Exception? DispatchException { get; set; }
+    public IReadOnlyList<AgvFleetDashboardStatus>? FleetStatus { get; set; }
+    public AgvCommandResult? CommandResult { get; set; }
+    public int AgvCommandCallCount { get; private set; }
+    public (string AgvId, string Command, Guid? TaskId)? LastAgvCommand { get; private set; }
     public DashboardPlannedPath? PlannedPath { get; set; }
     public (string FromStationId, string ToStationId, IReadOnlyCollection<string>? BlockedStations)? LastPlanRequest { get; private set; }
     public (int SourceStationCode, int TargetStationCode, int Priority, string? Description, string? ExternalId)? LastCreateRequest { get; private set; }
@@ -202,22 +286,23 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
         _stations.AddRange(stations);
     }
 
-    public Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken) => Task.FromResult(tasks);
+    public Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken) => Task.FromResult(CurrentTasks());
     public Task<IReadOnlyList<DashboardTask>> GetTasksAsync(DateOnly date, CancellationToken cancellationToken)
     {
         LastRequestedDate = date;
-        return Task.FromResult(tasks);
+        return Task.FromResult(CurrentTasks());
     }
     public Task<KpiDashboard> GetKpiDashboardAsync(DateOnly date, CancellationToken cancellationToken)
     {
         LastRequestedKpiDate = date;
-        var completed = tasks.Count(task => task.Status == "Completed");
-        var failed = tasks.Count(task => task.Status == "Failed");
-        var cancelled = tasks.Count(task => task.Status == "Cancelled");
-        var running = tasks.Count - completed - failed - cancelled;
+        var currentTasks = CurrentTasks();
+        var completed = currentTasks.Count(task => task.Status == "Completed");
+        var failed = currentTasks.Count(task => task.Status == "Failed");
+        var cancelled = currentTasks.Count(task => task.Status == "Cancelled");
+        var running = currentTasks.Count - completed - failed - cancelled;
         return Task.FromResult(new KpiDashboard(
             date,
-            new KpiTaskSummary(tasks.Count, running, completed, failed, cancelled),
+            new KpiTaskSummary(currentTasks.Count, running, completed, failed, cancelled),
             [],
             new KpiSampleSummary(0, 0, 0, 0, 0, 0, "test"),
             [],
@@ -225,9 +310,17 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
     }
     public Task<DashboardTaskDetail?> GetTaskDetailAsync(Guid taskId, CancellationToken cancellationToken) =>
         Task.FromResult<DashboardTaskDetail?>(new DashboardTaskDetail(
-            tasks[0],
+            CurrentTasks()[0],
             [new DashboardTaskEvent(Guid.NewGuid(), "Timeout", "{\"source\":\"test\"}", DateTime.UtcNow)]));
     public Task<AgvDashboardSnapshot> GetAgvSnapshotAsync(CancellationToken cancellationToken) => Task.FromResult(new AgvDashboardSnapshot(true, "adapter", "SAMPLE_01", null));
+    public Task<IReadOnlyList<AgvFleetDashboardStatus>> GetAgvFleetStatusAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(FleetStatus ?? [new AgvFleetDashboardStatus(new AgvDashboardSnapshot(true, "adapter", "SAMPLE_01", null), null)]);
+    public Task<AgvCommandResult?> ExecuteAgvCommandAsync(string agvId, string command, Guid? taskId, CancellationToken cancellationToken)
+    {
+        AgvCommandCallCount++;
+        LastAgvCommand = (agvId, command, taskId);
+        return Task.FromResult(CommandResult);
+    }
     public Task<IReadOnlyList<DashboardStation>> GetStationsAsync(CancellationToken cancellationToken)
     {
         GetStationsCallCount++;
@@ -246,24 +339,27 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
     public Task<DashboardTask> CreateTaskAsync(int sourceStationCode, int targetStationCode, int priority, string? description, string? externalId, CancellationToken cancellationToken)
     {
         LastCreateRequest = (sourceStationCode, targetStationCode, priority, description, externalId);
-        return Task.FromResult(tasks[0]);
+        return Task.FromResult(CurrentTasks()[0]);
     }
     public Task<DashboardTask> DispatchTaskAsync(Guid taskId, CancellationToken cancellationToken)
     {
         DispatchCallCount++;
         LastDispatchTaskId = taskId;
-        return Task.FromResult(tasks[0]);
+        if (DispatchException is { } exception) return Task.FromException<DashboardTask>(exception);
+        return Task.FromResult(DispatchResult ?? CurrentTasks()[0]);
     }
     public Task<DashboardTask> MarkArrivedAsync(Guid taskId, CancellationToken cancellationToken)
     {
         MarkArrivedCallCount++;
-        return Task.FromResult(tasks[0]);
+        return Task.FromResult(CurrentTasks()[0]);
     }
-    public Task<DashboardTask> ConfirmPickupAsync(Guid taskId, string operatorName, CancellationToken cancellationToken) => Task.FromResult(tasks[0]);
-    public Task<DashboardTask> ConfirmDropoffAsync(Guid taskId, string operatorName, CancellationToken cancellationToken) => Task.FromResult(tasks[0]);
-    public Task<DashboardTask> RetryAsync(Guid taskId, CancellationToken cancellationToken) => Task.FromResult(tasks[0]);
-    public Task<DashboardTask> RecoverAsync(Guid taskId, CancellationToken cancellationToken) => Task.FromResult(tasks[0]);
-    public Task<DashboardTask> CancelAsync(Guid taskId, string operatorName, CancellationToken cancellationToken) => Task.FromResult(tasks[0]);
+    public Task<DashboardTask> ConfirmPickupAsync(Guid taskId, string operatorName, CancellationToken cancellationToken) => Task.FromResult(CurrentTasks()[0]);
+    public Task<DashboardTask> ConfirmDropoffAsync(Guid taskId, string operatorName, CancellationToken cancellationToken) => Task.FromResult(CurrentTasks()[0]);
+    public Task<DashboardTask> RetryAsync(Guid taskId, CancellationToken cancellationToken) => Task.FromResult(CurrentTasks()[0]);
+    public Task<DashboardTask> RecoverAsync(Guid taskId, CancellationToken cancellationToken) => Task.FromResult(CurrentTasks()[0]);
+    public Task<DashboardTask> CancelAsync(Guid taskId, string operatorName, CancellationToken cancellationToken) => Task.FromResult(CurrentTasks()[0]);
+
+    private IReadOnlyList<DashboardTask> CurrentTasks() => DispatchCallCount > 0 && DispatchResult is { } result ? [result] : tasks;
 }
 
 internal sealed class RecordingSimulatorControlClient : ISimulatorControlClient

@@ -59,6 +59,29 @@ public sealed record AgvSnapshotResponse(
     AgvSafetyReadinessResponse? SafetyReadiness = null);
 
 /// <summary>
+/// Read-only correlation of an AGV's MES transport task with its current
+/// Adapter/device operation. A null DeviceState means the Adapter did not
+/// return an operation status during this snapshot.
+/// </summary>
+public sealed record AgvActiveTaskStatusResponse(
+    Guid TransportTaskId,
+    Guid OperationId,
+    string MesStatus,
+    string? DeviceTaskId,
+    string? DeviceState,
+    string? TargetStationId,
+    string? LastError,
+    IReadOnlyList<string>? Path);
+
+/// <summary>
+/// Fleet snapshot enriched with the active MES task assigned to each AGV.
+/// This endpoint is read-only and does not reconcile or control the device.
+/// </summary>
+public sealed record AgvFleetStatusResponse(
+    AgvSnapshotResponse Snapshot,
+    AgvActiveTaskStatusResponse? ActiveTask);
+
+/// <summary>
 /// Read-only physical-dispatch assessment. A false result never acquires control
 /// and never sends a navigation command.
 /// </summary>

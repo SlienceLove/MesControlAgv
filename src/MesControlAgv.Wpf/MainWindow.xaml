@@ -49,6 +49,7 @@
                     <TextBlock Foreground="Gray" Text="AGV 状态 / 当前位置" />
                     <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding AgvStatus}" />
                     <TextBlock Text="{Binding AgvStation}" />
+                    <TextBlock Margin="0,4,0,0" Foreground="Gray" FontSize="11" TextWrapping="Wrap" Text="{Binding AgvExecutionStatus}" />
                 </StackPanel>
             </Border>
         </Grid>
@@ -127,6 +128,7 @@
                 <StackPanel Grid.Row="2" Grid.Column="3" Grid.ColumnSpan="2" Margin="0,10,10,0">
                     <TextBlock Margin="0,0,0,4" Foreground="Gray" Text="路线预览" />
                     <TextBlock MinHeight="30" VerticalAlignment="Center" Text="{Binding RoutePreview}" TextTrimming="CharacterEllipsis" ToolTip="{Binding RoutePreview}" />
+                    <TextBlock Margin="0,4,0,0" Foreground="Gray" FontSize="11" Text="{Binding TaskFormStatus}" TextWrapping="Wrap" />
                 </StackPanel>
             </Grid>
         </Border>
@@ -183,7 +185,9 @@
                         <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding RecoverCommand}" Content="恢复查询" />
                         <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding CancelCommand}" Content="取消任务" />
                         <Separator Margin="0,16,0,12" />
-                        <TextBlock FontWeight="SemiBold" Text="操作提示" />
+                        <TextBlock FontWeight="SemiBold" Text="操作结果" />
+                        <TextBlock Margin="0,4,0,0" Foreground="#176B3A" TextWrapping="Wrap" Text="{Binding ActionStatus}" />
+                        <TextBlock Margin="0,6,0,0" Foreground="#8A6D1D" TextWrapping="Wrap" Text="{Binding OperatorValidationMessage}" />
                         <TextBlock Margin="0,4,0,0" Foreground="#B42318" TextWrapping="Wrap" Text="{Binding Message}" />
                     </StackPanel>
                 </Border>
@@ -207,6 +211,21 @@
                                 <TextBlock Foreground="Gray" Text="状态：" />
                                 <TextBlock Text="{Binding SelectedTask.StatusDescription}" />
                             </StackPanel>
+                            <Grid Margin="0,4,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="72" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <TextBlock Foreground="Gray" Text="执行 AGV：" />
+                                <TextBlock Grid.Column="1" Text="{Binding SelectedTask.AssignedAgvDescription}" TextTrimming="CharacterEllipsis" />
+                            </Grid>
+                            <Grid Margin="0,4,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="72" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <TextBlock Foreground="Gray" Text="设备任务：" />
+                                <TextBlock Grid.Column="1" Text="{Binding SelectedTask.DeviceTaskDescription}" TextTrimming="CharacterEllipsis" ToolTip="{Binding SelectedTask.DeviceTaskDescription}" />
+                            </Grid>
+                            <Grid Margin="0,4,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="72" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <TextBlock Foreground="Gray" Text="当前路径：" />
+                                <TextBlock Grid.Column="1" Text="{Binding SelectedTask.CurrentPathDescription}" TextWrapping="Wrap" />
+                            </Grid>
                             <TextBlock Margin="0,4,0,0" Foreground="#B42318" TextWrapping="Wrap" Text="{Binding SelectedTask.ErrorDescription}" />
                         </StackPanel>
                         <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
