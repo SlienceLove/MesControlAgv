@@ -26,7 +26,7 @@ public sealed class TaskApiTests : IClassFixture<MesWebApplicationFactory>
     }
 
     [Fact]
-    public async Task Create_task_persists_created_task_and_audit_event()
+    public async Task Create_task_persists_a_pending_task_without_dispatching_an_agv()
     {
         var response = await _client.PostAsJsonAsync("/api/tasks", new
         {
@@ -38,14 +38,72 @@ public sealed class TaskApiTests : IClassFixture<MesWebApplicationFactory>
         var task = await response.Content.ReadFromJsonAsync<TaskResponse>();
 
         Assert.NotNull(task);
-        Assert.Equal("MovingToPickup", task.Status);
+        Assert.Equal("Created", task.Status);
         Assert.True(task.CreatedAt > DateTime.UtcNow.AddMinutes(-1));
         Assert.Null(task.EndedAt);
 
         var detail = await _client.GetFromJsonAsync<TaskDetailResponse>($"/api/tasks/{task.Id}");
         Assert.NotNull(detail);
         Assert.Contains(detail.Events, taskEvent => taskEvent.EventType == "TaskCreated");
-        Assert.Contains(detail.Events, taskEvent => taskEvent.EventType == "PickupMoveStarted");
+        Assert.DoesNotContain(detail.Events, taskEvent => taskEvent.EventType == "DispatchRequested");
+    }
+
+    [Fact]
+    public async Task Dispatch_task_starts_a_previously_created_task()
+    {
+        var create = await _client.PostAsJsonAsync("/api/tasks", new
+        {
+            sourceStationCode = 2,
+            targetStationCode = 4
+        });
+        var created = await create.Content.ReadFromJsonAsync<TaskResponse>();
+        Assert.NotNull(created);
+
+        var dispatch = await _client.PostAsync($"/api/tasks/{created.Id}/dispatch", null);
+        dispatch.EnsureSuccessStatusCode();
+        var dispatched = await dispatch.Content.ReadFromJsonAsync<TaskResponse>();
+
+        Assert.NotNull(dispatched);
+        Assert.Equal("MovingToPickup", dispatched.Status);
+    }
+
+    [Fact]
+    public async Task Dispatch_task_rejects_a_task_that_is_not_pending()
+    {
+        var create = await _client.PostAsJsonAsync("/api/tasks", new
+        {
+            sourceStationCode = 2,
+            targetStationCode = 4
+        });
+        var created = await create.Content.ReadFromJsonAsync<TaskResponse>();
+        Assert.NotNull(created);
+        var first = await _client.PostAsync($"/api/tasks/{created.Id}/dispatch", null);
+        first.EnsureSuccessStatusCode();
+
+        var second = await _client.PostAsync($"/api/tasks/{created.Id}/dispatch", null);
+
+        Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
+    }
+
+    [Fact]
+    public async Task Cancel_pending_task_is_handled_by_mes_without_an_adapter_operation()
+    {
+        var create = await _client.PostAsJsonAsync("/api/tasks", new
+        {
+            sourceStationCode = 2,
+            targetStationCode = 4
+        });
+        var created = await create.Content.ReadFromJsonAsync<TaskResponse>();
+        Assert.NotNull(created);
+
+        var cancel = await _client.PostAsJsonAsync($"/api/tasks/{created.Id}/cancel", new { operatorName = "operator-a" });
+        cancel.EnsureSuccessStatusCode();
+        var cancelled = await cancel.Content.ReadFromJsonAsync<TaskResponse>();
+
+        Assert.NotNull(cancelled);
+        Assert.Equal("Cancelled", cancelled.Status);
+        var detail = await _client.GetFromJsonAsync<TaskDetailResponse>($"/api/tasks/{created.Id}");
+        Assert.Contains(detail!.Events, taskEvent => taskEvent.EventType == "CancelConfirmed");
     }
 
     [Fact]

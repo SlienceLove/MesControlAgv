@@ -99,7 +99,8 @@ public sealed class MesClient(HttpClient client) : IMesClient
     }
 
     public Task<DashboardTask> CreateTaskAsync(CancellationToken cancellationToken) =>
-        CreateTaskAsync(2, 4, 0, null, null, cancellationToken);
+        Task.FromException<DashboardTask>(new InvalidOperationException(
+            "Task creation requires source and target station parameters."));
 
     public Task<DashboardTask> CreateTaskAsync(
         int sourceStationCode,
@@ -109,6 +110,9 @@ public sealed class MesClient(HttpClient client) : IMesClient
         string? externalId,
         CancellationToken cancellationToken) =>
         PostAsync("api/tasks", new CreateTaskRequest(sourceStationCode, targetStationCode, priority, description, externalId), cancellationToken);
+
+    public Task<DashboardTask> DispatchTaskAsync(Guid taskId, CancellationToken cancellationToken) =>
+        PostAsync($"api/tasks/{taskId}/dispatch", null, cancellationToken);
 
     public Task<DashboardTask> MarkArrivedAsync(Guid taskId, CancellationToken cancellationToken) =>
         PostAsync($"api/tasks/{taskId}/arrived", null, cancellationToken);

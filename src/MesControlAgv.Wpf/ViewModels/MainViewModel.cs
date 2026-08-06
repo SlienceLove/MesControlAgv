@@ -47,18 +47,19 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _modules = new ControlCenterViewModel(WorkflowEditor, ModuleRegistry);
         Kpi = _modules.KpiDashboard;
         CreateTaskCommand = new AsyncCommand(() => ExecuteActionAsync(CreateTaskAsync), CanCreateTask);
+        DispatchTaskCommand = new AsyncCommand(() => ExecuteActionAsync(DispatchTaskAsync), CanDispatchTask);
         PlanRouteCommand = new AsyncCommand(() => ExecuteActionAsync(PlanRouteAsync), CanPlanRoute);
-        ArriveCommand = new AsyncCommand(() => ExecuteActionAsync(ArriveAsync), () => SelectedTask?.Status is "MovingToPickup" or "MovingToDropoff");
+        ArriveCommand = new AsyncCommand(() => ExecuteActionAsync(ArriveAsync), CanApplyManualArrival);
         ConfirmPickupCommand = new AsyncCommand(() => ExecuteActionAsync(ConfirmPickupAsync), () => HasOperator && SelectedTask?.Status == "WaitingPickupConfirmation");
         ConfirmDropoffCommand = new AsyncCommand(() => ExecuteActionAsync(ConfirmDropoffAsync), () => HasOperator && SelectedTask?.Status == "WaitingDropoffConfirmation");
         RetryCommand = new AsyncCommand(() => ExecuteActionAsync(RetryAsync), () => SelectedTask?.Status == "Failed");
         RecoverCommand = new AsyncCommand(() => ExecuteActionAsync(RecoverAsync), () => SelectedTask?.Status == "Unknown");
         CancelCommand = new AsyncCommand(() => ExecuteActionAsync(CancelAsync), () => HasOperator && SelectedTask is { Status: not "Completed" and not "Cancelled" });
-        SimulatorArriveCommand = new AsyncCommand(() => ExecuteActionAsync(() => ApplySimulatorControlAsync("arrive")), () => _simulator is not null);
-        SimulatorFailCommand = new AsyncCommand(() => ExecuteActionAsync(() => ApplySimulatorControlAsync("fail")), () => _simulator is not null);
-        SimulatorTimeoutCommand = new AsyncCommand(() => ExecuteActionAsync(() => ApplySimulatorControlAsync("timeout")), () => _simulator is not null);
-        SimulatorOfflineCommand = new AsyncCommand(() => ExecuteActionAsync(() => ApplySimulatorControlAsync("offline")), () => _simulator is not null);
-        SimulatorRecoverCommand = new AsyncCommand(() => ExecuteActionAsync(() => ApplySimulatorControlAsync("recover")), () => _simulator is not null);
+        SimulatorArriveCommand = new AsyncCommand(() => ExecuteActionAsync(() => ApplySimulatorControlAsync("arrive")), () => IsSimulatorPanelVisible);
+        SimulatorFailCommand = new AsyncCommand(() => ExecuteActionAsync(() => ApplySimulatorControlAsync("fail")), () => IsSimulatorPanelVisible);
+        SimulatorTimeoutCommand = new AsyncCommand(() => ExecuteActionAsync(() => ApplySimulatorControlAsync("timeout")), () => IsSimulatorPanelVisible);
+        SimulatorOfflineCommand = new AsyncCommand(() => ExecuteActionAsync(() => ApplySimulatorControlAsync("offline")), () => IsSimulatorPanelVisible);
+        SimulatorRecoverCommand = new AsyncCommand(() => ExecuteActionAsync(() => ApplySimulatorControlAsync("recover")), () => IsSimulatorPanelVisible);
         RefreshAgvCommand = new AsyncCommand(() => ExecuteActionAsync(RefreshAgvAsync));
         QueryTasksCommand = new AsyncCommand(() => ExecuteActionAsync(() => RefreshAsync()));
         RefreshTasksCommand = new AsyncCommand(() => ExecuteActionAsync(() => RefreshAsync()));
@@ -215,13 +216,23 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private DateOnly CurrentTaskDate => DateOnly.FromDateTime(TaskFilterDate ?? DateTime.UtcNow.Date);
 
+    public bool IsSimulatorMode => _simulator is not null;
+    public bool IsPhysicalMode => !IsSimulatorMode;
 #if DEBUG
-    public bool IsSimulatorPanelVisible => _simulator is not null;
+    public bool IsSimulatorPanelVisible => IsSimulatorMode;
 #else
     public bool IsSimulatorPanelVisible => false;
 #endif
+    public bool IsManualArrivalAvailable => IsSimulatorPanelVisible;
+    public string RuntimeMode => IsSimulatorMode ? "Simulator" : "Physical / \u5B89\u5168\u6A21\u5F0F";
+    public string RuntimeModeDescription => IsSimulatorPanelVisible
+        ? "\u5141\u8BB8\u5F00\u53D1\u7528\u5230\u7AD9\u4E0E\u6545\u969C\u6CE8\u5165"
+        : IsSimulatorMode
+            ? "Release \u5B89\u5168\u67E5\u770B\uFF1A\u4EFF\u771F\u63A7\u5236\u5DF2\u7981\u7528"
+            : "\u624B\u5DE5\u5230\u7AD9\u4E0E\u5BFC\u822A\u63A7\u5236\u5DF2\u7981\u7528";
 
     public ICommand CreateTaskCommand { get; }
+    public ICommand DispatchTaskCommand { get; }
     public ICommand PlanRouteCommand { get; }
     public ICommand ArriveCommand { get; }
     public ICommand ConfirmPickupCommand { get; }
@@ -416,7 +427,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         source.Code != target.Code;
 
     private bool CanCreateTask() => CanPlanRoute();
+    private bool CanDispatchTask() => SelectedTask?.Status == "Created";
     private bool HasOperator => !string.IsNullOrWhiteSpace(OperatorName);
+    private bool CanApplyManualArrival() =>
+        IsManualArrivalAvailable && SelectedTask?.Status is "MovingToPickup" or "MovingToDropoff";
 
     private async Task PlanRouteAsync()
     {
@@ -452,17 +466,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         await RefreshAsync(created.Id);
     }
 
+    private async Task DispatchTaskAsync()
+    {
+        if (SelectedTask is null || SelectedTask.Status != "Created") return;
+
+        var dispatched = await _mes.DispatchTaskAsync(SelectedTask.Id, _shutdown.Token);
+        await RefreshAsync(dispatched.Id);
+    }
+
     private async Task ArriveAsync()
     {
-        if (SelectedTask is not null)
-        {
-            if (_simulator is not null)
-            {
-                var deviceTaskId = SelectedTask.Status == "MovingToDropoff" ? TransportOperationIds.Dropoff(SelectedTask.Id) : TransportOperationIds.Pickup(SelectedTask.Id);
-                await _simulator.ApplyControlAsync(deviceTaskId, "arrive", _shutdown.Token);
-            }
-            await _mes.MarkArrivedAsync(SelectedTask.Id, _shutdown.Token);
-        }
+        if (!IsManualArrivalAvailable || _simulator is null || SelectedTask is null) return;
+
+        var deviceTaskId = SelectedTask.Status == "MovingToDropoff" ? TransportOperationIds.Dropoff(SelectedTask.Id) : TransportOperationIds.Pickup(SelectedTask.Id);
+        await _simulator.ApplyControlAsync(deviceTaskId, "arrive", _shutdown.Token);
+        await _mes.MarkArrivedAsync(SelectedTask.Id, _shutdown.Token);
         await RefreshAsync();
     }
 
@@ -471,7 +489,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private async Task RetryAsync() { if (SelectedTask is not null) await _mes.RetryAsync(SelectedTask.Id, _shutdown.Token); await RefreshAsync(); }
     private async Task RecoverAsync() { if (SelectedTask is not null) await _mes.RecoverAsync(SelectedTask.Id, _shutdown.Token); await RefreshAsync(); }
     private async Task CancelAsync() { if (SelectedTask is not null) await _mes.CancelAsync(SelectedTask.Id, OperatorName.Trim(), _shutdown.Token); await RefreshAsync(); }
-    private async Task ApplySimulatorControlAsync(string mode) { if (_simulator is null) return; await _simulator.ApplyControlAsync(mode, _shutdown.Token); await RefreshAsync(); }
+    private async Task ApplySimulatorControlAsync(string mode) { if (!IsSimulatorPanelVisible || _simulator is null) return; await _simulator.ApplyControlAsync(mode, _shutdown.Token); await RefreshAsync(); }
 
     private async Task ExecuteActionAsync(Func<Task> action)
     {
@@ -487,7 +505,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void RefreshCommandState()
     {
-        foreach (var command in new[] { ArriveCommand, ConfirmPickupCommand, ConfirmDropoffCommand, RetryCommand, RecoverCommand, CancelCommand }.OfType<AsyncCommand>()) command.RaiseCanExecuteChanged();
+        foreach (var command in new[] { DispatchTaskCommand, ArriveCommand, ConfirmPickupCommand, ConfirmDropoffCommand, RetryCommand, RecoverCommand, CancelCommand }.OfType<AsyncCommand>()) command.RaiseCanExecuteChanged();
     }
 
     private void InvalidateRoutePreview()

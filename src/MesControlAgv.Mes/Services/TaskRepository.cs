@@ -42,6 +42,14 @@ public sealed class TaskRepository(MesDbContext database)
     public Task<TransportTask?> GetAsync(Guid taskId, CancellationToken cancellationToken) =>
         database.TransportTasks.SingleOrDefaultAsync(task => task.Id == taskId, cancellationToken);
 
+    public Task<TransportTask?> GetByActiveOperationAsync(Guid operationId, CancellationToken cancellationToken)
+    {
+        var deviceTaskId = operationId.ToString("N");
+        return database.TransportTasks.SingleOrDefaultAsync(
+            task => task.ActiveDeviceTaskId == deviceTaskId,
+            cancellationToken);
+    }
+
     public Task<List<TransportTask>> ListAsync(DateOnly date, CancellationToken cancellationToken)
     {
         var start = date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);

@@ -12,6 +12,21 @@ namespace MesControlAgv.Mes.Tests;
 public class TransportWorkflowTests
 {
     [Fact]
+    public async Task Create_keeps_task_pending_without_calling_adapter()
+    {
+        var adapter = new FakeAdapterClient();
+        var service = CreateService(adapter);
+
+        var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+
+        Assert.Equal("Created", task.Status);
+        Assert.Empty(adapter.OperationIds);
+        var detail = await service.GetDetailAsync(task.Id, CancellationToken.None);
+        Assert.NotNull(detail);
+        Assert.DoesNotContain(detail.Events, item => item.EventType == "DispatchRequested");
+    }
+
+    [Fact]
     public async Task Custom_profile_route_dispatches_without_the_legacy_fixed_station_restriction()
     {
         var adapter = new FakeAdapterClient();
@@ -35,7 +50,8 @@ public class TransportWorkflowTests
             profile,
             new PathPlanner(AgvMap.FromProfile(profile.Map)));
 
-        var task = await service.CreateAsync(new(4, 5), CancellationToken.None);
+        var created = await service.CreateAsync(new(4, 5), CancellationToken.None);
+        var task = await service.DispatchAsync(created.Id, CancellationToken.None);
 
         Assert.Equal("MovingToPickup", task.Status);
         Assert.Equal("LM4", adapter.LastTargetStationId);
@@ -48,6 +64,7 @@ public class TransportWorkflowTests
         var service = CreateService(adapter);
 
         var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        await service.DispatchAsync(task.Id, CancellationToken.None);
         await service.RecordArrivalAsync(task.Id, CancellationToken.None);
         var updated = await service.ConfirmPickupAsync(task.Id, "operator", CancellationToken.None);
 
@@ -62,6 +79,7 @@ public class TransportWorkflowTests
         var service = CreateService(adapter);
 
         var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        await service.DispatchAsync(task.Id, CancellationToken.None);
         var detail = await service.GetDetailAsync(task.Id, CancellationToken.None);
 
         Assert.NotNull(detail);
@@ -76,6 +94,7 @@ public class TransportWorkflowTests
         var adapter = new FakeAdapterClient();
         var service = CreateService(adapter);
         var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        await service.DispatchAsync(task.Id, CancellationToken.None);
         await service.RecordArrivalAsync(task.Id, CancellationToken.None);
         adapter.DispatchException = new AdapterHttpException(
             HttpStatusCode.Conflict,
@@ -103,6 +122,7 @@ public class TransportWorkflowTests
         var adapter = new FakeAdapterClient();
         var service = CreateService(adapter);
         var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        await service.DispatchAsync(task.Id, CancellationToken.None);
 
         await service.RecordArrivalAsync(task.Id, CancellationToken.None);
         await service.ConfirmPickupAsync(task.Id, "operator", CancellationToken.None);
@@ -119,6 +139,7 @@ public class TransportWorkflowTests
         var adapter = new FakeAdapterClient { DispatchState = "failed" };
         var service = CreateService(adapter);
         var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        await service.DispatchAsync(task.Id, CancellationToken.None);
         adapter.DispatchState = "moving";
 
         var retried = await service.RetryAsync(task.Id, CancellationToken.None);
@@ -133,6 +154,7 @@ public class TransportWorkflowTests
         var adapter = new FakeAdapterClient { ThrowTimeout = true };
         var service = CreateService(adapter);
         var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        await service.DispatchAsync(task.Id, CancellationToken.None);
         var before = await service.GetDetailAsync(task.Id, CancellationToken.None);
 
         await Assert.ThrowsAsync<InvalidTaskTransitionException>(() => service.RetryAsync(task.Id, CancellationToken.None));
@@ -151,6 +173,7 @@ public class TransportWorkflowTests
         var adapter = new FakeAdapterClient { CancelState = "moving" };
         var service = CreateService(adapter);
         var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        await service.DispatchAsync(task.Id, CancellationToken.None);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => service.CancelAsync(task.Id, "operator", CancellationToken.None));
 
@@ -170,6 +193,7 @@ public class TransportWorkflowTests
         };
         var service = CreateService(adapter);
         var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        await service.DispatchAsync(task.Id, CancellationToken.None);
 
         var unknown = await service.CancelAsync(task.Id, "operator", CancellationToken.None);
 
@@ -187,6 +211,7 @@ public class TransportWorkflowTests
         var adapter = new FakeAdapterClient { CancelState = "cancelled" };
         var service = CreateService(adapter);
         var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        await service.DispatchAsync(task.Id, CancellationToken.None);
 
         var cancelled = await service.CancelAsync(task.Id, "operator", CancellationToken.None);
 
@@ -195,11 +220,97 @@ public class TransportWorkflowTests
     }
 
     [Fact]
+    public async Task Confirmed_pause_is_written_back_to_the_transport_task_and_audit_log()
+    {
+        var service = CreateService(new FakeAdapterClient());
+        var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        await service.DispatchAsync(task.Id, CancellationToken.None);
+        var operationId = TransportOperationIds.Pickup(task.Id);
+
+        var paused = await service.RecordAgvCommandAsync(
+            operationId,
+            "pause",
+            new AgvTaskResponse(operationId, operationId.ToString("N"), "SAMPLE_01", "paused", null),
+            CancellationToken.None);
+
+        Assert.NotNull(paused);
+        Assert.Equal("Paused", paused.Status);
+        var detail = await service.GetDetailAsync(task.Id, CancellationToken.None);
+        Assert.NotNull(detail);
+        Assert.Contains(detail.Events, item => item.EventType == "PauseRequested");
+    }
+
+    [Fact]
+    public async Task Confirmed_resume_restores_the_paused_dropoff_leg()
+    {
+        var service = CreateService(new FakeAdapterClient());
+        var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        await service.DispatchAsync(task.Id, CancellationToken.None);
+        await service.RecordArrivalAsync(task.Id, CancellationToken.None);
+        await service.ConfirmPickupAsync(task.Id, "operator", CancellationToken.None);
+        var operationId = TransportOperationIds.Dropoff(task.Id);
+        var paused = await service.RecordAgvCommandAsync(
+            operationId,
+            "pause",
+            new AgvTaskResponse(operationId, operationId.ToString("N"), "ST_PREP_01", "paused", null),
+            CancellationToken.None);
+
+        var resumed = await service.RecordAgvCommandAsync(
+            operationId,
+            "resume",
+            new AgvTaskResponse(operationId, operationId.ToString("N"), "ST_PREP_01", "moving", null),
+            CancellationToken.None);
+
+        Assert.Equal("Paused", paused?.Status);
+        Assert.Equal("MovingToDropoff", resumed?.Status);
+    }
+
+    [Fact]
+    public async Task Unconfirmed_pause_does_not_change_the_transport_task()
+    {
+        var service = CreateService(new FakeAdapterClient());
+        var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        await service.DispatchAsync(task.Id, CancellationToken.None);
+        var operationId = TransportOperationIds.Pickup(task.Id);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.RecordAgvCommandAsync(
+            operationId,
+            "pause",
+            new AgvTaskResponse(operationId, operationId.ToString("N"), "SAMPLE_01", "moving", null),
+            CancellationToken.None));
+
+        var detail = await service.GetDetailAsync(task.Id, CancellationToken.None);
+        Assert.NotNull(detail);
+        Assert.Equal("MovingToPickup", detail.Task.Status);
+        Assert.DoesNotContain(detail.Events, item => item.EventType == "PauseRequested");
+    }
+
+    [Fact]
+    public async Task Repeated_confirmed_pause_and_resume_are_idempotent()
+    {
+        var service = CreateService(new FakeAdapterClient());
+        var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        await service.DispatchAsync(task.Id, CancellationToken.None);
+        var operationId = TransportOperationIds.Pickup(task.Id);
+        var response = new AgvTaskResponse(operationId, operationId.ToString("N"), "SAMPLE_01", "paused", null);
+
+        await service.RecordAgvCommandAsync(operationId, "pause", response, CancellationToken.None);
+        var repeatedPause = await service.RecordAgvCommandAsync(operationId, "pause", response, CancellationToken.None);
+        var resumeResponse = response with { State = "moving" };
+        await service.RecordAgvCommandAsync(operationId, "resume", resumeResponse, CancellationToken.None);
+        var repeatedResume = await service.RecordAgvCommandAsync(operationId, "resume", resumeResponse, CancellationToken.None);
+
+        Assert.Equal("Paused", repeatedPause?.Status);
+        Assert.Equal("MovingToPickup", repeatedResume?.Status);
+    }
+
+    [Fact]
     public async Task Recovery_maps_arrived_pickup_to_operator_confirmation()
     {
         var adapter = new FakeAdapterClient();
         var service = CreateService(adapter);
         var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        await service.DispatchAsync(task.Id, CancellationToken.None);
         await service.MarkUnknownAsync(task.Id, CancellationToken.None);
         adapter.Reconciled = new(TransportOperationIds.Pickup(task.Id), "device", "SAMPLE_01", "arrived", null);
 
@@ -214,6 +325,7 @@ public class TransportWorkflowTests
         var adapter = new FakeAdapterClient { ThrowGetHttpRequest = true };
         var service = CreateService(adapter);
         var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        await service.DispatchAsync(task.Id, CancellationToken.None);
 
         await service.ReconcileIncompleteAsync(CancellationToken.None);
 
@@ -230,6 +342,7 @@ public class TransportWorkflowTests
         var adapter = new FakeAdapterClient { ThrowGetTaskCancellation = true };
         var service = CreateService(adapter);
         var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        await service.DispatchAsync(task.Id, CancellationToken.None);
 
         await service.ReconcileIncompleteAsync(CancellationToken.None);
 
@@ -245,6 +358,7 @@ public class TransportWorkflowTests
         var adapter = new FakeAdapterClient { CancelOnGet = stopping };
         var service = CreateService(adapter);
         var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        await service.DispatchAsync(task.Id, CancellationToken.None);
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.ReconcileIncompleteAsync(stopping.Token));
         Assert.NotEqual(Guid.Empty, task.Id);

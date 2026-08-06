@@ -1,6 +1,6 @@
 # AGV MES MVP
 
-面向实验室自动化的 `.NET 8 + WPF` MVP：系统支持多台仿真 AGV 的任务分配、地图路径规划和 `SAMPLE_01 -> ST_PREP_01` 搬运流程，并提供 Simulator、可审计的 MES 服务、Adapter 和 WPF 中控看板。
+面向实验室自动化的 `.NET 8 + WPF` MVP：系统支持多台仿真 AGV 的任务分配、地图路径规划和按配置站点创建运输任务，并提供 Simulator、可审计的 MES 服务、Adapter 和 WPF 中控看板。
 
 MES 是任务状态和审计事件的唯一写入者；Adapter 隔离设备协议、控制权和幂等派单；Simulator 仅用于开发和验收。
 
@@ -56,6 +56,8 @@ $env:MES_BASE_URL = 'http://localhost:5045/'
 dotnet run --project src/MesControlAgv.Wpf
 ```
 
+本地 Simulator 调试使用 `WPF_RUNTIME_MODE=simulator`（默认值）。连接真实 Adapter 时设置 `WPF_RUNTIME_MODE=physical`；此模式只显示状态和经过 MES 的任务操作，不提供手工到站或 Simulator 故障注入。
+
 完成 WPF 验证后先关闭窗口 2 中的 WPF 客户端。最后回到窗口 1 清理服务：
 
 ```powershell
@@ -102,7 +104,7 @@ dotnet .\bin\Debug\net8.0\MesControlAgv.Mes.dll --urls http://localhost:5045 --e
 
 ## 正常搬运演示
 
-按以下顺序完成一条正常搬运：创建 `SAMPLE_01 -> ST_PREP_01` 任务，模拟到达 `SAMPLE_01`，确认取货，模拟到达 `ST_PREP_01`，确认放货，最后检查任务详情中的审计事件时间线。
+按以下顺序完成一条正常搬运：在 WPF 中选择当前站点目录中的起点和终点，先创建任务再显式派发，模拟到达起点，确认取货，模拟到达终点，确认放货，最后检查任务详情中的审计事件时间线。站点目录和路线来自当前 MES 配置，不再由界面固定默认值。
 
 WPF 中的创建任务、模拟到站、确认取货和确认放货按钮对应这些操作。任务详情区会显示审计事件时间线，`Unknown` 任务可执行恢复查询；Debug 构建还提供模拟器到站、失败、超时、离线和恢复控制。任务完成后，可以用 `GET /api/tasks/{taskId}` 查看事件时间线。
 
@@ -139,7 +141,9 @@ MES 保存任务状态和完整事件审计；Adapter 保存设备操作和幂�
 
 对接真实 AGV 时，Adapter 已提供按厂商 TCP API 实现的可配置设备客户端；默认仍使用 Simulator。配置 `Agv:Driver` 为 `tcp` 并填写机器人 IP 前，请先完成地图站点、固件版本和控制权规则确认。详细协议映射与现场验收清单见 [真实 AGV TCP Adapter](docs/AGV-TCP-ADAPTER.md)。MES 生命周期、事件审计、WPF 中控和 MES -> Adapter API 契约无需变更。
 
-## 固定站点
+## 默认站点目录
+
+下表是默认开发配置中的站点目录。运行时 WPF 从 `GET /api/stations` 读取启用站点，部署到其他现场时应通过 MES/Adapter profile 更新映射，而不是修改界面代码。
 
 | 编号 | 站点 | 机器站点 ID |
 |---:|---|---|

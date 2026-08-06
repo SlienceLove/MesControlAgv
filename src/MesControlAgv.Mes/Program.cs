@@ -216,11 +216,16 @@ app.MapPost("/api/agvs/{agvId}/command", async (
     string agvId,
     AgvCommandRequest request,
     IAgvGateway adapter,
+    ITaskApplicationService tasks,
     CancellationToken cancellationToken) =>
 {
     try
     {
         var result = await adapter.ExecuteAgvCommandAsync(agvId, request.Command, request.TaskId, cancellationToken);
+        if (result is not null && request.TaskId is { } operationId && request.Command.Trim().ToLowerInvariant() is "pause" or "resume" or "continue")
+        {
+            await tasks.RecordAgvCommandAsync(operationId, request.Command, result, cancellationToken);
+        }
         return result is null ? Results.NotFound() : Results.Ok(result);
     }
     catch (AdapterHttpException exception)
@@ -268,6 +273,22 @@ app.MapPost("/api/tasks", async (
     catch (UnsupportedRouteException exception)
     {
         return Results.UnprocessableEntity(new { detail = exception.Message });
+    }
+});
+
+app.MapPost("/api/tasks/{taskId:guid}/dispatch", async (Guid taskId, ITaskApplicationService service, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        return Results.Ok(await service.DispatchAsync(taskId, cancellationToken));
+    }
+    catch (KeyNotFoundException)
+    {
+        return Results.NotFound();
+    }
+    catch (InvalidTaskTransitionException exception)
+    {
+        return Results.Conflict(new { detail = exception.Message });
     }
 });
 

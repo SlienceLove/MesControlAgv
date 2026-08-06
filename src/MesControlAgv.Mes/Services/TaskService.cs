@@ -50,7 +50,18 @@ public sealed class TaskService : ITaskApplicationService
         }
 
         var task = await _repository.CreateAsync(request.SourceStationCode, request.TargetStationCode, request.Priority, request.Description, request.ExternalId, cancellationToken);
-        await DispatchLegAsync(task.Id, TaskEvent.PickupMoveStarted, source.AgvStationId, cancellationToken);
+        return ToResponse(task);
+    }
+
+    public async Task<TaskResponse> DispatchAsync(Guid taskId, CancellationToken cancellationToken)
+    {
+        var task = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
+        if (task.Status != DomainTaskStatus.Created)
+        {
+            throw new InvalidTaskTransitionException(task.Status, TaskEvent.DispatchRequested);
+        }
+
+        await DispatchLegAsync(task.Id, TaskEvent.PickupMoveStarted, GetEnabledStation(task.SourceStationCode).AgvStationId, cancellationToken);
         return ToResponse((await _repository.GetAsync(task.Id, cancellationToken))!);
     }
 
@@ -90,6 +101,15 @@ public sealed class TaskService : ITaskApplicationService
     public async Task<TaskResponse> CancelAsync(Guid taskId, string operatorName, CancellationToken cancellationToken)
     {
         var task = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
+        if (task.Status == DomainTaskStatus.Created)
+        {
+            return ToResponse(await _repository.ApplyEventAsync(
+                taskId,
+                TaskEvent.CancelConfirmed,
+                new { operatorName, source = "mes-pending-task" },
+                cancellationToken));
+        }
+
         var operationId = task.ActiveTargetStationId == GetEnabledStation(task.TargetStationCode).AgvStationId
             ? TransportOperationIds.Dropoff(task.Id)
             : TransportOperationIds.Pickup(task.Id);
@@ -98,7 +118,7 @@ public sealed class TaskService : ITaskApplicationService
             return ToResponse(await _repository.ApplyEventAsync(taskId, TaskEvent.CancelConfirmed, new { operatorName }, cancellationToken));
 
         if (cancellation is { State: "unknown" }
-            && task.Status is DomainTaskStatus.Dispatching or DomainTaskStatus.MovingToPickup or DomainTaskStatus.MovingToDropoff)
+            && task.Status is DomainTaskStatus.Dispatching or DomainTaskStatus.MovingToPickup or DomainTaskStatus.MovingToDropoff or DomainTaskStatus.Paused)
         {
             var error = cancellation.LastError ?? "cancel_not_confirmed_by_1110";
             return ToResponse(await _repository.ApplyEventAsync(
@@ -142,6 +162,50 @@ public sealed class TaskService : ITaskApplicationService
             _ => throw new InvalidOperationException("Device task cannot be reconciled.")
         };
         return ToResponse(await _repository.ApplyEventAsync(taskId, reconciliation, new { deviceState = device?.State }, cancellationToken));
+    }
+
+    public async Task<TaskResponse?> RecordAgvCommandAsync(
+        Guid operationId,
+        string command,
+        AgvTaskResponse result,
+        CancellationToken cancellationToken)
+    {
+        var task = await _repository.GetByActiveOperationAsync(operationId, cancellationToken);
+        if (task is null) return null;
+
+        var normalizedCommand = command.Trim().ToLowerInvariant();
+        var deviceState = result.State.Trim().ToLowerInvariant();
+        if (normalizedCommand == "pause" && deviceState == "paused" && task.Status == DomainTaskStatus.Paused)
+        {
+            return ToResponse(task);
+        }
+
+        if ((normalizedCommand is "resume" or "continue") && (deviceState is "accepted" or "moving"))
+        {
+            var resumedStatus = IsDropoffLeg(task)
+                ? DomainTaskStatus.MovingToDropoff
+                : DomainTaskStatus.MovingToPickup;
+            if (task.Status == resumedStatus)
+            {
+                return ToResponse(task);
+            }
+        }
+
+        TaskEvent taskEvent = normalizedCommand switch
+        {
+            "pause" when deviceState == "paused" => TaskEvent.PauseRequested,
+            "resume" or "continue" when deviceState is "accepted" or "moving" =>
+                IsDropoffLeg(task) ? TaskEvent.ResumeDropoffRequested : TaskEvent.ResumeRequested,
+            _ => throw new InvalidOperationException(
+                $"Adapter did not confirm {normalizedCommand} for operation {operationId:N} (state: {result.State}).")
+        };
+
+        var updated = await _repository.ApplyEventAsync(
+            task.Id,
+            taskEvent,
+            new { operationId, command = normalizedCommand, deviceState, result.DeviceTaskId, source = "adapter-command" },
+            cancellationToken);
+        return ToResponse(updated);
     }
 
     public async Task ReconcileIncompleteAsync(CancellationToken cancellationToken)
@@ -189,7 +253,7 @@ public sealed class TaskService : ITaskApplicationService
 
     public async Task ReconcileActiveAsync(CancellationToken cancellationToken)
     {
-        foreach (var status in new[] { DomainTaskStatus.Dispatching, DomainTaskStatus.MovingToPickup, DomainTaskStatus.MovingToDropoff })
+        foreach (var status in new[] { DomainTaskStatus.Dispatching, DomainTaskStatus.MovingToPickup, DomainTaskStatus.MovingToDropoff, DomainTaskStatus.Paused })
         {
             var tasks = await _repository.ListByStatusAsync(status, cancellationToken);
             foreach (var task in tasks)
@@ -232,7 +296,7 @@ public sealed class TaskService : ITaskApplicationService
     private async Task ReconcileActiveTaskAsync(Guid taskId, CancellationToken cancellationToken)
     {
         var task = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
-        if (task.Status is not (DomainTaskStatus.Dispatching or DomainTaskStatus.MovingToPickup or DomainTaskStatus.MovingToDropoff)) return;
+        if (task.Status is not (DomainTaskStatus.Dispatching or DomainTaskStatus.MovingToPickup or DomainTaskStatus.MovingToDropoff or DomainTaskStatus.Paused)) return;
 
         var pickup = task.ActiveTargetStationId == GetEnabledStation(task.SourceStationCode).AgvStationId;
         var operationId = pickup ? TransportOperationIds.Pickup(task.Id) : TransportOperationIds.Dropoff(task.Id);
@@ -247,6 +311,19 @@ public sealed class TaskService : ITaskApplicationService
             cancellationToken);
 
         var state = device.State?.Trim().ToLowerInvariant();
+        if (state == "paused")
+        {
+            if (task.Status is DomainTaskStatus.MovingToPickup or DomainTaskStatus.MovingToDropoff)
+            {
+                await _repository.ApplyEventAsync(
+                    taskId,
+                    TaskEvent.PauseRequested,
+                    new { deviceState = state, source = "adapter-poll" },
+                    cancellationToken);
+            }
+            return;
+        }
+
         if (state is "accepted" or "moving")
         {
             if (task.Status == DomainTaskStatus.Dispatching)
@@ -254,6 +331,14 @@ public sealed class TaskService : ITaskApplicationService
                 await _repository.ApplyEventAsync(
                     taskId,
                     pickup ? TaskEvent.PickupMoveStarted : TaskEvent.DropoffMoveStarted,
+                    new { deviceState = state, source = "adapter-poll" },
+                    cancellationToken);
+            }
+            else if (task.Status == DomainTaskStatus.Paused)
+            {
+                await _repository.ApplyEventAsync(
+                    taskId,
+                    pickup ? TaskEvent.ResumeRequested : TaskEvent.ResumeDropoffRequested,
                     new { deviceState = state, source = "adapter-poll" },
                     cancellationToken);
             }
@@ -498,6 +583,12 @@ public sealed class TaskService : ITaskApplicationService
         HttpRequestException => $"Adapter \u901A\u4FE1\u5931\u8D25\uFF1A{exception.Message}",
         _ => $"\u7CFB\u7EDF\u5F02\u5E38\uFF1A{exception.Message}"
     };
+
+    private bool IsDropoffLeg(TransportTask task) =>
+        string.Equals(
+            task.ActiveTargetStationId,
+            GetEnabledStation(task.TargetStationCode).AgvStationId,
+            StringComparison.Ordinal);
 
     private Station GetEnabledStation(int code)
     {

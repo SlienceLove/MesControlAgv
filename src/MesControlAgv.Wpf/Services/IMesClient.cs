@@ -50,7 +50,9 @@ public interface IMesClient
     async Task<IReadOnlyList<AgvDashboardSnapshot>> GetAgvFleetAsync(CancellationToken cancellationToken) => [await GetAgvSnapshotAsync(cancellationToken)];
     Task<AgvCommandResult?> ExecuteAgvCommandAsync(string agvId, string command, Guid? taskId, CancellationToken cancellationToken) => Task.FromResult<AgvCommandResult?>(null);
     Task<DashboardTask> CreateTaskAsync(CancellationToken cancellationToken);
-    Task<DashboardTask> CreateTaskAsync(int sourceStationCode, int targetStationCode, int priority, string? description, string? externalId, CancellationToken cancellationToken) => CreateTaskAsync(cancellationToken);
+    Task<DashboardTask> CreateTaskAsync(int sourceStationCode, int targetStationCode, int priority, string? description, string? externalId, CancellationToken cancellationToken);
+    Task<DashboardTask> DispatchTaskAsync(Guid taskId, CancellationToken cancellationToken) =>
+        Task.FromException<DashboardTask>(new NotSupportedException("Task dispatch is not supported by this MES client."));
     Task<DashboardTask> MarkArrivedAsync(Guid taskId, CancellationToken cancellationToken);
     Task<DashboardTask> ConfirmPickupAsync(Guid taskId, string operatorName, CancellationToken cancellationToken);
     Task<DashboardTask> ConfirmDropoffAsync(Guid taskId, string operatorName, CancellationToken cancellationToken);

@@ -17,6 +17,7 @@ public sealed class TransportAcceptanceTests
         var service = CreateService(adapter);
 
         var created = await service.CreateAsync(new CreateTaskRequest(2, 4), CancellationToken.None);
+        await service.DispatchAsync(created.Id, CancellationToken.None);
         await service.RecordArrivalAsync(created.Id, CancellationToken.None);
         await service.ConfirmPickupAsync(created.Id, "operator-a", CancellationToken.None);
         await service.RecordArrivalAsync(created.Id, CancellationToken.None);
@@ -37,7 +38,9 @@ public sealed class TransportAcceptanceTests
         var service = CreateService(adapter);
 
         var first = await service.CreateAsync(new CreateTaskRequest(2, 4), CancellationToken.None);
+        await service.DispatchAsync(first.Id, CancellationToken.None);
         var second = await service.CreateAsync(new CreateTaskRequest(2, 4), CancellationToken.None);
+        await service.DispatchAsync(second.Id, CancellationToken.None);
 
         Assert.NotEqual(first.Id, second.Id);
         Assert.Equal(2, adapter.OperationIds.Distinct().Count());
@@ -52,6 +55,7 @@ public sealed class TransportAcceptanceTests
         for (var index = 0; index < 10; index++)
         {
             var created = await service.CreateAsync(new CreateTaskRequest(2, 4), CancellationToken.None);
+            await service.DispatchAsync(created.Id, CancellationToken.None);
             await service.RecordArrivalAsync(created.Id, CancellationToken.None);
             await service.ConfirmPickupAsync(created.Id, "operator-a", CancellationToken.None);
             await service.RecordArrivalAsync(created.Id, CancellationToken.None);
@@ -71,7 +75,8 @@ public sealed class TransportAcceptanceTests
         var adapter = new AcceptanceAdapter { NextDispatchState = "failed", NextDispatchError = "blocked aisle" };
         var service = CreateService(adapter);
 
-        var failed = await service.CreateAsync(new CreateTaskRequest(2, 4), CancellationToken.None);
+        var created = await service.CreateAsync(new CreateTaskRequest(2, 4), CancellationToken.None);
+        var failed = await service.DispatchAsync(created.Id, CancellationToken.None);
         adapter.NextDispatchState = "moving";
         adapter.NextDispatchError = null;
         var retried = await service.RetryAsync(failed.Id, CancellationToken.None);
@@ -89,7 +94,8 @@ public sealed class TransportAcceptanceTests
         var adapter = new AcceptanceAdapter { ThrowTimeout = true };
         var service = CreateService(adapter);
 
-        var unknown = await service.CreateAsync(new CreateTaskRequest(2, 4), CancellationToken.None);
+        var created = await service.CreateAsync(new CreateTaskRequest(2, 4), CancellationToken.None);
+        var unknown = await service.DispatchAsync(created.Id, CancellationToken.None);
         adapter.ThrowTimeout = false;
         adapter.ReconciledState = "moving";
         var recovered = await service.RecoverAsync(unknown.Id, CancellationToken.None);
@@ -106,6 +112,7 @@ public sealed class TransportAcceptanceTests
         var adapter = new AcceptanceAdapter();
         var firstInstance = CreateService(adapter);
         var created = await firstInstance.CreateAsync(new CreateTaskRequest(2, 4), CancellationToken.None);
+        await firstInstance.DispatchAsync(created.Id, CancellationToken.None);
 
         var restartedInstance = CreateService(adapter);
         await restartedInstance.ReconcileIncompleteAsync(CancellationToken.None);

@@ -4,11 +4,11 @@ Last updated: 2026-08-06
 
 ## Current status
 
-The `.NET 8 + WPF` MVP is implemented and the final review fix wave is complete. The fixed route is `SAMPLE_01 -> ST_PREP_01`; the service ports remain Simulator `5183`, Adapter `5041`, and MES `5045`.
+The `.NET 8 + WPF` MVP is implemented and the current control-center flow is configuration-driven. WPF loads enabled stations and previews the configured route; a task is created as `Created` and explicitly dispatched through MES -> Adapter -> AGV. The default local service ports remain Simulator `5183`, Adapter `5041`, and MES `5045`.
 
-MES owns task state, SQLite persistence, and audit events. Adapter owns device protocol, control ownership, idempotent dispatch, device-confirmed cancellation, and timeout reconciliation. WPF calls MES action APIs; its Debug-only panel calls simulator controls only for development and acceptance.
+MES owns task state, SQLite persistence, and audit events. Adapter owns device protocol, control ownership, idempotent dispatch, device-confirmed cancellation, and timeout reconciliation. WPF calls MES action APIs; only a Debug build running with `WPF_RUNTIME_MODE=simulator` can call simulator controls.
 
-The WPF dashboard includes task detail and audit-event timeline loading, task-operation descriptions, explicit exception reasons, `UNKNOWN` recovery, and a development-only simulator control panel. Release builds hide simulator controls. The Adapter now also contains a configuration-selected vendor TCP driver; Simulator remains the default. The development Simulator now exposes three virtual AGVs, while the shared Domain layer provides shortest-path planning and multi-AGV assignment.
+The WPF dashboard includes dynamic task creation, explicit dispatch, task detail and audit-event timeline loading, task-operation descriptions, explicit exception reasons, `UNKNOWN` recovery, and AGV pause/resume/cancel controls. Release builds hide simulator controls even when Simulator is selected; physical mode never exposes manual arrival or simulator fault injection. The Adapter now also contains a configuration-selected vendor TCP driver; Simulator remains the default. The development Simulator now exposes three virtual AGVs, while the shared Domain layer provides shortest-path planning and multi-AGV assignment.
 
 Task state handling now distinguishes a known execution failure from an unresolved device result. Adapter conflicts such as no available AGV, path conflicts, and duplicate control are persisted as `FAILED` with a Chinese reason and remain retryable. Timeouts and communication failures remain `UNKNOWN` only when the device result cannot be confirmed, and the WPF dashboard shows `系统异常` together with the stored reason instead of `状态未知`.
 
@@ -31,11 +31,11 @@ dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1
 dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
-The suite contains 79 tests after addition of experiment workflow management, AGV communications, batch-import coverage, KPI dashboard coverage, task-monitor date filtering, the application-boundary migration, and the first capability/module-boundary slice. The serial Release build passed on 2026-08-04 with 0 warnings and 0 errors, and all 79 tests passed in this environment: Domain 12, MES 18, Adapter 16, WPF 22, E2E 7, and Simulator 4.
+The Release solution build passed on 2026-08-06 with 0 warnings and 0 errors, and all 158 tests passed: Domain 19, MES 32, Adapter 57, WPF 29, E2E 8, Simulator 4, and Workflow Contract 9. Coverage includes dynamic station/task parameters, explicit create/dispatch separation, pause/resume state writeback, physical-mode command guards, and the complete Simulator transport flow.
 
 ## Live verification
 
-The three service processes were started with the built DLLs for process-level validation. Health checks, the planning endpoint, and the normal transport flow passed; `scripts/verify-local.ps1` created a task, simulated pickup/dropoff arrival, confirmed both operations, and observed `COMPLETED` with required audit events. The three services were listening on Simulator `5183`, Adapter `5041`, and MES `5045` during live verification; they are not required to remain running after verification. The physical-robot run has not been completed.
+The three service processes were started from the Release publish output on isolated local ports for process-level validation. Health checks and `scripts/verify-local.ps1` passed on 2026-08-06: the script created a task, explicitly dispatched it, paused and resumed the Adapter operation with MES state writeback, simulated pickup/dropoff arrival, confirmed both operations, and observed `COMPLETED` with required audit events. The physical-robot run has not been completed.
 
 The 2026-08-04 WPF Debug EXE verification also succeeded. The task-monitor refresh message, `每 2 秒从 MES 刷新`, is now fixed at the bottom of the monitoring layout in outer `Grid.Row="2"` and has hit testing disabled, so it no longer overlays the task list or prevents task clicks.
 
@@ -47,7 +47,7 @@ The vendor protocol is now implemented behind the Adapter driver boundary, but n
 
 ## Next session handoff
 
-1. Start WPF and verify the normal UI flow: arrive at pickup, confirm pickup, arrive at dropoff, confirm dropoff, and observe `COMPLETED`; also verify known failures and communication exceptions show their reasons.
+1. Start WPF in Debug + Simulator mode, select configured source/target stations, create and explicitly dispatch a task, then verify pause/resume, arrival, pickup confirmation, dropoff arrival, dropoff confirmation, and `COMPLETED`; also verify known failures and communication exceptions show their reasons.
 2. If a future restart produces new project-specific Code Integrity 3077/3033 events, ask the administrator to approve a supplemental WDAC policy or provide a signed development build.
 3. Confirm the full physical-robot acceptance boundary before enabling `Agv:Driver=tcp`.
 4. Confirm the AGV IP address, firmware version, map name, and actual station IDs.

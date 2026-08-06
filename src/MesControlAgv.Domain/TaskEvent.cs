@@ -11,6 +11,7 @@ public enum TaskEvent
     DropoffConfirmed,
     PauseRequested,
     ResumeRequested,
+    ResumeDropoffRequested,
     DeviceFailed,
     Timeout,
     RetryRequested,

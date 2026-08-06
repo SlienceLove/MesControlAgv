@@ -207,6 +207,26 @@ public class AdapterServiceTests
     }
 
     [Fact]
+    public async Task Pause_and_resume_persist_confirmed_device_state()
+    {
+        var simulator = new FakeSimulatorClient();
+        var (service, database) = CreateServiceWithDatabase(simulator);
+        var taskId = Guid.NewGuid();
+        await service.DispatchAsync(taskId, "SAMPLE_01", CancellationToken.None);
+
+        var paused = await service.PauseAsync(taskId, CancellationToken.None);
+        var persistedPaused = await database.Tasks.FindAsync([taskId]);
+        Assert.Equal("paused", paused?.State);
+        Assert.Equal("paused", persistedPaused?.State);
+
+        var resumed = await service.ResumeAsync(taskId, CancellationToken.None);
+        var persistedResumed = await database.Tasks.FindAsync([taskId]);
+
+        Assert.Equal("moving", resumed?.State);
+        Assert.Equal("moving", persistedResumed?.State);
+    }
+
+    [Fact]
     public async Task Cancel_persists_only_after_device_confirms_cancellation()
     {
         var taskId = Guid.NewGuid();

@@ -43,7 +43,15 @@ public class MainViewModelTests
     }
 
     [Fact]
-    public async Task Refresh_populates_dashboard_and_enables_arrival_for_moving_task()
+    public void Paused_task_is_distinguished_in_the_task_monitor()
+    {
+        var row = TaskRowViewModel.From(new DashboardTask(Guid.NewGuid(), 2, 4, "Paused", 0, null));
+
+        Assert.Contains("\u6682\u505C", row.StatusDescription);
+    }
+
+    [Fact]
+    public async Task Physical_mode_keeps_status_visible_and_blocks_manual_arrival()
     {
         var task = new DashboardTask(Guid.NewGuid(), 2, 4, "MovingToPickup", 0, null);
         var client = new FakeMesClient([task]);
@@ -57,8 +65,43 @@ public class MainViewModelTests
         Assert.Equal(DateOnly.FromDateTime(DateTime.UtcNow), client.LastRequestedDate);
         Assert.Equal(DateOnly.FromDateTime(DateTime.UtcNow), client.LastRequestedKpiDate);
         Assert.Equal(1, viewModel.Kpi.TaskSummary.Total);
-        Assert.True(viewModel.ArriveCommand.CanExecute(null));
+        Assert.True(viewModel.IsPhysicalMode);
+        Assert.False(viewModel.IsManualArrivalAvailable);
+        Assert.Contains("Physical", viewModel.RuntimeMode, StringComparison.Ordinal);
+        Assert.False(viewModel.ArriveCommand.CanExecute(null));
+        viewModel.ArriveCommand.Execute(null);
+        Assert.Equal(0, client.MarkArrivedCallCount);
         Assert.False(viewModel.ConfirmPickupCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task Simulator_mode_respects_the_build_safety_boundary()
+    {
+        var task = new DashboardTask(Guid.NewGuid(), 2, 4, "MovingToPickup", 0, null);
+        var client = new FakeMesClient([task]);
+        var simulator = new RecordingSimulatorControlClient();
+        using var viewModel = new MainViewModel(client, simulator);
+
+        await viewModel.RefreshAsync();
+
+        Assert.True(viewModel.IsSimulatorMode);
+#if DEBUG
+        Assert.True(viewModel.IsManualArrivalAvailable);
+        Assert.True(viewModel.ArriveCommand.CanExecute(null));
+
+        viewModel.ArriveCommand.Execute(null);
+        await WaitUntilAsync(() => client.MarkArrivedCallCount == 1);
+
+        Assert.Equal(1, simulator.TaskControlCallCount);
+#else
+        Assert.False(viewModel.IsManualArrivalAvailable);
+        Assert.False(viewModel.ArriveCommand.CanExecute(null));
+
+        viewModel.ArriveCommand.Execute(null);
+
+        Assert.Equal(0, client.MarkArrivedCallCount);
+        Assert.Equal(0, simulator.TaskControlCallCount);
+#endif
     }
 
     [Fact]
@@ -125,6 +168,17 @@ public class MainViewModelTests
         Assert.Single(viewModel.TaskEvents);
         Assert.Equal("Timeout", viewModel.TaskEvents[0].EventType);
     }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            if (condition()) return;
+            await Task.Delay(10);
+        }
+
+        Assert.Fail("The expected asynchronous command did not complete.");
+    }
 }
 
 internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesClient
@@ -134,6 +188,9 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
     public DateOnly? LastRequestedDate { get; private set; }
     public DateOnly? LastRequestedKpiDate { get; private set; }
     public int GetStationsCallCount { get; private set; }
+    public int MarkArrivedCallCount { get; private set; }
+    public int DispatchCallCount { get; private set; }
+    public Guid? LastDispatchTaskId { get; private set; }
     public DashboardPlannedPath? PlannedPath { get; set; }
     public (string FromStationId, string ToStationId, IReadOnlyCollection<string>? BlockedStations)? LastPlanRequest { get; private set; }
     public (int SourceStationCode, int TargetStationCode, int Priority, string? Description, string? ExternalId)? LastCreateRequest { get; private set; }
@@ -191,10 +248,33 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
         LastCreateRequest = (sourceStationCode, targetStationCode, priority, description, externalId);
         return Task.FromResult(tasks[0]);
     }
-    public Task<DashboardTask> MarkArrivedAsync(Guid taskId, CancellationToken cancellationToken) => Task.FromResult(tasks[0]);
+    public Task<DashboardTask> DispatchTaskAsync(Guid taskId, CancellationToken cancellationToken)
+    {
+        DispatchCallCount++;
+        LastDispatchTaskId = taskId;
+        return Task.FromResult(tasks[0]);
+    }
+    public Task<DashboardTask> MarkArrivedAsync(Guid taskId, CancellationToken cancellationToken)
+    {
+        MarkArrivedCallCount++;
+        return Task.FromResult(tasks[0]);
+    }
     public Task<DashboardTask> ConfirmPickupAsync(Guid taskId, string operatorName, CancellationToken cancellationToken) => Task.FromResult(tasks[0]);
     public Task<DashboardTask> ConfirmDropoffAsync(Guid taskId, string operatorName, CancellationToken cancellationToken) => Task.FromResult(tasks[0]);
     public Task<DashboardTask> RetryAsync(Guid taskId, CancellationToken cancellationToken) => Task.FromResult(tasks[0]);
     public Task<DashboardTask> RecoverAsync(Guid taskId, CancellationToken cancellationToken) => Task.FromResult(tasks[0]);
     public Task<DashboardTask> CancelAsync(Guid taskId, string operatorName, CancellationToken cancellationToken) => Task.FromResult(tasks[0]);
+}
+
+internal sealed class RecordingSimulatorControlClient : ISimulatorControlClient
+{
+    public int TaskControlCallCount { get; private set; }
+
+    public Task ApplyControlAsync(string mode, CancellationToken cancellationToken) => Task.CompletedTask;
+
+    public Task ApplyControlAsync(Guid deviceTaskId, string mode, CancellationToken cancellationToken)
+    {
+        TaskControlCallCount++;
+        return Task.CompletedTask;
+    }
 }

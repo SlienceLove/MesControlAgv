@@ -70,6 +70,25 @@ public sealed class TaskCreationViewModelTests
         Assert.Null(client.LastCreateRequest);
     }
 
+    [Fact]
+    public async Task Created_task_can_be_explicitly_dispatched_from_the_control_center()
+    {
+        var task = new DashboardTask(Guid.NewGuid(), 2, 4, "Created", 0, null);
+        var client = new FakeMesClient([task]);
+        client.SetStations(
+            new DashboardStation(2, "Sample", "SAMPLE_01", true),
+            new DashboardStation(4, "Preparation", "ST_PREP_01", true));
+        using var viewModel = new MainViewModel(client);
+
+        await viewModel.RefreshAsync();
+
+        Assert.True(viewModel.DispatchTaskCommand.CanExecute(null));
+        viewModel.DispatchTaskCommand.Execute(null);
+
+        await WaitUntilAsync(() => client.DispatchCallCount == 1);
+        Assert.Equal(task.Id, client.LastDispatchTaskId);
+    }
+
     private static FakeMesClient CreateClient()
     {
         var task = new DashboardTask(Guid.NewGuid(), 2, 4, "MovingToPickup", 0, null);

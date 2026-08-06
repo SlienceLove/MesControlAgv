@@ -49,8 +49,10 @@ public sealed class VendorTcpTransportAcceptanceTests
                     new PathPlanner(AgvMap.FromProfile(profile.Map)));
 
             var created = await service.CreateAsync(new CreateTaskRequest(2, 4), CancellationToken.None);
-            Assert.Equal("MovingToPickup", created.Status);
-            Assert.Equal(["CHARGE_01", "PICK_01", "SAMPLE_01"], created.ActivePath);
+            Assert.Equal("Created", created.Status);
+            var dispatched = await service.DispatchAsync(created.Id, CancellationToken.None);
+            Assert.Equal("MovingToPickup", dispatched.Status);
+            Assert.Equal(["CHARGE_01", "PICK_01", "SAMPLE_01"], dispatched.ActivePath);
 
             await service.ReconcileActiveAsync(CancellationToken.None);
             var waitingForPickup = await service.GetDetailAsync(created.Id, CancellationToken.None);
