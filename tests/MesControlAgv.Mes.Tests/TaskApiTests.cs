@@ -14,11 +14,11 @@ public sealed class TaskApiTests : IClassFixture<MesWebApplicationFactory>
     }
 
     [Fact]
-    public async Task Create_task_only_accepts_sample_to_prep_route()
+    public async Task Create_task_rejects_station_outside_active_profile()
     {
         var response = await _client.PostAsJsonAsync("/api/tasks", new
         {
-            sourceStationCode = 1,
+            sourceStationCode = 999,
             targetStationCode = 4
         });
 

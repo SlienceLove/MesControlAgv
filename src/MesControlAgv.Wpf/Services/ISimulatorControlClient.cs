@@ -32,7 +32,8 @@ public sealed class SimulatorControlClient(HttpClient client) : ISimulatorContro
         {
             using var document = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
             if (document.RootElement.ValueKind == JsonValueKind.Object
-                && document.RootElement.TryGetProperty("detail", out var detailElement))
+                && document.RootElement.TryGetProperty("detail", out var detailElement)
+                && detailElement.ValueKind == JsonValueKind.String)
             {
                 detail = detailElement.GetString();
             }

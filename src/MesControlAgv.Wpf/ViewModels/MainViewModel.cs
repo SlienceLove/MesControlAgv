@@ -1,10 +1,11 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
 using MesControlAgv.Domain;
 using MesControlAgv.Wpf.Infrastructure;
+using MesControlAgv.Wpf.Modules;
 using MesControlAgv.Wpf.Services;
 
 namespace MesControlAgv.Wpf.ViewModels;
@@ -13,7 +14,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 {
     private readonly IMesClient _mes;
     private readonly ISimulatorControlClient? _simulator;
-    private readonly BatchTaskImportParser _batchParser = new();
+    private readonly ControlCenterViewModel _modules;
     private readonly PeriodicTimer _timer = new(TimeSpan.FromSeconds(2));
     private readonly CancellationTokenSource _shutdown = new();
     private CancellationTokenSource? _detailRefresh;
@@ -21,19 +22,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private TaskRowViewModel? _selectedTask;
     private AgvRowViewModel? _selectedAgv;
     private bool _suppressDetailRefresh;
-    private string _connectionStatus = "正在连接 MES";
-    private string _agvStatus = "未知";
+    private string _connectionStatus = "\u6B63\u5728\u8FDE\u63A5 MES";
+    private string _agvStatus = "\u672A\u77E5";
     private string _agvStation = "-";
     private string _message = string.Empty;
-    private string _batchStatus = "请选择 CSV 或 XLSX 文件导入任务";
+    private string _batchStatus = "\u8BF7\u9009\u62E9 CSV \u6216 XLSX \u6587\u4EF6\u5BFC\u5165\u4EFB\u52A1";
     private DateTime? _taskFilterDate = DateTime.UtcNow.Date;
 
-    public MainViewModel(IMesClient mes, ISimulatorControlClient? simulator = null)
+    public MainViewModel(IMesClient mes, ISimulatorControlClient? simulator = null, ControlCenterModuleRegistry? moduleRegistry = null)
     {
         _mes = mes;
         _simulator = simulator;
+        ModuleRegistry = moduleRegistry ?? ControlCenterModuleRegistry.CreateStandard();
         WorkflowEditor = new WorkflowEditorViewModel(new WorkflowStore());
-        Kpi = new KpiDashboardViewModel();
+        _modules = new ControlCenterViewModel(WorkflowEditor, ModuleRegistry);
+        Kpi = _modules.KpiDashboard;
         CreateTaskCommand = new AsyncCommand(() => ExecuteActionAsync(CreateTaskAsync));
         ArriveCommand = new AsyncCommand(() => ExecuteActionAsync(ArriveAsync), () => SelectedTask?.Status is "MovingToPickup" or "MovingToDropoff");
         ConfirmPickupCommand = new AsyncCommand(() => ExecuteActionAsync(ConfirmPickupAsync), () => SelectedTask?.Status == "WaitingPickupConfirmation");
@@ -49,21 +52,32 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         RefreshAgvCommand = new AsyncCommand(() => ExecuteActionAsync(RefreshAgvAsync));
         QueryTasksCommand = new AsyncCommand(() => ExecuteActionAsync(() => RefreshAsync()));
         RefreshTasksCommand = new AsyncCommand(() => ExecuteActionAsync(() => RefreshAsync()));
-        PauseAgvCommand = new AsyncCommand(() => ExecuteActionAsync(() => ExecuteAgvCommandAsync("pause")), CanControlSelectedAgv);
-        ResumeAgvCommand = new AsyncCommand(() => ExecuteActionAsync(() => ExecuteAgvCommandAsync("resume")), CanControlSelectedAgv);
-        CancelAgvCommand = new AsyncCommand(() => ExecuteActionAsync(() => ExecuteAgvCommandAsync("cancel")), CanControlSelectedAgv);
+        PauseAgvCommand = new AsyncCommand(() => ExecuteActionAsync(() => ExecuteAgvCommandAsync("pause")), () => CanControlSelectedAgv("pause"));
+        ResumeAgvCommand = new AsyncCommand(() => ExecuteActionAsync(() => ExecuteAgvCommandAsync("resume")), () => CanControlSelectedAgv("resume"));
+        CancelAgvCommand = new AsyncCommand(() => ExecuteActionAsync(() => ExecuteAgvCommandAsync("cancel")), () => CanControlSelectedAgv("cancel"));
         SortBatchCommand = new AsyncCommand(() => { SortBatchTasks(); return Task.CompletedTask; }, () => BatchTasks.Count > 1);
-        SubmitBatchCommand = new AsyncCommand(() => ExecuteActionAsync(SubmitBatchAsync), () => BatchTasks.Any(task => task.Status == "待提交"));
-        ClearBatchCommand = new AsyncCommand(() => { BatchTasks.Clear(); BatchImportIssues.Clear(); BatchStatus = "已清空导入列表"; RefreshBatchCommandState(); return Task.CompletedTask; });
+        SubmitBatchCommand = new AsyncCommand(() => ExecuteActionAsync(SubmitBatchAsync), () => BatchTasks.Any(task => task.Status == "\u5F85\u63D0\u4EA4"));
+        ClearBatchCommand = new AsyncCommand(() =>
+        {
+            _modules.BatchImport.Clear();
+            BatchStatus = _modules.BatchImport.BatchStatus;
+            RefreshBatchCommandState();
+            return Task.CompletedTask;
+        });
     }
 
-    public ObservableCollection<TaskRowViewModel> Tasks { get; } = [];
-    public ObservableCollection<TaskEventRowViewModel> TaskEvents { get; } = [];
-    public ObservableCollection<AgvRowViewModel> Agvs { get; } = [];
-    public ObservableCollection<BatchTaskRowViewModel> BatchTasks { get; } = [];
-    public ObservableCollection<string> BatchImportIssues { get; } = [];
+    public ObservableCollection<TaskRowViewModel> Tasks => _modules.TaskMonitor.Tasks;
+    public ObservableCollection<TaskEventRowViewModel> TaskEvents => _modules.TaskMonitor.TaskEvents;
+    public ObservableCollection<AgvRowViewModel> Agvs => _modules.AgvCommunication.Agvs;
+    public ObservableCollection<BatchTaskRowViewModel> BatchTasks => _modules.BatchImport.BatchTasks;
+    public ObservableCollection<string> BatchImportIssues => _modules.BatchImport.BatchImportIssues;
     public WorkflowEditorViewModel WorkflowEditor { get; }
     public KpiDashboardViewModel Kpi { get; }
+    public ControlCenterModuleRegistry ModuleRegistry { get; }
+    public ControlCenterViewModel Modules => _modules;
+    public TaskMonitorViewModel TaskMonitor => _modules.TaskMonitor;
+    public AgvCommunicationViewModel AgvCommunication => _modules.AgvCommunication;
+    public BatchImportViewModel BatchImport => _modules.BatchImport;
 
     public TaskRowViewModel? SelectedTask
     {
@@ -71,6 +85,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         set
         {
             if (!SetField(ref _selectedTask, value)) return;
+            _modules.TaskMonitor.SelectedTask = value;
             RefreshCommandState();
             if (!_suppressDetailRefresh) RequestTaskDetailRefresh();
         }
@@ -79,14 +94,51 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public AgvRowViewModel? SelectedAgv
     {
         get => _selectedAgv;
-        set { if (SetField(ref _selectedAgv, value)) RefreshAgvCommandState(); }
+        set
+        {
+            if (!SetField(ref _selectedAgv, value)) return;
+            _modules.AgvCommunication.SelectedAgv = value;
+            RefreshAgvCommandState();
+        }
     }
 
-    public string ConnectionStatus { get => _connectionStatus; private set => SetField(ref _connectionStatus, value); }
-    public string AgvStatus { get => _agvStatus; private set => SetField(ref _agvStatus, value); }
-    public string AgvStation { get => _agvStation; private set => SetField(ref _agvStation, value); }
+    public string ConnectionStatus
+    {
+        get => _connectionStatus;
+        private set
+        {
+            if (!SetField(ref _connectionStatus, value)) return;
+            _modules.TaskMonitor.ConnectionStatus = value;
+        }
+    }
+    public string AgvStatus
+    {
+        get => _agvStatus;
+        private set
+        {
+            if (!SetField(ref _agvStatus, value)) return;
+            _modules.AgvCommunication.AgvStatus = value;
+        }
+    }
+    public string AgvStation
+    {
+        get => _agvStation;
+        private set
+        {
+            if (!SetField(ref _agvStation, value)) return;
+            _modules.AgvCommunication.AgvStation = value;
+        }
+    }
     public string Message { get => _message; private set => SetField(ref _message, value); }
-    public string BatchStatus { get => _batchStatus; private set => SetField(ref _batchStatus, value); }
+    public string BatchStatus
+    {
+        get => _batchStatus;
+        private set
+        {
+            if (!SetField(ref _batchStatus, value)) return;
+            _modules.BatchImport.BatchStatus = value;
+        }
+    }
 
     public DateTime? TaskFilterDate
     {
@@ -94,7 +146,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         set
         {
             if (value is not { } date) return;
-            SetField(ref _taskFilterDate, date.Date);
+            if (SetField(ref _taskFilterDate, date.Date)) _modules.TaskMonitor.TaskFilterDate = date.Date;
         }
     }
 
@@ -146,19 +198,24 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             foreach (var task in tasks) Tasks.Add(TaskRowViewModel.From(task));
             CancelPendingDetailRefresh();
             _suppressDetailRefresh = true;
-            try { SelectedTask = Tasks.SingleOrDefault(task => task.Id == selectedId) ?? Tasks.FirstOrDefault(); }
+            try
+            {
+                SelectedTask = preferredTaskId is { } preferredId
+                    ? Tasks.SingleOrDefault(task => task.Id == preferredId)
+                    : Tasks.SingleOrDefault(task => task.Id == selectedId) ?? Tasks.FirstOrDefault();
+            }
             finally { _suppressDetailRefresh = false; }
             await LoadTaskDetailAsync(SelectedTask?.Id, _shutdown.Token);
             UpdateAgvs(fleet);
-            ConnectionStatus = "MES 已连接";
+            ConnectionStatus = "MES \u5DF2\u8FDE\u63A5";
             var primary = fleet.FirstOrDefault();
-            AgvStatus = primary is null ? "无 AGV 数据" : primary.Online ? $"在线 / {primary.ControlOwner}" : "离线";
+            AgvStatus = primary is null ? "\u65E0 AGV \u6570\u636E" : primary.Online ? $"\u5728\u7EBF / {primary.ControlOwner}" : "\u79BB\u7EBF";
             AgvStation = primary?.CurrentStationId ?? "-";
             Message = string.Empty;
         }
         catch (Exception exception)
         {
-            ConnectionStatus = "MES 不可用";
+            ConnectionStatus = "MES \u4E0D\u53EF\u7528";
             Message = exception.Message;
         }
     }
@@ -167,9 +224,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         var fleet = await _mes.GetAgvFleetAsync(_shutdown.Token);
         UpdateAgvs(fleet);
-        BatchStatus = $"AGV 状态已刷新：{fleet.Count} 台";
+        BatchStatus = $"AGV \u72B6\u6001\u5DF2\u5237\u65B0\uFF1A{fleet.Count} \u53F0";
     }
 
+    #if false
     public Task ImportBatchFileAsync(string filePath)
     {
         try
@@ -177,14 +235,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             var result = _batchParser.Parse(filePath);
             BatchTasks.Clear();
             BatchImportIssues.Clear();
-            foreach (var issue in result.Issues) BatchImportIssues.Add($"第 {issue.SourceRowNumber} 行：{issue.Message}");
+            foreach (var issue in result.Issues) BatchImportIssues.Add($"�?{issue.SourceRowNumber} 琛岋細{issue.Message}");
             foreach (var task in result.Tasks) BatchTasks.Add(new BatchTaskRowViewModel(task));
-            BatchStatus = $"已导入 {BatchTasks.Count} 条任务，问题 {BatchImportIssues.Count} 条；可编辑优先级后提交";
+            BatchStatus = $"宸插鍏?{BatchTasks.Count} 鏉′换鍔★紝闂�?{BatchImportIssues.Count} 鏉★紱鍙紪杈戜紭鍏堢骇鍚庢彁浜?;
             RefreshBatchCommandState();
         }
         catch (Exception exception)
         {
-            BatchStatus = $"导入失败：{exception.Message}";
+            BatchStatus = $"瀵煎叆澶辫触锛歿exception.Message}";
             Message = exception.Message;
         }
         return Task.CompletedTask;
@@ -194,12 +252,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         SortBatchTasks();
         var submitted = 0;
-        foreach (var task in BatchTasks.Where(task => task.Status == "待提交").ToList())
+        foreach (var task in BatchTasks.Where(task => task.Status == "寰呮彁浜?).ToList())
         {
             if (!TryResolveStationCode(task.SourceStation, out var source) ||
                 !TryResolveStationCode(task.TargetStation, out var target))
             {
-                task.MarkFailed("起点/终点必须是数字编码、AGV 站点 ID 或站点名称");
+                task.MarkFailed("璧风�?缁堢偣蹇呴』鏄暟瀛楃紪鐮併€丄GV 绔欑�?ID 鎴栫珯鐐瑰悕�?);
                 continue;
             }
 
@@ -214,7 +272,57 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 task.MarkFailed(exception.Message);
             }
         }
-        BatchStatus = $"批量提交完成：成功 {submitted} 条，待提交 {BatchTasks.Count(task => task.Status == "待提交")} 条";
+        BatchStatus = $"鎵归噺鎻愪氦瀹屾垚锛氭垚�?{submitted} 鏉★紝寰呮彁�?{BatchTasks.Count(task => task.Status == "寰呮彁浜?)} �?;
+        RefreshBatchCommandState();
+        await RefreshAsync();
+    }
+
+    #endif
+
+    public Task ImportBatchFileAsync(string filePath)
+    {
+        try
+        {
+            _modules.BatchImport.Import(filePath);
+            BatchStatus = _modules.BatchImport.BatchStatus;
+            RefreshBatchCommandState();
+        }
+        catch (Exception exception)
+        {
+            BatchStatus = $"Batch import failed: {exception.Message}";
+            Message = exception.Message;
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private async Task SubmitBatchAsync()
+    {
+        _modules.BatchImport.Sort();
+        var submitted = 0;
+        foreach (var task in BatchTasks.Where(task => task.Status == "\u5F85\u63D0\u4EA4").ToList())
+        {
+            if (!TryResolveStationCode(task.SourceStation, out var source) ||
+                !TryResolveStationCode(task.TargetStation, out var target))
+            {
+                task.MarkFailed("Source and target stations must be valid station codes or station IDs.");
+                continue;
+            }
+
+            try
+            {
+                await _mes.CreateTaskAsync(source, target, task.Priority, task.Description, task.TaskId, _shutdown.Token);
+                task.MarkSubmitted();
+                submitted++;
+            }
+            catch (Exception exception)
+            {
+                task.MarkFailed(exception.Message);
+            }
+        }
+
+        var pending = BatchTasks.Count(task => task.Status == "���ύ");
+        BatchStatus = $"Batch submission complete: {submitted} succeeded, {pending} pending";
         RefreshBatchCommandState();
         await RefreshAsync();
     }
@@ -256,13 +364,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         RefreshAgvCommandState();
     }
 
-    private bool CanControlSelectedAgv() => SelectedAgv is { Online: true, CurrentTaskId: not null };
+    private bool CanControlSelectedAgv(string command) => SelectedAgv is { Online: true, CurrentTaskId: not null } agv && agv.Supports(command);
 
     private async Task ExecuteAgvCommandAsync(string command)
     {
         if (SelectedAgv is not { } agv || agv.CurrentTaskId is not { } taskId) return;
         await _mes.ExecuteAgvCommandAsync(agv.AgvId, command, taskId, _shutdown.Token);
-        BatchStatus = $"已向 {agv.AgvId} 发送 {command} 指令";
+        BatchStatus = $"Sent {command} command to {agv.AgvId}";
         await RefreshAgvAsync();
         await RefreshAsync();
     }
@@ -270,6 +378,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private async Task CreateTaskAsync()
     {
         var created = await _mes.CreateTaskAsync(_shutdown.Token);
+        TaskFilterDate = DateTime.UtcNow.Date;
         await RefreshAsync(created.Id);
     }
 

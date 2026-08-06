@@ -1,0 +1,104 @@
+{
+  "Profile": {
+    "product": {
+      "productId": "MES-AGV",
+      "displayName": "AGV MES physical acceptance example",
+      "version": "1.0"
+    },
+    "agvs": [
+      {
+        "agvId": "AGV-01",
+        "model": "RoboshopPro",
+        "driver": "vendor-tcp",
+        "endpoint": "tcp://agv-controller.example.invalid:19206",
+        "deviceParameters": {
+          "controllerHost": "agv-controller.example.invalid",
+          "statusPort": "19204",
+          "commandPort": "19206",
+          "controlPort": "19207",
+          "pushPort": "19301"
+        },
+        "maxLoadKg": 200,
+        "maxSpeedMetersPerSecond": 0.3,
+        "homeStationId": "LM1"
+      }
+    ],
+    "stations": [
+      { "code": 1, "stationId": "LM1", "agvStationId": "LM1", "name": "LM1", "type": "PhysicalAcceptance" },
+      { "code": 2, "stationId": "LM2", "agvStationId": "LM2", "name": "LM2", "type": "PhysicalAcceptance" },
+      { "code": 3, "stationId": "LM3", "agvStationId": "LM3", "name": "LM3", "type": "PhysicalAcceptance" },
+      { "code": 4, "stationId": "LM4", "agvStationId": "LM4", "name": "LM4", "type": "PhysicalAcceptance" },
+      { "code": 5, "stationId": "LM5", "agvStationId": "LM5", "name": "LM5", "type": "PhysicalAcceptance" }
+    ],
+    "map": {
+      "stationIds": ["LM1", "LM2", "LM3", "LM4", "LM5"],
+      "edges": [
+        { "from": "LM1", "to": "LM2", "cost": 1, "bidirectional": false },
+        { "from": "LM2", "to": "LM3", "cost": 1, "bidirectional": false },
+        { "from": "LM1", "to": "LM4", "cost": 1, "bidirectional": false },
+        { "from": "LM4", "to": "LM1", "cost": 1, "bidirectional": false },
+        { "from": "LM4", "to": "LM5", "cost": 1, "bidirectional": false },
+        { "from": "LM5", "to": "LM4", "cost": 1, "bidirectional": false },
+        { "from": "LM1", "to": "LM5", "cost": 1, "bidirectional": false }
+      ]
+    },
+    "physicalAcceptance": {
+      "expectedControlOwner": "MesControlAgv.Adapter",
+      "mapSnapshot": {
+        "mapName": "guangzhou606",
+        "version": "1.0.6",
+        "md5": "e1b8d6b2b24362c1d44f1884c0abd8fb",
+        "capturedAtUtc": "2026-08-05T00:00:00Z",
+        "stationIds": ["LM1", "LM2", "LM3", "LM4", "LM5"],
+        "directedEdges": [
+          { "from": "LM1", "to": "LM2" },
+          { "from": "LM2", "to": "LM3" },
+          { "from": "LM1", "to": "LM4" },
+          { "from": "LM4", "to": "LM1" },
+          { "from": "LM4", "to": "LM5" },
+          { "from": "LM5", "to": "LM4" },
+          { "from": "LM1", "to": "LM5" }
+        ]
+      },
+      "safety": {
+        "minimumLocalizationConfidence": 0.95,
+        "maximumDispatchSpeedMetersPerSecond": 0.3,
+        "requireControlOwnership": true,
+        "requireNoEmergency": true,
+        "requireNoBlocked": true,
+        "requireNoFaults": true,
+        "requireAutomaticMode": true
+      }
+    },
+    "features": {
+      "useSimulator": false,
+      "enableAutomaticDispatch": false,
+      "enableTaskCancellation": true,
+      "enableFleetMonitoring": true
+    },
+    "timeouts": {
+      "connectionTimeout": "00:00:10",
+      "dispatchTimeout": "00:00:30",
+      "commandTimeout": "00:00:30",
+      "taskCompletionTimeout": "00:05:00",
+      "taskPollingInterval": "00:00:02"
+    }
+  },
+  "Agv": {
+    "Driver": "vendor-tcp",
+    "Tcp": {
+      "Host": "agv-controller.example.invalid",
+      "StatusPort": 19204,
+      "CommandPort": 19206,
+      "ControlPort": 19207,
+      "PushPort": 19301,
+      "NickName": "MesControlAgv.Adapter",
+      "AcquireControl": true,
+      "EnablePush": true,
+      "PushIntervalMs": 500,
+      "MinimumConfidence": 0.95,
+      "RequestTimeoutMs": 3000,
+      "ConnectTimeoutMs": 3000
+    }
+  }
+}

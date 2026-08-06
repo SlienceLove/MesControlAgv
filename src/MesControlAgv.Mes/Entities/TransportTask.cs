@@ -28,5 +28,11 @@ public sealed class TransportTask
 
     public string? ActiveTargetStationId { get; set; }
 
+    public string? ActiveAgvId { get; set; }
+
+    public string? ActiveDeviceTaskId { get; set; }
+
+    public string? ActivePathJson { get; set; }
+
     public string? LastError { get; set; }
 }

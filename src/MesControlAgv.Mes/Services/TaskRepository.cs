@@ -70,13 +70,45 @@ public sealed class TaskRepository(MesDbContext database)
         Guid taskId,
         string targetStationId,
         CancellationToken cancellationToken)
+        => await SetActiveRouteAsync(taskId, targetStationId, null, null, null, cancellationToken);
+
+    public async Task<TransportTask> SetActiveRouteAsync(
+        Guid taskId,
+        string targetStationId,
+        string? agvId,
+        string? deviceTaskId,
+        IReadOnlyList<string>? path,
+        CancellationToken cancellationToken)
     {
         var task = await GetAsync(taskId, cancellationToken)
             ?? throw new KeyNotFoundException($"Task {taskId} was not found.");
         task.ActiveTargetStationId = targetStationId;
+        task.ActiveAgvId = agvId;
+        task.ActiveDeviceTaskId = deviceTaskId;
+        task.ActivePathJson = path is null ? null : JsonSerializer.Serialize(path);
         task.UpdatedAt = DateTime.UtcNow;
         await database.SaveChangesAsync(cancellationToken);
         return task;
+    }
+
+    public async Task RecordEventAsync(
+        Guid taskId,
+        string eventType,
+        object payload,
+        CancellationToken cancellationToken)
+    {
+        if (!await database.TransportTasks.AnyAsync(task => task.Id == taskId, cancellationToken))
+        {
+            throw new KeyNotFoundException($"Task {taskId} was not found.");
+        }
+
+        database.TaskEvents.Add(new TaskEventRecord
+        {
+            TaskId = taskId,
+            EventType = eventType,
+            Payload = JsonSerializer.Serialize(payload)
+        });
+        await database.SaveChangesAsync(cancellationToken);
     }
 
     public async Task<TransportTask> IncrementRetryAsync(Guid taskId, CancellationToken cancellationToken)

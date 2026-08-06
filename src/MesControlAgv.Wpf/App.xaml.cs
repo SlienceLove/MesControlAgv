@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Windows;
 using MesControlAgv.Wpf.Services;
+using MesControlAgv.Wpf.Modules;
 using MesControlAgv.Wpf.ViewModels;
 
 namespace MesControlAgv.Wpf;
@@ -14,7 +15,8 @@ public partial class App : Application
         var simulatorUrl = Environment.GetEnvironmentVariable("SIMULATOR_BASE_URL") ?? "http://localhost:5183/";
         var mesClient = new MesClient(new HttpClient { BaseAddress = new Uri(mesUrl) });
         var simulatorClient = new SimulatorControlClient(new HttpClient { BaseAddress = new Uri(simulatorUrl) });
-        var viewModel = new MainViewModel(mesClient, simulatorClient);
+        var moduleRegistry = ControlCenterModuleRegistry.CreateStandard();
+        var viewModel = new MainViewModel(mesClient, simulatorClient, moduleRegistry);
         var window = new MainWindow { DataContext = viewModel };
         window.Closed += (_, _) => viewModel.Dispose();
         window.Show();

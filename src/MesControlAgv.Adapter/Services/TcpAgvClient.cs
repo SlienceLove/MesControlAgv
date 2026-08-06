@@ -1,7 +1,10 @@
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
 using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
-using MesControlAgv.Adapter.Contracts;
+using MesControlAgv.Contracts;
 using Microsoft.Extensions.Options;
 
 namespace MesControlAgv.Adapter.Services;
@@ -22,7 +25,7 @@ public sealed class TcpAgvOptions
     public int PushReconnectDelayMs { get; set; } = 1000;
     public int MaxPayloadBytes { get; set; } = 1024 * 1024;
     public double MinimumConfidence { get; set; }
-    public int CancelApiId { get; set; } = 3067;
+    public bool RequireCompleteSafetyStatus { get; set; }
 }
 
 public sealed class AgvApiException(int apiId, int errorCode, string? errorMessage)
@@ -189,7 +192,7 @@ internal sealed class TcpApiChannel : IDisposable
     }
 }
 
-public sealed class TcpAgvClient : IAgvDeviceClient, IHostedService, IDisposable
+public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, IHostedService, IDisposable
 {
     private const ushort QueryControlApi = 1060;
     private const ushort AcquireControlApi = 4005;
@@ -197,6 +200,7 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IHostedService, IDisposable
     private const ushort QueryTaskApi = 1110;
     private const ushort PauseApi = 3001;
     private const ushort ResumeApi = 3002;
+    private const ushort CancelApi = 3067;
     private const ushort RealtimeStatusApi = 1101;
     private const ushort ConfigurePushApi = 9300;
     private const ushort PushApi = 19301;
@@ -205,7 +209,8 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IHostedService, IDisposable
     [
         "x", "y", "angle", "confidence", "current_station", "reloc_status", "task_status", "target_id",
         "blocked", "block_reason", "emergency", "fatals", "errors", "battery_level",
-        "charging", "fork_auto_flag"
+        "charging", "fork_auto_flag", "dispatch_mode", "manualBlock", "src_release",
+        "current_map", "current_map_md5"
     ];
 
     private readonly TcpAgvOptions _options;
@@ -214,6 +219,8 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IHostedService, IDisposable
     private readonly TcpApiChannel _commandChannel;
     private readonly TcpApiChannel _controlChannel;
     private readonly object _snapshotLock = new();
+    private readonly ConcurrentDictionary<Guid, RoutePlan> _routes = new();
+    private readonly ConcurrentDictionary<Guid, Guid> _parentTaskIds = new();
     private AgvSnapshotResponse? _pushSnapshot;
     private DeviceReadiness? _pushReadiness;
     private DateTimeOffset _pushReceivedAt;
@@ -264,11 +271,12 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IHostedService, IDisposable
             using var taskStatus = await QueryTaskStatusAsync(null, cancellationToken);
             var currentTask = ParseTaskStatuses(taskStatus.RootElement)
                 .FirstOrDefault(task => task.Status is 1 or 2 or 3);
+            var currentTaskId = TryParseGuid(currentTask?.TaskId);
             return new AgvSnapshotResponse(
                 true,
                 control.Owner,
                 ReadStation(taskStatus.RootElement),
-                TryParseGuid(currentTask?.TaskId));
+                MapToParentTaskId(currentTaskId));
         }
         catch (Exception exception) when (exception is SocketException or IOException or TimeoutException)
         {
@@ -277,70 +285,139 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IHostedService, IDisposable
         }
     }
 
-    public async Task<AdapterTaskResponse> NavigateAsync(
+    public async Task<AgvSafetyReadinessResponse> GetSafetyReadinessAsync(CancellationToken cancellationToken)
+    {
+        using var response = await _statusChannel.RequestAsync(
+            RealtimeStatusApi,
+            new { return_laser = false },
+            cancellationToken);
+        EnsureSuccess(response, RealtimeStatusApi);
+        return ReadReadiness(response.RootElement).ToResponse(DateTimeOffset.UtcNow);
+    }
+
+    public async Task<AgvTaskResponse> NavigateAsync(
         Guid taskId,
         string? sourceStationId,
         string stationId,
+        CancellationToken cancellationToken) =>
+        await NavigateAsync(taskId, sourceStationId, stationId, null, cancellationToken);
+
+    public async Task<AgvTaskResponse> NavigateAsync(
+        Guid taskId,
+        string? sourceStationId,
+        string stationId,
+        IReadOnlyList<string>? path,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(stationId)) throw new ArgumentException("Target station is required.", nameof(stationId));
-        if (string.IsNullOrWhiteSpace(sourceStationId))
+        var normalizedTargetStationId = stationId.Trim();
+        var route = BuildNavigationRoute(taskId, sourceStationId, normalizedTargetStationId, path);
+        _routes[taskId] = route;
+        foreach (var segment in route.Segments) _parentTaskIds[segment.TaskId] = taskId;
+
+        var existingStatuses = await QueryRouteStatusesAsync(route, cancellationToken);
+        if (existingStatuses.Count > 0)
         {
-            throw new InvalidOperationException("A source station is required for real AGV 3066 navigation.");
+            return CreateRouteResponse(taskId, route, existingStatuses);
         }
-        EnsureAscii(sourceStationId, nameof(sourceStationId));
-        EnsureAscii(stationId, nameof(stationId));
 
         await EnsureReadyAsync(cancellationToken);
+        // Recheck ownership after the live safety read and immediately before 3066.
+        await EnsureControlAsync(cancellationToken);
 
-        var request = new[]
+        var request = new
         {
-            new
-            {
-                task_id = taskId.ToString("N"),
-                source_id = sourceStationId,
-                id = stationId
-            }
+            move_task_list = route.Segments
+                .Select(segment => new
+                {
+                    task_id = segment.DeviceTaskId,
+                    source_id = segment.SourceStationId,
+                    id = segment.TargetStationId
+                })
+                .ToArray()
         };
-        using var response = await _commandChannel.RequestAsync(NavigateApi, request, cancellationToken);
-        EnsureSuccess(response, NavigateApi);
-        return new AdapterTaskResponse(taskId, taskId.ToString("N"), stationId, "moving", null);
+        try
+        {
+            using var response = await _commandChannel.RequestAsync(NavigateApi, request, cancellationToken);
+            EnsureSuccess(response, NavigateApi);
+        }
+        catch (TimeoutException)
+        {
+            var reconciledStatuses = await QueryRouteStatusesAsync(route, cancellationToken);
+            if (reconciledStatuses.Count > 0)
+            {
+                return CreateRouteResponse(taskId, route, reconciledStatuses);
+            }
+            throw;
+        }
+        return new AgvTaskResponse(taskId, route.DeviceTaskId, normalizedTargetStationId, "moving", null, Path: route.Path);
     }
 
-    public async Task<AdapterTaskResponse?> GetTaskAsync(Guid taskId, CancellationToken cancellationToken)
+    public Task<AgvTaskResponse?> GetTaskAsync(Guid taskId, CancellationToken cancellationToken) =>
+        GetTaskAsync(taskId, null, cancellationToken);
+
+    public async Task<AgvTaskResponse?> GetTaskAsync(
+        Guid taskId,
+        IReadOnlyList<string>? path,
+        CancellationToken cancellationToken)
     {
-        using var response = await QueryTaskStatusAsync([taskId.ToString("N")], cancellationToken);
-        EnsureSuccess(response, QueryTaskApi);
-        var status = ParseTaskStatuses(response.RootElement).FirstOrDefault(item => item.TaskId == taskId.ToString("N"));
-        if (status is null) return null;
-        return new AdapterTaskResponse(
-            taskId,
-            taskId.ToString("N"),
-            status.TargetStationId ?? string.Empty,
-            MapTaskState(status.Status),
-            status.Status == 5 ? ReadString(response.RootElement, "err_msg") : null);
+        var route = ResolveRoute(taskId, path);
+        var statuses = await QueryRouteStatusesAsync(route, cancellationToken);
+        return statuses.Count == 0 ? null : CreateRouteResponse(taskId, route, statuses);
     }
 
-    public async Task<AdapterTaskResponse?> PauseAsync(Guid taskId, CancellationToken cancellationToken)
+    public async Task<AgvTaskResponse?> PauseAsync(Guid taskId, CancellationToken cancellationToken)
     {
         using var response = await _commandChannel.RequestAsync(PauseApi, null, cancellationToken);
         EnsureSuccess(response, PauseApi);
-        return new AdapterTaskResponse(taskId, taskId.ToString("N"), string.Empty, "paused", null);
+        return new AgvTaskResponse(taskId, taskId.ToString("N"), string.Empty, "paused", null);
     }
 
-    public async Task<AdapterTaskResponse?> ResumeAsync(Guid taskId, CancellationToken cancellationToken)
+    public async Task<AgvTaskResponse?> ResumeAsync(Guid taskId, CancellationToken cancellationToken)
     {
         using var response = await _commandChannel.RequestAsync(ResumeApi, null, cancellationToken);
         EnsureSuccess(response, ResumeApi);
-        return new AdapterTaskResponse(taskId, taskId.ToString("N"), string.Empty, "moving", null);
+        return new AgvTaskResponse(taskId, taskId.ToString("N"), string.Empty, "moving", null);
     }
 
-    public async Task<AdapterTaskResponse?> CancelAsync(Guid taskId, CancellationToken cancellationToken)
+    public Task<AgvTaskResponse?> CancelAsync(Guid taskId, CancellationToken cancellationToken) =>
+        CancelAsync(taskId, null, cancellationToken);
+
+    public async Task<AgvTaskResponse?> CancelAsync(
+        Guid taskId,
+        IReadOnlyList<string>? path,
+        CancellationToken cancellationToken)
     {
-        var payload = _options.CancelApiId == 3068 ? new { task_id = taskId.ToString("N") } : null;
-        using var response = await _commandChannel.RequestAsync((ushort)_options.CancelApiId, payload, cancellationToken);
-        EnsureSuccess(response, _options.CancelApiId);
-        return new AdapterTaskResponse(taskId, taskId.ToString("N"), string.Empty, "cancelled", null);
+        var route = ResolveRoute(taskId, path);
+        var activeStatuses = await QueryRouteStatusesAsync(route, cancellationToken);
+        if (!activeStatuses.Any(status => status.Status is 1 or 2 or 3))
+        {
+            return CreateCancellationResponse(taskId, route, activeStatuses);
+        }
+
+        using var response = await _commandChannel.RequestAsync(CancelApi, null, cancellationToken);
+        EnsureSuccess(response, CancelApi);
+
+        // Command acknowledgement alone does not prove that the AGV cancelled the task.
+        using var statusResponse = await QueryTaskStatusAsync(route.Segments.Select(segment => segment.DeviceTaskId).ToArray(), cancellationToken);
+        EnsureSuccess(statusResponse, QueryTaskApi);
+        var statuses = ParseTaskStatuses(statusResponse.RootElement)
+            .Where(status => route.DeviceTaskIds.Contains(status.TaskId, StringComparer.Ordinal))
+            .ToArray();
+        var cancellationConfirmed = IsCancellationConfirmed(route, statuses);
+
+        if (cancellationConfirmed)
+        {
+            return new AgvTaskResponse(
+                taskId,
+                route.DeviceTaskId,
+                ResolveTargetStationId(route, statuses),
+                "cancelled",
+                null,
+                Path: route.Path);
+        }
+
+        return CreateCancellationResponse(taskId, route, statuses);
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -380,19 +457,34 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IHostedService, IDisposable
 
     private async Task EnsureReadyAsync(CancellationToken cancellationToken)
     {
-        var readiness = GetFreshReadiness();
+        DeviceReadiness? readiness = _options.RequireCompleteSafetyStatus
+            ? null
+            : GetFreshReadiness();
         if (readiness is null)
         {
-            using var response = await _statusChannel.RequestAsync(RealtimeStatusApi, null, cancellationToken);
+            using var response = await _statusChannel.RequestAsync(
+                RealtimeStatusApi,
+                new { return_laser = false },
+                cancellationToken);
             EnsureSuccess(response, RealtimeStatusApi);
             readiness = ReadReadiness(response.RootElement);
         }
 
+        if (_options.RequireCompleteSafetyStatus && !readiness.HasCompleteBaseSafetyStatus)
+        {
+            throw new InvalidOperationException("AGV safety status is incomplete; dispatch is blocked.");
+        }
         if (readiness.Emergency == true) throw new InvalidOperationException("AGV emergency stop is active.");
         if (readiness.Blocked == true) throw new InvalidOperationException("AGV is blocked.");
+        if (readiness.ManualBlock == true) throw new InvalidOperationException("AGV manual block is active.");
         if (readiness.FatalCount > 0) throw new InvalidOperationException("AGV has active fatal alarms.");
         if (readiness.ErrorCount > 0) throw new InvalidOperationException("AGV has active errors.");
-        if (readiness.ForkAutoFlag == false) throw new InvalidOperationException("AGV fork is not in automatic mode.");
+        if (readiness.ForkAutomatic == false) throw new InvalidOperationException("AGV fork is not in automatic mode.");
+        if (_options.RequireCompleteSafetyStatus && readiness.VehicleOperatingMode != "automatic")
+        {
+            throw new InvalidOperationException(
+                "AGV vehicle automatic-mode signal is unavailable or unconfirmed; dispatch is blocked.");
+        }
         if (readiness.RelocStatus is { } relocStatus && relocStatus != 1)
         {
             throw new InvalidOperationException($"AGV relocation status is {relocStatus}, expected SUCCESS (1).");
@@ -466,12 +558,13 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IHostedService, IDisposable
 
     private void UpdatePushSnapshot(JsonElement root)
     {
+        var readiness = ReadReadiness(root);
         var snapshot = new AgvSnapshotResponse(
             true,
             _lastControlOwner,
             ReadStation(root),
-            TryParseGuid(ReadString(root, "current_task_id") ?? ReadString(root, "task_id")));
-        var readiness = ReadReadiness(root);
+            MapToParentTaskId(TryParseGuid(ReadString(root, "current_task_id") ?? ReadString(root, "task_id"))),
+            SafetyReadiness: readiness.ToResponse(DateTimeOffset.UtcNow));
         lock (_snapshotLock)
         {
             _pushSnapshot = snapshot;
@@ -509,7 +602,8 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IHostedService, IDisposable
 
     private static IReadOnlyList<DeviceTaskStatus> ParseTaskStatuses(JsonElement root)
     {
-        if (!root.TryGetProperty("task_status_list", out var list) || list.ValueKind != JsonValueKind.Array) return [];
+        var statusRoot = GetTaskStatusRoot(root);
+        if (!statusRoot.TryGetProperty("task_status_list", out var list) || list.ValueKind != JsonValueKind.Array) return [];
         var statuses = new List<DeviceTaskStatus>();
         foreach (var item in list.EnumerateArray())
         {
@@ -523,9 +617,16 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IHostedService, IDisposable
         return statuses;
     }
 
+    private static JsonElement GetTaskStatusRoot(JsonElement root) =>
+        root.TryGetProperty("task_status_package", out var package)
+            && package.ValueKind == JsonValueKind.Object
+            ? package
+            : root;
+
     private static string MapTaskState(int status) => status switch
     {
-        0 or 1 => "accepted",
+        0 => "unknown",
+        1 => "accepted",
         2 => "moving",
         3 => "paused",
         4 => "arrived",
@@ -535,19 +636,190 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IHostedService, IDisposable
         _ => "unknown"
     };
 
-    private static string? ReadStation(JsonElement root)
+    private RoutePlan ResolveRoute(Guid taskId, IReadOnlyList<string>? path)
     {
-        foreach (var name in new[] { "current_station", "current_station_id", "closest_target" })
+        if (path is { Count: >= 2 })
         {
-            var value = ReadString(root, name);
-            if (!string.IsNullOrWhiteSpace(value)) return value;
+            var route = BuildRoute(taskId, path);
+            _routes[taskId] = route;
+            foreach (var segment in route.Segments) _parentTaskIds[segment.TaskId] = taskId;
+            return route;
         }
 
-        if (root.TryGetProperty("running_status", out var runningStatus) && runningStatus.ValueKind == JsonValueKind.Object)
+        return _routes.TryGetValue(taskId, out var registered)
+            ? registered
+            : RoutePlan.Single(taskId);
+    }
+
+    private static RoutePlan BuildNavigationRoute(
+        Guid taskId,
+        string? sourceStationId,
+        string targetStationId,
+        IReadOnlyList<string>? requestedPath)
+    {
+        var normalizedSourceStationId = sourceStationId?.Trim();
+        var normalizedTargetStationId = targetStationId.Trim();
+        IReadOnlyList<string> path;
+        if (requestedPath is { Count: > 0 })
         {
-            return ReadString(runningStatus, "target_id");
+            path = NormalizePath(requestedPath);
+            if (string.IsNullOrWhiteSpace(normalizedSourceStationId)
+                || !StringComparer.Ordinal.Equals(path[0], normalizedSourceStationId))
+            {
+                throw new InvalidOperationException("The first path station must match the navigation source.");
+            }
+            if (!StringComparer.Ordinal.Equals(path[^1], normalizedTargetStationId))
+            {
+                throw new InvalidOperationException("The final path station must match the navigation target.");
+            }
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(normalizedSourceStationId))
+                throw new InvalidOperationException("A source station is required for real AGV 3066 navigation.");
+            path = [normalizedSourceStationId, normalizedTargetStationId];
+        }
+
+        return BuildRoute(taskId, path);
+    }
+
+    private static RoutePlan BuildRoute(Guid taskId, IReadOnlyList<string> requestedPath)
+    {
+        var path = NormalizePath(requestedPath);
+        if (path.Count < 2) throw new InvalidOperationException("A route must contain at least two distinct stations.");
+        foreach (var station in path) EnsureAscii(station, nameof(requestedPath));
+
+        var segments = path.Zip(path.Skip(1), (source, target) => (source, target))
+            .Select((edge, index) => new RouteSegment(
+                index == 0 ? taskId : CreateSegmentTaskId(taskId, index, edge.source, edge.target),
+                edge.source,
+                edge.target))
+            .ToArray();
+        return new RoutePlan(path, segments);
+    }
+
+    private static IReadOnlyList<string> NormalizePath(IReadOnlyList<string> requestedPath)
+    {
+        var path = new List<string>(requestedPath.Count);
+        var stations = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var station in requestedPath)
+        {
+            if (string.IsNullOrWhiteSpace(station)) throw new InvalidOperationException("Route stations cannot be empty.");
+            var normalized = station.Trim();
+            if (!stations.Add(normalized)) throw new InvalidOperationException($"Route station '{normalized}' is repeated.");
+            path.Add(normalized);
+        }
+        return path;
+    }
+
+    private async Task<IReadOnlyList<DeviceTaskStatus>> QueryRouteStatusesAsync(
+        RoutePlan route,
+        CancellationToken cancellationToken)
+    {
+        using var response = await QueryTaskStatusAsync(route.Segments.Select(segment => segment.DeviceTaskId).ToArray(), cancellationToken);
+        EnsureSuccess(response, QueryTaskApi);
+        return ParseTaskStatuses(response.RootElement)
+            .Where(status => route.DeviceTaskIds.Contains(status.TaskId, StringComparer.Ordinal))
+            .ToArray();
+    }
+
+    private static AgvTaskResponse CreateRouteResponse(
+        Guid taskId,
+        RoutePlan route,
+        IReadOnlyList<DeviceTaskStatus> statuses) =>
+        new(
+            taskId,
+            route.DeviceTaskId,
+            ResolveTargetStationId(route, statuses),
+            AggregateTaskState(route, statuses),
+            statuses.Any(status => status.Status == 5) ? "device_task_failed" : null,
+            Path: route.Path);
+
+    private static AgvTaskResponse CreateCancellationResponse(
+        Guid taskId,
+        RoutePlan route,
+        IReadOnlyList<DeviceTaskStatus> statuses) =>
+        new(
+            taskId,
+            route.DeviceTaskId,
+            ResolveTargetStationId(route, statuses),
+            IsCancellationConfirmed(route, statuses) ? "cancelled" : "unknown",
+            IsCancellationConfirmed(route, statuses) ? null : "cancel_not_confirmed_by_1110",
+            Path: route.Path);
+
+    private static bool IsCancellationConfirmed(
+        RoutePlan route,
+        IReadOnlyList<DeviceTaskStatus> statuses)
+    {
+        var statusByTaskId = statuses.ToDictionary(status => status.TaskId, StringComparer.Ordinal);
+        return route.Segments.All(segment =>
+                statusByTaskId.TryGetValue(segment.DeviceTaskId, out var status) && status.Status is 4 or 6)
+            && statuses.Any(status => status.Status == 6);
+    }
+
+    private static Guid CreateSegmentTaskId(Guid parentTaskId, int index, string sourceStationId, string targetStationId)
+    {
+        var seed = Encoding.UTF8.GetBytes($"{parentTaskId:N}|{index}|{sourceStationId}|{targetStationId}");
+        var bytes = SHA256.HashData(seed)[..16];
+        bytes[6] = (byte)((bytes[6] & 0x0F) | 0x50);
+        bytes[8] = (byte)((bytes[8] & 0x3F) | 0x80);
+        return new Guid(bytes);
+    }
+
+    private static string AggregateTaskState(RoutePlan route, IReadOnlyList<DeviceTaskStatus> statuses)
+    {
+        var statusByTaskId = statuses.ToDictionary(status => status.TaskId, StringComparer.Ordinal);
+        var ordered = route.Segments
+            .Select(segment => statusByTaskId.TryGetValue(segment.DeviceTaskId, out var status) ? status.Status : (int?)null)
+            .ToArray();
+        if (ordered.Any(status => status == 5)) return "failed";
+        if (ordered.All(status => status == 4)) return "arrived";
+        if (ordered.All(status => status is 4 or 6) && ordered.Any(status => status == 6)) return "cancelled";
+        if (ordered.Any(status => status == 2)) return "moving";
+        if (ordered.Any(status => status == 3)) return "paused";
+        if (ordered.Any(status => status == 1)) return "accepted";
+        if (ordered.Any(status => status == 4)) return "moving";
+        return "unknown";
+    }
+
+    private static string ResolveTargetStationId(RoutePlan route, IReadOnlyList<DeviceTaskStatus> statuses) =>
+        !string.IsNullOrWhiteSpace(route.TargetStationId)
+            ? route.TargetStationId
+            : statuses.LastOrDefault(status => !string.IsNullOrWhiteSpace(status.TargetStationId))?.TargetStationId ?? string.Empty;
+
+    private Guid? MapToParentTaskId(Guid? deviceTaskId) =>
+        deviceTaskId is { } id && _parentTaskIds.TryGetValue(id, out var parentTaskId)
+            ? parentTaskId
+            : deviceTaskId;
+
+    private static string? ReadStation(JsonElement root)
+    {
+        foreach (var statusRoot in EnumerateStatusRoots(root))
+        {
+            foreach (var name in new[] { "current_station", "current_station_id", "closest_target" })
+            {
+                var value = ReadString(statusRoot, name);
+                if (!string.IsNullOrWhiteSpace(value)) return value;
+            }
+
+            if (statusRoot.TryGetProperty("running_status", out var runningStatus)
+                && runningStatus.ValueKind == JsonValueKind.Object)
+            {
+                var target = ReadString(runningStatus, "target_id");
+                if (!string.IsNullOrWhiteSpace(target)) return target;
+            }
         }
         return null;
+    }
+
+    private static IEnumerable<JsonElement> EnumerateStatusRoots(JsonElement root)
+    {
+        yield return root;
+        if (root.TryGetProperty("task_status_package", out var package)
+            && package.ValueKind == JsonValueKind.Object)
+        {
+            yield return package;
+        }
     }
 
     private static DeviceReadiness ReadReadiness(JsonElement root) => new(
@@ -556,8 +828,17 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IHostedService, IDisposable
         ReadArrayCount(root, "fatals"),
         ReadArrayCount(root, "errors"),
         ReadNullableBool(root, "fork_auto_flag"),
+        ReadInt(root, "dispatch_mode"),
+        ReadNullableBool(root, "manualBlock"),
+        ReadNullableBool(root, "src_release"),
+        ReadString(root, "current_map"),
+        ReadString(root, "current_map_md5"),
         ReadInt(root, "reloc_status"),
-        ReadDouble(root, "confidence"));
+        ReadDouble(root, "confidence"),
+        HasBooleanValue(root, "emergency"),
+        HasBooleanValue(root, "blocked"),
+        HasArrayValue(root, "fatals"),
+        HasArrayValue(root, "errors"));
 
     private static int? ReadInt(JsonElement root, string name)
     {
@@ -583,6 +864,14 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IHostedService, IDisposable
             ? result
             : null;
     }
+
+    private static bool HasBooleanValue(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var value)
+        && (value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            || value.ValueKind == JsonValueKind.String && bool.TryParse(value.GetString(), out _));
+
+    private static bool HasArrayValue(JsonElement root, string name) =>
+        root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Array;
 
     private static int ReadArrayCount(JsonElement root, string name) =>
         root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Array
@@ -615,12 +904,66 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IHostedService, IDisposable
 
     private sealed record ControlInfo(string Owner);
     private sealed record DeviceTaskStatus(string TaskId, int Status, string? TargetStationId);
+    private sealed record RouteSegment(Guid TaskId, string SourceStationId, string TargetStationId)
+    {
+        public string DeviceTaskId => TaskId.ToString("N");
+    }
+
+    private sealed record RoutePlan(IReadOnlyList<string> Path, IReadOnlyList<RouteSegment> Segments)
+    {
+        public IReadOnlyList<string> DeviceTaskIds => Segments.Select(segment => segment.DeviceTaskId).ToArray();
+        public string DeviceTaskId => Segments[0].DeviceTaskId;
+        public string TargetStationId => Path.Count == 0 ? string.Empty : Path[^1];
+
+        public static RoutePlan Single(Guid taskId) =>
+            new([], [new RouteSegment(taskId, string.Empty, string.Empty)]);
+    }
+
     private sealed record DeviceReadiness(
         bool? Emergency,
         bool? Blocked,
         int FatalCount,
         int ErrorCount,
-        bool? ForkAutoFlag,
+        bool? ForkAutomatic,
+        int? DispatchMode,
+        bool? ManualBlock,
+        bool? SrcRelease,
+        string? MapName,
+        string? MapMd5,
         int? RelocStatus,
-        double? Confidence);
+        double? Confidence,
+        bool HasEmergency,
+        bool HasBlocked,
+        bool HasFatalList,
+        bool HasErrorList)
+    {
+        // The current vendor protocol does not document a vehicle-level automatic
+        // navigation field. Never infer it from dispatch_mode, SRC ownership, or
+        // the fork mechanism flag.
+        public string VehicleOperatingMode => "unknown";
+
+        public bool HasCompleteBaseSafetyStatus => HasEmergency
+            && HasBlocked
+            && HasFatalList
+            && HasErrorList
+            && RelocStatus is not null
+            && Confidence is not null;
+
+        public AgvSafetyReadinessResponse ToResponse(DateTimeOffset observedAtUtc) => new(
+            VehicleOperatingMode,
+            VehicleOperatingModeSource: null,
+            MapName,
+            MapMd5,
+            ForkAutomatic,
+            DispatchMode,
+            ManualBlock,
+            SrcRelease,
+            Emergency,
+            Blocked,
+            FatalCount,
+            ErrorCount,
+            RelocStatus,
+            Confidence,
+            observedAtUtc);
+    }
 }

@@ -1,4 +1,4 @@
-﻿namespace MesControlAgv.Mes.Contracts;
+﻿namespace MesControlAgv.Contracts;
 
 public sealed record KpiDashboardResponse(
     DateOnly Date,

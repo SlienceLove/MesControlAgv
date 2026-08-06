@@ -1,3 +1,5 @@
+using MesControlAgv.Contracts;
+
 ﻿namespace MesControlAgv.Wpf.Services;
 
 public sealed record DashboardTask(
@@ -11,14 +13,18 @@ public sealed record DashboardTask(
     string? Description = null,
     string? ExternalId = null,
     DateTime CreatedAt = default,
-    DateTime? EndedAt = null);
+    DateTime? EndedAt = null,
+    string? ActiveAgvId = null,
+    string? ActiveDeviceTaskId = null,
+    IReadOnlyList<string>? ActivePath = null);
 
 public sealed record AgvDashboardSnapshot(
     bool Online,
     string ControlOwner,
     string? CurrentStationId,
     Guid? CurrentTaskId,
-    string AgvId = "AGV-01");
+    string AgvId = "AGV-01",
+    AgvCapabilitiesResponse? Capabilities = null);
 
 public sealed record AgvCommandResult(Guid TaskId, string DeviceTaskId, string TargetStationId, string State, string? LastError, string AgvId = "AGV-01", IReadOnlyList<string>? Path = null);
 public sealed record DashboardTaskEvent(Guid Id, string EventType, string Payload, DateTime CreatedAt);

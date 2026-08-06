@@ -1,5 +1,5 @@
-﻿using System.Net.Http.Json;
-using MesControlAgv.Mes.Contracts;
+using System.Net.Http.Json;
+using MesControlAgv.Contracts;
 
 namespace MesControlAgv.Mes.Tests;
 

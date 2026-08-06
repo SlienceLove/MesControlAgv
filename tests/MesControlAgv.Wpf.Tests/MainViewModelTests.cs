@@ -90,6 +90,17 @@ public class MainViewModelTests
     }
 
     [Fact]
+    public async Task Refresh_with_missing_preferred_task_does_not_select_an_old_task()
+    {
+        var existing = new DashboardTask(Guid.NewGuid(), 2, 4, "Completed", 0, null);
+        using var viewModel = new MainViewModel(new FakeMesClient([existing]));
+
+        await viewModel.RefreshAsync(Guid.NewGuid());
+
+        Assert.Null(viewModel.SelectedTask);
+    }
+
+    [Fact]
     public async Task Failed_task_enables_retry_and_disables_arrival()
     {
         var task = new DashboardTask(Guid.NewGuid(), 2, 4, "Failed", 1, "fault");

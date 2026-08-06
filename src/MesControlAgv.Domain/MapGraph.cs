@@ -1,3 +1,5 @@
+using MesControlAgv.Domain.Profiles;
+
 namespace MesControlAgv.Domain;
 
 public sealed record MapEdge(string From, string To, double Cost, bool Bidirectional = true);
@@ -43,17 +45,15 @@ public sealed class AgvMap
             ? neighbors
             : throw new KeyNotFoundException($"Station {stationId} is not present in the map.");
 
-    public static AgvMap Default { get; } = new(
-        Stations.All.Select(station => station.AgvStationId),
-        [
-            new("CHARGE_01", "PICK_01", 1),
-            new("PICK_01", "SAMPLE_01", 1),
-            new("SAMPLE_01", "ST_OPEN_01", 1),
-            new("ST_OPEN_01", "ST_PREP_01", 1),
-            new("ST_PREP_01", "ST_INJECT_01", 1),
-            new("ST_INJECT_01", "DROP_01", 1),
-            new("SAMPLE_01", "ST_PREP_01", 2)
-        ]);
+    public static AgvMap Default => FromProfile(ProfileConfiguration.Default.Map);
+
+    public static AgvMap FromProfile(MapProfile profile)
+    {
+        ArgumentNullException.ThrowIfNull(profile);
+        return new(
+            profile.StationIds,
+            profile.Edges.Select(edge => new MapEdge(edge.From, edge.To, edge.Cost, edge.Bidirectional)));
+    }
 }
 
 public sealed record MapNeighbor(string StationId, double Cost);
@@ -66,6 +66,53 @@ public sealed record PlannedPath(IReadOnlyList<string> Stations, double Cost)
 
 public sealed class PathPlanner(AgvMap map)
 {
+    public PlannedPath ValidatePath(IReadOnlyList<string> stations)
+    {
+        ArgumentNullException.ThrowIfNull(stations);
+        if (stations.Count < 2)
+        {
+            throw new InvalidOperationException("A route must contain at least two stations.");
+        }
+
+        var normalized = new List<string>(stations.Count);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var station in stations)
+        {
+            if (string.IsNullOrWhiteSpace(station))
+            {
+                throw new InvalidOperationException("Route stations cannot be empty.");
+            }
+
+            var normalizedStation = station.Trim();
+            if (!seen.Add(normalizedStation))
+            {
+                throw new InvalidOperationException($"Route station '{normalizedStation}' is repeated.");
+            }
+
+            if (!map.Contains(normalizedStation))
+            {
+                throw new KeyNotFoundException($"Station {normalizedStation} is not present in the map.");
+            }
+
+            normalized.Add(normalizedStation);
+        }
+
+        var cost = 0d;
+        foreach (var (from, to) in normalized.Zip(normalized.Skip(1)))
+        {
+            var edge = map.Neighbors(from).FirstOrDefault(neighbor =>
+                StringComparer.Ordinal.Equals(neighbor.StationId, to));
+            if (edge is null)
+            {
+                throw new InvalidOperationException($"No direct route exists from {from} to {to}.");
+            }
+
+            cost += edge.Cost;
+        }
+
+        return new PlannedPath(normalized, cost);
+    }
+
     public PlannedPath Plan(string startStationId, string targetStationId, IReadOnlySet<string>? blockedStations = null)
     {
         if (!map.Contains(startStationId)) throw new KeyNotFoundException($"Station {startStationId} is not present in the map.");

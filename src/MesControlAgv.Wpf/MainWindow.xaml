@@ -50,10 +50,10 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
             <StackPanel Grid.Row="0" Margin="0,0,0,10" Orientation="Horizontal">
-                <TextBlock Margin="0,0,8,0" VerticalAlignment="Center" Foreground="Gray" Text="??" />
+                <TextBlock Margin="0,0,8,0" VerticalAlignment="Center" Foreground="Gray" Text="Date:" />
                 <DatePicker Width="140" SelectedDate="{Binding TaskFilterDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                <Button Margin="8,0,0,0" Padding="12,4" Command="{Binding QueryTasksCommand}" Content="??" />
-                <Button Margin="8,0,0,0" Padding="12,4" Command="{Binding RefreshTasksCommand}" Content="??" />
+                <Button Margin="8,0,0,0" Padding="12,4" Command="{Binding QueryTasksCommand}" Content="Query" />
+                <Button Margin="8,0,0,0" Padding="12,4" Command="{Binding RefreshTasksCommand}" Content="Refresh" />
             </StackPanel>
             <Grid Grid.Row="1" MinHeight="0" ClipToBounds="True">
             <Grid.ColumnDefinitions>
@@ -72,8 +72,8 @@
                     <DataGridTextColumn Width="150" Header="起点站" Binding="{Binding SourceStationName}" />
                     <DataGridTextColumn Width="170" Header="终点站" Binding="{Binding TargetStationName}" />
                     <DataGridTextColumn Width="140" Header="状态" Binding="{Binding StatusDescription}" />
-                    <DataGridTextColumn Width="145" Header="????" Binding="{Binding CreatedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" />
-                    <DataGridTextColumn Width="145" Header="????" Binding="{Binding EndedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" />
+                    <DataGridTextColumn Width="145" Header="Created" Binding="{Binding CreatedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" />
+                    <DataGridTextColumn Width="145" Header="Ended" Binding="{Binding EndedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" />
                     <DataGridTextColumn Width="70" Header="重试" Binding="{Binding RetryCount}" />
                     <DataGridTextColumn Width="*" Header="错误" Binding="{Binding ErrorDescription}" />
                 </DataGrid.Columns>
@@ -241,6 +241,7 @@
                         <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding SelectedAgv.AgvId}" />
                         <TextBlock Margin="0,8,0,0" Foreground="Gray" Text="当前任务" />
                         <TextBlock Text="{Binding SelectedAgv.CurrentTaskText}" TextWrapping="Wrap" />
+                        <TextBlock Margin="0,6,0,0" Foreground="Gray" Text="{Binding SelectedAgv.CapabilitySummary}" TextWrapping="Wrap" />
                         <Button Margin="0,18,0,0" MinHeight="34" Command="{Binding PauseAgvCommand}" Content="暂停当前任务" />
                         <Button Margin="0,8,0,0" MinHeight="34" Command="{Binding ResumeAgvCommand}" Content="恢复当前任务" />
                         <Button Margin="0,8,0,0" MinHeight="34" Command="{Binding CancelAgvCommand}" Content="取消当前任务" />

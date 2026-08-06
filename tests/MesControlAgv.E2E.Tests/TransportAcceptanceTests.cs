@@ -1,4 +1,5 @@
-using MesControlAgv.Mes.Contracts;
+﻿using MesControlAgv.Application;
+using MesControlAgv.Contracts;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Services;
 using Microsoft.EntityFrameworkCore;
@@ -128,9 +129,9 @@ public sealed class TransportAcceptanceTests
 
 }
 
-internal sealed class AcceptanceAdapter : IAdapterClient
+internal sealed class AcceptanceAdapter : IAgvGateway
 {
-    private readonly Dictionary<Guid, AdapterTask> _tasks = [];
+    private readonly Dictionary<Guid, AgvTaskResponse> _tasks = [];
 
     public List<Guid> OperationIds { get; } = [];
     public List<string> Targets { get; } = [];
@@ -139,35 +140,37 @@ internal sealed class AcceptanceAdapter : IAdapterClient
     public bool ThrowTimeout { get; set; }
     public string? ReconciledState { get; set; }
 
-    public Task<AdapterTask> DispatchAsync(Guid operationId, string targetStationId, CancellationToken cancellationToken)
+    public Task<AgvTaskResponse> DispatchAsync(Guid operationId, string targetStationId, CancellationToken cancellationToken)
     {
         OperationIds.Add(operationId);
         Targets.Add(targetStationId);
-        var task = new AdapterTask(operationId, operationId.ToString("N"), targetStationId, NextDispatchState, NextDispatchError);
+        var task = new AgvTaskResponse(operationId, operationId.ToString("N"), targetStationId, NextDispatchState, NextDispatchError);
         _tasks[operationId] = task;
         if (ThrowTimeout) throw new TimeoutException("adapter timeout");
         return Task.FromResult(task);
     }
 
-    public Task<AdapterTask?> GetTaskAsync(Guid operationId, CancellationToken cancellationToken)
+    public Task<AgvTaskResponse?> GetTaskAsync(Guid operationId, CancellationToken cancellationToken)
     {
         if (ReconciledState is { } state && _tasks.TryGetValue(operationId, out var task))
         {
-            return Task.FromResult<AdapterTask?>(task with { State = state });
+            return Task.FromResult<AgvTaskResponse?>(task with { State = state });
         }
         return Task.FromResult(_tasks.GetValueOrDefault(operationId));
     }
 
-    public Task<AdapterTask?> CancelAsync(Guid operationId, CancellationToken cancellationToken) =>
-        Task.FromResult<AdapterTask?>(new AdapterTask(operationId, operationId.ToString("N"), string.Empty, "cancelled", null));
+    public Task<AgvTaskResponse?> CancelAsync(Guid operationId, CancellationToken cancellationToken) =>
+        Task.FromResult<AgvTaskResponse?>(new AgvTaskResponse(operationId, operationId.ToString("N"), string.Empty, "cancelled", null));
 
-    public Task<AdapterSnapshot> GetSnapshotAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(new AdapterSnapshot(true, "adapter", "CHARGE_01", null));
+    public Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(new AgvSnapshotResponse(true, "adapter", "CHARGE_01", null));
 
-    public Task<AdapterTask?> ExecuteAgvCommandAsync(
+    public Task<AgvTaskResponse?> ExecuteAgvCommandAsync(
         string agvId,
         string command,
         Guid? taskId,
         CancellationToken cancellationToken) =>
-        Task.FromResult<AdapterTask?>(null);
+        Task.FromResult<AgvTaskResponse?>(null);
 }
+
+

@@ -1,5 +1,8 @@
 using System.Net;
+using MesControlAgv.Application;
+using MesControlAgv.Contracts;
 using MesControlAgv.Domain;
+using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Services;
 using Microsoft.EntityFrameworkCore;
@@ -8,6 +11,36 @@ namespace MesControlAgv.Mes.Tests;
 
 public class TransportWorkflowTests
 {
+    [Fact]
+    public async Task Custom_profile_route_dispatches_without_the_legacy_fixed_station_restriction()
+    {
+        var adapter = new FakeAdapterClient();
+        var profile = ProfileConfiguration.Default with
+        {
+            Stations =
+            [
+                new StationProfile { Code = 4, StationId = "LM4", AgvStationId = "LM4", Name = "LM4", Type = "PhysicalAcceptance" },
+                new StationProfile { Code = 5, StationId = "LM5", AgvStationId = "LM5", Name = "LM5", Type = "PhysicalAcceptance" }
+            ],
+            Map = new MapProfile
+            {
+                StationIds = ["LM4", "LM5"],
+                Edges = [new MapEdgeProfile { From = "LM4", To = "LM5", Cost = 1, Bidirectional = false }]
+            }
+        };
+        var options = new DbContextOptionsBuilder<MesDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
+        var service = new TaskService(
+            new TaskRepository(new MesDbContext(options)),
+            adapter,
+            profile,
+            new PathPlanner(AgvMap.FromProfile(profile.Map)));
+
+        var task = await service.CreateAsync(new(4, 5), CancellationToken.None);
+
+        Assert.Equal("MovingToPickup", task.Status);
+        Assert.Equal("LM4", adapter.LastTargetStationId);
+    }
+
     [Fact]
     public async Task Pickup_confirmation_dispatches_dropoff()
     {
@@ -20,6 +53,21 @@ public class TransportWorkflowTests
 
         Assert.Equal("MovingToDropoff", updated.Status);
         Assert.Equal("ST_PREP_01", adapter.LastTargetStationId);
+    }
+
+    [Fact]
+    public async Task Dispatch_records_the_mes_pre_dispatch_plan_before_device_progress()
+    {
+        var adapter = new FakeAdapterClient();
+        var service = CreateService(adapter);
+
+        var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        var detail = await service.GetDetailAsync(task.Id, CancellationToken.None);
+
+        Assert.NotNull(detail);
+        var plan = Assert.Single(detail.Events.Where(item => item.EventType == "PathPlanned"));
+        Assert.Contains("mes-pre-dispatch", plan.Payload, StringComparison.Ordinal);
+        Assert.Contains("SAMPLE_01", plan.Payload, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -36,6 +84,7 @@ public class TransportWorkflowTests
         var failed = await service.ConfirmPickupAsync(task.Id, "operator", CancellationToken.None);
 
         Assert.Equal("Failed", failed.Status);
+        Assert.NotNull(failed.EndedAt);
         Assert.Equal("没有可用的空闲 AGV。", failed.LastError);
         var detail = await service.GetDetailAsync(task.Id, CancellationToken.None);
         Assert.NotNull(detail);
@@ -46,6 +95,22 @@ public class TransportWorkflowTests
 
         Assert.Equal("MovingToDropoff", retried.Status);
         Assert.Null(retried.EndedAt);
+    }
+
+    [Fact]
+    public async Task Completed_task_records_ended_at()
+    {
+        var adapter = new FakeAdapterClient();
+        var service = CreateService(adapter);
+        var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+
+        await service.RecordArrivalAsync(task.Id, CancellationToken.None);
+        await service.ConfirmPickupAsync(task.Id, "operator", CancellationToken.None);
+        await service.RecordArrivalAsync(task.Id, CancellationToken.None);
+        var completed = await service.ConfirmDropoffAsync(task.Id, "operator", CancellationToken.None);
+
+        Assert.Equal("Completed", completed.Status);
+        Assert.NotNull(completed.EndedAt);
     }
 
     [Fact]
@@ -92,6 +157,27 @@ public class TransportWorkflowTests
         var detail = await service.GetDetailAsync(task.Id, CancellationToken.None);
         Assert.NotNull(detail);
         Assert.Equal("MovingToPickup", detail.Task.Status);
+        Assert.DoesNotContain(detail.Events, item => item.EventType == "CancelConfirmed");
+    }
+
+    [Fact]
+    public async Task Unconfirmed_adapter_cancellation_marks_transport_task_unknown()
+    {
+        var adapter = new FakeAdapterClient
+        {
+            CancelState = "unknown",
+            CancelError = "cancel_not_confirmed_by_1110"
+        };
+        var service = CreateService(adapter);
+        var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+
+        var unknown = await service.CancelAsync(task.Id, "operator", CancellationToken.None);
+
+        Assert.Equal("Unknown", unknown.Status);
+        Assert.Equal("cancel_not_confirmed_by_1110", unknown.LastError);
+        var detail = await service.GetDetailAsync(task.Id, CancellationToken.None);
+        Assert.NotNull(detail);
+        Assert.Contains(detail.Events, item => item.EventType == "Timeout");
         Assert.DoesNotContain(detail.Events, item => item.EventType == "CancelConfirmed");
     }
 
@@ -171,13 +257,14 @@ public class TransportWorkflowTests
     }
 }
 
-internal sealed class FakeAdapterClient : IAdapterClient
+internal sealed class FakeAdapterClient : IAgvGateway
 {
     public string DispatchState { get; set; } = "moving";
     public string? LastTargetStationId { get; private set; }
     public List<Guid> OperationIds { get; } = [];
-    public AdapterTask? Reconciled { get; set; }
+    public AgvTaskResponse? Reconciled { get; set; }
     public string? CancelState { get; set; }
+    public string? CancelError { get; set; }
     public bool ThrowTimeout { get; set; }
     public Exception? DispatchException { get; set; }
     public bool ThrowGetHttpRequest { get; set; }
@@ -185,40 +272,40 @@ internal sealed class FakeAdapterClient : IAdapterClient
     public int GetTaskCalls { get; private set; }
     public CancellationTokenSource? CancelOnGet { get; set; }
 
-    public Task<AdapterTask> DispatchAsync(Guid operationId, string targetStationId, CancellationToken cancellationToken)
+    public Task<AgvTaskResponse> DispatchAsync(Guid operationId, string targetStationId, CancellationToken cancellationToken)
     {
         OperationIds.Add(operationId);
         LastTargetStationId = targetStationId;
-        if (DispatchException is not null) return Task.FromException<AdapterTask>(DispatchException);
-        var task = new AdapterTask(operationId, operationId.ToString("N"), targetStationId, DispatchState, DispatchState == "failed" ? "failure" : null);
+        if (DispatchException is not null) return Task.FromException<AgvTaskResponse>(DispatchException);
+        var task = new AgvTaskResponse(operationId, operationId.ToString("N"), targetStationId, DispatchState, DispatchState == "failed" ? "failure" : null);
         return ThrowTimeout
-            ? Task.FromException<AdapterTask>(new TimeoutException("adapter timeout"))
+            ? Task.FromException<AgvTaskResponse>(new TimeoutException("adapter timeout"))
             : Task.FromResult(task);
     }
 
-    public Task<AdapterTask?> GetTaskAsync(Guid operationId, CancellationToken cancellationToken)
+    public Task<AgvTaskResponse?> GetTaskAsync(Guid operationId, CancellationToken cancellationToken)
     {
         GetTaskCalls++;
         if (CancelOnGet is not null)
         {
             CancelOnGet.Cancel();
-            return Task.FromException<AdapterTask?>(new TaskCanceledException("adapter request cancelled"));
+            return Task.FromException<AgvTaskResponse?>(new TaskCanceledException("adapter request cancelled"));
         }
-        if (ThrowGetHttpRequest) return Task.FromException<AdapterTask?>(new HttpRequestException("adapter unavailable"));
-        if (ThrowGetTaskCancellation) return Task.FromException<AdapterTask?>(new TaskCanceledException("adapter request timed out"));
+        if (ThrowGetHttpRequest) return Task.FromException<AgvTaskResponse?>(new HttpRequestException("adapter unavailable"));
+        if (ThrowGetTaskCancellation) return Task.FromException<AgvTaskResponse?>(new TaskCanceledException("adapter request timed out"));
         return Task.FromResult(Reconciled);
     }
 
-    public Task<AdapterTask?> CancelAsync(Guid operationId, CancellationToken cancellationToken) =>
-        Task.FromResult<AdapterTask?>(CancelState is null
+    public Task<AgvTaskResponse?> CancelAsync(Guid operationId, CancellationToken cancellationToken) =>
+        Task.FromResult<AgvTaskResponse?>(CancelState is null
             ? null
-            : new AdapterTask(operationId, operationId.ToString("N"), "SAMPLE_01", CancelState, null));
-    public Task<AdapterSnapshot> GetSnapshotAsync(CancellationToken cancellationToken) => Task.FromResult(new AdapterSnapshot(true, "adapter", null, null));
+            : new AgvTaskResponse(operationId, operationId.ToString("N"), "SAMPLE_01", CancelState, CancelError));
+    public Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken) => Task.FromResult(new AgvSnapshotResponse(true, "adapter", null, null));
 
-    public Task<AdapterTask?> ExecuteAgvCommandAsync(
+    public Task<AgvTaskResponse?> ExecuteAgvCommandAsync(
         string agvId,
         string command,
         Guid? taskId,
         CancellationToken cancellationToken) =>
-        Task.FromResult<AdapterTask?>(null);
+        Task.FromResult<AgvTaskResponse?>(null);
 }

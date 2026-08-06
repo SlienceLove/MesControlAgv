@@ -1,3 +1,4 @@
+﻿using MesControlAgv.Application;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Services;
 using Microsoft.AspNetCore.Hosting;
@@ -20,9 +21,11 @@ public sealed class MesWebApplicationFactory : WebApplicationFactory<Program>
         {
             services.RemoveAll<DbContextOptions<MesDbContext>>();
             services.RemoveAll<MesDbContext>();
-            services.RemoveAll<IAdapterClient>();
+            services.RemoveAll<IAgvGateway>();
             services.AddDbContext<MesDbContext>(options => options.UseSqlite($"Data Source={_databasePath}"));
-            services.AddScoped<IAdapterClient, TestAdapterClient>();
+            services.AddScoped<IAgvGateway, TestAdapterClient>();
         });
     }
 }
+
+

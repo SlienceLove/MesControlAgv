@@ -510,3 +510,12 @@ CustomerExtensions/<CustomerId>/Profile / Workflow / Driver / UI Module
 6. 所有设备命令具备能力检查、幂等、超时和审计记录。
 
 本节是 MVP 之后的平台化重构准备基线；在 P0 完成前，新增客户需求优先通过接口和配置验证，不直接复制项目或在核心代码中堆叠客户分支。
+## 2026-08-05 pause checkpoint
+
+The first parallel P0 platformization pass has been implemented locally and is intentionally paused without commit or push.
+
+Completed slices include the normalized `IAgvDriver`/`DriverRegistry` boundary with simulator and vendor TCP adapters, profile configuration models and JSON validation, WPF module composition registration for views/view-models/services/commands/permissions, and versioned workflow contracts with validation and application lifecycle interfaces.
+
+A gradual WPF ViewModel split has also started with `TaskMonitorViewModel`, `AgvCommunicationViewModel`, `BatchImportViewModel`, and a `ControlCenterViewModel` facade. The final `MainViewModel` integration was in progress when work was paused; it must be compiled and regression-tested before being considered complete.
+
+The next resume action is therefore verification first: Release build, full tests, and compatibility review. Only after that should DI/composition-root integration, full MainViewModel command migration, and Workflow Runtime Executor work continue. No commit or push was performed for this checkpoint.

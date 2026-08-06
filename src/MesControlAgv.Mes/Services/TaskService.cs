@@ -1,95 +1,158 @@
 using System.Net;
+using MesControlAgv.Application;
 using MesControlAgv.Domain;
-using MesControlAgv.Mes.Contracts;
+using MesControlAgv.Contracts;
 using MesControlAgv.Mes.Entities;
 using DomainTaskStatus = MesControlAgv.Domain.TaskStatus;
+using MesControlAgv.Domain.Profiles;
 
 namespace MesControlAgv.Mes.Services;
 
-public sealed class TaskService(TaskRepository repository, IAdapterClient adapter)
+public sealed class TaskService : ITaskApplicationService
 {
+    private readonly TaskRepository _repository;
+    private readonly IAgvGateway _adapter;
+    private readonly PathPlanner _planner;
+    private readonly IReadOnlyDictionary<int, Station> _stations;
+
+    public TaskService(TaskRepository repository, IAgvGateway adapter)
+        : this(repository, adapter, ProfileConfiguration.Default, new PathPlanner(AgvMap.Default))
+    {
+    }
+
+    public TaskService(
+        TaskRepository repository,
+        IAgvGateway adapter,
+        ProfileConfiguration profile,
+        PathPlanner planner)
+    {
+        _repository = repository;
+        _adapter = adapter;
+        _planner = planner;
+        _stations = Stations.FromProfile(profile).ToDictionary(station => station.Code);
+    }
+
     public async Task<TaskResponse> CreateAsync(CreateTaskRequest request, CancellationToken cancellationToken)
     {
-        if (request is not { SourceStationCode: 2, TargetStationCode: 4 }) throw new UnsupportedRouteException();
-        var task = await repository.CreateAsync(request.SourceStationCode, request.TargetStationCode, request.Priority, request.Description, request.ExternalId, cancellationToken);
-        await DispatchLegAsync(task.Id, TaskEvent.PickupMoveStarted, Stations.Get(request.SourceStationCode).AgvStationId, cancellationToken);
-        return ToResponse((await repository.GetAsync(task.Id, cancellationToken))!);
+        var source = GetEnabledStation(request.SourceStationCode);
+        var target = GetEnabledStation(request.TargetStationCode);
+        try
+        {
+            _planner.Plan(source.AgvStationId, target.AgvStationId);
+        }
+        catch (KeyNotFoundException exception)
+        {
+            throw new UnsupportedRouteException(exception.Message);
+        }
+        catch (InvalidOperationException exception)
+        {
+            throw new UnsupportedRouteException(exception.Message);
+        }
+
+        var task = await _repository.CreateAsync(request.SourceStationCode, request.TargetStationCode, request.Priority, request.Description, request.ExternalId, cancellationToken);
+        await DispatchLegAsync(task.Id, TaskEvent.PickupMoveStarted, source.AgvStationId, cancellationToken);
+        return ToResponse((await _repository.GetAsync(task.Id, cancellationToken))!);
     }
 
     public async Task<TaskResponse> RecordArrivalAsync(Guid taskId, CancellationToken cancellationToken)
     {
-        var task = await repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
+        var task = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
         var arrival = task.Status == DomainTaskStatus.MovingToPickup ? TaskEvent.PickupArrived : TaskEvent.DropoffArrived;
-        return ToResponse(await repository.ApplyEventAsync(taskId, arrival, new { source = "adapter" }, cancellationToken));
+        return ToResponse(await _repository.ApplyEventAsync(taskId, arrival, new { source = "adapter" }, cancellationToken));
     }
 
     public async Task<TaskResponse> ConfirmPickupAsync(Guid taskId, string operatorName, CancellationToken cancellationToken)
     {
-        await repository.ApplyEventAsync(taskId, TaskEvent.PickupConfirmed, new { operatorName }, cancellationToken);
-        var task = await repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
-        await DispatchLegAsync(task.Id, TaskEvent.DropoffMoveStarted, Stations.Get(task.TargetStationCode).AgvStationId, cancellationToken);
-        return ToResponse((await repository.GetAsync(task.Id, cancellationToken))!);
+        await _repository.ApplyEventAsync(taskId, TaskEvent.PickupConfirmed, new { operatorName }, cancellationToken);
+        var task = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
+        await DispatchLegAsync(task.Id, TaskEvent.DropoffMoveStarted, GetEnabledStation(task.TargetStationCode).AgvStationId, cancellationToken);
+        return ToResponse((await _repository.GetAsync(task.Id, cancellationToken))!);
     }
 
     public async Task<TaskResponse> ConfirmDropoffAsync(Guid taskId, string operatorName, CancellationToken cancellationToken) =>
-        ToResponse(await repository.ApplyEventAsync(taskId, TaskEvent.DropoffConfirmed, new { operatorName }, cancellationToken));
+        ToResponse(await _repository.ApplyEventAsync(taskId, TaskEvent.DropoffConfirmed, new { operatorName }, cancellationToken));
 
     public async Task<TaskResponse> RetryAsync(Guid taskId, CancellationToken cancellationToken)
     {
-        var current = await repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
+        var current = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
         if (current.Status != DomainTaskStatus.Failed)
         {
             throw new InvalidTaskTransitionException(current.Status, TaskEvent.RetryRequested);
         }
-        var task = await repository.IncrementRetryAsync(taskId, cancellationToken);
-        await repository.ApplyEventAsync(taskId, TaskEvent.RetryRequested, new { retry = task.RetryCount }, cancellationToken);
+        var task = await _repository.IncrementRetryAsync(taskId, cancellationToken);
+        await _repository.ApplyEventAsync(taskId, TaskEvent.RetryRequested, new { retry = task.RetryCount }, cancellationToken);
         var target = task.ActiveTargetStationId ?? throw new InvalidOperationException("Task has no target station.");
-        var eventType = target == Stations.Get(task.SourceStationCode).AgvStationId ? TaskEvent.PickupMoveStarted : TaskEvent.DropoffMoveStarted;
+        var eventType = target == GetEnabledStation(task.SourceStationCode).AgvStationId ? TaskEvent.PickupMoveStarted : TaskEvent.DropoffMoveStarted;
         await DispatchLegAsync(taskId, eventType, target, cancellationToken);
-        return ToResponse((await repository.GetAsync(taskId, cancellationToken))!);
+        return ToResponse((await _repository.GetAsync(taskId, cancellationToken))!);
     }
 
     public async Task<TaskResponse> CancelAsync(Guid taskId, string operatorName, CancellationToken cancellationToken)
     {
-        var task = await repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
-        var operationId = task.ActiveTargetStationId == Stations.Get(task.TargetStationCode).AgvStationId
+        var task = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
+        var operationId = task.ActiveTargetStationId == GetEnabledStation(task.TargetStationCode).AgvStationId
             ? TransportOperationIds.Dropoff(task.Id)
             : TransportOperationIds.Pickup(task.Id);
-        var cancellation = await adapter.CancelAsync(operationId, cancellationToken);
-        if (cancellation?.State != "cancelled") throw new InvalidOperationException("Adapter did not confirm cancellation.");
-        return ToResponse(await repository.ApplyEventAsync(taskId, TaskEvent.CancelConfirmed, new { operatorName }, cancellationToken));
+        var cancellation = await _adapter.CancelAsync(operationId, cancellationToken);
+        if (cancellation?.State == "cancelled")
+            return ToResponse(await _repository.ApplyEventAsync(taskId, TaskEvent.CancelConfirmed, new { operatorName }, cancellationToken));
+
+        if (cancellation is { State: "unknown" }
+            && task.Status is DomainTaskStatus.Dispatching or DomainTaskStatus.MovingToPickup or DomainTaskStatus.MovingToDropoff)
+        {
+            var error = cancellation.LastError ?? "cancel_not_confirmed_by_1110";
+            return ToResponse(await _repository.ApplyEventAsync(
+                taskId,
+                TaskEvent.Timeout,
+                new { operatorName, operationId, source = "adapter-cancel", error },
+                cancellationToken,
+                error));
+        }
+
+        throw new InvalidOperationException("Adapter did not confirm cancellation.");
     }
 
     public async Task<TaskResponse> MarkUnknownAsync(Guid taskId, CancellationToken cancellationToken) =>
-        ToResponse(await repository.ApplyEventAsync(taskId, TaskEvent.Timeout, new { source = "recovery" }, cancellationToken));
+        ToResponse(await _repository.ApplyEventAsync(taskId, TaskEvent.Timeout, new { source = "recovery" }, cancellationToken));
 
     public async Task<TaskResponse> RecoverAsync(Guid taskId, CancellationToken cancellationToken)
     {
-        var task = await repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
+        var task = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
         if (task.Status != DomainTaskStatus.Unknown) return ToResponse(task);
-        var pickup = task.ActiveTargetStationId == Stations.Get(task.SourceStationCode).AgvStationId;
+        var pickup = task.ActiveTargetStationId == GetEnabledStation(task.SourceStationCode).AgvStationId;
         var operationId = pickup ? TransportOperationIds.Pickup(task.Id) : TransportOperationIds.Dropoff(task.Id);
-        var device = await adapter.GetTaskAsync(operationId, cancellationToken);
+        var device = await _adapter.GetTaskAsync(operationId, cancellationToken);
+        if (device is not null)
+        {
+            await _repository.SetActiveRouteAsync(
+                taskId,
+                task.ActiveTargetStationId ?? string.Empty,
+                device.AgvId,
+                device.DeviceTaskId,
+                device.Path,
+                cancellationToken);
+        }
         var reconciliation = device?.State switch
         {
             "accepted" or "moving" => pickup ? TaskEvent.ReconciledMoving : TaskEvent.ReconciledMovingToDropoff,
             "arrived" => pickup ? TaskEvent.ReconciledPickupArrived : TaskEvent.ReconciledDropoffArrived,
             "completed" => TaskEvent.ReconciledCompleted,
             "failed" => TaskEvent.ReconciledFailed,
+            "cancelled" => TaskEvent.CancelConfirmed,
             _ => throw new InvalidOperationException("Device task cannot be reconciled.")
         };
-        return ToResponse(await repository.ApplyEventAsync(taskId, reconciliation, new { deviceState = device?.State }, cancellationToken));
+        return ToResponse(await _repository.ApplyEventAsync(taskId, reconciliation, new { deviceState = device?.State }, cancellationToken));
     }
 
     public async Task ReconcileIncompleteAsync(CancellationToken cancellationToken)
     {
-        var unknownTasks = await repository.ListByStatusAsync(DomainTaskStatus.Unknown, cancellationToken);
+        var unknownTasks = await _repository.ListByStatusAsync(DomainTaskStatus.Unknown, cancellationToken);
         foreach (var status in new[] { DomainTaskStatus.Dispatching, DomainTaskStatus.MovingToPickup, DomainTaskStatus.MovingToDropoff })
         {
-            var tasks = await repository.ListByStatusAsync(status, cancellationToken);
+            var tasks = await _repository.ListByStatusAsync(status, cancellationToken);
             foreach (var task in tasks)
             {
-                await repository.ApplyEventAsync(task.Id, TaskEvent.Timeout, new { source = "startup-recovery" }, cancellationToken);
+                await _repository.ApplyEventAsync(task.Id, TaskEvent.Timeout, new { source = "startup-recovery" }, cancellationToken);
                 try
                 {
                     await RecoverWithRetryAsync(task.Id, cancellationToken);
@@ -124,6 +187,119 @@ public sealed class TaskService(TaskRepository repository, IAdapterClient adapte
         }
     }
 
+    public async Task ReconcileActiveAsync(CancellationToken cancellationToken)
+    {
+        foreach (var status in new[] { DomainTaskStatus.Dispatching, DomainTaskStatus.MovingToPickup, DomainTaskStatus.MovingToDropoff })
+        {
+            var tasks = await _repository.ListByStatusAsync(status, cancellationToken);
+            foreach (var task in tasks)
+            {
+                try
+                {
+                    await ReconcileActiveTaskAsync(task.Id, cancellationToken);
+                }
+                catch (InvalidOperationException)
+                {
+                }
+                catch (HttpRequestException)
+                {
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                }
+            }
+        }
+
+        var unknownTasks = await _repository.ListByStatusAsync(DomainTaskStatus.Unknown, cancellationToken);
+        foreach (var task in unknownTasks)
+        {
+            try
+            {
+                await RecoverWithRetryAsync(task.Id, cancellationToken);
+            }
+            catch (InvalidOperationException)
+            {
+            }
+            catch (HttpRequestException)
+            {
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+            }
+        }
+    }
+
+    private async Task ReconcileActiveTaskAsync(Guid taskId, CancellationToken cancellationToken)
+    {
+        var task = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
+        if (task.Status is not (DomainTaskStatus.Dispatching or DomainTaskStatus.MovingToPickup or DomainTaskStatus.MovingToDropoff)) return;
+
+        var pickup = task.ActiveTargetStationId == GetEnabledStation(task.SourceStationCode).AgvStationId;
+        var operationId = pickup ? TransportOperationIds.Pickup(task.Id) : TransportOperationIds.Dropoff(task.Id);
+        var device = await _adapter.GetTaskAsync(operationId, cancellationToken);
+        if (device is null) return;
+        await _repository.SetActiveRouteAsync(
+            taskId,
+            task.ActiveTargetStationId ?? string.Empty,
+            device.AgvId,
+            device.DeviceTaskId,
+            device.Path,
+            cancellationToken);
+
+        var state = device.State?.Trim().ToLowerInvariant();
+        if (state is "accepted" or "moving")
+        {
+            if (task.Status == DomainTaskStatus.Dispatching)
+            {
+                await _repository.ApplyEventAsync(
+                    taskId,
+                    pickup ? TaskEvent.PickupMoveStarted : TaskEvent.DropoffMoveStarted,
+                    new { deviceState = state, source = "adapter-poll" },
+                    cancellationToken);
+            }
+            return;
+        }
+
+        if (state is "arrived" or "completed")
+        {
+            if (task.Status == DomainTaskStatus.Dispatching)
+            {
+                await _repository.ApplyEventAsync(
+                    taskId,
+                    pickup ? TaskEvent.PickupMoveStarted : TaskEvent.DropoffMoveStarted,
+                    new { deviceState = state, source = "adapter-poll" },
+                    cancellationToken);
+            }
+
+            await _repository.ApplyEventAsync(
+                taskId,
+                pickup ? TaskEvent.PickupArrived : TaskEvent.DropoffArrived,
+                new { deviceState = state, source = "adapter-poll" },
+                cancellationToken);
+            return;
+        }
+
+        if (state == "failed")
+        {
+            await _repository.ApplyEventAsync(
+                taskId,
+                TaskEvent.DeviceFailed,
+                new { deviceState = state, source = "adapter-poll", error = device.LastError },
+                cancellationToken,
+                device.LastError);
+            return;
+        }
+
+        if (state == "cancelled")
+        {
+            await _repository.ApplyEventAsync(
+                taskId,
+                TaskEvent.CancelConfirmed,
+                new { deviceState = state, source = "adapter-poll" },
+                cancellationToken);
+        }
+    }
+
     private static readonly TimeSpan[] RecoveryBackoff =
     [
         TimeSpan.FromMilliseconds(50),
@@ -151,47 +327,132 @@ public sealed class TaskService(TaskRepository repository, IAdapterClient adapte
 
     public async Task<TaskDetailResponse?> GetDetailAsync(Guid taskId, CancellationToken cancellationToken)
     {
-        var task = await repository.GetAsync(taskId, cancellationToken);
+        var task = await _repository.GetAsync(taskId, cancellationToken);
         if (task is null) return null;
-        var events = await repository.GetEventsAsync(taskId, cancellationToken);
+        var events = await _repository.GetEventsAsync(taskId, cancellationToken);
         return new TaskDetailResponse(ToResponse(task), events.Select(ToResponse).ToList());
     }
 
     public async Task<IReadOnlyList<TaskResponse>> ListAsync(DateOnly date, CancellationToken cancellationToken) =>
-        (await repository.ListAsync(date, cancellationToken)).Select(ToResponse).ToList();
+        (await _repository.ListAsync(date, cancellationToken)).Select(ToResponse).ToList();
 
     public Task<IReadOnlyList<TaskResponse>> ListAsync(CancellationToken cancellationToken) =>
         ListAsync(DateOnly.FromDateTime(DateTime.UtcNow), cancellationToken);
 
     private async Task DispatchLegAsync(Guid taskId, TaskEvent started, string targetStationId, CancellationToken cancellationToken)
     {
-        var task = await repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
-        if (task.Status == DomainTaskStatus.Created)
-        {
-            await repository.ApplyEventAsync(taskId, TaskEvent.DispatchRequested, new { targetStationId }, cancellationToken);
-        }
-        await repository.SetActiveTargetAsync(taskId, targetStationId, cancellationToken);
+        var task = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
         var operationId = started == TaskEvent.PickupMoveStarted ? TransportOperationIds.Pickup(taskId) : TransportOperationIds.Dropoff(taskId);
         try
         {
-            var sourceStationId = Stations.Get(task.SourceStationCode).AgvStationId;
-            var response = adapter is IRouteAwareAdapterClient routeAware
-                ? await routeAware.DispatchAsync(operationId, sourceStationId, targetStationId, cancellationToken)
-                : await adapter.DispatchAsync(operationId, targetStationId, cancellationToken);
-            task = await repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
+            var sourceStationId = GetEnabledStation(task.SourceStationCode).AgvStationId;
+            var navigationSourceStationId = sourceStationId;
+            IReadOnlyList<string>? plannedPath = null;
+            var plannedCost = 0d;
+            var preDispatchSnapshot = await _adapter.GetSnapshotAsync(cancellationToken);
+            if (!string.IsNullOrWhiteSpace(preDispatchSnapshot.CurrentStationId))
+            {
+                var planned = _planner.PlanVia(
+                    preDispatchSnapshot.CurrentStationId,
+                    sourceStationId,
+                    targetStationId);
+                navigationSourceStationId = planned.Start;
+                plannedPath = planned.Stations;
+                plannedCost = planned.Cost;
+            }
+            else
+            {
+                var planned = _planner.Plan(sourceStationId, targetStationId);
+                plannedPath = planned.Stations;
+                plannedCost = planned.Cost;
+            }
+
+            await _repository.RecordEventAsync(
+                taskId,
+                "PathPlanned",
+                new
+                {
+                    source = "mes-pre-dispatch",
+                    agvId = preDispatchSnapshot.AgvId,
+                    currentStationId = preDispatchSnapshot.CurrentStationId,
+                    targetStationId,
+                    path = plannedPath,
+                    cost = plannedCost,
+                    observedAtUtc = DateTime.UtcNow
+                },
+                cancellationToken);
+
+            if (task.Status == DomainTaskStatus.Created)
+            {
+                await _repository.ApplyEventAsync(
+                    taskId,
+                    TaskEvent.DispatchRequested,
+                    new { targetStationId, plannedPath, source = "mes-pre-dispatch" },
+                    cancellationToken);
+            }
+            await _repository.SetActiveTargetAsync(taskId, targetStationId, cancellationToken);
+
+            if (!string.IsNullOrWhiteSpace(preDispatchSnapshot.CurrentStationId)
+                && plannedPath is { Count: 1 }
+                && StringComparer.Ordinal.Equals(plannedPath[0], targetStationId))
+            {
+                await _repository.SetActiveRouteAsync(
+                    taskId,
+                    targetStationId,
+                    preDispatchSnapshot.AgvId,
+                    null,
+                    plannedPath,
+                    cancellationToken);
+                task = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
+                if (task.Status == DomainTaskStatus.Dispatching)
+                {
+                    await _repository.ApplyEventAsync(
+                        taskId,
+                        started,
+                        new { source = "mes-pre-dispatch-plan", path = plannedPath },
+                        cancellationToken);
+                }
+                await _repository.ApplyEventAsync(
+                    taskId,
+                    started == TaskEvent.PickupMoveStarted ? TaskEvent.PickupArrived : TaskEvent.DropoffArrived,
+                    new { source = "mes-pre-dispatch-plan", path = plannedPath },
+                    cancellationToken);
+                return;
+            }
+
+            var response = _adapter is IPathAwareAgvGateway pathAwareGateway
+                && plannedPath is { Count: >= 2 }
+                && !string.IsNullOrWhiteSpace(preDispatchSnapshot.CurrentStationId)
+                ? await pathAwareGateway.DispatchAsync(
+                    operationId,
+                    navigationSourceStationId,
+                    targetStationId,
+                    plannedPath,
+                    cancellationToken)
+                : _adapter is IRouteAwareAgvGateway routeAware
+                    ? await routeAware.DispatchAsync(operationId, navigationSourceStationId, targetStationId, cancellationToken)
+                    : await _adapter.DispatchAsync(operationId, targetStationId, cancellationToken);
+            await _repository.SetActiveRouteAsync(
+                taskId,
+                targetStationId,
+                response.AgvId,
+                response.DeviceTaskId,
+                response.Path ?? plannedPath,
+                cancellationToken);
+            task = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
             if (response.State == "failed")
             {
-                await repository.ApplyEventAsync(taskId, TaskEvent.DeviceFailed, response, cancellationToken, response.LastError);
+                await _repository.ApplyEventAsync(taskId, TaskEvent.DeviceFailed, response, cancellationToken, response.LastError);
             }
             else if (task.Status == DomainTaskStatus.Dispatching)
             {
-                await repository.ApplyEventAsync(taskId, started, response, cancellationToken);
+                await _repository.ApplyEventAsync(taskId, started, response, cancellationToken);
             }
         }
         catch (AdapterHttpException exception) when (exception.ResponseStatusCode == HttpStatusCode.Conflict)
         {
             var error = DescribeAdapterConflict(exception);
-            await repository.ApplyEventAsync(
+            await _repository.ApplyEventAsync(
                 taskId,
                 TaskEvent.DeviceFailed,
                 new { source = "adapter", statusCode = (int)exception.ResponseStatusCode, reason = error, detail = exception.Detail },
@@ -201,17 +462,17 @@ public sealed class TaskService(TaskRepository repository, IAdapterClient adapte
         catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
             var error = DescribeSystemFailure(exception);
-            await repository.ApplyEventAsync(taskId, TaskEvent.Timeout, new { error }, cancellationToken, error);
+            await _repository.ApplyEventAsync(taskId, TaskEvent.Timeout, new { error }, cancellationToken, error);
         }
         catch (TimeoutException exception)
         {
             var error = DescribeSystemFailure(exception);
-            await repository.ApplyEventAsync(taskId, TaskEvent.Timeout, new { error }, cancellationToken, error);
+            await _repository.ApplyEventAsync(taskId, TaskEvent.Timeout, new { error }, cancellationToken, error);
         }
         catch (HttpRequestException exception)
         {
             var error = DescribeSystemFailure(exception);
-            await repository.ApplyEventAsync(taskId, TaskEvent.Timeout, new { error }, cancellationToken, error);
+            await _repository.ApplyEventAsync(taskId, TaskEvent.Timeout, new { error }, cancellationToken, error);
         }
     }
 
@@ -238,7 +499,17 @@ public sealed class TaskService(TaskRepository repository, IAdapterClient adapte
         _ => $"\u7CFB\u7EDF\u5F02\u5E38\uFF1A{exception.Message}"
     };
 
-    public static TaskResponse ToResponse(TransportTask task) => new(
+    private Station GetEnabledStation(int code)
+    {
+        if (!_stations.TryGetValue(code, out var station) || !station.Enabled)
+        {
+            throw new UnsupportedRouteException($"Station code {code} is not configured or enabled in the active profile.");
+        }
+
+        return station;
+    }
+
+    private TaskResponse ToResponse(TransportTask task) => new(
         task.Id,
         task.SourceStationCode,
         task.TargetStationCode,
@@ -249,11 +520,20 @@ public sealed class TaskService(TaskRepository repository, IAdapterClient adapte
         task.Description,
         task.ExternalId,
         task.CreatedAt,
-        task.EndedAt);
+        task.EndedAt,
+        task.ActiveAgvId,
+        task.ActiveDeviceTaskId,
+        DeserializePath(task.ActivePathJson));
     private static TaskEventResponse ToResponse(TaskEventRecord taskEvent) => new(taskEvent.Id, taskEvent.EventType, taskEvent.Payload, taskEvent.CreatedAt);
+
+    private static IReadOnlyList<string>? DeserializePath(string? pathJson) =>
+        pathJson is null ? null : System.Text.Json.JsonSerializer.Deserialize<IReadOnlyList<string>>(pathJson);
 }
 
 public sealed class UnsupportedRouteException : InvalidOperationException
 {
     public UnsupportedRouteException() : base("MVP only supports SAMPLE_01 to ST_PREP_01.") { }
+    public UnsupportedRouteException(string message) : base(message) { }
 }
+
+

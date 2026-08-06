@@ -1,25 +1,28 @@
-using MesControlAgv.Mes.Services;
+﻿using MesControlAgv.Application;
+using MesControlAgv.Contracts;
 
 namespace MesControlAgv.Mes.Tests;
 
-public sealed class TestAdapterClient : IAdapterClient
+public sealed class TestAdapterClient : IAgvGateway
 {
-    public Task<AdapterTask> DispatchAsync(Guid operationId, string targetStationId, CancellationToken cancellationToken) =>
-        Task.FromResult(new AdapterTask(operationId, operationId.ToString("N"), targetStationId, "moving", null));
+    public Task<AgvTaskResponse> DispatchAsync(Guid operationId, string targetStationId, CancellationToken cancellationToken) =>
+        Task.FromResult(new AgvTaskResponse(operationId, operationId.ToString("N"), targetStationId, "moving", null));
 
-    public Task<AdapterTask?> GetTaskAsync(Guid operationId, CancellationToken cancellationToken) =>
-        Task.FromResult<AdapterTask?>(null);
+    public Task<AgvTaskResponse?> GetTaskAsync(Guid operationId, CancellationToken cancellationToken) =>
+        Task.FromResult<AgvTaskResponse?>(null);
 
-    public Task<AdapterTask?> CancelAsync(Guid operationId, CancellationToken cancellationToken) =>
-        Task.FromResult<AdapterTask?>(null);
+    public Task<AgvTaskResponse?> CancelAsync(Guid operationId, CancellationToken cancellationToken) =>
+        Task.FromResult<AgvTaskResponse?>(null);
 
-    public Task<AdapterSnapshot> GetSnapshotAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(new AdapterSnapshot(true, "adapter", "CHARGE_01", null));
+    public Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(new AgvSnapshotResponse(true, "adapter", "CHARGE_01", null));
 
-    public Task<AdapterTask?> ExecuteAgvCommandAsync(
+    public Task<AgvTaskResponse?> ExecuteAgvCommandAsync(
         string agvId,
         string command,
         Guid? taskId,
         CancellationToken cancellationToken) =>
-        Task.FromResult<AdapterTask?>(null);
+        Task.FromResult<AgvTaskResponse?>(null);
 }
+
+
