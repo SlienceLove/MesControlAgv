@@ -72,6 +72,12 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 
     public ObservableCollection<WorkflowDefinition> Workflows { get; }
 
+    /// <summary>
+    /// Enabled station profiles returned by MES. Workflow transport nodes must
+    /// resolve their target against this catalog before a version can publish.
+    /// </summary>
+    public ObservableCollection<DashboardStation> AvailableStations { get; } = [];
+
     public IReadOnlyList<WorkflowNodeTypeOption> NodeTypeOptions { get; } =
     [
         new(WorkflowNodeType.Start, "开始"),
@@ -99,6 +105,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(SelectedRemoteVersion));
             OnPropertyChanged(nameof(RemoteStatus));
             OnPropertyChanged(nameof(ValidationSummary));
+            OnPropertyChanged(nameof(HasValidStationTargets));
+            OnPropertyChanged(nameof(StationValidationSummary));
             RefreshCommandStates();
         }
     }
@@ -109,8 +117,11 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         set
         {
             if (ReferenceEquals(_selectedNode, value)) return;
+            if (_selectedNode is not null) _selectedNode.PropertyChanged -= SelectedNode_PropertyChanged;
             _selectedNode = value;
+            if (_selectedNode is not null) _selectedNode.PropertyChanged += SelectedNode_PropertyChanged;
             OnPropertyChanged();
+            OnPropertyChanged(nameof(StationValidationSummary));
             RefreshCommandStates();
         }
     }
@@ -156,6 +167,49 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     public ContractWorkflowValidationResult? LastValidation => _lastValidation;
 
     public DashboardWorkflowExecution? LastExecution => _lastExecution;
+
+    public bool HasValidStationTargets =>
+        SelectedWorkflow is not { } workflow ||
+        workflow.Nodes
+            .Where(node => node.Type is WorkflowNodeType.Move or WorkflowNodeType.Pickup or WorkflowNodeType.Dropoff)
+            .All(node => TryResolveStation(node.TargetStation, out _));
+
+    public string StationValidationSummary
+    {
+        get
+        {
+            if (SelectedWorkflow is not { } workflow) return "No workflow selected.";
+            var transportNodes = workflow.Nodes
+                .Where(node => node.Type is WorkflowNodeType.Move or WorkflowNodeType.Pickup or WorkflowNodeType.Dropoff)
+                .ToList();
+            if (transportNodes.Count == 0) return "No transport station targets.";
+            if (AvailableStations.Count == 0) return "MES enabled station catalog is not loaded.";
+
+            var invalid = transportNodes
+                .Where(node => !TryResolveStation(node.TargetStation, out _))
+                .Select(node => string.IsNullOrWhiteSpace(node.Name) ? node.Id.ToString("N") : node.Name)
+                .ToList();
+            return invalid.Count == 0
+                ? "All transport station targets are valid."
+                : $"Invalid station target(s): {string.Join(", ", invalid)}";
+        }
+    }
+
+    /// <summary>Resolve a station code, name, or AGV station id to an enabled MES profile.</summary>
+    public bool TryResolveStation(string? value, out DashboardStation station)
+    {
+        station = default!;
+        var normalized = value?.Trim();
+        if (string.IsNullOrWhiteSpace(normalized)) return false;
+
+        var match = AvailableStations.FirstOrDefault(item =>
+            string.Equals(item.AgvStationId, normalized, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(item.Name, normalized, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(item.Code.ToString(System.Globalization.CultureInfo.InvariantCulture), normalized, StringComparison.Ordinal));
+        if (match is null) return false;
+        station = match;
+        return true;
+    }
 
     public string ValidationSummary => _lastValidation is null
         ? "Not validated"
@@ -229,6 +283,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 
     private bool CanPublish() =>
         CanUseRemote() &&
+        HasValidStationTargets &&
         SelectedRemoteVersion is { Status: ContractWorkflowVersionStatus.Draft or ContractWorkflowVersionStatus.Validated } version &&
         version.Validation?.IsValid == true;
 
@@ -269,6 +324,14 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     {
         if (_mes is null) return;
 
+        var stations = await _mes.GetStationsAsync(CancellationToken.None);
+        AvailableStations.Clear();
+        foreach (var station in stations.Where(item => item.Enabled).OrderBy(item => item.Code))
+        {
+            AvailableStations.Add(station);
+        }
+        OnPropertyChanged(nameof(StationValidationSummary));
+
         var definitions = await _mes.GetWorkflowsAsync(CancellationToken.None);
         var selectedId = SelectedWorkflow?.Id;
         var loadedIds = new HashSet<Guid>();
@@ -304,6 +367,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 
         UpdateRemotePresentation("Loaded " + definitions.Count + " workflow(s) from MES");
         Message = RemoteStatus;
+        RefreshCommandStates();
     }
 
     private async Task SaveDraftAsync()
@@ -437,7 +501,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(ValidationSummary));
     }
 
-    private static ContractWorkflowDefinition ToContract(WorkflowDefinition workflow) => new()
+    private ContractWorkflowDefinition ToContract(WorkflowDefinition workflow) => new()
     {
         Id = workflow.Id,
         Name = workflow.Name,
@@ -452,7 +516,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
                 Type = (MesControlAgv.Contracts.Workflows.WorkflowNodeType)node.Type,
                 Name = node.Name,
                 Description = node.Description,
-                TargetStation = node.TargetStation,
+                TargetStation = ResolveTargetStation(node.TargetStation),
                 X = node.X,
                 Y = node.Y,
                 Order = node.Order,
@@ -467,6 +531,9 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             })
             .ToArray()
     };
+
+    private string? ResolveTargetStation(string? value) =>
+        TryResolveStation(value, out var station) ? station.AgvStationId : value?.Trim();
 
     private static WorkflowDefinition FromContract(ContractWorkflowDefinition workflow)
     {
@@ -607,6 +674,16 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             PublishCommand,
             DryRunCommand
         }.OfType<AsyncCommand>()) command.RaiseCanExecuteChanged();
+    }
+
+    private void SelectedNode_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(WorkflowNode.TargetStation))
+        {
+            OnPropertyChanged(nameof(HasValidStationTargets));
+            OnPropertyChanged(nameof(StationValidationSummary));
+            RefreshCommandStates();
+        }
     }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

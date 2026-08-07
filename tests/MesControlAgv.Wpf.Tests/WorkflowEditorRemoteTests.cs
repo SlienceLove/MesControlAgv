@@ -31,6 +31,10 @@ public sealed class WorkflowEditorRemoteTests
         Assert.Equal("remote-transport", editor.SelectedWorkflow!.Name);
         Assert.Equal(1, editor.SelectedRemoteVersion!.Version);
         Assert.Equal(ContractWorkflowVersionStatus.Draft, editor.SelectedRemoteVersion.Status);
+        Assert.Single(editor.AvailableStations);
+        Assert.True(editor.TryResolveStation("101", out var station));
+        Assert.Equal("LAB_SOURCE", station.AgvStationId);
+        Assert.True(editor.HasValidStationTargets);
 
         editor.SaveDraftCommand.Execute(null);
         await WaitUntilAsync(() => !editor.IsRemoteBusy && client.UpdateDraftCallCount == 1);
@@ -53,6 +57,25 @@ public sealed class WorkflowEditorRemoteTests
         Assert.Equal("Move", editor.LastExecution.NextStep!.NodeName);
         Assert.True(client.LastExecutionRequest!.DryRun);
         Assert.Equal(1, client.LastExecutionRequest.Version);
+    }
+
+    [Fact]
+    public async Task Invalid_station_target_blocks_publish_and_is_reported_to_the_operator()
+    {
+        using var fixture = new TempWorkflowFile();
+        var client = new WorkflowEditorClientStub(CreateContractWorkflow());
+        var editor = new WorkflowEditorViewModel(new WorkflowStore(fixture.Path), client, () => "operator-remote");
+
+        editor.LoadFromMesCommand.Execute(null);
+        await WaitUntilAsync(() => !editor.IsRemoteBusy && editor.SelectedRemoteVersion is not null);
+
+        editor.SelectedWorkflow!.Nodes.Single(node => node.Type == MesControlAgv.Wpf.Workflows.WorkflowNodeType.Move).TargetStation = "not-enabled";
+        Assert.False(editor.HasValidStationTargets);
+        Assert.Contains("Invalid station", editor.StationValidationSummary, StringComparison.Ordinal);
+
+        editor.ValidateCommand.Execute(null);
+        await WaitUntilAsync(() => !editor.IsRemoteBusy && editor.LastValidation is not null);
+        Assert.False(editor.PublishCommand.CanExecute(null));
     }
 
     [Fact]
@@ -101,7 +124,7 @@ public sealed class WorkflowEditorRemoteTests
             Nodes =
             [
                 new ContractWorkflowNode { Id = startId, Type = ContractWorkflowNodeType.Start, Name = "Start", Order = 1, NextNodeIds = [moveId] },
-                new ContractWorkflowNode { Id = moveId, Type = ContractWorkflowNodeType.Move, Name = "Move", TargetStation = "SAMPLE_01", Order = 2, NextNodeIds = [endId] },
+                new ContractWorkflowNode { Id = moveId, Type = ContractWorkflowNodeType.Move, Name = "Move", TargetStation = "LAB_SOURCE", Order = 2, NextNodeIds = [endId] },
                 new ContractWorkflowNode { Id = endId, Type = ContractWorkflowNodeType.End, Name = "End", Order = 3 }
             ]
         };
@@ -137,7 +160,8 @@ public sealed class WorkflowEditorRemoteTests
         public Task<KpiDashboard> GetKpiDashboardAsync(DateOnly date, CancellationToken cancellationToken) => Task.FromResult(new KpiDashboard(date, new KpiTaskSummary(0, 0, 0, 0, 0), [], new KpiSampleSummary(0, 0, 0, 0, 0, 0, "test"), [], []));
         public Task<DashboardTaskDetail?> GetTaskDetailAsync(Guid taskId, CancellationToken cancellationToken) => Task.FromResult<DashboardTaskDetail?>(null);
         public Task<AgvDashboardSnapshot> GetAgvSnapshotAsync(CancellationToken cancellationToken) => Task.FromResult(new AgvDashboardSnapshot(false, "none", null, null));
-        public Task<DashboardTask> CreateTaskAsync(CancellationToken cancellationToken) => Task.FromException<DashboardTask>(new NotSupportedException());
+        public Task<IReadOnlyList<DashboardStation>> GetStationsAsync(CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<DashboardStation>>([new DashboardStation(101, "Lab source", "LAB_SOURCE", true)]);
         public Task<DashboardTask> CreateTaskAsync(int sourceStationCode, int targetStationCode, int priority, string? description, string? externalId, CancellationToken cancellationToken) => Task.FromException<DashboardTask>(new NotSupportedException());
         public Task<DashboardTask> MarkArrivedAsync(Guid taskId, CancellationToken cancellationToken) => Task.FromException<DashboardTask>(new NotSupportedException());
         public Task<DashboardTask> ConfirmPickupAsync(Guid taskId, string operatorName, CancellationToken cancellationToken) => Task.FromException<DashboardTask>(new NotSupportedException());
@@ -193,7 +217,7 @@ public sealed class WorkflowEditorRemoteTests
                 request.DryRun,
                 null,
                 null,
-                new DashboardWorkflowNextStep(Guid.NewGuid(), Guid.NewGuid(), request.WorkflowId, request.Version, Guid.NewGuid(), (int)WorkflowNodeType.Move, "Move", "SAMPLE_01", true, new Dictionary<string, string?>())));
+                new DashboardWorkflowNextStep(Guid.NewGuid(), Guid.NewGuid(), request.WorkflowId, request.Version, Guid.NewGuid(), (int)WorkflowNodeType.Move, "Move", "LAB_SOURCE", true, new Dictionary<string, string?>())));
         }
 
         private Task<ContractWorkflowVersion> Update(ContractWorkflowDefinition value, string actor)

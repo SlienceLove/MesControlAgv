@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Text.Json;
 using MesControlAgv.Contracts;
 using MesControlAgv.Contracts.Workflows;
 using ContractAgvSnapshot = MesControlAgv.Contracts.AgvSnapshotResponse;
@@ -13,8 +14,38 @@ using ContractTaskResponse = MesControlAgv.Contracts.TaskResponse;
 
 namespace MesControlAgv.Wpf.Services;
 
+public sealed class MesApiException(HttpStatusCode responseStatusCode, string? detail)
+    : HttpRequestException(BuildMessage(responseStatusCode, detail), null, responseStatusCode)
+{
+    public HttpStatusCode ResponseStatusCode { get; } = responseStatusCode;
+    public string? Detail { get; } = detail;
+
+    private static string BuildMessage(HttpStatusCode statusCode, string? detail) =>
+        string.IsNullOrWhiteSpace(detail)
+            ? $"MES returned HTTP {(int)statusCode} ({statusCode})."
+            : $"MES returned HTTP {(int)statusCode} ({statusCode}): {detail}";
+}
+
 public sealed class MesClient(HttpClient client) : IMesClient
 {
+    public async Task<RuntimeReadinessResponse?> GetRuntimeReadinessAsync(CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync("api/runtime/readiness", cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        await EnsureSuccessAsync(response, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<RuntimeReadinessResponse>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no runtime readiness evidence.");
+    }
+
+    public async Task<PhysicalAgvPreflightResponse?> GetPhysicalPreflightAsync(CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync("api/physical/preflight", cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        await EnsureSuccessAsync(response, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<PhysicalAgvPreflightResponse>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no physical preflight evidence.");
+    }
+
     public Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken) =>
         GetTasksAsync(DateOnly.FromDateTime(DateTime.UtcNow), cancellationToken);
 
@@ -37,7 +68,7 @@ public sealed class MesClient(HttpClient client) : IMesClient
     {
         using var response = await client.GetAsync($"api/tasks/{taskId}", cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, cancellationToken);
         var detail = await response.Content.ReadFromJsonAsync<ContractTaskDetail>(cancellationToken)
             ?? throw new InvalidOperationException("MES returned no task detail.");
         return new DashboardTaskDetail(
@@ -65,7 +96,7 @@ public sealed class MesClient(HttpClient client) : IMesClient
             "api/planning/path",
             new PlanPathRequest(fromStationId, toStationId, blockedStations),
             cancellationToken);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, cancellationToken);
         var path = await response.Content.ReadFromJsonAsync<ContractPlannedPath>(cancellationToken)
             ?? throw new InvalidOperationException("MES returned no planned path.");
         return new DashboardPlannedPath(path.Stations, path.Cost, path.FromStationId, path.ToStationId);
@@ -113,14 +144,10 @@ public sealed class MesClient(HttpClient client) : IMesClient
             new AgvCommandRequest(command, taskId),
             cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, cancellationToken);
         var result = await response.Content.ReadFromJsonAsync<ContractAgvTask>(cancellationToken);
         return result is null ? null : ToCommandResult(result);
     }
-
-    public Task<DashboardTask> CreateTaskAsync(CancellationToken cancellationToken) =>
-        Task.FromException<DashboardTask>(new InvalidOperationException(
-            "Task creation requires source and target station parameters."));
 
     public Task<DashboardTask> CreateTaskAsync(
         int sourceStationCode,
@@ -173,7 +200,7 @@ public sealed class MesClient(HttpClient client) : IMesClient
         using var response = await client.GetAsync(
             $"api/workflows/{workflowId}/versions/{version}", cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, cancellationToken);
         return await response.Content.ReadFromJsonAsync<WorkflowVersion>(cancellationToken)
             ?? throw new InvalidOperationException("MES returned no workflow version.");
     }
@@ -225,7 +252,7 @@ public sealed class MesClient(HttpClient client) : IMesClient
         CancellationToken cancellationToken)
     {
         using var response = await client.PostAsJsonAsync("api/workflows/execute", request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, cancellationToken);
         return await response.Content.ReadFromJsonAsync<DashboardWorkflowExecution>(cancellationToken)
             ?? throw new InvalidOperationException("MES returned no workflow execution result.");
     }
@@ -233,7 +260,7 @@ public sealed class MesClient(HttpClient client) : IMesClient
     private async Task<DashboardTask> PostAsync(string path, object? body, CancellationToken cancellationToken)
     {
         using var response = await client.PostAsJsonAsync(path, body, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, cancellationToken);
         var task = await response.Content.ReadFromJsonAsync<ContractTaskResponse>(cancellationToken)
             ?? throw new InvalidOperationException("MES returned no task.");
         return ToDashboardTask(task);
@@ -254,7 +281,7 @@ public sealed class MesClient(HttpClient client) : IMesClient
         using var request = new HttpRequestMessage(method, path);
         if (body is not null) request.Content = JsonContent.Create(body);
         using var response = await client.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, cancellationToken);
         return await response.Content.ReadFromJsonAsync<WorkflowVersion>(cancellationToken)
             ?? throw new InvalidOperationException("MES returned no workflow version.");
     }
@@ -267,9 +294,48 @@ public sealed class MesClient(HttpClient client) : IMesClient
         using var request = new HttpRequestMessage(HttpMethod.Post, path);
         if (body is not null) request.Content = JsonContent.Create(body);
         using var response = await client.SendAsync(request, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        await EnsureSuccessAsync(response, cancellationToken);
         return await response.Content.ReadFromJsonAsync<WorkflowValidationResult>(cancellationToken)
             ?? throw new InvalidOperationException("MES returned no workflow validation result.");
+    }
+
+    private static async Task EnsureSuccessAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        if (response.IsSuccessStatusCode) return;
+
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        throw new MesApiException(response.StatusCode, ExtractDetail(body));
+    }
+
+    private static string? ExtractDetail(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            if (document.RootElement.ValueKind == JsonValueKind.Object)
+            {
+                if (document.RootElement.TryGetProperty("detail", out var detail)
+                    && detail.ValueKind == JsonValueKind.String)
+                {
+                    return detail.GetString();
+                }
+
+                if (document.RootElement.TryGetProperty("title", out var title)
+                    && title.ValueKind == JsonValueKind.String)
+                {
+                    return title.GetString();
+                }
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return body.Trim();
     }
 
     private static DashboardTask ToDashboardTask(ContractTaskResponse task) => new(

@@ -103,6 +103,41 @@ public sealed class TaskCreationViewModelTests
     }
 
     [Fact]
+    public async Task Periodic_refresh_preserves_an_existing_route_when_station_catalog_is_unchanged()
+    {
+        var client = CreateClient();
+        using var viewModel = new MainViewModel(client);
+        await viewModel.RefreshAsync();
+        viewModel.NewTaskSourceStation = client.Stations.Single(station => station.Code == 2);
+        viewModel.NewTaskTargetStation = client.Stations.Single(station => station.Code == 4);
+        viewModel.PlanRouteCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.PlannedRoute is not null);
+        var plannedRoute = viewModel.PlannedRoute;
+        var preview = viewModel.RoutePreview;
+        var source = viewModel.NewTaskSourceStation;
+        var target = viewModel.NewTaskTargetStation;
+        var stationRows = viewModel.AvailableStations.ToArray();
+        var collectionChanges = 0;
+        viewModel.AvailableStations.CollectionChanged += (_, _) => collectionChanges++;
+        client.SetStations(
+            new DashboardStation(2, "Sample", "SAMPLE_01", true),
+            new DashboardStation(4, "Preparation", "ST_PREP_01", true));
+
+        await viewModel.RefreshAsync();
+
+        Assert.Equal(0, collectionChanges);
+        Assert.Same(plannedRoute, viewModel.PlannedRoute);
+        Assert.Same(source, viewModel.NewTaskSourceStation);
+        Assert.Same(target, viewModel.NewTaskTargetStation);
+        Assert.Same(stationRows[0], viewModel.AvailableStations[0]);
+        Assert.Same(stationRows[1], viewModel.AvailableStations[1]);
+        Assert.Equal(preview, viewModel.RoutePreview);
+        Assert.Equal(2, viewModel.NewTaskSourceStation?.Code);
+        Assert.Equal(4, viewModel.NewTaskTargetStation?.Code);
+        Assert.True(viewModel.CreateTaskCommand.CanExecute(null));
+    }
+
+    [Fact]
     public async Task Create_task_is_disabled_when_no_stations_are_available()
     {
         var task = new DashboardTask(Guid.NewGuid(), 2, 4, "MovingToPickup", 0, null);

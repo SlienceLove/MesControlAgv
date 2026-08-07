@@ -1,17 +1,22 @@
 using System.Net;
 using System.Net.Http.Json;
+using MesControlAgv.Application;
 using MesControlAgv.Contracts;
 using MesControlAgv.Domain;
+using MesControlAgv.Mes.Services;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace MesControlAgv.Mes.Tests;
 
 public sealed class TaskApiTests : IClassFixture<MesWebApplicationFactory>
 {
+    private readonly MesWebApplicationFactory _factory;
     private readonly HttpClient _client;
 
     public TaskApiTests(MesWebApplicationFactory factory)
     {
+        _factory = factory;
         _client = factory.CreateClient();
     }
 
@@ -113,6 +118,40 @@ public sealed class TaskApiTests : IClassFixture<MesWebApplicationFactory>
     }
 
     [Fact]
+    public async Task Low_level_agv_cancel_is_rejected_without_changing_mes_task()
+    {
+        var adapter = _factory.Services.GetRequiredService<IAgvGateway>();
+        var commandCallsBeforeCancel = Assert.IsType<TestAdapterClient>(adapter).ExecuteAgvCommandCallCount;
+        var create = await _client.PostAsJsonAsync("/api/tasks", new
+        {
+            sourceStationCode = 2,
+            targetStationCode = 4
+        });
+        var created = await create.Content.ReadFromJsonAsync<TaskResponse>();
+        Assert.NotNull(created);
+        var dispatch = await _client.PostAsync($"/api/tasks/{created.Id}/dispatch", null);
+        dispatch.EnsureSuccessStatusCode();
+
+        var cancel = await _client.PostAsJsonAsync(
+            "/api/agvs/AGV-01/command",
+            new
+            {
+                command = "cancel",
+                taskId = TransportOperationIds.Pickup(created.Id)
+            });
+
+        Assert.Equal(HttpStatusCode.Conflict, cancel.StatusCode);
+        Assert.Equal(commandCallsBeforeCancel, Assert.IsType<TestAdapterClient>(adapter).ExecuteAgvCommandCallCount);
+        var body = await cancel.Content.ReadAsStringAsync();
+        Assert.Contains("/api/tasks/{taskId}/cancel", body, StringComparison.Ordinal);
+
+        var detail = await _client.GetFromJsonAsync<TaskDetailResponse>($"/api/tasks/{created.Id}");
+        Assert.NotNull(detail);
+        Assert.Equal("MovingToPickup", detail.Task.Status);
+        Assert.DoesNotContain(detail.Events, taskEvent => taskEvent.EventType == "CancelConfirmed");
+    }
+
+    [Fact]
     public async Task Cancel_pending_task_is_handled_by_mes_without_an_adapter_operation()
     {
         var create = await _client.PostAsJsonAsync("/api/tasks", new
@@ -131,6 +170,58 @@ public sealed class TaskApiTests : IClassFixture<MesWebApplicationFactory>
         Assert.Equal("Cancelled", cancelled.Status);
         var detail = await _client.GetFromJsonAsync<TaskDetailResponse>($"/api/tasks/{created.Id}");
         Assert.Contains(detail!.Events, taskEvent => taskEvent.EventType == "CancelConfirmed");
+    }
+
+    [Fact]
+    public async Task Recover_missing_task_returns_not_found_with_detail()
+    {
+        var taskId = Guid.NewGuid();
+
+        var response = await _client.PostAsync($"/api/tasks/{taskId}/recover", null);
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains(taskId.ToString(), body, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not found", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Recover_unreconciled_unknown_task_returns_conflict_with_detail()
+    {
+        var adapter = Assert.IsType<TestAdapterClient>(_factory.Services.GetRequiredService<IAgvGateway>());
+        var create = await _client.PostAsJsonAsync("/api/tasks", new
+        {
+            sourceStationCode = 2,
+            targetStationCode = 4
+        });
+        var created = await create.Content.ReadFromJsonAsync<TaskResponse>();
+        Assert.NotNull(created);
+        var dispatch = await _client.PostAsync($"/api/tasks/{created.Id}/dispatch", null);
+        dispatch.EnsureSuccessStatusCode();
+
+        adapter.ReturnMissingTaskOnQuery = true;
+        try
+        {
+            using (var scope = _factory.Services.CreateScope())
+            {
+                var repository = scope.ServiceProvider.GetRequiredService<TaskRepository>();
+                await repository.ApplyEventAsync(
+                    created.Id,
+                    TaskEvent.Timeout,
+                    new { source = "api-contract-test" },
+                    CancellationToken.None);
+            }
+
+            var response = await _client.PostAsync($"/api/tasks/{created.Id}/recover", null);
+
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            var body = await response.Content.ReadAsStringAsync();
+            Assert.Contains("Device task cannot be reconciled.", body, StringComparison.Ordinal);
+        }
+        finally
+        {
+            adapter.ReturnMissingTaskOnQuery = false;
+        }
     }
 
     [Fact]

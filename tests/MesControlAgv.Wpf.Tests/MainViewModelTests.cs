@@ -1,3 +1,5 @@
+using MesControlAgv.Contracts;
+using MesControlAgv.Domain;
 using MesControlAgv.Wpf.Services;
 using MesControlAgv.Wpf.ViewModels;
 
@@ -131,16 +133,287 @@ public class MainViewModelTests
     }
 
     [Fact]
+    public async Task Refresh_keeps_last_successful_task_and_fleet_snapshot_visible_until_replacement_completes()
+    {
+        var taskId = Guid.NewGuid();
+        var operationId = TransportOperationIds.Pickup(taskId);
+        var task = new DashboardTask(
+            taskId,
+            2,
+            4,
+            "MovingToPickup",
+            0,
+            null,
+            ActiveAgvId: "AGV-01",
+            ActiveDeviceTaskId: "device-pickup",
+            ActivePath: ["SAMPLE_01", "ST_PREP_01"]);
+        var client = new FakeMesClient([task])
+        {
+            FleetStatus =
+            [
+                new AgvFleetDashboardStatus(
+                    new AgvDashboardSnapshot(true, "adapter", "SAMPLE_01", operationId),
+                    new AgvActiveTaskStatus(
+                        taskId,
+                        operationId,
+                        "MovingToPickup",
+                        "device-pickup",
+                        "moving",
+                        "ST_PREP_01",
+                        null,
+                        ["SAMPLE_01", "ST_PREP_01"]))
+            ]
+        };
+        using var viewModel = new MainViewModel(client);
+
+        await viewModel.RefreshAsync();
+        Assert.Equal(taskId, viewModel.SelectedTask?.Id);
+        Assert.Equal(taskId, viewModel.SelectedAgv?.MesTransportTaskId);
+        Assert.Equal(operationId, viewModel.SelectedAgv?.CurrentTaskId);
+
+        var refreshEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refreshRelease = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.TaskSnapshotEntered = refreshEntered;
+        client.TaskSnapshotGate = refreshRelease;
+
+        var refreshTask = viewModel.RefreshAsync();
+        await refreshEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(viewModel.IsRefreshing);
+        Assert.Equal(taskId, viewModel.SelectedTask?.Id);
+        Assert.Equal("MovingToPickup", viewModel.SelectedTask?.Status);
+        Assert.Single(viewModel.Tasks);
+        Assert.Single(viewModel.Agvs);
+        Assert.Equal(taskId, viewModel.SelectedAgv?.MesTransportTaskId);
+        Assert.Equal(operationId, viewModel.SelectedAgv?.CurrentTaskId);
+
+        refreshRelease.SetResult(true);
+        await refreshTask;
+
+        Assert.False(viewModel.IsRefreshing);
+        Assert.Equal(taskId, viewModel.SelectedTask?.Id);
+        Assert.Equal(taskId, viewModel.SelectedAgv?.MesTransportTaskId);
+    }
+
+    [Fact]
+    public async Task Successful_refresh_keeps_resume_enabled_for_a_correlated_paused_task()
+    {
+        var taskId = Guid.NewGuid();
+        var operationId = TransportOperationIds.Pickup(taskId);
+        var task = new DashboardTask(
+            taskId,
+            2,
+            4,
+            "Paused",
+            0,
+            null,
+            ActiveAgvId: "AGV-01",
+            ActiveDeviceTaskId: "device-pickup",
+            ActivePath: ["SAMPLE_01", "ST_PREP_01"]);
+        var client = new FakeMesClient([task])
+        {
+            FleetStatus =
+            [
+                new AgvFleetDashboardStatus(
+                    new AgvDashboardSnapshot(true, "adapter", "SAMPLE_01", operationId),
+                    new AgvActiveTaskStatus(
+                        taskId,
+                        operationId,
+                        "Paused",
+                        "device-pickup",
+                        "paused",
+                        "ST_PREP_01",
+                        null,
+                        ["SAMPLE_01", "ST_PREP_01"]))
+            ]
+        };
+        using var viewModel = new MainViewModel(client);
+
+        await viewModel.RefreshAsync();
+        Assert.Equal("Paused", viewModel.SelectedTask?.Status);
+        Assert.True(viewModel.ResumeAgvCommand.CanExecute(null));
+        Assert.False(viewModel.PauseAgvCommand.CanExecute(null));
+
+        var resumeStates = new List<bool>();
+        viewModel.ResumeAgvCommand.CanExecuteChanged += (_, _) =>
+            resumeStates.Add(viewModel.ResumeAgvCommand.CanExecute(null));
+        await viewModel.RefreshAgvAsync();
+
+        Assert.Equal("Paused", viewModel.SelectedTask?.Status);
+        Assert.Equal("paused", viewModel.SelectedAgv?.DeviceState);
+        Assert.True(viewModel.ResumeAgvCommand.CanExecute(null));
+        Assert.Contains(false, resumeStates);
+        Assert.True(resumeStates[^1]);
+
+        resumeStates.Clear();
+        await viewModel.RefreshAsync();
+        Assert.True(viewModel.ResumeAgvCommand.CanExecute(null));
+        Assert.Contains(false, resumeStates);
+        Assert.True(resumeStates[^1]);
+    }
+
+    [Fact]
+    public async Task Selecting_a_different_task_notifies_all_agv_commands_with_the_new_task_state()
+    {
+        var completedTask = new DashboardTask(Guid.NewGuid(), 2, 4, "Completed", 0, null);
+        var pausedTaskId = Guid.NewGuid();
+        var operationId = TransportOperationIds.Pickup(pausedTaskId);
+        var pausedTask = new DashboardTask(
+            pausedTaskId,
+            2,
+            4,
+            "Paused",
+            0,
+            null,
+            ActiveAgvId: "AGV-01",
+            ActiveDeviceTaskId: "device-pickup",
+            ActivePath: ["SAMPLE_01", "ST_PREP_01"]);
+        var client = new FakeMesClient([completedTask, pausedTask])
+        {
+            FleetStatus =
+            [
+                new AgvFleetDashboardStatus(
+                    new AgvDashboardSnapshot(true, "adapter", "SAMPLE_01", operationId),
+                    new AgvActiveTaskStatus(
+                        pausedTaskId,
+                        operationId,
+                        "Paused",
+                        "device-pickup",
+                        "paused",
+                        "ST_PREP_01",
+                        null,
+                        ["SAMPLE_01", "ST_PREP_01"]))
+            ]
+        };
+        using var viewModel = new MainViewModel(client)
+        {
+            OperatorName = "selection-operator"
+        };
+
+        await viewModel.RefreshAsync();
+        Assert.Equal(completedTask.Id, viewModel.SelectedTask?.Id);
+        Assert.False(viewModel.PauseAgvCommand.CanExecute(null));
+        Assert.False(viewModel.ResumeAgvCommand.CanExecute(null));
+        Assert.False(viewModel.CancelAgvCommand.CanExecute(null));
+
+        var pauseNotifications = 0;
+        var resumeNotifications = 0;
+        var cancelNotifications = 0;
+        viewModel.PauseAgvCommand.CanExecuteChanged += (_, _) => pauseNotifications++;
+        viewModel.ResumeAgvCommand.CanExecuteChanged += (_, _) => resumeNotifications++;
+        viewModel.CancelAgvCommand.CanExecuteChanged += (_, _) => cancelNotifications++;
+
+        viewModel.SelectedTask = viewModel.Tasks.Single(task => task.Id == pausedTaskId);
+
+        Assert.True(pauseNotifications > 0);
+        Assert.True(resumeNotifications > 0);
+        Assert.True(cancelNotifications > 0);
+        Assert.False(viewModel.PauseAgvCommand.CanExecute(null));
+        Assert.True(viewModel.ResumeAgvCommand.CanExecute(null));
+        Assert.True(viewModel.CancelAgvCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task Changing_operator_name_notifies_the_agv_cancel_command()
+    {
+        var taskId = Guid.NewGuid();
+        var operationId = TransportOperationIds.Pickup(taskId);
+        var task = new DashboardTask(
+            taskId,
+            2,
+            4,
+            "Paused",
+            0,
+            null,
+            ActiveAgvId: "AGV-01",
+            ActiveDeviceTaskId: "device-pickup",
+            ActivePath: ["SAMPLE_01", "ST_PREP_01"]);
+        var client = new FakeMesClient([task])
+        {
+            FleetStatus =
+            [
+                new AgvFleetDashboardStatus(
+                    new AgvDashboardSnapshot(true, "adapter", "SAMPLE_01", operationId),
+                    new AgvActiveTaskStatus(
+                        taskId,
+                        operationId,
+                        "Paused",
+                        "device-pickup",
+                        "paused",
+                        "ST_PREP_01",
+                        null,
+                        ["SAMPLE_01", "ST_PREP_01"]))
+            ]
+        };
+        using var viewModel = new MainViewModel(client)
+        {
+            OperatorName = "cancel-operator"
+        };
+
+        await viewModel.RefreshAsync();
+        Assert.True(viewModel.CancelAgvCommand.CanExecute(null));
+
+        var cancelStates = new List<bool>();
+        viewModel.CancelAgvCommand.CanExecuteChanged += (_, _) =>
+            cancelStates.Add(viewModel.CancelAgvCommand.CanExecute(null));
+
+        viewModel.OperatorName = "   ";
+
+        Assert.NotEmpty(cancelStates);
+        Assert.False(cancelStates[^1]);
+        Assert.False(viewModel.CancelAgvCommand.CanExecute(null));
+
+        cancelStates.Clear();
+        viewModel.OperatorName = "restored-operator";
+
+        Assert.NotEmpty(cancelStates);
+        Assert.True(cancelStates[^1]);
+        Assert.True(viewModel.CancelAgvCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task Dispose_during_a_blocked_refresh_allows_the_refresh_task_to_complete()
+    {
+        var refreshEntered = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refreshRelease = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = new FakeMesClient([new DashboardTask(Guid.NewGuid(), 2, 4, "Created", 0, null)])
+        {
+            TaskSnapshotEntered = refreshEntered,
+            TaskSnapshotGate = refreshRelease
+        };
+        var viewModel = new MainViewModel(client);
+
+        var refreshTask = viewModel.RefreshAsync();
+        await refreshEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(viewModel.IsRefreshing);
+
+        viewModel.Dispose();
+        refreshRelease.TrySetResult(true);
+
+        await refreshTask.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(refreshTask.IsCompletedSuccessfully);
+    }
+
+    [Fact]
     public async Task Selected_agv_pause_command_is_sent_through_mes_to_adapter()
     {
         var operationId = Guid.NewGuid();
+        var taskId = Guid.NewGuid();
         var client = new FakeMesClient([
-            new DashboardTask(Guid.NewGuid(), 2, 4, "MovingToPickup", 0, null, ActiveAgvId: "AGV-01", ActiveDeviceTaskId: operationId.ToString("N"))
+            new DashboardTask(taskId, 2, 4, "MovingToPickup", 0, null, ActiveAgvId: "AGV-01", ActiveDeviceTaskId: operationId.ToString("N"))
         ])
         {
             FleetStatus = [new AgvFleetDashboardStatus(
                 new AgvDashboardSnapshot(true, "adapter", "SAMPLE_01", operationId),
-                null)],
+                new AgvActiveTaskStatus(
+                    taskId,
+                    operationId,
+                    "MovingToPickup",
+                    operationId.ToString("N"),
+                    "moving",
+                    "ST_PREP_01",
+                    null,
+                    ["SAMPLE_01", "ST_PREP_01"]))],
             CommandResult = new AgvCommandResult(operationId, operationId.ToString("N"), "SAMPLE_01", "paused", null)
         };
         using var viewModel = new MainViewModel(client);
@@ -189,13 +462,22 @@ public class MainViewModelTests
     public async Task Agv_command_failure_is_visible_and_releases_the_action_gate()
     {
         var operationId = Guid.NewGuid();
+        var taskId = Guid.NewGuid();
         var client = new FakeMesClient([
-            new DashboardTask(Guid.NewGuid(), 2, 4, "MovingToPickup", 0, null, ActiveAgvId: "AGV-01", ActiveDeviceTaskId: operationId.ToString("N"))
+            new DashboardTask(taskId, 2, 4, "MovingToPickup", 0, null, ActiveAgvId: "AGV-01", ActiveDeviceTaskId: operationId.ToString("N"))
         ])
         {
             FleetStatus = [new AgvFleetDashboardStatus(
                 new AgvDashboardSnapshot(true, "adapter", "SAMPLE_01", operationId),
-                null)],
+                new AgvActiveTaskStatus(
+                    taskId,
+                    operationId,
+                    "MovingToPickup",
+                    operationId.ToString("N"),
+                    "moving",
+                    "ST_PREP_01",
+                    null,
+                    ["SAMPLE_01", "ST_PREP_01"]))],
             CommandResult = new AgvCommandResult(operationId, operationId.ToString("N"), "SAMPLE_01", "failed", "blocked by safety interlock")
         };
         using var viewModel = new MainViewModel(client);
@@ -305,6 +587,67 @@ public class MainViewModelTests
         Assert.Equal("Timeout", viewModel.TaskEvents[0].EventType);
     }
 
+    [Fact]
+    public async Task Physical_dispatch_fails_closed_when_readiness_evidence_is_missing()
+    {
+        var task = new DashboardTask(Guid.NewGuid(), 2, 4, "Created", 0, null);
+        var client = new FakeMesClient([task])
+        {
+            RuntimeReadiness = null,
+            PhysicalPreflight = null
+        };
+        using var viewModel = new MainViewModel(client);
+
+        await viewModel.RefreshAsync();
+
+        Assert.False(viewModel.IsDispatchReadinessSatisfied);
+        Assert.False(viewModel.DispatchTaskCommand.CanExecute(null));
+        Assert.Contains("NO-GO", viewModel.PhysicalPreflightStatus, StringComparison.Ordinal);
+        Assert.Contains("证据缺失", viewModel.PhysicalPreflightStatus, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Physical_dispatch_rechecks_manual_block_and_map_evidence()
+    {
+        var task = new DashboardTask(Guid.NewGuid(), 2, 4, "Created", 0, null);
+        var client = new FakeMesClient([task]);
+        var baseline = client.PhysicalPreflight!;
+        client.PhysicalPreflight = baseline with
+        {
+            Readiness = baseline.Readiness! with
+            {
+                ManualBlock = true,
+                MapMd5 = "unexpected-md5"
+            },
+            DispatchPermitted = true,
+            BlockingReasons = []
+        };
+        using var viewModel = new MainViewModel(client);
+
+        await viewModel.RefreshAsync();
+
+        Assert.False(viewModel.IsDispatchReadinessSatisfied);
+        Assert.False(viewModel.DispatchTaskCommand.CanExecute(null));
+        Assert.Contains("manualBlock", viewModel.PhysicalPreflightStatus, StringComparison.Ordinal);
+        Assert.Contains("MD5", viewModel.PhysicalPreflightStatus, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Physical_dispatch_is_enabled_only_with_matching_go_evidence()
+    {
+        var task = new DashboardTask(Guid.NewGuid(), 2, 4, "Created", 0, null);
+        var client = new FakeMesClient([task]);
+        using var viewModel = new MainViewModel(client);
+
+        await viewModel.RefreshAsync();
+
+        Assert.True(viewModel.IsDispatchReadinessSatisfied);
+        Assert.True(viewModel.DispatchTaskCommand.CanExecute(null));
+        Assert.Contains("GO", viewModel.PhysicalPreflightStatus, StringComparison.Ordinal);
+        Assert.Contains(client.RuntimeReadiness!.ProfileFingerprint, viewModel.RuntimeReadinessStatus, StringComparison.Ordinal);
+        Assert.Contains(client.RuntimeReadiness.MapFingerprint, viewModel.MapReadinessStatus, StringComparison.Ordinal);
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         for (var attempt = 0; attempt < 100; attempt++)
@@ -330,14 +673,23 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
     public DashboardTask? DispatchResult { get; set; }
     public Exception? DispatchException { get; set; }
     public TaskCompletionSource<bool>? DispatchGate { get; set; }
+    public TaskCompletionSource<bool>? TaskSnapshotEntered { get; set; }
+    public TaskCompletionSource<bool>? TaskSnapshotGate { get; set; }
     public IReadOnlyList<AgvFleetDashboardStatus>? FleetStatus { get; set; }
     public AgvCommandResult? CommandResult { get; set; }
     public int AgvCommandCallCount { get; private set; }
     public (string AgvId, string Command, Guid? TaskId)? LastAgvCommand { get; private set; }
     public DashboardPlannedPath? PlannedPath { get; set; }
+    public RuntimeReadinessResponse? RuntimeReadiness { get; set; } = CreateRuntimeReadiness();
+    public PhysicalAgvPreflightResponse? PhysicalPreflight { get; set; } = CreatePhysicalPreflight();
     public (string FromStationId, string ToStationId, IReadOnlyCollection<string>? BlockedStations)? LastPlanRequest { get; private set; }
     public (int SourceStationCode, int TargetStationCode, int Priority, string? Description, string? ExternalId)? LastCreateRequest { get; private set; }
     public IReadOnlyList<DashboardStation> Stations => _stations;
+
+    public Task<RuntimeReadinessResponse?> GetRuntimeReadinessAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(RuntimeReadiness);
+    public Task<PhysicalAgvPreflightResponse?> GetPhysicalPreflightAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(PhysicalPreflight);
 
     public void SetStations(params DashboardStation[] stations)
     {
@@ -349,7 +701,18 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
     public Task<IReadOnlyList<DashboardTask>> GetTasksAsync(DateOnly date, CancellationToken cancellationToken)
     {
         LastRequestedDate = date;
-        return Task.FromResult(CurrentTasks());
+        return GetTaskSnapshotAsync(cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<DashboardTask>> GetTaskSnapshotAsync(CancellationToken cancellationToken)
+    {
+        TaskSnapshotEntered?.TrySetResult(true);
+        if (TaskSnapshotGate is { } gate)
+        {
+            await gate.Task.WaitAsync(cancellationToken);
+        }
+
+        return CurrentTasks();
     }
     public Task<KpiDashboard> GetKpiDashboardAsync(DateOnly date, CancellationToken cancellationToken)
     {
@@ -394,7 +757,6 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
         LastPlanRequest = (fromStationId, toStationId, blockedStations);
         return Task.FromResult(PlannedPath ?? new DashboardPlannedPath([fromStationId, toStationId], 1));
     }
-    public Task<DashboardTask> CreateTaskAsync(CancellationToken cancellationToken) => Task.FromResult(tasks[0]);
     public Task<DashboardTask> CreateTaskAsync(int sourceStationCode, int targetStationCode, int priority, string? description, string? externalId, CancellationToken cancellationToken)
     {
         LastCreateRequest = (sourceStationCode, targetStationCode, priority, description, externalId);
@@ -425,6 +787,52 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
     public Task<DashboardTask> CancelAsync(Guid taskId, string operatorName, CancellationToken cancellationToken) => Task.FromResult(CurrentTasks()[0]);
 
     private IReadOnlyList<DashboardTask> CurrentTasks() => DispatchCallCount > 0 && DispatchResult is { } result ? [result] : tasks;
+
+    private static RuntimeReadinessResponse CreateRuntimeReadiness() => new(
+        "TEST-PROFILE",
+        "Test AGV MES",
+        "1.0",
+        UseSimulator: false,
+        AutomaticDispatchEnabled: true,
+        TaskCancellationEnabled: true,
+        ProfileFingerprint: new string('a', 64),
+        MapFingerprint: new string('b', 64),
+        StationIds: ["SAMPLE_01", "ST_PREP_01"],
+        DirectedEdges: [new DirectedMapEdgeResponse("SAMPLE_01", "ST_PREP_01", 1)],
+        ExpectedPhysicalMapName: "test-map",
+        ExpectedPhysicalMapVersion: "v1",
+        ExpectedPhysicalMapMd5: "expected-md5");
+
+    private static PhysicalAgvPreflightResponse CreatePhysicalPreflight()
+    {
+        var readiness = new AgvSafetyReadinessResponse(
+            "automatic",
+            "test",
+            "test-map",
+            "expected-md5",
+            ForkAutomatic: true,
+            DispatchMode: 1,
+            ManualBlock: false,
+            SrcRelease: true,
+            Emergency: false,
+            Blocked: false,
+            FatalCount: 0,
+            ErrorCount: 0,
+            RelocationStatus: 1,
+            LocalizationConfidence: 1,
+            ObservedAtUtc: DateTimeOffset.UtcNow);
+        return new PhysicalAgvPreflightResponse(
+            new AgvSnapshotResponse(
+                true,
+                "adapter",
+                "SAMPLE_01",
+                null,
+                "AGV-01",
+                SafetyReadiness: readiness),
+            readiness,
+            DispatchPermitted: true,
+            BlockingReasons: []);
+    }
 }
 
 internal sealed class RecordingSimulatorControlClient : ISimulatorControlClient

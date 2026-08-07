@@ -69,10 +69,10 @@ public sealed class WorkflowStore
             Nodes =
             [
                 Node(WorkflowNodeType.Start, "开始", "启动实验流程", null, 0, 100, 1),
-                Node(WorkflowNodeType.Move, "前往取货位", "AGV 前往样品位", "SAMPLE_01", 180, 100, 2),
-                Node(WorkflowNodeType.Pickup, "确认取货", "操作员确认已完成取货", "SAMPLE_01", 360, 100, 3),
-                Node(WorkflowNodeType.Move, "前往放货位", "AGV 前往前处理工作站", "ST_PREP_01", 540, 100, 4),
-                Node(WorkflowNodeType.Dropoff, "确认放货", "操作员确认已完成放货", "ST_PREP_01", 720, 100, 5),
+                Node(WorkflowNodeType.Move, "前往取货位", "AGV 前往起点站点", null, 180, 100, 2),
+                Node(WorkflowNodeType.Pickup, "确认取货", "操作员确认已完成取货", null, 360, 100, 3),
+                Node(WorkflowNodeType.Move, "前往放货位", "AGV 前往终点站点", null, 540, 100, 4),
+                Node(WorkflowNodeType.Dropoff, "确认放货", "操作员确认已完成放货", null, 720, 100, 5),
                 Node(WorkflowNodeType.End, "结束", "实验流程完成", null, 900, 100, 6)
             ]
         },
@@ -84,10 +84,10 @@ public sealed class WorkflowStore
             Nodes =
             [
                 Node(WorkflowNodeType.Start, "开始", "启动故障恢复实验", null, 0, 260, 1),
-                Node(WorkflowNodeType.Move, "前往取货位", "发送取货运输任务", "SAMPLE_01", 180, 260, 2),
+                Node(WorkflowNodeType.Move, "前往取货位", "发送取货运输任务", null, 180, 260, 2),
                 Node(WorkflowNodeType.Wait, "模拟超时", "等待并观察超时状态", null, 360, 260, 3),
                 Node(WorkflowNodeType.Custom, "恢复并重试", "恢复 AGV 后重新执行任务", null, 540, 260, 4),
-                Node(WorkflowNodeType.Dropoff, "确认放货", "确认恢复后的任务完成放货", "ST_PREP_01", 720, 260, 5),
+                Node(WorkflowNodeType.Dropoff, "确认放货", "确认恢复后的任务完成放货", null, 720, 260, 5),
                 Node(WorkflowNodeType.End, "结束", "实验流程完成", null, 900, 260, 6)
             ]
         }

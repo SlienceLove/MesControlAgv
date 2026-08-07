@@ -77,6 +77,10 @@ public sealed record DashboardWorkflowExecution(
 
 public interface IMesClient
 {
+    Task<RuntimeReadinessResponse?> GetRuntimeReadinessAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<RuntimeReadinessResponse?>(null);
+    Task<PhysicalAgvPreflightResponse?> GetPhysicalPreflightAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<PhysicalAgvPreflightResponse?>(null);
     Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<DashboardTask>> GetTasksAsync(DateOnly date, CancellationToken cancellationToken) => GetTasksAsync(cancellationToken);
     Task<KpiDashboard> GetKpiDashboardAsync(DateOnly date, CancellationToken cancellationToken);
@@ -96,7 +100,6 @@ public interface IMesClient
             .Select(snapshot => new AgvFleetDashboardStatus(snapshot, null))
             .ToList();
     Task<AgvCommandResult?> ExecuteAgvCommandAsync(string agvId, string command, Guid? taskId, CancellationToken cancellationToken) => Task.FromResult<AgvCommandResult?>(null);
-    Task<DashboardTask> CreateTaskAsync(CancellationToken cancellationToken);
     Task<DashboardTask> CreateTaskAsync(int sourceStationCode, int targetStationCode, int priority, string? description, string? externalId, CancellationToken cancellationToken);
     Task<DashboardTask> DispatchTaskAsync(Guid taskId, CancellationToken cancellationToken) =>
         Task.FromException<DashboardTask>(new NotSupportedException("Task dispatch is not supported by this MES client."));

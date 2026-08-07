@@ -20,6 +20,7 @@ builder.Services.AddHttpClient<IAgvGateway, AdapterClient>(client =>
 builder.Services.AddSingleton(profile);
 builder.Services.AddSingleton(map);
 builder.Services.AddSingleton(new PathPlanner(map));
+builder.Services.AddSingleton<RuntimeReadinessService>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<WorkflowValidator>();
 builder.Services.AddScoped<MesWorkflowVersionReader>();
@@ -44,6 +45,9 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.MapGet("/health", () => Results.Ok(new { service = "mes", status = "ok" }));
+
+app.MapGet("/api/runtime/readiness", (RuntimeReadinessService service) =>
+    Results.Ok(service.Get()));
 
 app.MapGet("/api/workflows", async (IWorkflowApplicationService service, CancellationToken cancellationToken) =>
     Results.Ok(await service.ListAsync(cancellationToken)));
@@ -253,12 +257,31 @@ app.MapPost("/api/agvs/{agvId}/command", async (
     ITaskApplicationService tasks,
     CancellationToken cancellationToken) =>
 {
+    var normalizedCommand = request.Command?.Trim();
+    if (string.IsNullOrWhiteSpace(normalizedCommand))
+    {
+        return Results.BadRequest(new { detail = "AGV command is required." });
+    }
+
+    // Transport-task cancellation is an MES lifecycle operation, not a raw
+    // device command.  Rejecting the low-level form prevents the Adapter from
+    // cancelling a device operation while the corresponding MES task remains
+    // Moving/Paused.  Callers must use /api/tasks/{taskId}/cancel so the
+    // operator action and CancelConfirmed audit event are persisted together.
+    if (string.Equals(normalizedCommand, "cancel", StringComparison.OrdinalIgnoreCase))
+    {
+        return Results.Conflict(new
+        {
+            detail = "Low-level AGV cancel is not supported. Cancel the transport task through /api/tasks/{taskId}/cancel."
+        });
+    }
+
     try
     {
-        var result = await adapter.ExecuteAgvCommandAsync(agvId, request.Command, request.TaskId, cancellationToken);
-        if (result is not null && request.TaskId is { } operationId && request.Command.Trim().ToLowerInvariant() is "pause" or "resume" or "continue")
+        var result = await adapter.ExecuteAgvCommandAsync(agvId, normalizedCommand, request.TaskId, cancellationToken);
+        if (result is not null && request.TaskId is { } operationId && normalizedCommand.ToLowerInvariant() is "pause" or "resume" or "continue")
         {
-            await tasks.RecordAgvCommandAsync(operationId, request.Command, result, cancellationToken);
+            await tasks.RecordAgvCommandAsync(operationId, normalizedCommand, result, cancellationToken);
         }
         return result is null ? Results.NotFound() : Results.Ok(result);
     }
@@ -343,10 +366,52 @@ app.MapPost("/api/tasks/{taskId:guid}/retry", async (Guid taskId, ITaskApplicati
     Results.Ok(await service.RetryAsync(taskId, cancellationToken)));
 
 app.MapPost("/api/tasks/{taskId:guid}/cancel", async (Guid taskId, OperatorActionRequest request, ITaskApplicationService service, CancellationToken cancellationToken) =>
-    Results.Ok(await service.CancelAsync(taskId, request.OperatorName, cancellationToken)));
+{
+    try
+    {
+        return Results.Ok(await service.CancelAsync(taskId, request.OperatorName, cancellationToken));
+    }
+    catch (KeyNotFoundException)
+    {
+        return Results.NotFound();
+    }
+    catch (InvalidTaskTransitionException exception)
+    {
+        return Results.Conflict(new { detail = exception.Message });
+    }
+    catch (InvalidOperationException exception)
+    {
+        return Results.Conflict(new { detail = exception.Message });
+    }
+    catch (AdapterHttpException exception)
+    {
+        return Results.Json(
+            new { detail = exception.Detail ?? exception.Message },
+            statusCode: (int)exception.ResponseStatusCode);
+    }
+});
 
 app.MapPost("/api/tasks/{taskId:guid}/recover", async (Guid taskId, ITaskApplicationService service, CancellationToken cancellationToken) =>
-    Results.Ok(await service.RecoverAsync(taskId, cancellationToken)));
+{
+    try
+    {
+        return Results.Ok(await service.RecoverAsync(taskId, cancellationToken));
+    }
+    catch (KeyNotFoundException)
+    {
+        return Results.NotFound(new { detail = $"Task {taskId} was not found." });
+    }
+    catch (InvalidOperationException exception)
+    {
+        return Results.Conflict(new { detail = exception.Message });
+    }
+    catch (AdapterHttpException exception)
+    {
+        return Results.Json(
+            new { detail = exception.Detail ?? exception.Message },
+            statusCode: (int)exception.ResponseStatusCode);
+    }
+});
 
 app.MapGet("/api/tasks", async (DateOnly? date, ITaskApplicationService service, CancellationToken cancellationToken) =>
     Results.Ok(await service.ListAsync(date ?? DateOnly.FromDateTime(DateTime.UtcNow), cancellationToken)));
