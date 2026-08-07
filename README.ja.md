@@ -124,7 +124,7 @@ New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
 .\scripts\stop-local.ps1 -RunId $runId
 ```
 
-開発用 DB を再利用したり、物理受入 profile を使ったりしないでください。詳細は [ローカル分離プロセス検証](docs/LOCAL-VERIFICATION.md) と [WPF UI Automation 検証](docs/WPF-UIA-VERIFICATION.md) を参照してください。
+開発用 DB を再利用したり、物理受入 profile を使ったりしないでください。詳細は [ローカル分離プロセス検証](docs/LOCAL-VERIFICATION.md) を参照してください。
 
 ## 検証シナリオ
 
@@ -147,7 +147,6 @@ Adapter には設定可能なベンダー TCP ドライバーがありますが�
 ## ドキュメント
 
 - [ローカル分離プロセス検証](docs/LOCAL-VERIFICATION.md)
-- [WPF UI Automation オフライン検証](docs/WPF-UIA-VERIFICATION.md)
 - [ベンダー TCP Adapter](docs/AGV-TCP-ADAPTER.md)
 - [物理受入の境界](docs/physical-acceptance/README.md)
 - [進捗と引継ぎ](docs/PROGRESS.md)

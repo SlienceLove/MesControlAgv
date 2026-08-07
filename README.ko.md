@@ -124,7 +124,7 @@ New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
 .\scripts\stop-local.ps1 -RunId $runId
 ```
 
-개발 데이터베이스를 재사용하거나 물리 인수 profile을 사용하지 마십시오. 자세한 내용은 [로컬 격리 프로세스 검증](docs/LOCAL-VERIFICATION.md) 및 [WPF UI Automation 검증](docs/WPF-UIA-VERIFICATION.md)을 참조하십시오.
+개발 데이터베이스를 재사용하거나 물리 인수 profile을 사용하지 마십시오. 자세한 내용은 [로컬 격리 프로세스 검증](docs/LOCAL-VERIFICATION.md)을 참조하십시오.
 
 ## 검증 시나리오
 
@@ -147,7 +147,6 @@ Adapter에는 구성 가능한 벤더 TCP 드라이버가 있지만 기본값은
 ## 문서
 
 - [로컬 격리 프로세스 검증](docs/LOCAL-VERIFICATION.md)
-- [WPF UI Automation 오프라인 검증](docs/WPF-UIA-VERIFICATION.md)
 - [벤더 TCP Adapter](docs/AGV-TCP-ADAPTER.md)
 - [물리 인수 경계](docs/physical-acceptance/README.md)
 - [진행 상황 및 인계](docs/PROGRESS.md)
