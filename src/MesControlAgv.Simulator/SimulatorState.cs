@@ -53,7 +53,8 @@ public sealed class SimulatorState
         }
 
         var timeout = agv.NextFault == "timeout";
-        if (timeout) agv.NextFault = null;
+        var timeoutWithoutTask = agv.NextFault == "timeout-unknown";
+        if (timeout || timeoutWithoutTask) agv.NextFault = null;
         if (agv.NextFault == "fail")
         {
             agv.NextFault = null;
@@ -61,6 +62,11 @@ public sealed class SimulatorState
             agv.Tasks[taskId] = failed;
             return failed;
         }
+
+        // A timeout-unknown fault models a request whose device state cannot
+        // be queried after the transport timeout. The caller can later issue
+        // the same operation again once the simulator is available.
+        if (timeoutWithoutTask) throw new TimeoutException();
 
         var task = new SimulatedTask(taskId, stationId, "moving", null, agv.Id, path);
         agv.Tasks[taskId] = task;
@@ -143,6 +149,7 @@ public sealed class SimulatorState
                 break;
             case "fail": agv.NextFault = "fail"; break;
             case "timeout": agv.NextFault = "timeout"; break;
+            case "timeout-unknown": agv.NextFault = "timeout-unknown"; break;
             case "offline": agv.Online = false; break;
             case "recover": agv.Online = true; break;
             default: throw new ArgumentOutOfRangeException(nameof(mode));

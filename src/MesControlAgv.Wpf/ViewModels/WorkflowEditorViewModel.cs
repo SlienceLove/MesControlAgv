@@ -2,22 +2,45 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
+using MesControlAgv.Wpf.Infrastructure;
 using MesControlAgv.Wpf.Services;
 using MesControlAgv.Wpf.Workflows;
+
+using ContractWorkflowDefinition = MesControlAgv.Contracts.Workflows.WorkflowDefinition;
+using ContractWorkflowNode = MesControlAgv.Contracts.Workflows.WorkflowNode;
+using ContractWorkflowVersion = MesControlAgv.Contracts.Workflows.WorkflowVersion;
+using ContractWorkflowExecutionRequest = MesControlAgv.Contracts.Workflows.WorkflowExecutionRequest;
+using ContractWorkflowParameter = MesControlAgv.Contracts.Workflows.WorkflowParameter;
+using ContractWorkflowPublishStatus = MesControlAgv.Contracts.Workflows.WorkflowPublishStatus;
+using ContractWorkflowValidationResult = MesControlAgv.Contracts.Workflows.WorkflowValidationResult;
+using ContractWorkflowVersionStatus = MesControlAgv.Contracts.Workflows.WorkflowVersionStatus;
 
 namespace MesControlAgv.Wpf.ViewModels;
 
 public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 {
     private readonly WorkflowStore _store;
+    private readonly IMesClient? _mes;
+    private readonly Func<string> _actorProvider;
+    private readonly SemaphoreSlim _remoteGate = new(1, 1);
+    private readonly Dictionary<Guid, ContractWorkflowVersion> _remoteVersions = [];
     private readonly ObservableCollection<WorkflowNode> _emptyNodes = [];
     private WorkflowDefinition? _selectedWorkflow;
     private WorkflowNode? _selectedNode;
     private string _message = string.Empty;
+    private string _remoteStatus = "Local only";
+    private bool _isRemoteBusy;
+    private ContractWorkflowValidationResult? _lastValidation;
+    private DashboardWorkflowExecution? _lastExecution;
 
-    public WorkflowEditorViewModel(WorkflowStore store)
+    public WorkflowEditorViewModel(
+        WorkflowStore store,
+        IMesClient? mes = null,
+        Func<string>? actorProvider = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
+        _mes = mes;
+        _actorProvider = actorProvider ?? (() => "wpf-editor");
         Workflows = new ObservableCollection<WorkflowDefinition>(_store.Load());
 
         NewWorkflowCommand = new EditorCommand(CreateWorkflow);
@@ -28,6 +51,21 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         DeleteNodeCommand = new EditorCommand(DeleteNode, () => SelectedWorkflow is not null && SelectedNode is not null);
         MoveNodeLeftCommand = new EditorCommand(() => MoveNode(-1), CanMoveNodeLeft);
         MoveNodeRightCommand = new EditorCommand(() => MoveNode(1), CanMoveNodeRight);
+        LoadFromMesCommand = new AsyncCommand(
+            () => RunRemoteAsync("Load workflows", LoadFromMesAsync),
+            CanUseRemote);
+        SaveDraftCommand = new AsyncCommand(
+            () => RunRemoteAsync("Save draft", SaveDraftAsync),
+            CanSaveDraft);
+        ValidateCommand = new AsyncCommand(
+            () => RunRemoteAsync("Validate workflow", ValidateAsync),
+            CanValidate);
+        PublishCommand = new AsyncCommand(
+            () => RunRemoteAsync("Publish workflow", PublishAsync),
+            CanPublish);
+        DryRunCommand = new AsyncCommand(
+            () => RunRemoteAsync("Dry-run workflow", DryRunAsync),
+            CanDryRun);
 
         SelectedWorkflow = Workflows.FirstOrDefault();
     }
@@ -53,8 +91,14 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             if (ReferenceEquals(_selectedWorkflow, value)) return;
             _selectedWorkflow = value;
             SelectedNode = value?.Nodes.OrderBy(node => node.Order).FirstOrDefault();
+            _lastValidation = value is not null && _remoteVersions.TryGetValue(value.Id, out var remote)
+                ? remote.Validation
+                : null;
             OnPropertyChanged();
             OnPropertyChanged(nameof(Nodes));
+            OnPropertyChanged(nameof(SelectedRemoteVersion));
+            OnPropertyChanged(nameof(RemoteStatus));
+            OnPropertyChanged(nameof(ValidationSummary));
             RefreshCommandStates();
         }
     }
@@ -84,6 +128,41 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         }
     }
 
+    public bool IsRemoteAvailable => _mes is not null;
+
+    public bool IsRemoteBusy
+    {
+        get => _isRemoteBusy;
+        private set
+        {
+            if (_isRemoteBusy == value) return;
+            _isRemoteBusy = value;
+            OnPropertyChanged();
+            RefreshCommandStates();
+        }
+    }
+
+    public string RemoteStatus
+    {
+        get => _remoteStatus;
+        private set => SetField(ref _remoteStatus, value);
+    }
+
+    public ContractWorkflowVersion? SelectedRemoteVersion =>
+        SelectedWorkflow is { } workflow && _remoteVersions.TryGetValue(workflow.Id, out var version)
+            ? version
+            : null;
+
+    public ContractWorkflowValidationResult? LastValidation => _lastValidation;
+
+    public DashboardWorkflowExecution? LastExecution => _lastExecution;
+
+    public string ValidationSummary => _lastValidation is null
+        ? "Not validated"
+        : _lastValidation.IsValid
+            ? _lastValidation.HasWarnings ? "Valid with warnings" : "Valid"
+            : $"Invalid ({_lastValidation.Issues.Count} issue(s))";
+
     public ICommand NewWorkflowCommand { get; }
     public ICommand CopyWorkflowCommand { get; }
     public ICommand DeleteWorkflowCommand { get; }
@@ -92,6 +171,11 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     public ICommand DeleteNodeCommand { get; }
     public ICommand MoveNodeLeftCommand { get; }
     public ICommand MoveNodeRightCommand { get; }
+    public ICommand LoadFromMesCommand { get; }
+    public ICommand SaveDraftCommand { get; }
+    public ICommand ValidateCommand { get; }
+    public ICommand PublishCommand { get; }
+    public ICommand DryRunCommand { get; }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -135,6 +219,287 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     {
         _store.Save(Workflows);
         Message = $"已保存到 {_store.FilePath}";
+    }
+
+    private bool CanUseRemote() => _mes is not null && !IsRemoteBusy;
+
+    private bool CanSaveDraft() => CanUseRemote() && SelectedWorkflow is not null;
+
+    private bool CanValidate() => CanUseRemote() && SelectedWorkflow is not null;
+
+    private bool CanPublish() =>
+        CanUseRemote() &&
+        SelectedRemoteVersion is { Status: ContractWorkflowVersionStatus.Draft or ContractWorkflowVersionStatus.Validated } version &&
+        version.Validation?.IsValid == true;
+
+    private bool CanDryRun() =>
+        CanUseRemote() &&
+        SelectedRemoteVersion is { Status: ContractWorkflowVersionStatus.Published, PublishStatus: ContractWorkflowPublishStatus.Published };
+
+    private async Task RunRemoteAsync(string action, Func<Task> operation)
+    {
+        if (_mes is null) return;
+
+        if (!await _remoteGate.WaitAsync(0))
+        {
+            Message = "A workflow action is already running.";
+            return;
+        }
+
+        IsRemoteBusy = true;
+        RemoteStatus = action + "...";
+        try
+        {
+            await operation();
+        }
+        catch (Exception exception)
+        {
+            Message = exception.Message;
+            RemoteStatus = "Remote action failed";
+        }
+        finally
+        {
+            IsRemoteBusy = false;
+            _remoteGate.Release();
+            RefreshCommandStates();
+        }
+    }
+
+    private async Task LoadFromMesAsync()
+    {
+        if (_mes is null) return;
+
+        var definitions = await _mes.GetWorkflowsAsync(CancellationToken.None);
+        var selectedId = SelectedWorkflow?.Id;
+        var loadedIds = new HashSet<Guid>();
+        foreach (var definition in definitions)
+        {
+            var local = FromContract(definition);
+            var versions = await _mes.GetWorkflowVersionsAsync(definition.Id, CancellationToken.None);
+            var latest = versions.OrderByDescending(version => version.Version).FirstOrDefault();
+            if (latest is not null) _remoteVersions[definition.Id] = latest;
+
+            var existing = Workflows.FirstOrDefault(workflow => workflow.Id == local.Id);
+            if (existing is null)
+            {
+                Workflows.Add(local);
+            }
+            else
+            {
+                var index = Workflows.IndexOf(existing);
+                Workflows[index] = local;
+            }
+
+            loadedIds.Add(local.Id);
+        }
+
+        if (selectedId is { } id && loadedIds.Contains(id))
+        {
+            SelectedWorkflow = Workflows.First(workflow => workflow.Id == id);
+        }
+        else if (loadedIds.Count > 0)
+        {
+            SelectedWorkflow = Workflows.First(workflow => loadedIds.Contains(workflow.Id));
+        }
+
+        UpdateRemotePresentation("Loaded " + definitions.Count + " workflow(s) from MES");
+        Message = RemoteStatus;
+    }
+
+    private async Task SaveDraftAsync()
+    {
+        if (_mes is null || SelectedWorkflow is not { } workflow) return;
+
+        var definition = ToContract(workflow);
+        var current = SelectedRemoteVersion;
+        ContractWorkflowVersion saved;
+        if (current is { Status: ContractWorkflowVersionStatus.Draft, PublishStatus: ContractWorkflowPublishStatus.NotPublished })
+        {
+            saved = await _mes.UpdateWorkflowDraftAsync(
+                workflow.Id,
+                current.Version,
+                definition,
+                Actor,
+                CancellationToken.None);
+        }
+        else
+        {
+            saved = await _mes.CreateWorkflowDraftAsync(definition, Actor, CancellationToken.None);
+        }
+
+        SetRemoteVersion(saved);
+        _store.Save(Workflows);
+        Message = $"Draft saved as v{saved.Version}.";
+    }
+
+    private async Task ValidateAsync()
+    {
+        if (_mes is null || SelectedWorkflow is not { } workflow) return;
+
+        var current = SelectedRemoteVersion;
+        var result = current is null
+            ? await _mes.ValidateWorkflowAsync(ToContract(workflow), CancellationToken.None)
+            : await _mes.ValidateWorkflowVersionAsync(workflow.Id, current.Version, CancellationToken.None);
+        _lastValidation = result;
+        if (current is not null)
+        {
+            _remoteVersions[workflow.Id] = current with
+            {
+                Validation = result,
+                Status = result.IsValid ? ContractWorkflowVersionStatus.Validated : ContractWorkflowVersionStatus.Draft
+            };
+        }
+
+        UpdateRemotePresentation(result.IsValid ? "Validation passed" : "Validation failed");
+        OnPropertyChanged(nameof(LastValidation));
+        OnPropertyChanged(nameof(ValidationSummary));
+        Message = ValidationSummary;
+    }
+
+    private async Task PublishAsync()
+    {
+        if (_mes is null || SelectedWorkflow is not { } workflow || SelectedRemoteVersion is not { } current) return;
+
+        var published = await _mes.PublishWorkflowAsync(
+            workflow.Id,
+            current.Version,
+            Actor,
+            CancellationToken.None);
+        SetRemoteVersion(published);
+        Message = $"Workflow published as v{published.Version}.";
+    }
+
+    private async Task DryRunAsync()
+    {
+        if (_mes is null || SelectedWorkflow is not { } workflow || SelectedRemoteVersion is not { } version) return;
+
+        var result = await _mes.ExecuteWorkflowAsync(
+            new ContractWorkflowExecutionRequest
+            {
+                WorkflowId = workflow.Id,
+                Version = version.Version,
+                RequestedBy = Actor,
+                CorrelationId = $"wpf-dry-run-{Guid.NewGuid():N}",
+                DryRun = true
+            },
+            CancellationToken.None);
+        _lastExecution = result;
+        OnPropertyChanged(nameof(LastExecution));
+        Message = result.IsAccepted
+            ? result.NextStep is null
+                ? "Dry-run accepted; workflow is terminal."
+                : $"Dry-run accepted; next step: {result.NextStep.NodeName}."
+            : $"Dry-run rejected: {result.RejectionCode ?? result.RejectionReason ?? "unknown"}.";
+        RemoteStatus = Message;
+    }
+
+    private string Actor
+    {
+        get
+        {
+            var actor = _actorProvider();
+            return string.IsNullOrWhiteSpace(actor) ? "wpf-editor" : actor.Trim();
+        }
+    }
+
+    private void SetRemoteVersion(ContractWorkflowVersion version)
+    {
+        _remoteVersions[version.WorkflowId] = version;
+        _lastValidation = version.Validation;
+        if (SelectedWorkflow?.Id == version.WorkflowId)
+        {
+            SelectedWorkflow.PublishedVersion = version.Definition.PublishedVersion;
+        }
+
+        OnPropertyChanged(nameof(SelectedRemoteVersion));
+        OnPropertyChanged(nameof(LastValidation));
+        OnPropertyChanged(nameof(ValidationSummary));
+        UpdateRemotePresentation();
+        RefreshCommandStates();
+    }
+
+    private void UpdateRemotePresentation(string? status = null)
+    {
+        if (status is not null)
+        {
+            RemoteStatus = status;
+        }
+        else if (SelectedRemoteVersion is { } version)
+        {
+            RemoteStatus = $"MES v{version.Version}: {version.Status}/{version.PublishStatus}";
+        }
+        else
+        {
+            RemoteStatus = IsRemoteAvailable ? "No MES version" : "Local only";
+        }
+
+        OnPropertyChanged(nameof(SelectedRemoteVersion));
+        OnPropertyChanged(nameof(ValidationSummary));
+    }
+
+    private static ContractWorkflowDefinition ToContract(WorkflowDefinition workflow) => new()
+    {
+        Id = workflow.Id,
+        Name = workflow.Name,
+        Description = workflow.Description,
+        IsPreset = workflow.IsPreset,
+        PublishedVersion = workflow.PublishedVersion,
+        Nodes = workflow.Nodes
+            .OrderBy(node => node.Order)
+            .Select(node => new ContractWorkflowNode
+            {
+                Id = node.Id,
+                Type = (MesControlAgv.Contracts.Workflows.WorkflowNodeType)node.Type,
+                Name = node.Name,
+                Description = node.Description,
+                TargetStation = node.TargetStation,
+                X = node.X,
+                Y = node.Y,
+                Order = node.Order,
+                Parameters = node.Parameters.Select(parameter => new ContractWorkflowParameter
+                {
+                    Name = parameter.Name,
+                    Value = parameter.Value,
+                    DataType = parameter.DataType,
+                    IsRequired = parameter.IsRequired
+                }).ToArray(),
+                NextNodeIds = node.NextNodeIds.ToArray()
+            })
+            .ToArray()
+    };
+
+    private static WorkflowDefinition FromContract(ContractWorkflowDefinition workflow)
+    {
+        var local = new WorkflowDefinition
+        {
+            Id = workflow.Id,
+            Name = workflow.Name,
+            Description = workflow.Description,
+            IsPreset = workflow.IsPreset,
+            PublishedVersion = workflow.PublishedVersion,
+            Nodes = new ObservableCollection<WorkflowNode>(workflow.Nodes
+                .OrderBy(node => node.Order)
+                .Select(node => new WorkflowNode
+                {
+                    Id = node.Id,
+                    Type = (WorkflowNodeType)node.Type,
+                    Name = node.Name,
+                    Description = node.Description,
+                    TargetStation = node.TargetStation,
+                    X = node.X,
+                    Y = node.Y,
+                    Order = node.Order,
+                    Parameters = new ObservableCollection<WorkflowNodeParameter>(node.Parameters.Select(parameter => new WorkflowNodeParameter
+                    {
+                        Name = parameter.Name,
+                        Value = parameter.Value,
+                        DataType = parameter.DataType,
+                        IsRequired = parameter.IsRequired
+                    })),
+                    NextNodeIds = new ObservableCollection<Guid>(node.NextNodeIds)
+                }))
+        };
+        return local;
     }
 
     private void AddNode() => AddNodeAt(WorkflowNodeType.Custom, null, null);
@@ -219,7 +584,37 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 
     private void RefreshCommandStates()
     {
-        foreach (var command in new[] { CopyWorkflowCommand, DeleteWorkflowCommand, AddNodeCommand, DeleteNodeCommand, MoveNodeLeftCommand, MoveNodeRightCommand }.OfType<EditorCommand>()) command.RaiseCanExecuteChanged();
+        foreach (var command in new[]
+        {
+            CopyWorkflowCommand,
+            DeleteWorkflowCommand,
+            AddNodeCommand,
+            DeleteNodeCommand,
+            MoveNodeLeftCommand,
+            MoveNodeRightCommand,
+            LoadFromMesCommand,
+            SaveDraftCommand,
+            ValidateCommand,
+            PublishCommand,
+            DryRunCommand
+        }.OfType<EditorCommand>()) command.RaiseCanExecuteChanged();
+
+        foreach (var command in new[]
+        {
+            LoadFromMesCommand,
+            SaveDraftCommand,
+            ValidateCommand,
+            PublishCommand,
+            DryRunCommand
+        }.OfType<AsyncCommand>()) command.RaiseCanExecuteChanged();
+    }
+
+    private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return false;
+        field = value;
+        OnPropertyChanged(propertyName);
+        return true;
     }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));

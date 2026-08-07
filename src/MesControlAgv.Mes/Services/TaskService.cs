@@ -495,8 +495,25 @@ public sealed class TaskService : ITaskApplicationService
             var navigationSourceStationId = sourceStationId;
             IReadOnlyList<string>? plannedPath = null;
             var plannedCost = 0d;
-            var preDispatchSnapshot = await _adapter.GetSnapshotAsync(cancellationToken);
-            if (!string.IsNullOrWhiteSpace(preDispatchSnapshot.CurrentStationId))
+            var fleetAware = _adapter is IFleetAwareAgvGateway;
+            var preDispatchSnapshot = fleetAware && _adapter is IFleetAwareAgvGateway fleetGateway
+                ? (await fleetGateway.GetFleetSnapshotAsync(cancellationToken))
+                    .OrderByDescending(snapshot => snapshot.Online)
+                    .ThenBy(snapshot => snapshot.AgvId, StringComparer.Ordinal)
+                    .FirstOrDefault()
+                    ?? throw new InvalidOperationException("Adapter returned no fleet snapshot.")
+                : await _adapter.GetSnapshotAsync(cancellationToken);
+            if (fleetAware)
+            {
+                // A fleet gateway owns AGV selection and must plan the approach
+                // from the selected vehicle's current station.  The single
+                // snapshot below is retained only as audit context; forcing its
+                // path onto another AGV can create an invalid reverse route.
+                var planned = _planner.Plan(sourceStationId, targetStationId);
+                plannedPath = planned.Stations;
+                plannedCost = planned.Cost;
+            }
+            else if (!string.IsNullOrWhiteSpace(preDispatchSnapshot.CurrentStationId))
             {
                 var planned = _planner.PlanVia(
                     preDispatchSnapshot.CurrentStationId,
@@ -524,6 +541,7 @@ public sealed class TaskService : ITaskApplicationService
                     targetStationId,
                     path = plannedPath,
                     cost = plannedCost,
+                    planningScope = fleetAware ? "fleet" : "single-agv",
                     observedAtUtc = DateTime.UtcNow
                 },
                 cancellationToken);
@@ -538,7 +556,8 @@ public sealed class TaskService : ITaskApplicationService
             }
             await _repository.SetActiveTargetAsync(taskId, targetStationId, cancellationToken);
 
-            if (!string.IsNullOrWhiteSpace(preDispatchSnapshot.CurrentStationId)
+            if (!fleetAware
+                && !string.IsNullOrWhiteSpace(preDispatchSnapshot.CurrentStationId)
                 && plannedPath is { Count: 1 }
                 && StringComparer.Ordinal.Equals(plannedPath[0], targetStationId))
             {
@@ -566,18 +585,39 @@ public sealed class TaskService : ITaskApplicationService
                 return;
             }
 
-            var response = _adapter is IPathAwareAgvGateway pathAwareGateway
+            AgvTaskResponse response;
+            if (fleetAware && _adapter is IRouteAwareAgvGateway fleetRouteAware)
+            {
+                response = await fleetRouteAware.DispatchAsync(
+                    operationId,
+                    sourceStationId,
+                    targetStationId,
+                    cancellationToken);
+            }
+            else if (!fleetAware
+                && _adapter is IPathAwareAgvGateway pathAwareGateway
                 && plannedPath is { Count: >= 2 }
-                && !string.IsNullOrWhiteSpace(preDispatchSnapshot.CurrentStationId)
-                ? await pathAwareGateway.DispatchAsync(
+                && !string.IsNullOrWhiteSpace(preDispatchSnapshot.CurrentStationId))
+            {
+                response = await pathAwareGateway.DispatchAsync(
                     operationId,
                     navigationSourceStationId,
                     targetStationId,
                     plannedPath,
-                    cancellationToken)
-                : _adapter is IRouteAwareAgvGateway routeAware
-                    ? await routeAware.DispatchAsync(operationId, navigationSourceStationId, targetStationId, cancellationToken)
-                    : await _adapter.DispatchAsync(operationId, targetStationId, cancellationToken);
+                    cancellationToken);
+            }
+            else if (_adapter is IRouteAwareAgvGateway routeAware)
+            {
+                response = await routeAware.DispatchAsync(
+                    operationId,
+                    navigationSourceStationId,
+                    targetStationId,
+                    cancellationToken);
+            }
+            else
+            {
+                response = await _adapter.DispatchAsync(operationId, targetStationId, cancellationToken);
+            }
             await _repository.SetActiveRouteAsync(
                 taskId,
                 targetStationId,
@@ -586,7 +626,17 @@ public sealed class TaskService : ITaskApplicationService
                 response.Path ?? plannedPath,
                 cancellationToken);
             task = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
-            if (response.State == "failed")
+            if (string.Equals(response.State, "unknown", StringComparison.OrdinalIgnoreCase))
+            {
+                var error = response.LastError ?? "dispatch_not_confirmed_by_1110";
+                await _repository.ApplyEventAsync(
+                    taskId,
+                    TaskEvent.Timeout,
+                    new { source = "adapter", deviceState = response.State, response.DeviceTaskId },
+                    cancellationToken,
+                    error);
+            }
+            else if (string.Equals(response.State, "failed", StringComparison.OrdinalIgnoreCase))
             {
                 await _repository.ApplyEventAsync(taskId, TaskEvent.DeviceFailed, response, cancellationToken, response.LastError);
             }

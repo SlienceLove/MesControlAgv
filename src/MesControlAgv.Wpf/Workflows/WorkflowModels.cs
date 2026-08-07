@@ -15,6 +15,22 @@ public enum WorkflowNodeType
     Custom
 }
 
+public sealed class WorkflowNodeParameter
+{
+    public string Name { get; set; } = string.Empty;
+    public string? Value { get; set; }
+    public string DataType { get; set; } = "string";
+    public bool IsRequired { get; set; }
+
+    public WorkflowNodeParameter Clone() => new()
+    {
+        Name = Name,
+        Value = Value,
+        DataType = DataType,
+        IsRequired = IsRequired
+    };
+}
+
 public sealed class WorkflowNode : INotifyPropertyChanged
 {
     private WorkflowNodeType _type;
@@ -86,6 +102,10 @@ public sealed class WorkflowNode : INotifyPropertyChanged
         set => SetField(ref _order, value);
     }
 
+    public ObservableCollection<WorkflowNodeParameter> Parameters { get; set; } = [];
+
+    public ObservableCollection<Guid> NextNodeIds { get; set; } = [];
+
     public WorkflowNode Clone() => new()
     {
         Id = Guid.NewGuid(),
@@ -95,7 +115,8 @@ public sealed class WorkflowNode : INotifyPropertyChanged
         TargetStation = TargetStation,
         X = X,
         Y = Y,
-        Order = Order
+        Order = Order,
+        Parameters = new ObservableCollection<WorkflowNodeParameter>(Parameters.Select(parameter => parameter.Clone()))
     };
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -134,16 +155,36 @@ public sealed class WorkflowDefinition : INotifyPropertyChanged
         set => SetField(ref _isPreset, value);
     }
 
+    /// <summary>Latest MES publication observed for this local definition.</summary>
+    public int? PublishedVersion { get; set; }
+
     public ObservableCollection<WorkflowNode> Nodes { get; set; } = [];
 
-    public WorkflowDefinition Clone(string? name = null) => new()
+    public WorkflowDefinition Clone(string? name = null)
     {
-        Id = Guid.NewGuid(),
-        Name = name ?? $"{Name} - 副本",
-        Description = Description,
-        IsPreset = false,
-        Nodes = new ObservableCollection<WorkflowNode>(Nodes.OrderBy(node => node.Order).Select(node => node.Clone()))
-    };
+        var sourceNodes = Nodes.OrderBy(node => node.Order).ToArray();
+        var idMap = sourceNodes.ToDictionary(node => node.Id, _ => Guid.NewGuid());
+        var clonedNodes = sourceNodes.Select(node =>
+        {
+            var clone = node.Clone();
+            clone.Id = idMap[node.Id];
+            clone.NextNodeIds = new ObservableCollection<Guid>(
+                node.NextNodeIds
+                    .Where(idMap.ContainsKey)
+                    .Select(id => idMap[id]));
+            return clone;
+        });
+
+        return new WorkflowDefinition
+        {
+            Id = Guid.NewGuid(),
+            Name = name ?? $"{Name} - 副本",
+            Description = Description,
+            IsPreset = false,
+            PublishedVersion = null,
+            Nodes = new ObservableCollection<WorkflowNode>(clonedNodes)
+        };
+    }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 

@@ -29,6 +29,7 @@ public sealed class LocalPortContractTests
         var launcher = File.ReadAllText(Path.Combine(root, "scripts", "run-local.ps1"));
         var stopper = File.ReadAllText(Path.Combine(root, "scripts", "stop-local.ps1"));
         var verifier = File.ReadAllText(Path.Combine(root, "scripts", "verify-local.ps1"));
+        var restarter = File.ReadAllText(Path.Combine(root, "scripts", "restart-local.ps1"));
 
         Assert.Contains("SimulatorUrl", launcher);
         Assert.Contains("AdapterUrl", launcher);
@@ -54,9 +55,29 @@ public sealed class LocalPortContractTests
         Assert.Contains("RunId", verifier);
         Assert.Contains("Scenario", verifier);
         Assert.Contains("failure-retry", verifier);
+        Assert.Contains("timeout-recover", verifier);
+        Assert.Contains("timeout-unknown", verifier);
+        Assert.Contains("ReconciledMoving", verifier);
+        Assert.Contains("timeout-unknown", File.ReadAllText(Path.Combine(root, "src", "MesControlAgv.Simulator", "SimulatorState.cs")));
+        Assert.Contains("cancel", verifier);
+        Assert.Contains("CancelConfirmed", verifier);
+        Assert.Contains("Simulator still reports an active task", verifier);
+        Assert.Contains("Adapter fleet still reports an active task", verifier);
         Assert.Contains("WaitingDropoffConfirmation", verifier);
         Assert.Contains("DeviceFailed", verifier);
         Assert.Contains("RetryRequested", verifier);
+        Assert.Contains("multi-agv", verifier);
+        Assert.Contains("restart-resume", verifier);
+        Assert.Contains("workflow-publish-rollback", verifier);
+        Assert.Contains("/api/workflows/$workflowId/audits", verifier);
+        Assert.Contains("WorkflowVersionPublished", verifier);
+        Assert.Contains("Complete-TransportTask", verifier);
+        Assert.Contains("DeviceFailed", verifier);
+        Assert.Contains("ReconciledMoving", verifier);
+        Assert.Contains("ProjectRoot", launcher);
+        Assert.Contains("Dll", launcher);
+        Assert.Contains("ProjectRoot", restarter);
+        Assert.Contains("Simulator remained running", restarter);
         Assert.Contains("Local Simulator transport verification", verifier);
         Assert.DoesNotContain("Live AGV transport verification", verifier);
     }

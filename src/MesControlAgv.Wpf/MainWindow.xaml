@@ -426,6 +426,11 @@
                     <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.CopyWorkflowCommand}" Content="澶嶅埗" />
                     <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.DeleteWorkflowCommand}" Content="删除" />
                     <Button Margin="6,0,0,0" Padding="14,7" Background="#1769AA" Foreground="White" Command="{Binding WorkflowEditor.SaveCommand}" Content="保存" />
+                    <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.LoadFromMesCommand}" Content="MES Load" />
+                    <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.SaveDraftCommand}" Content="Save Draft" />
+                    <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.ValidateCommand}" Content="Validate" />
+                    <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.PublishCommand}" Content="Publish" />
+                    <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.DryRunCommand}" Content="Dry Run" />
                 </StackPanel>
             </DockPanel>
 
@@ -544,7 +549,11 @@
                     </ScrollViewer>
                 </Border>
             </Grid>
-             <TextBlock Grid.Row="2" Margin="0,10,0,0" Foreground="Gray" Text="修改后点击保存，流程会持久化到本地 JSON 文件。" />
+             <StackPanel Grid.Row="2" Margin="0,10,0,0" Orientation="Horizontal">
+                 <TextBlock Foreground="Gray" Text="修改后点击保存，流程会持久化到本地 JSON 文件。" />
+                 <TextBlock Margin="18,0,0,0" Foreground="#315B87" Text="{Binding WorkflowEditor.RemoteStatus}" />
+                 <TextBlock Margin="18,0,0,0" Foreground="#7A3E00" Text="{Binding WorkflowEditor.ValidationSummary}" />
+             </StackPanel>
         </Grid>
     </TabItem>
     </TabControl>

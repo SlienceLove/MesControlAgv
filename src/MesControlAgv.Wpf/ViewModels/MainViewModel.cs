@@ -52,7 +52,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _mes = mes;
         _simulator = simulator;
         ModuleRegistry = moduleRegistry ?? ControlCenterModuleRegistry.CreateStandard();
-        WorkflowEditor = new WorkflowEditorViewModel(new WorkflowStore());
+        WorkflowEditor = new WorkflowEditorViewModel(new WorkflowStore(), _mes, () => OperatorName);
         _modules = new ControlCenterViewModel(WorkflowEditor, ModuleRegistry);
         Kpi = _modules.KpiDashboard;
         CreateTaskCommand = CreateActionCommand("\u521B\u5EFA\u4EFB\u52A1", CreateTaskAsync, CanCreateTask);

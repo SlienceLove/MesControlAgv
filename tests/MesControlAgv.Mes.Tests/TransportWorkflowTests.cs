@@ -89,6 +89,33 @@ public class TransportWorkflowTests
     }
 
     [Fact]
+    public async Task Fleet_dispatch_delegates_route_selection_to_the_gateway()
+    {
+        var adapter = new FleetRouteAdapter();
+        var service = CreateService(adapter);
+
+        var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        var dispatched = await service.DispatchAsync(task.Id, CancellationToken.None);
+
+        Assert.Equal("MovingToPickup", dispatched.Status);
+        Assert.Equal("AGV-02", dispatched.ActiveAgvId);
+        Assert.Equal("SAMPLE_01", adapter.LastSourceStationId);
+        Assert.Equal("SAMPLE_01", adapter.LastTargetStationId);
+        Assert.Equal(["SAMPLE_01", "SAMPLE_01"], dispatched.ActivePath);
+        Assert.Equal(1, adapter.RouteDispatchCalls);
+        Assert.Equal(0, adapter.LegacyDispatchCalls);
+
+        await service.RecordArrivalAsync(task.Id, CancellationToken.None);
+        var dropoff = await service.ConfirmPickupAsync(task.Id, "operator", CancellationToken.None);
+
+        Assert.Equal("MovingToDropoff", dropoff.Status);
+        Assert.Equal("SAMPLE_01", adapter.LastSourceStationId);
+        Assert.Equal("ST_PREP_01", adapter.LastTargetStationId);
+        Assert.Equal(["SAMPLE_01", "ST_PREP_01"], dropoff.ActivePath);
+        Assert.Equal(2, adapter.RouteDispatchCalls);
+    }
+
+    [Fact]
     public async Task Adapter_conflict_during_dropoff_dispatch_marks_task_failed_with_reason()
     {
         var adapter = new FakeAdapterClient();
@@ -165,6 +192,23 @@ public class TransportWorkflowTests
         Assert.Equal(before.Task, after.Task);
         Assert.Equal(before.Events.Count, after.Events.Count);
         Assert.Equal(before.Events.Select(item => item.EventType), after.Events.Select(item => item.EventType));
+    }
+
+    [Fact]
+    public async Task Unknown_adapter_dispatch_response_marks_task_unknown_for_recovery()
+    {
+        var adapter = new FakeAdapterClient { DispatchState = "unknown" };
+        var service = CreateService(adapter);
+        var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+
+        var unknown = await service.DispatchAsync(task.Id, CancellationToken.None);
+
+        Assert.Equal("Unknown", unknown.Status);
+        Assert.Equal("dispatch_not_confirmed_by_1110", unknown.LastError);
+        var detail = await service.GetDetailAsync(task.Id, CancellationToken.None);
+        Assert.NotNull(detail);
+        Assert.Contains(detail.Events, item => item.EventType == "Timeout");
+        Assert.DoesNotContain(detail.Events, item => item.EventType == "PickupMoveStarted");
     }
 
     [Fact]
@@ -381,7 +425,7 @@ public class TransportWorkflowTests
         Assert.NotEqual(Guid.Empty, task.Id);
     }
 
-    private static TaskService CreateService(FakeAdapterClient adapter)
+    private static TaskService CreateService(IAgvGateway adapter)
     {
         var options = new DbContextOptionsBuilder<MesDbContext>().UseInMemoryDatabase(Guid.NewGuid().ToString()).Options;
         return new TaskService(new TaskRepository(new MesDbContext(options)), adapter);
@@ -436,6 +480,66 @@ internal sealed class FakeAdapterClient : IAgvGateway
             : new AgvTaskResponse(operationId, operationId.ToString("N"), "SAMPLE_01", CancelState, CancelError));
     }
     public Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken) => Task.FromResult(new AgvSnapshotResponse(true, "adapter", null, null));
+
+    public Task<AgvTaskResponse?> ExecuteAgvCommandAsync(
+        string agvId,
+        string command,
+        Guid? taskId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<AgvTaskResponse?>(null);
+}
+
+internal sealed class FleetRouteAdapter : IAgvGateway, IRouteAwareAgvGateway, IFleetAwareAgvGateway
+{
+    public string? LastSourceStationId { get; private set; }
+    public string? LastTargetStationId { get; private set; }
+    public int RouteDispatchCalls { get; private set; }
+    public int LegacyDispatchCalls { get; private set; }
+
+    public Task<AgvTaskResponse> DispatchAsync(Guid operationId, string targetStationId, CancellationToken cancellationToken)
+    {
+        LegacyDispatchCalls++;
+        return Task.FromResult(new AgvTaskResponse(
+            operationId,
+            operationId.ToString("N"),
+            targetStationId,
+            "moving",
+            null,
+            "AGV-02",
+            ["SAMPLE_01", targetStationId]));
+    }
+
+    public Task<AgvTaskResponse> DispatchAsync(
+        Guid operationId,
+        string sourceStationId,
+        string targetStationId,
+        CancellationToken cancellationToken)
+    {
+        RouteDispatchCalls++;
+        LastSourceStationId = sourceStationId;
+        LastTargetStationId = targetStationId;
+        return Task.FromResult(new AgvTaskResponse(
+            operationId,
+            operationId.ToString("N"),
+            targetStationId,
+            "moving",
+            null,
+            "AGV-02",
+            [sourceStationId, targetStationId]));
+    }
+
+    public Task<AgvTaskResponse?> GetTaskAsync(Guid operationId, CancellationToken cancellationToken) =>
+        Task.FromResult<AgvTaskResponse?>(null);
+
+    public Task<AgvTaskResponse?> CancelAsync(Guid operationId, CancellationToken cancellationToken) =>
+        Task.FromResult<AgvTaskResponse?>(null);
+
+    public Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(new AgvSnapshotResponse(true, "adapter", "CHARGE_01", null, "AGV-01"));
+
+    public Task<IReadOnlyList<AgvSnapshotResponse>> GetFleetSnapshotAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<AgvSnapshotResponse>>(
+        [new AgvSnapshotResponse(true, "adapter", "CHARGE_01", null, "AGV-01")]);
 
     public Task<AgvTaskResponse?> ExecuteAgvCommandAsync(
         string agvId,
