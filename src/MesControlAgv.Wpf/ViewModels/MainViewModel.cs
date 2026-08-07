@@ -18,6 +18,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly PeriodicTimer _timer = new(TimeSpan.FromSeconds(2));
     private readonly CancellationTokenSource _shutdown = new();
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
+    private readonly SemaphoreSlim _actionGate = new(1, 1);
     private CancellationTokenSource? _detailRefresh;
     private Task? _refreshLoop;
     private TaskRowViewModel? _selectedTask;
@@ -43,6 +44,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private bool _isRefreshing;
     private bool _isDataStale = true;
     private DateTimeOffset? _lastRefreshAt;
+    private bool _isActionInProgress;
+    private string _currentAction = string.Empty;
 
     public MainViewModel(IMesClient mes, ISimulatorControlClient? simulator = null, ControlCenterModuleRegistry? moduleRegistry = null)
     {
@@ -52,29 +55,29 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         WorkflowEditor = new WorkflowEditorViewModel(new WorkflowStore());
         _modules = new ControlCenterViewModel(WorkflowEditor, ModuleRegistry);
         Kpi = _modules.KpiDashboard;
-        CreateTaskCommand = new AsyncCommand(() => ExecuteActionAsync(CreateTaskAsync), CanCreateTask);
-        DispatchTaskCommand = new AsyncCommand(() => ExecuteActionAsync(DispatchTaskAsync), CanDispatchTask);
-        PlanRouteCommand = new AsyncCommand(() => ExecuteActionAsync(PlanRouteAsync), CanPlanRoute);
-        ArriveCommand = new AsyncCommand(() => ExecuteActionAsync(ArriveAsync), CanApplyManualArrival);
-        ConfirmPickupCommand = new AsyncCommand(() => ExecuteActionAsync(ConfirmPickupAsync), () => HasOperator && SelectedTask?.Status == "WaitingPickupConfirmation");
-        ConfirmDropoffCommand = new AsyncCommand(() => ExecuteActionAsync(ConfirmDropoffAsync), () => HasOperator && SelectedTask?.Status == "WaitingDropoffConfirmation");
-        RetryCommand = new AsyncCommand(() => ExecuteActionAsync(RetryAsync), () => SelectedTask?.Status == "Failed");
-        RecoverCommand = new AsyncCommand(() => ExecuteActionAsync(RecoverAsync), () => SelectedTask?.Status == "Unknown");
-        CancelCommand = new AsyncCommand(() => ExecuteActionAsync(CancelAsync), () => HasOperator && SelectedTask is { Status: not "Completed" and not "Cancelled" });
-        SimulatorArriveCommand = new AsyncCommand(() => ExecuteActionAsync(() => ApplySimulatorControlAsync("arrive")), () => IsSimulatorPanelVisible);
-        SimulatorFailCommand = new AsyncCommand(() => ExecuteActionAsync(() => ApplySimulatorControlAsync("fail")), () => IsSimulatorPanelVisible);
-        SimulatorTimeoutCommand = new AsyncCommand(() => ExecuteActionAsync(() => ApplySimulatorControlAsync("timeout")), () => IsSimulatorPanelVisible);
-        SimulatorOfflineCommand = new AsyncCommand(() => ExecuteActionAsync(() => ApplySimulatorControlAsync("offline")), () => IsSimulatorPanelVisible);
-        SimulatorRecoverCommand = new AsyncCommand(() => ExecuteActionAsync(() => ApplySimulatorControlAsync("recover")), () => IsSimulatorPanelVisible);
-        RefreshAgvCommand = new AsyncCommand(() => ExecuteActionAsync(RefreshAgvAsync));
-        QueryTasksCommand = new AsyncCommand(() => ExecuteActionAsync(() => RefreshAsync()));
-        RefreshTasksCommand = new AsyncCommand(() => ExecuteActionAsync(() => RefreshAsync()));
-        PauseAgvCommand = new AsyncCommand(() => ExecuteActionAsync(() => ExecuteAgvCommandAsync("pause")), () => CanControlSelectedAgv("pause"));
-        ResumeAgvCommand = new AsyncCommand(() => ExecuteActionAsync(() => ExecuteAgvCommandAsync("resume")), () => CanControlSelectedAgv("resume"));
-        CancelAgvCommand = new AsyncCommand(() => ExecuteActionAsync(() => ExecuteAgvCommandAsync("cancel")), () => CanControlSelectedAgv("cancel"));
-        SortBatchCommand = new AsyncCommand(() => { SortBatchTasks(); return Task.CompletedTask; }, () => BatchTasks.Count > 1);
-        SubmitBatchCommand = new AsyncCommand(() => ExecuteActionAsync(SubmitBatchAsync), () => BatchTasks.Any(task => task.Status == "\u5F85\u63D0\u4EA4"));
-        ClearBatchCommand = new AsyncCommand(() =>
+        CreateTaskCommand = CreateActionCommand("\u521B\u5EFA\u4EFB\u52A1", CreateTaskAsync, CanCreateTask);
+        DispatchTaskCommand = CreateActionCommand("\u6D3E\u53D1\u4EFB\u52A1", DispatchTaskAsync, CanDispatchTask);
+        PlanRouteCommand = CreateActionCommand("\u9884\u89C8\u8DEF\u7EBF", PlanRouteAsync, CanPlanRoute);
+        ArriveCommand = CreateActionCommand("\u4EFF\u771F\u5230\u7AD9", ArriveAsync, CanApplyManualArrival);
+        ConfirmPickupCommand = CreateActionCommand("\u786E\u8BA4\u53D6\u8D27", ConfirmPickupAsync, () => HasOperator && SelectedTask?.Status == "WaitingPickupConfirmation");
+        ConfirmDropoffCommand = CreateActionCommand("\u786E\u8BA4\u653E\u8D27", ConfirmDropoffAsync, () => HasOperator && SelectedTask?.Status == "WaitingDropoffConfirmation");
+        RetryCommand = CreateActionCommand("\u91CD\u8BD5\u4EFB\u52A1", RetryAsync, () => SelectedTask?.Status == "Failed");
+        RecoverCommand = CreateActionCommand("\u6062\u590D\u4EFB\u52A1", RecoverAsync, () => SelectedTask?.Status == "Unknown");
+        CancelCommand = CreateActionCommand("\u53D6\u6D88\u4EFB\u52A1", CancelAsync, () => HasOperator && SelectedTask is { Status: not "Completed" and not "Cancelled" });
+        SimulatorArriveCommand = CreateActionCommand("\u4EFF\u771F\u5230\u7AD9", () => ApplySimulatorControlAsync("arrive"), () => IsSimulatorPanelVisible);
+        SimulatorFailCommand = CreateActionCommand("\u6A21\u62DF\u5931\u8D25", () => ApplySimulatorControlAsync("fail"), () => IsSimulatorPanelVisible);
+        SimulatorTimeoutCommand = CreateActionCommand("\u6A21\u62DF\u8D85\u65F6", () => ApplySimulatorControlAsync("timeout"), () => IsSimulatorPanelVisible);
+        SimulatorOfflineCommand = CreateActionCommand("\u6A21\u62DF\u79BB\u7EBF", () => ApplySimulatorControlAsync("offline"), () => IsSimulatorPanelVisible);
+        SimulatorRecoverCommand = CreateActionCommand("\u6A21\u62DF\u6062\u590D", () => ApplySimulatorControlAsync("recover"), () => IsSimulatorPanelVisible);
+        RefreshAgvCommand = CreateActionCommand("\u5237\u65B0 AGV", RefreshAgvAsync);
+        QueryTasksCommand = CreateActionCommand("\u67E5\u8BE2\u4EFB\u52A1", () => RefreshAsync());
+        RefreshTasksCommand = CreateActionCommand("\u5237\u65B0\u4EFB\u52A1", () => RefreshAsync());
+        PauseAgvCommand = CreateActionCommand("\u6682\u505C AGV", () => ExecuteAgvCommandAsync("pause"), () => CanControlSelectedAgv("pause"));
+        ResumeAgvCommand = CreateActionCommand("\u6062\u590D AGV", () => ExecuteAgvCommandAsync("resume"), () => CanControlSelectedAgv("resume"));
+        CancelAgvCommand = CreateActionCommand("\u53D6\u6D88 AGV \u4EFB\u52A1", () => ExecuteAgvCommandAsync("cancel"), () => CanControlSelectedAgv("cancel"));
+        SortBatchCommand = CreateActionCommand("\u6392\u5E8F\u6279\u91CF\u4EFB\u52A1", () => { SortBatchTasks(); return Task.CompletedTask; }, () => BatchTasks.Count > 1);
+        SubmitBatchCommand = CreateActionCommand("\u63D0\u4EA4\u6279\u91CF\u4EFB\u52A1", SubmitBatchAsync, () => BatchTasks.Any(task => task.Status == "\u5F85\u63D0\u4EA4"));
+        ClearBatchCommand = CreateActionCommand("\u6E05\u7A7A\u6279\u91CF\u4EFB\u52A1", () =>
         {
             _modules.BatchImport.Clear();
             BatchStatus = _modules.BatchImport.BatchStatus;
@@ -149,6 +152,20 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     }
     public string Message { get => _message; private set => SetField(ref _message, value); }
     public string ActionStatus { get => _actionStatus; private set => SetField(ref _actionStatus, value); }
+    public bool IsActionInProgress
+    {
+        get => _isActionInProgress;
+        private set
+        {
+            if (!SetField(ref _isActionInProgress, value)) return;
+            RefreshAllCommandState();
+        }
+    }
+    public string CurrentAction
+    {
+        get => _currentAction;
+        private set => SetField(ref _currentAction, value);
+    }
     public DashboardStation? NewTaskSourceStation
     {
         get => _newTaskSourceStation;
@@ -504,7 +521,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private async Task ExecuteAgvCommandAsync(string command)
     {
         if (SelectedAgv is not { } agv || agv.CurrentTaskId is not { } taskId) return;
-        await _mes.ExecuteAgvCommandAsync(agv.AgvId, command, taskId, _shutdown.Token);
+        var result = await _mes.ExecuteAgvCommandAsync(agv.AgvId, command, taskId, _shutdown.Token)
+            ?? throw new InvalidOperationException($"AGV {agv.AgvId} returned no result for '{command}'.");
+        if (!string.IsNullOrWhiteSpace(result.LastError) ||
+            string.Equals(result.State, "failed", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(result.State, "error", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(result.LastError ?? $"AGV {agv.AgvId} rejected '{command}'.");
+        }
+
+        ActionStatus = $"AGV {agv.AgvId} {command} command accepted ({result.State}).";
         BatchStatus = $"Sent {command} command to {agv.AgvId}";
         await RefreshAgvAsync();
         await RefreshAsync();
@@ -543,7 +569,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         NewTaskPriority >= 0 &&
         PlannedRoute is { Stations.Count: >= 2 } route &&
         string.Equals(route.Stations[0], NewTaskSourceStation!.AgvStationId, StringComparison.Ordinal) &&
-        string.Equals(route.Stations[^1], NewTaskTargetStation!.AgvStationId, StringComparison.Ordinal);
+        string.Equals(route.Stations[^1], NewTaskTargetStation!.AgvStationId, StringComparison.Ordinal) &&
+        (route.SourceStationId is null || string.Equals(route.SourceStationId, NewTaskSourceStation.AgvStationId, StringComparison.Ordinal)) &&
+        (route.TargetStationId is null || string.Equals(route.TargetStationId, NewTaskTargetStation.AgvStationId, StringComparison.Ordinal));
     private bool CanDispatchTask() => SelectedTask?.Status == "Created";
     private bool HasOperator => !string.IsNullOrWhiteSpace(OperatorName);
     private bool CanApplyManualArrival() =>
@@ -561,6 +589,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             if (NewTaskSourceStation?.Code != source.Code || NewTaskTargetStation?.Code != target.Code)
             {
                 RoutePreview = "\u7AD9\u70B9\u5DF2\u53D8\u66F4\uFF0C\u8BF7\u91CD\u65B0\u9884\u89C8\u8DEF\u7EBF\u3002";
+                return;
+            }
+            if (path.Stations.Count < 2 ||
+                !string.Equals(path.Stations[0], source.AgvStationId, StringComparison.Ordinal) ||
+                !string.Equals(path.Stations[^1], target.AgvStationId, StringComparison.Ordinal) ||
+                (path.SourceStationId is not null && !string.Equals(path.SourceStationId, source.AgvStationId, StringComparison.Ordinal)) ||
+                (path.TargetStationId is not null && !string.Equals(path.TargetStationId, target.AgvStationId, StringComparison.Ordinal)))
+            {
+                RoutePreview = "MES 返回的路线与选定站点不一致，请重新选择站点后再预览。";
                 return;
             }
             PlannedRoute = path;
@@ -647,14 +684,40 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     }
     private async Task ApplySimulatorControlAsync(string mode) { if (!IsSimulatorPanelVisible || _simulator is null) return; await _simulator.ApplyControlAsync(mode, _shutdown.Token); await RefreshAsync(); }
 
-    private async Task ExecuteActionAsync(Func<Task> action)
+    private AsyncCommand CreateActionCommand(string actionName, Func<Task> action, Func<bool>? canExecute = null) =>
+        new(
+            () => ExecuteActionAsync(actionName, action),
+            () => !IsActionInProgress && (canExecute?.Invoke() ?? true));
+
+    private async Task ExecuteActionAsync(string actionName, Func<Task> action)
     {
+        bool entered;
+        try { entered = _actionGate.Wait(0); }
+        catch (ObjectDisposedException) { return; }
+        if (!entered)
+        {
+            Message = "已有操作正在执行，请稍候。";
+            return;
+        }
+
+        CurrentAction = actionName;
+        IsActionInProgress = true;
         Message = string.Empty;
+        var runningStatus = $"正在执行：{actionName}";
+        ActionStatus = runningStatus;
         try { await action(); }
         catch (Exception exception)
         {
             ActionStatus = "\u64CD\u4F5C\u5931\u8D25";
             Message = exception.Message;
+        }
+        finally
+        {
+            if (ActionStatus == runningStatus) ActionStatus = $"{actionName}完成";
+            CurrentAction = string.Empty;
+            IsActionInProgress = false;
+            try { _actionGate.Release(); }
+            catch (ObjectDisposedException) { }
         }
     }
 
@@ -667,6 +730,25 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private void RefreshCommandState()
     {
         foreach (var command in new[] { DispatchTaskCommand, ArriveCommand, ConfirmPickupCommand, ConfirmDropoffCommand, RetryCommand, RecoverCommand, CancelCommand }.OfType<AsyncCommand>()) command.RaiseCanExecuteChanged();
+    }
+
+    private void RefreshAllCommandState()
+    {
+        RefreshCommandState();
+        RefreshCreateTaskCommandState();
+        RefreshAgvCommandState();
+        RefreshBatchCommandState();
+        foreach (var command in new[]
+        {
+            SimulatorArriveCommand,
+            SimulatorFailCommand,
+            SimulatorTimeoutCommand,
+            SimulatorOfflineCommand,
+            SimulatorRecoverCommand,
+            RefreshAgvCommand,
+            QueryTasksCommand,
+            RefreshTasksCommand
+        }.OfType<AsyncCommand>()) command.RaiseCanExecuteChanged();
     }
 
     private void InvalidateRoutePreview()
@@ -747,6 +829,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         CancelPendingDetailRefresh();
         _timer.Dispose();
         _refreshGate.Dispose();
+        _actionGate.Dispose();
         _shutdown.Dispose();
     }
 

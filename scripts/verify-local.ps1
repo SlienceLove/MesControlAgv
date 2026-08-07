@@ -10,6 +10,8 @@ param(
     [string]$IsolationLabel,
     [int]$SourceStationCode = 2,
     [int]$TargetStationCode = 4,
+    [ValidateSet('positive', 'failure-retry')]
+    [string]$Scenario = 'positive',
     [switch]$RequireIsolatedStores
 )
 
@@ -205,9 +207,91 @@ function Get-FleetEntryForTask {
         Select-Object -First 1)
 }
 
+function Invoke-FailureRecoveryScenario {
+    $verificationId = [Guid]::NewGuid().ToString('N')
+    $externalId = if ([string]::IsNullOrWhiteSpace($IsolationLabel)) {
+        "verify-local-failure-$verificationId"
+    } else {
+        "$IsolationLabel-failure-$verificationId"
+    }
+    $createBody = @{
+        sourceStationCode = $SourceStationCode
+        targetStationCode = $TargetStationCode
+        externalId = $externalId
+        description = "Offline failure/retry verification ($externalId)"
+    } | ConvertTo-Json
+    $task = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks" -ContentType 'application/json' -Body $createBody
+    if ($task.status -ne 'Created') { throw "Unexpected created status for failure scenario: $($task.status)" }
+
+    # The simulator consumes this fault on the next navigation request. It is
+    # deliberately injected before MES dispatch so the failure is persisted
+    # through the normal Adapter/MES path rather than mocked in the script.
+    $fleetCandidates = @(Get-FleetEntries (Invoke-RestMethod -Uri "$adapter/agvs") |
+        Where-Object { $_.online -eq $true -and -not [string]::IsNullOrWhiteSpace([string]$_.agvId) } |
+        Sort-Object agvId)
+    if ($fleetCandidates.Count -eq 0) { throw 'Adapter did not return an online AGV for failure injection.' }
+    $failureAgvId = [string]$fleetCandidates[0].agvId
+    $encodedAgvId = [Uri]::EscapeDataString($failureAgvId)
+    Invoke-RestMethod -Method Post -Uri "$simulator/agvs/$encodedAgvId/controls/fail" | Out-Null
+    $failed = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($task.id)/dispatch"
+    if ($failed.status -ne 'Failed') { throw "Expected injected navigation failure, got status: $($failed.status)" }
+    if ($failed.lastError -ne 'navigation failed') { throw "Unexpected failure reason: $($failed.lastError)" }
+
+    $failedDetail = Invoke-RestMethod -Uri "$mes/api/tasks/$($task.id)"
+    $failedEvents = @($failedDetail.events | ForEach-Object { $_.eventType })
+    foreach ($requiredEvent in @('TaskCreated', 'DispatchRequested', 'DeviceFailed')) {
+        if ($failedEvents -notcontains $requiredEvent) { throw "Failure scenario missing audit event: $requiredEvent" }
+    }
+    if (@(Get-FleetEntryForTask (Invoke-RestMethod -Uri "$mes/api/agvs/fleet/status") ([Guid]$task.id)).Count -gt 0) {
+        throw 'Failed task still appears as an active fleet task before retry.'
+    }
+
+    $retried = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($task.id)/retry"
+    if ($retried.status -ne 'MovingToPickup') { throw "Expected retry to resume pickup, got status: $($retried.status)" }
+    if ($retried.retryCount -ne 1) { throw "Expected retry count 1, got: $($retried.retryCount)" }
+    if ([string]::IsNullOrWhiteSpace($retried.activeDeviceTaskId)) { throw 'Retry did not return a pickup operation ID.' }
+    if (@($retried.activePath).Count -lt 2 -or @($retried.activePath)[-1] -eq $null) { throw 'Retry did not return a non-empty pickup execution path.' }
+
+    $agvId = [string]$retried.activeAgvId
+    if ([string]::IsNullOrWhiteSpace($agvId)) { throw 'Retry did not return the assigned AGV.' }
+    $encodedAgvId = [Uri]::EscapeDataString($agvId)
+    Invoke-RestMethod -Method Post -Uri "$simulator/agvs/$encodedAgvId/controls/arrive" | Out-Null
+    $arrived = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($task.id)/arrived"
+    if ($arrived.status -ne 'WaitingPickupConfirmation') { throw "Unexpected recovered pickup arrival status: $($arrived.status)" }
+
+    $operatorBody = @{ operatorName = 'verify-local-failure' } | ConvertTo-Json
+    $pickup = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($task.id)/confirm-pickup" -ContentType 'application/json' -Body $operatorBody
+    if ($pickup.status -ne 'MovingToDropoff') { throw "Unexpected recovered dropoff status: $($pickup.status)" }
+    if ([string]::IsNullOrWhiteSpace($pickup.activeDeviceTaskId)) { throw 'Recovered dropoff dispatch did not return an operation ID.' }
+    $encodedAgvId = [Uri]::EscapeDataString([string]$pickup.activeAgvId)
+    Invoke-RestMethod -Method Post -Uri "$simulator/agvs/$encodedAgvId/controls/arrive" | Out-Null
+    $arrivedAtDropoff = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($task.id)/arrived"
+    if ($arrivedAtDropoff.status -ne 'WaitingDropoffConfirmation') { throw "Unexpected recovered dropoff arrival status: $($arrivedAtDropoff.status)" }
+
+    $completed = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($task.id)/confirm-dropoff" -ContentType 'application/json' -Body $operatorBody
+    if ($completed.status -ne 'Completed') { throw "Recovered task did not complete: $($completed.status)" }
+    $detail = Invoke-RestMethod -Uri "$mes/api/tasks/$($task.id)"
+    if ($detail.task.status -ne 'Completed') { throw "Recovered task detail did not record Completed: $($detail.task.status)" }
+    $eventTypes = @($detail.events | ForEach-Object { $_.eventType })
+    foreach ($requiredEvent in @('DeviceFailed', 'RetryRequested', 'PickupArrived', 'PickupConfirmed', 'DropoffArrived', 'DropoffConfirmed')) {
+        if ($eventTypes -notcontains $requiredEvent) { throw "Failure/retry scenario missing audit event: $requiredEvent" }
+    }
+    if (@(Get-FleetEntryForTask (Invoke-RestMethod -Uri "$mes/api/agvs/fleet/status") ([Guid]$task.id)).Count -gt 0) {
+        throw 'Recovered completed task still appears as an active fleet task.'
+    }
+
+    $runSuffix = if ([string]::IsNullOrWhiteSpace($RunId)) { '' } else { " (run $RunId)" }
+    Write-Host "Local Simulator failure/retry verification passed for task $($task.id)$runSuffix."
+}
+
 Wait-Health $simulator 'simulator' $TimeoutSeconds
 Wait-Health $adapter 'adapter' $TimeoutSeconds
 Wait-Health $mes 'mes' $TimeoutSeconds
+
+if ($Scenario -eq 'failure-retry') {
+    Invoke-FailureRecoveryScenario
+    return
+}
 
 $verificationId = [Guid]::NewGuid().ToString('N')
 $externalId = if ([string]::IsNullOrWhiteSpace($IsolationLabel)) {

@@ -157,6 +157,60 @@ public class MainViewModelTests
     }
 
     [Fact]
+    public async Task Task_commands_are_single_flight_across_different_actions()
+    {
+        var task = new DashboardTask(Guid.NewGuid(), 2, 4, "Created", 0, null);
+        var dispatchGate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = new FakeMesClient([task])
+        {
+            DispatchGate = dispatchGate
+        };
+        using var viewModel = new MainViewModel(client);
+
+        await viewModel.RefreshAsync();
+        Assert.True(viewModel.DispatchTaskCommand.CanExecute(null));
+
+        viewModel.DispatchTaskCommand.Execute(null);
+        await WaitUntilAsync(() => client.DispatchCallCount == 1 && viewModel.IsActionInProgress);
+
+        Assert.False(viewModel.DispatchTaskCommand.CanExecute(null));
+        Assert.False(viewModel.QueryTasksCommand.CanExecute(null));
+        viewModel.DispatchTaskCommand.Execute(null);
+        await Task.Delay(20);
+        Assert.Equal(1, client.DispatchCallCount);
+
+        dispatchGate.SetResult(true);
+        await WaitUntilAsync(() => !viewModel.IsActionInProgress);
+        Assert.Equal(string.Empty, viewModel.CurrentAction);
+        Assert.Equal(1, client.DispatchCallCount);
+    }
+
+    [Fact]
+    public async Task Agv_command_failure_is_visible_and_releases_the_action_gate()
+    {
+        var operationId = Guid.NewGuid();
+        var client = new FakeMesClient([
+            new DashboardTask(Guid.NewGuid(), 2, 4, "MovingToPickup", 0, null, ActiveAgvId: "AGV-01", ActiveDeviceTaskId: operationId.ToString("N"))
+        ])
+        {
+            FleetStatus = [new AgvFleetDashboardStatus(
+                new AgvDashboardSnapshot(true, "adapter", "SAMPLE_01", operationId),
+                null)],
+            CommandResult = new AgvCommandResult(operationId, operationId.ToString("N"), "SAMPLE_01", "failed", "blocked by safety interlock")
+        };
+        using var viewModel = new MainViewModel(client);
+
+        await viewModel.RefreshAsync();
+        viewModel.PauseAgvCommand.Execute(null);
+        await WaitUntilAsync(() => !viewModel.IsActionInProgress);
+
+        Assert.Equal("\u64CD\u4F5C\u5931\u8D25", viewModel.ActionStatus);
+        Assert.Contains("blocked by safety interlock", viewModel.Message, StringComparison.Ordinal);
+        Assert.Equal(string.Empty, viewModel.CurrentAction);
+        Assert.True(viewModel.PauseAgvCommand.CanExecute(null));
+    }
+
+    [Fact]
     public async Task Simulator_mode_respects_the_build_safety_boundary()
     {
         var task = new DashboardTask(Guid.NewGuid(), 2, 4, "MovingToPickup", 0, null);
@@ -275,6 +329,7 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
     public Guid? LastDispatchTaskId { get; private set; }
     public DashboardTask? DispatchResult { get; set; }
     public Exception? DispatchException { get; set; }
+    public TaskCompletionSource<bool>? DispatchGate { get; set; }
     public IReadOnlyList<AgvFleetDashboardStatus>? FleetStatus { get; set; }
     public AgvCommandResult? CommandResult { get; set; }
     public int AgvCommandCallCount { get; private set; }
@@ -350,7 +405,13 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
         DispatchCallCount++;
         LastDispatchTaskId = taskId;
         if (DispatchException is { } exception) return Task.FromException<DashboardTask>(exception);
-        return Task.FromResult(DispatchResult ?? CurrentTasks()[0]);
+        return DispatchTaskCoreAsync();
+
+        async Task<DashboardTask> DispatchTaskCoreAsync()
+        {
+            if (DispatchGate is { } gate) await gate.Task.WaitAsync(cancellationToken);
+            return DispatchResult ?? CurrentTasks()[0];
+        }
     }
     public Task<DashboardTask> MarkArrivedAsync(Guid taskId, CancellationToken cancellationToken)
     {

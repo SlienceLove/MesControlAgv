@@ -67,7 +67,7 @@ public sealed class MesClient(HttpClient client) : IMesClient
         response.EnsureSuccessStatusCode();
         var path = await response.Content.ReadFromJsonAsync<ContractPlannedPath>(cancellationToken)
             ?? throw new InvalidOperationException("MES returned no planned path.");
-        return new DashboardPlannedPath(path.Stations, path.Cost);
+        return new DashboardPlannedPath(path.Stations, path.Cost, path.FromStationId, path.ToStationId);
     }
 
     public async Task<AgvDashboardSnapshot> GetAgvSnapshotAsync(CancellationToken cancellationToken)

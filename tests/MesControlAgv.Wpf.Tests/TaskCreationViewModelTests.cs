@@ -39,6 +39,27 @@ public sealed class TaskCreationViewModelTests
     }
 
     [Fact]
+    public async Task Plan_route_rejects_a_response_with_mismatched_station_metadata()
+    {
+        var client = CreateClient();
+        client.PlannedPath = new DashboardPlannedPath(
+            ["SAMPLE_01", "ST_PREP_01"],
+            1,
+            "OTHER_START",
+            "ST_PREP_01");
+        using var viewModel = new MainViewModel(client);
+        await viewModel.RefreshAsync();
+        viewModel.NewTaskSourceStation = client.Stations.Single(station => station.Code == 2);
+        viewModel.NewTaskTargetStation = client.Stations.Single(station => station.Code == 4);
+
+        viewModel.PlanRouteCommand.Execute(null);
+
+        await WaitUntilAsync(() => viewModel.RoutePreview.Contains("不一致", StringComparison.Ordinal));
+        Assert.Null(viewModel.PlannedRoute);
+        Assert.False(viewModel.CreateTaskCommand.CanExecute(null));
+    }
+
+    [Fact]
     public async Task Create_task_sends_configured_source_target_and_metadata()
     {
         var client = CreateClient();

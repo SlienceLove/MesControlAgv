@@ -40,4 +40,8 @@ public sealed record PlanPathRequest(
     string ToStationId,
     IReadOnlyCollection<string>? BlockedStations = null);
 
-public sealed record PlannedPathResponse(IReadOnlyList<string> Stations, double Cost);
+public sealed record PlannedPathResponse(
+    IReadOnlyList<string> Stations,
+    double Cost,
+    string? FromStationId = null,
+    string? ToStationId = null);

@@ -52,7 +52,11 @@ public sealed class LocalPortContractTests
         Assert.Contains("AdapterDatabasePath", verifier);
         Assert.Contains("StatePath", verifier);
         Assert.Contains("RunId", verifier);
+        Assert.Contains("Scenario", verifier);
+        Assert.Contains("failure-retry", verifier);
         Assert.Contains("WaitingDropoffConfirmation", verifier);
+        Assert.Contains("DeviceFailed", verifier);
+        Assert.Contains("RetryRequested", verifier);
         Assert.Contains("Local Simulator transport verification", verifier);
         Assert.DoesNotContain("Live AGV transport verification", verifier);
     }

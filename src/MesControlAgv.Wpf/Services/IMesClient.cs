@@ -44,7 +44,11 @@ public sealed record AgvCommandResult(Guid TaskId, string DeviceTaskId, string T
 public sealed record DashboardTaskEvent(Guid Id, string EventType, string Payload, DateTime CreatedAt);
 public sealed record DashboardTaskDetail(DashboardTask Task, IReadOnlyList<DashboardTaskEvent> Events);
 public sealed record DashboardStation(int Code, string Name, string AgvStationId, bool Enabled);
-public sealed record DashboardPlannedPath(IReadOnlyList<string> Stations, double Cost);
+public sealed record DashboardPlannedPath(
+    IReadOnlyList<string> Stations,
+    double Cost,
+    string? SourceStationId = null,
+    string? TargetStationId = null);
 
 public interface IMesClient
 {

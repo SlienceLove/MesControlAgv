@@ -187,6 +187,7 @@
                         <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding CancelCommand}" Content="取消任务" />
                         <Separator Margin="0,16,0,12" />
                         <TextBlock FontWeight="SemiBold" Text="操作结果" />
+                        <TextBlock Margin="0,4,0,0" Foreground="#1769AA" TextWrapping="Wrap" Text="{Binding CurrentAction}" />
                         <TextBlock Margin="0,4,0,0" Foreground="#176B3A" TextWrapping="Wrap" Text="{Binding ActionStatus}" />
                         <TextBlock Margin="0,6,0,0" Foreground="#8A6D1D" TextWrapping="Wrap" Text="{Binding OperatorValidationMessage}" />
                         <TextBlock Margin="0,4,0,0" Foreground="#B42318" TextWrapping="Wrap" Text="{Binding Message}" />

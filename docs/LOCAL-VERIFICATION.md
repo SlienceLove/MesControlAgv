@@ -15,6 +15,7 @@ $runRoot = Join-Path ([IO.Path]::GetTempPath()) "MesControlAgv-$runId"
 New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
 
 .\scripts\run-local.ps1 `
+  -Configuration Release `
   -RunId $runId `
   -SimulatorUrl http://localhost:5361 `
   -AdapterUrl http://localhost:5362 `
@@ -31,6 +32,23 @@ New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
 
 .\scripts\stop-local.ps1 -RunId $runId
 ```
+
+With a fresh isolated run started above, invoke the verifier using the same run
+and inject one simulator navigation failure before dispatch. The scenario asserts the MES task
+becomes `Failed`, records `DeviceFailed`, retries once, and then completes both
+transport legs through the normal arrival and operator confirmation APIs:
+
+```powershell
+.\scripts\verify-local.ps1 `
+  -RunId $runId `
+  -Scenario failure-retry `
+  -RequireIsolatedStores
+```
+
+`failure-retry` consumes only the in-memory Simulator fault for that process;
+it does not alter the profile, connect to a physical AGV, or reuse a task from
+another run. Start a fresh run before repeating it so the simulator state is
+clean, and keep the same `-RunId`/temporary SQLite paths for both commands.
 
 Use `-StatePath` instead of `-RunId` when a caller owns the state-file
 location. This is preferred when several local runs are active. Calling

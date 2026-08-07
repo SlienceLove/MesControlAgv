@@ -251,7 +251,11 @@ app.MapPost("/api/planning/path", (PlanPathRequest request, PathPlanner planner)
             request.FromStationId,
             request.ToStationId,
             request.BlockedStations?.ToHashSet(StringComparer.Ordinal));
-        return Results.Ok(new PlannedPathResponse(path.Stations, path.Cost));
+        return Results.Ok(new PlannedPathResponse(
+            path.Stations,
+            path.Cost,
+            request.FromStationId,
+            request.ToStationId));
     }
     catch (KeyNotFoundException exception) { return Results.NotFound(new { detail = exception.Message }); }
     catch (InvalidOperationException exception) { return Results.UnprocessableEntity(new { detail = exception.Message }); }
