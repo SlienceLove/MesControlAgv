@@ -6,6 +6,8 @@ param(
     [string]$MesDatabasePath,
     [string]$AdapterDatabasePath,
     [string]$IsolationLabel,
+    [int]$SourceStationCode = 2,
+    [int]$TargetStationCode = 4,
     [switch]$RequireIsolatedStores
 )
 
@@ -142,8 +144,8 @@ $externalId = if ([string]::IsNullOrWhiteSpace($IsolationLabel)) {
     "$IsolationLabel-$verificationId"
 }
 $createBody = @{
-    sourceStationCode = 2
-    targetStationCode = 4
+    sourceStationCode = $SourceStationCode
+    targetStationCode = $TargetStationCode
     externalId = $externalId
     description = "Offline process verification ($externalId)"
 } | ConvertTo-Json
@@ -156,6 +158,9 @@ if ($task.status -ne 'MovingToPickup') { throw "Unexpected pickup dispatch statu
 $operationId = $task.activeDeviceTaskId
 if ([string]::IsNullOrWhiteSpace($operationId)) { throw 'MES did not return the active pickup operation ID.' }
 $operationGuid = [Guid]::Parse($operationId)
+$agvId = $task.activeAgvId
+if ([string]::IsNullOrWhiteSpace($agvId)) { throw 'MES did not return the AGV assigned to the pickup operation.' }
+$encodedAgvId = [Uri]::EscapeDataString($agvId)
 
 $fleetStatus = Invoke-RestMethod -Uri "$mes/api/agvs/fleet/status"
 $activeStatus = @(Get-FleetEntryForTask $fleetStatus ([Guid]$task.id)) | Select-Object -First 1
@@ -164,7 +169,7 @@ if ($activeStatus.activeTask.mesStatus -ne 'MovingToPickup') { throw "Unexpected
 if ($activeStatus.activeTask.deviceState -ne 'moving') { throw "Unexpected fleet device state: $($activeStatus.activeTask.deviceState)" }
 
 $pauseBody = @{ command = 'pause'; taskId = $operationGuid } | ConvertTo-Json
-$paused = Invoke-RestMethod -Method Post -Uri "$mes/api/agvs/AGV-01/command" -ContentType 'application/json' -Body $pauseBody
+$paused = Invoke-RestMethod -Method Post -Uri "$mes/api/agvs/$encodedAgvId/command" -ContentType 'application/json' -Body $pauseBody
 if ($paused.state -ne 'paused') { throw "Adapter did not confirm pause: $($paused.state)" }
 $pausedTask = Invoke-RestMethod -Uri "$mes/api/tasks/$($task.id)"
 if ($pausedTask.task.status -ne 'Paused') { throw "MES did not record Paused: $($pausedTask.task.status)" }
@@ -173,7 +178,7 @@ $pausedActive = @(Get-FleetEntryForTask $pausedFleetStatus ([Guid]$task.id)) | S
 if ($null -eq $pausedActive -or $pausedActive.activeTask.mesStatus -ne 'Paused') { throw 'Fleet status did not record the paused MES task.' }
 
 $resumeBody = @{ command = 'resume'; taskId = $operationGuid } | ConvertTo-Json
-$resumed = Invoke-RestMethod -Method Post -Uri "$mes/api/agvs/AGV-01/command" -ContentType 'application/json' -Body $resumeBody
+$resumed = Invoke-RestMethod -Method Post -Uri "$mes/api/agvs/$encodedAgvId/command" -ContentType 'application/json' -Body $resumeBody
 if ($resumed.state -notin @('accepted', 'moving')) { throw "Adapter did not confirm resume: $($resumed.state)" }
 $resumedTask = Invoke-RestMethod -Uri "$mes/api/tasks/$($task.id)"
 if ($resumedTask.task.status -ne 'MovingToPickup') { throw "MES did not record resumed pickup: $($resumedTask.task.status)" }
@@ -181,15 +186,18 @@ $resumedFleetStatus = Invoke-RestMethod -Uri "$mes/api/agvs/fleet/status"
 $resumedActive = @(Get-FleetEntryForTask $resumedFleetStatus ([Guid]$task.id)) | Select-Object -First 1
 if ($null -eq $resumedActive -or $resumedActive.activeTask.mesStatus -ne 'MovingToPickup') { throw 'Fleet status did not restore the pickup leg after resume.' }
 
-Invoke-RestMethod -Method Post -Uri "$simulator/controls/arrive" | Out-Null
+Invoke-RestMethod -Method Post -Uri "$simulator/agvs/$encodedAgvId/controls/arrive" | Out-Null
 $arrived = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($task.id)/arrived"
 if ($arrived.status -ne 'WaitingPickupConfirmation') { throw "Unexpected pickup arrival status: $($arrived.status)" }
 
 $operatorBody = @{ operatorName = 'verify-local' } | ConvertTo-Json
 $pickup = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($task.id)/confirm-pickup" -ContentType 'application/json' -Body $operatorBody
 if ($pickup.status -ne 'MovingToDropoff') { throw "Unexpected dropoff status: $($pickup.status)" }
+$agvId = $pickup.activeAgvId
+if ([string]::IsNullOrWhiteSpace($agvId)) { throw 'MES did not return the AGV assigned to the dropoff operation.' }
+$encodedAgvId = [Uri]::EscapeDataString($agvId)
 
-Invoke-RestMethod -Method Post -Uri "$simulator/controls/arrive" | Out-Null
+Invoke-RestMethod -Method Post -Uri "$simulator/agvs/$encodedAgvId/controls/arrive" | Out-Null
 $arrivedAtDropoff = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($task.id)/arrived"
 if ($arrivedAtDropoff.status -ne 'WaitingDropoffConfirmation') { throw "Unexpected dropoff arrival status: $($arrivedAtDropoff.status)" }
 
