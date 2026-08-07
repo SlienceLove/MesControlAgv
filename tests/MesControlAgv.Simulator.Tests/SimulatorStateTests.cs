@@ -20,6 +20,22 @@ public class SimulatorStateTests
     }
 
     [Fact]
+    public void Timeout_unknown_does_not_create_a_device_task_until_retried()
+    {
+        var state = new SimulatorState();
+        var taskId = Guid.NewGuid();
+        state.ApplyControl("timeout-unknown");
+
+        Assert.Throws<TimeoutException>(() => state.Navigate(taskId, "SAMPLE_01"));
+        Assert.Null(state.GetTask(taskId));
+        Assert.Null(state.CurrentTaskId);
+
+        var retried = state.Navigate(taskId, "SAMPLE_01");
+        Assert.Equal("moving", retried.State);
+        Assert.Equal(taskId, state.CurrentTaskId);
+    }
+
+    [Fact]
     public void Cancelling_a_moving_task_stops_it_from_being_current()
     {
         var state = new SimulatorState();

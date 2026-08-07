@@ -1,5 +1,6 @@
 ﻿using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts.Workflows;
 
@@ -60,6 +61,47 @@ public sealed class WorkflowApiTests : IClassFixture<MesWebApplicationFactory>
         var replayResult = await replay.Content.ReadFromJsonAsync<WorkflowExecutionResult>();
         Assert.True(replayResult!.IsIdempotentReplay);
         Assert.Equal(accepted.ExecutionId, replayResult.ExecutionId);
+    }
+
+    [Fact]
+    public async Task Workflow_audit_endpoint_returns_read_only_lifecycle_events()
+    {
+        var definition = CreateValidWorkflow();
+        var create = await _client.PostAsJsonAsync("/api/workflows?actor=audit-test", definition);
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var draft = await create.Content.ReadFromJsonAsync<WorkflowVersion>();
+        Assert.NotNull(draft);
+
+        var validate = await _client.PostAsync(
+            $"/api/workflows/{draft!.WorkflowId}/versions/{draft.Version}/validate",
+            content: null);
+        Assert.Equal(HttpStatusCode.OK, validate.StatusCode);
+
+        var publish = await _client.PostAsync(
+            $"/api/workflows/{draft.WorkflowId}/versions/{draft.Version}/publish?actor=audit-test",
+            content: null);
+        Assert.Equal(HttpStatusCode.OK, publish.StatusCode);
+
+        var audits = await _client.GetAsync($"/api/workflows/{draft.WorkflowId}/audits");
+        Assert.Equal(HttpStatusCode.OK, audits.StatusCode);
+        using var document = JsonDocument.Parse(await audits.Content.ReadAsStringAsync());
+        var events = document.RootElement.EnumerateArray()
+            .Select(item => new
+            {
+                EventType = item.GetProperty("eventType").GetString(),
+                Outcome = item.GetProperty("outcome").GetString(),
+                Version = item.GetProperty("version").GetInt32(),
+                Actor = item.GetProperty("actor").GetString()
+            })
+            .ToList();
+        Assert.Equal(3, events.Count);
+        Assert.Equal(
+            new[] { "WorkflowDraftCreated", "WorkflowVersionValidated", "WorkflowVersionPublished" },
+            events.Select(item => item.EventType));
+        Assert.All(events, item => Assert.Equal(1, item.Version));
+        Assert.Equal("audit-test", events[0].Actor);
+        Assert.Equal("audit-test", events[2].Actor);
+        Assert.Equal("Published", events[2].Outcome);
     }
 
     private static WorkflowDefinition CreateValidWorkflow()

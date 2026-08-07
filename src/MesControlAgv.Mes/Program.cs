@@ -73,6 +73,37 @@ app.MapGet("/api/workflows/{workflowId:guid}/versions/{version:int}", async (
     return workflowVersion is null ? Results.NotFound() : Results.Ok(workflowVersion);
 });
 
+app.MapGet("/api/workflows/{workflowId:guid}/audits", async (
+    Guid workflowId,
+    MesDbContext database,
+    CancellationToken cancellationToken) =>
+{
+    var audits = await database.WorkflowAudits
+        .AsNoTracking()
+        .Where(audit => audit.WorkflowId == workflowId)
+        .OrderBy(audit => audit.OccurredAtUtc)
+        .ThenBy(audit => audit.Id)
+        .Select(audit => new
+        {
+            audit.Id,
+            audit.EventType,
+            audit.Outcome,
+            audit.Code,
+            audit.Reason,
+            audit.WorkflowId,
+            audit.Version,
+            audit.RequestId,
+            audit.ExecutionId,
+            audit.Actor,
+            audit.CorrelationId,
+            audit.DetailsJson,
+            audit.OccurredAtUtc
+        })
+        .ToListAsync(cancellationToken);
+
+    return Results.Ok(audits);
+});
+
 app.MapPost("/api/workflows", async (
     WorkflowDefinition definition,
     string actor,
