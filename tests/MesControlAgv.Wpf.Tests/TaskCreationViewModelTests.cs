@@ -61,6 +61,27 @@ public sealed class TaskCreationViewModelTests
     }
 
     [Fact]
+    public async Task Profile_station_catalog_change_invalidates_an_existing_route_preview()
+    {
+        var client = CreateClient();
+        using var viewModel = new MainViewModel(client);
+        await viewModel.RefreshAsync();
+        viewModel.NewTaskSourceStation = client.Stations.Single(station => station.Code == 2);
+        viewModel.NewTaskTargetStation = client.Stations.Single(station => station.Code == 4);
+        viewModel.PlanRouteCommand.Execute(null);
+        await WaitUntilAsync(() => viewModel.PlannedRoute is not null);
+
+        client.SetStations(
+            new DashboardStation(2, "Sample", "SAMPLE_RELOADED", true),
+            new DashboardStation(4, "Preparation", "ST_PREP_RELOADED", true));
+        await viewModel.RefreshAsync();
+
+        Assert.Null(viewModel.PlannedRoute);
+        Assert.Contains("预览", viewModel.RoutePreview, StringComparison.Ordinal);
+        Assert.False(viewModel.CreateTaskCommand.CanExecute(null));
+    }
+
+    [Fact]
     public async Task Create_task_is_disabled_when_no_stations_are_available()
     {
         var task = new DashboardTask(Guid.NewGuid(), 2, 4, "MovingToPickup", 0, null);
@@ -72,6 +93,54 @@ public sealed class TaskCreationViewModelTests
         Assert.False(viewModel.CreateTaskCommand.CanExecute(null));
         viewModel.CreateTaskCommand.Execute(null);
         Assert.Null(client.LastCreateRequest);
+    }
+
+    [Fact]
+    public async Task Task_list_uses_custom_profile_station_names_from_mes_catalog()
+    {
+        var task = new DashboardTask(Guid.NewGuid(), 101, 202, "Created", 0, null);
+        var client = new FakeMesClient([task]);
+        client.SetStations(
+            new DashboardStation(101, "Custom pickup", "CUSTOM_PICKUP", true),
+            new DashboardStation(202, "Custom dropoff", "CUSTOM_DROPOFF", true));
+        using var viewModel = new MainViewModel(client);
+
+        await viewModel.RefreshAsync();
+
+        Assert.Equal("Custom pickup", viewModel.SelectedTask?.SourceStationName);
+        Assert.Equal("Custom dropoff", viewModel.SelectedTask?.TargetStationName);
+        Assert.Equal("Custom pickup -> Custom dropoff", viewModel.SelectedTask?.RouteDescription);
+    }
+
+    [Fact]
+    public async Task Batch_submission_resolves_custom_station_name_and_agv_station_id_from_mes_catalog()
+    {
+        var task = new DashboardTask(Guid.NewGuid(), 101, 202, "Created", 0, null);
+        var client = new FakeMesClient([task]);
+        client.SetStations(
+            new DashboardStation(101, "Custom pickup", "CUSTOM_PICKUP", true),
+            new DashboardStation(202, "Custom dropoff", "CUSTOM_DROPOFF", true));
+        using var viewModel = new MainViewModel(client);
+        await viewModel.RefreshAsync();
+
+        var filePath = Path.Combine(Path.GetTempPath(), $"wpf-custom-stations-{Guid.NewGuid():N}.csv");
+        try
+        {
+            await File.WriteAllTextAsync(
+                filePath,
+                "TaskId,SourceStation,TargetStation,Priority\nCUSTOM-01,Custom pickup,CUSTOM_DROPOFF,9\n");
+
+            await viewModel.ImportBatchFileAsync(filePath);
+            viewModel.SubmitBatchCommand.Execute(null);
+
+            await WaitUntilAsync(() => client.LastCreateRequest is not null);
+            Assert.Equal((101, 202, 9, (string?)null, "CUSTOM-01"), client.LastCreateRequest);
+            Assert.Contains("Custom pickup", viewModel.SelectedTask?.RouteDescription, StringComparison.Ordinal);
+        }
+        finally
+        {
+            File.Delete(filePath);
+        }
     }
 
     [Fact]

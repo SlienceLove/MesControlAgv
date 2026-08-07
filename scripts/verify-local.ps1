@@ -1,10 +1,12 @@
 param(
     [int]$TimeoutSeconds = 30,
-    [string]$MesUrl = 'http://localhost:5045',
-    [string]$AdapterUrl = 'http://localhost:5041',
-    [string]$SimulatorUrl = 'http://localhost:5183',
+    [string]$MesUrl,
+    [string]$AdapterUrl,
+    [string]$SimulatorUrl,
     [string]$MesDatabasePath,
     [string]$AdapterDatabasePath,
+    [string]$StatePath,
+    [string]$RunId,
     [string]$IsolationLabel,
     [int]$SourceStationCode = 2,
     [int]$TargetStationCode = 4,
@@ -12,18 +14,88 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+
+function Resolve-StatePath {
+    param(
+        [string]$RequestedPath,
+        [string]$RequestedRunId
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($RequestedPath)) {
+        return [IO.Path]::GetFullPath($RequestedPath)
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($RequestedRunId)) {
+        $safeRunId = $RequestedRunId.Trim()
+        if ($safeRunId -notmatch '^[A-Za-z0-9._-]+$') {
+            throw 'RunId may contain only letters, digits, dot, underscore, and hyphen.'
+        }
+
+        return Join-Path ([IO.Path]::GetTempPath()) ("MesControlAgv-local-{0}-pids.json" -f $safeRunId)
+    }
+
+    return $null
+}
+
+function Get-StateService {
+    param(
+        [AllowNull()][object]$State,
+        [string]$ServiceName
+    )
+
+    if ($null -eq $State -or $null -eq $State.PSObject.Properties['Services']) {
+        return $null
+    }
+
+    @($State.Services | Where-Object { $_.Name -eq $ServiceName } | Select-Object -First 1)
+}
+
+$resolvedStatePath = Resolve-StatePath $StatePath $RunId
+$runState = $null
+if (-not [string]::IsNullOrWhiteSpace($resolvedStatePath)) {
+    if (-not (Test-Path -LiteralPath $resolvedStatePath -PathType Leaf)) {
+        throw "Local service state file was not found at '$resolvedStatePath'."
+    }
+
+    $runState = Get-Content -Raw -LiteralPath $resolvedStatePath | ConvertFrom-Json
+    if ($null -eq $runState) {
+        throw "Local service state file '$resolvedStatePath' is empty."
+    }
+
+    if ([string]::IsNullOrWhiteSpace($RunId) -and $null -ne $runState.PSObject.Properties['RunId']) {
+        $RunId = [string]$runState.RunId
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($RunId) -and $null -ne $runState.PSObject.Properties['RunId'] -and [string]$runState.RunId -ne $RunId) {
+        throw "State file run id '$($runState.RunId)' does not match requested run id '$RunId'."
+    }
+}
+
+$stateSimulator = Get-StateService $runState 'Simulator'
+$stateAdapter = Get-StateService $runState 'Adapter'
+$stateMes = Get-StateService $runState 'MES'
+if ([string]::IsNullOrWhiteSpace($SimulatorUrl) -and $null -ne $stateSimulator) { $SimulatorUrl = [string]$stateSimulator.Url }
+if ([string]::IsNullOrWhiteSpace($AdapterUrl) -and $null -ne $stateAdapter) { $AdapterUrl = [string]$stateAdapter.Url }
+if ([string]::IsNullOrWhiteSpace($MesUrl) -and $null -ne $stateMes) { $MesUrl = [string]$stateMes.Url }
+if ([string]::IsNullOrWhiteSpace($AdapterDatabasePath) -and $null -ne $stateAdapter) { $AdapterDatabasePath = [string]$stateAdapter.DatabasePath }
+if ([string]::IsNullOrWhiteSpace($MesDatabasePath) -and $null -ne $stateMes) { $MesDatabasePath = [string]$stateMes.DatabasePath }
+
+if ([string]::IsNullOrWhiteSpace($MesUrl)) { $MesUrl = 'http://localhost:5045' }
+if ([string]::IsNullOrWhiteSpace($AdapterUrl)) { $AdapterUrl = 'http://localhost:5041' }
+if ([string]::IsNullOrWhiteSpace($SimulatorUrl)) { $SimulatorUrl = 'http://localhost:5183' }
+
 $mes = $MesUrl.TrimEnd('/')
 $adapter = $AdapterUrl.TrimEnd('/')
 $simulator = $SimulatorUrl.TrimEnd('/')
 
 # This script verifies already-running services; it does not start or stop them.
-# For process-level checks, start MES and Adapter with fresh SQLite stores, for
-# example by setting ConnectionStrings__Mes and ConnectionStrings__Adapter, then
-# pass the same paths here and use -RequireIsolatedStores. This prevents a prior
-# active task in data/mes.db or data/adapter.db from affecting fleet correlation.
+# For process-level checks, start MES and Adapter with fresh SQLite stores (the
+# run-local script accepts database paths and supplies `Data Source=` connection
+# strings), then pass the same paths here and use -RequireIsolatedStores. This
+# prevents a prior active task in data/mes.db or data/adapter.db from affecting
+# fleet correlation.
 # Simulator state is in-memory, so use a freshly started simulator process/port
 # for the same run (there is no simulator database path to pass here).
-$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $defaultMesDatabasePaths = @(
     [IO.Path]::GetFullPath((Join-Path $repoRoot 'data\mes.db')),
     [IO.Path]::GetFullPath((Join-Path $repoRoot 'src\MesControlAgv.Mes\data\mes.db'))
@@ -154,6 +226,7 @@ if ($task.status -ne 'Created') { throw "Unexpected created status: $($task.stat
 
 $task = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($task.id)/dispatch"
 if ($task.status -ne 'MovingToPickup') { throw "Unexpected pickup dispatch status: $($task.status)" }
+if (@($task.activePath).Count -lt 2 -or @($task.activePath)[-1] -eq $null) { throw 'MES did not return a non-empty pickup execution path.' }
 
 $operationId = $task.activeDeviceTaskId
 if ([string]::IsNullOrWhiteSpace($operationId)) { throw 'MES did not return the active pickup operation ID.' }
@@ -193,9 +266,28 @@ if ($arrived.status -ne 'WaitingPickupConfirmation') { throw "Unexpected pickup 
 $operatorBody = @{ operatorName = 'verify-local' } | ConvertTo-Json
 $pickup = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($task.id)/confirm-pickup" -ContentType 'application/json' -Body $operatorBody
 if ($pickup.status -ne 'MovingToDropoff') { throw "Unexpected dropoff status: $($pickup.status)" }
+$operationId = $pickup.activeDeviceTaskId
+if ([string]::IsNullOrWhiteSpace($operationId)) { throw 'MES did not return the active dropoff operation ID.' }
+$operationGuid = [Guid]::Parse($operationId)
 $agvId = $pickup.activeAgvId
 if ([string]::IsNullOrWhiteSpace($agvId)) { throw 'MES did not return the AGV assigned to the dropoff operation.' }
 $encodedAgvId = [Uri]::EscapeDataString($agvId)
+
+$dropoffFleetStatus = Invoke-RestMethod -Uri "$mes/api/agvs/fleet/status"
+$dropoffActive = @(Get-FleetEntryForTask $dropoffFleetStatus ([Guid]$task.id)) | Select-Object -First 1
+if ($null -eq $dropoffActive -or $dropoffActive.activeTask.mesStatus -ne 'MovingToDropoff') { throw 'Fleet status did not record the active dropoff leg.' }
+
+$dropoffPauseBody = @{ command = 'pause'; taskId = $operationGuid } | ConvertTo-Json
+$dropoffPaused = Invoke-RestMethod -Method Post -Uri "$mes/api/agvs/$encodedAgvId/command" -ContentType 'application/json' -Body $dropoffPauseBody
+if ($dropoffPaused.state -ne 'paused') { throw "Adapter did not confirm dropoff pause: $($dropoffPaused.state)" }
+$dropoffPausedTask = Invoke-RestMethod -Uri "$mes/api/tasks/$($task.id)"
+if ($dropoffPausedTask.task.status -ne 'Paused') { throw "MES did not record dropoff Paused: $($dropoffPausedTask.task.status)" }
+
+$dropoffResumeBody = @{ command = 'resume'; taskId = $operationGuid } | ConvertTo-Json
+$dropoffResumed = Invoke-RestMethod -Method Post -Uri "$mes/api/agvs/$encodedAgvId/command" -ContentType 'application/json' -Body $dropoffResumeBody
+if ($dropoffResumed.state -notin @('accepted', 'moving')) { throw "Adapter did not confirm dropoff resume: $($dropoffResumed.state)" }
+$dropoffResumedTask = Invoke-RestMethod -Uri "$mes/api/tasks/$($task.id)"
+if ($dropoffResumedTask.task.status -ne 'MovingToDropoff') { throw "MES did not record resumed dropoff: $($dropoffResumedTask.task.status)" }
 
 Invoke-RestMethod -Method Post -Uri "$simulator/agvs/$encodedAgvId/controls/arrive" | Out-Null
 $arrivedAtDropoff = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($task.id)/arrived"
@@ -205,6 +297,10 @@ $completed = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($task.id)/con
 if ($completed.status -ne 'Completed') { throw "Unexpected terminal status: $($completed.status)" }
 
 $detail = Invoke-RestMethod -Uri "$mes/api/tasks/$($task.id)"
+if ($detail.task.status -ne 'Completed') { throw "Task detail did not record Completed: $($detail.task.status)" }
+$finalFleetStatus = Invoke-RestMethod -Uri "$mes/api/agvs/fleet/status"
+$remainingActive = @(Get-FleetEntryForTask $finalFleetStatus ([Guid]$task.id))
+if ($remainingActive.Count -gt 0) { throw 'Completed task still appears as an active fleet task.' }
 $eventTypes = @($detail.events | ForEach-Object { $_.eventType })
 foreach ($requiredEvent in @(
     'TaskCreated',
@@ -218,4 +314,5 @@ foreach ($requiredEvent in @(
     if ($eventTypes -notcontains $requiredEvent) { throw "Missing audit event: $requiredEvent" }
 }
 
-Write-Host "Live AGV transport verification passed for task $($task.id)."
+$runSuffix = if ([string]::IsNullOrWhiteSpace($RunId)) { '' } else { " (run $RunId)" }
+Write-Host "Local Simulator transport verification passed for task $($task.id)$runSuffix."

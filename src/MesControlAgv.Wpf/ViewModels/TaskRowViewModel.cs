@@ -1,4 +1,5 @@
 using MesControlAgv.Domain;
+using MesControlAgv.Wpf.Services;
 
 namespace MesControlAgv.Wpf.ViewModels;
 
@@ -13,10 +14,11 @@ public sealed record TaskRowViewModel(
     DateTime? EndedAt = null,
     string? ActiveAgvId = null,
     string? ActiveDeviceTaskId = null,
-    IReadOnlyList<string>? ActivePath = null)
+    IReadOnlyList<string>? ActivePath = null,
+    IReadOnlyList<DashboardStation>? StationCatalog = null)
 {
-    public string SourceStationName => GetStationName(SourceStationCode);
-    public string TargetStationName => GetStationName(TargetStationCode);
+    public string SourceStationName => GetStationName(SourceStationCode, StationCatalog);
+    public string TargetStationName => GetStationName(TargetStationCode, StationCatalog);
     public string RouteDescription => $"{SourceStationName} -> {TargetStationName}";
     public string CurrentPathDescription => ActivePath is { Count: > 0 }
         ? string.Join(" -> ", ActivePath)
@@ -46,7 +48,9 @@ public sealed record TaskRowViewModel(
             ? string.Empty
             : $"原因：{LastError}";
 
-    public static TaskRowViewModel From(Services.DashboardTask task) => new(
+    public static TaskRowViewModel From(
+        Services.DashboardTask task,
+        IReadOnlyList<DashboardStation>? stationCatalog = null) => new(
         task.Id,
         task.SourceStationCode,
         task.TargetStationCode,
@@ -57,10 +61,20 @@ public sealed record TaskRowViewModel(
         task.EndedAt,
         task.ActiveAgvId,
         task.ActiveDeviceTaskId,
-        task.ActivePath);
+        task.ActivePath,
+        stationCatalog);
 
-    private static string GetStationName(int code)
+    private static string GetStationName(int code, IReadOnlyList<DashboardStation>? stationCatalog)
     {
+        if (stationCatalog is not null)
+        {
+            var configured = stationCatalog.FirstOrDefault(station => station.Code == code);
+            return configured?.Name ?? $"未知站点({code})";
+        }
+
+        // Keep the legacy factory usable by isolated unit tests that do not
+        // provide a MES station catalog. Runtime rows are always created by
+        // MainViewModel with the catalog returned from /api/stations.
         try
         {
             return Stations.Get(code).Name;

@@ -17,6 +17,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly ControlCenterViewModel _modules;
     private readonly PeriodicTimer _timer = new(TimeSpan.FromSeconds(2));
     private readonly CancellationTokenSource _shutdown = new();
+    private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private CancellationTokenSource? _detailRefresh;
     private Task? _refreshLoop;
     private TaskRowViewModel? _selectedTask;
@@ -38,7 +39,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _operatorName = Environment.UserName;
     private DashboardPlannedPath? _plannedRoute;
     private string _routePreview = "\u8BF7\u9009\u62E9\u8D77\u70B9\u548C\u7EC8\u70B9\u540E\u9884\u89C8\u8DEF\u7EBF\u3002";
-    private bool _stationsLoaded;
+    private IReadOnlyList<DashboardStation> _stationCatalog = [];
+    private bool _isRefreshing;
+    private bool _isDataStale = true;
+    private DateTimeOffset? _lastRefreshAt;
 
     public MainViewModel(IMesClient mes, ISimulatorControlClient? simulator = null, ControlCenterModuleRegistry? moduleRegistry = null)
     {
@@ -154,6 +158,40 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             InvalidateRoutePreview();
         }
     }
+    public bool IsRefreshing
+    {
+        get => _isRefreshing;
+        private set
+        {
+            if (!SetField(ref _isRefreshing, value)) return;
+            OnPropertyChanged(nameof(RefreshStatus));
+        }
+    }
+    public bool IsDataStale
+    {
+        get => _isDataStale;
+        private set
+        {
+            if (!SetField(ref _isDataStale, value)) return;
+            OnPropertyChanged(nameof(RefreshStatus));
+        }
+    }
+    public DateTimeOffset? LastRefreshAt
+    {
+        get => _lastRefreshAt;
+        private set
+        {
+            if (!SetField(ref _lastRefreshAt, value)) return;
+            OnPropertyChanged(nameof(RefreshStatus));
+        }
+    }
+    public string RefreshStatus => IsRefreshing
+        ? "正在刷新控制中心数据..."
+        : IsDataStale
+            ? LastRefreshAt is null
+                ? "数据尚未成功刷新"
+                : $"数据可能已过期，最后成功刷新：{LastRefreshAt.Value.LocalDateTime:HH:mm:ss}"
+            : $"数据已更新：{LastRefreshAt?.LocalDateTime:HH:mm:ss}";
     public string AgvExecutionStatus
     {
         get => _agvExecutionStatus;
@@ -282,15 +320,21 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public async Task RefreshAsync(Guid? preferredTaskId = null)
     {
+        if (!await TryEnterRefreshAsync()) return;
+
+        IsRefreshing = true;
         try
         {
-            if (!_stationsLoaded) await LoadStationsAsync();
+            // Refresh the profile catalog with the task/fleet snapshot. A
+            // profile reload must invalidate a route preview instead of
+            // allowing a task to be created against stale station metadata.
+            await LoadStationsAsync();
             var tasks = await _mes.GetTasksAsync(CurrentTaskDate, _shutdown.Token);
             var fleetStatus = await _mes.GetAgvFleetStatusAsync(_shutdown.Token);
             await Kpi.RefreshAsync(_mes, CurrentTaskDate, _shutdown.Token);
             var selectedId = preferredTaskId ?? SelectedTask?.Id;
             Tasks.Clear();
-            foreach (var task in tasks) Tasks.Add(TaskRowViewModel.From(task));
+            foreach (var task in tasks) Tasks.Add(TaskRowViewModel.From(task, _stationCatalog));
             CancelPendingDetailRefresh();
             _suppressDetailRefresh = true;
             try
@@ -310,19 +354,47 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             AgvExecutionStatus = primaryStatus?.ActiveTask is not { } active
                 ? "\u65E0\u6D3B\u52A8\u8FD0\u8F93\u4EFB\u52A1"
                 : $"MES {active.MesStatus} / \u8BBE\u5907 {active.DeviceState ?? "\u672A\u77E5"} -> {active.TargetStationId ?? "-"}";
+            LastRefreshAt = DateTimeOffset.UtcNow;
+            IsDataStale = false;
         }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
         catch (Exception exception)
         {
             ConnectionStatus = "MES \u4E0D\u53EF\u7528";
             Message = exception.Message;
+            IsDataStale = true;
+        }
+        finally
+        {
+            IsRefreshing = false;
+            _refreshGate.Release();
         }
     }
 
     public async Task RefreshAgvAsync()
     {
-        var fleetStatus = await _mes.GetAgvFleetStatusAsync(_shutdown.Token);
-        UpdateAgvs(fleetStatus);
-        BatchStatus = $"AGV \u72B6\u6001\u5DF2\u5237\u65B0\uFF1A{fleetStatus.Count} \u53F0";
+        if (!await TryEnterRefreshAsync()) return;
+
+        IsRefreshing = true;
+        try
+        {
+            var fleetStatus = await _mes.GetAgvFleetStatusAsync(_shutdown.Token);
+            UpdateAgvs(fleetStatus);
+            BatchStatus = $"AGV \u72B6\u6001\u5DF2\u5237\u65B0\uFF1A{fleetStatus.Count} \u53F0";
+            LastRefreshAt = DateTimeOffset.UtcNow;
+            IsDataStale = false;
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
+        catch
+        {
+            IsDataStale = true;
+            throw;
+        }
+        finally
+        {
+            IsRefreshing = false;
+            _refreshGate.Release();
+        }
     }
 
     public Task ImportBatchFileAsync(string filePath)
@@ -357,7 +429,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
             try
             {
-                await _mes.CreateTaskAsync(source, target, task.Priority, task.Description, task.TaskId, _shutdown.Token);
+                await _mes.CreateTaskAsync(
+                    source,
+                    target,
+                    task.Priority,
+                    NormalizeOptionalText(task.Description),
+                    NormalizeOptionalText(task.TaskId),
+                    _shutdown.Token);
                 task.MarkSubmitted();
                 submitted++;
             }
@@ -373,13 +451,24 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         await RefreshAsync();
     }
 
-    private static bool TryResolveStationCode(string value, out int code)
+    private bool TryResolveStationCode(string value, out int code)
     {
-        if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out code)) return true;
+        var normalized = value.Trim();
+        if (int.TryParse(normalized, NumberStyles.Integer, CultureInfo.InvariantCulture, out code))
+        {
+            // When MES has returned a profile catalog, only enabled profile
+            // station codes are accepted. If an isolated unit test does not
+            // provide a catalog, retain the previous numeric-code behavior and
+            // let the MES API perform the final validation.
+            var parsedCode = code;
+            return _stationCatalog.Count == 0 || _stationCatalog.Any(station => station.Enabled && station.Code == parsedCode);
+        }
 
-        var station = Stations.All.FirstOrDefault(item =>
-            string.Equals(item.AgvStationId, value, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(item.Name, value, StringComparison.OrdinalIgnoreCase));
+        var station = _stationCatalog
+            .Where(item => item.Enabled)
+            .FirstOrDefault(item =>
+                string.Equals(item.AgvStationId, normalized, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(item.Name, normalized, StringComparison.OrdinalIgnoreCase));
         code = station?.Code ?? -1;
         return station is not null;
     }
@@ -425,15 +514,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         var sourceCode = NewTaskSourceStation?.Code;
         var targetCode = NewTaskTargetStation?.Code;
-        var stations = await _mes.GetStationsAsync(_shutdown.Token);
+        var stations = (await _mes.GetStationsAsync(_shutdown.Token)).ToList();
+        _stationCatalog = stations;
 
         AvailableStations.Clear();
         foreach (var station in stations.Where(station => station.Enabled).OrderBy(station => station.Code))
         {
             AvailableStations.Add(station);
         }
-        _stationsLoaded = true;
-
         NewTaskSourceStation = sourceCode is { } source
             ? AvailableStations.FirstOrDefault(station => station.Code == source)
             : null;
@@ -640,11 +728,25 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private void CancelPendingDetailRefresh() { _detailRefresh?.Cancel(); _detailRefresh?.Dispose(); _detailRefresh = null; }
 
+    private async Task<bool> TryEnterRefreshAsync()
+    {
+        try
+        {
+            await _refreshGate.WaitAsync(_shutdown.Token);
+            return true;
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
     public void Dispose()
     {
         _shutdown.Cancel();
         CancelPendingDetailRefresh();
         _timer.Dispose();
+        _refreshGate.Dispose();
         _shutdown.Dispose();
     }
 

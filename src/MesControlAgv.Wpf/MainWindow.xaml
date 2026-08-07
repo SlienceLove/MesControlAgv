@@ -35,6 +35,7 @@
                 <StackPanel>
                     <TextBlock Foreground="Gray" Text="MES 连接" />
                     <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding ConnectionStatus}" />
+                    <TextBlock Margin="0,4,0,0" Foreground="Gray" FontSize="11" TextWrapping="Wrap" Text="{Binding RefreshStatus}" />
                 </StackPanel>
             </Border>
             <Border Grid.Column="2" Margin="12,0,0,0" Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">

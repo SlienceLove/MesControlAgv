@@ -31,11 +31,24 @@ dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1
 dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
-The Release solution build passed on 2026-08-07 with 0 warnings and 0 errors, and all **172/172 tests passed**. Coverage includes dynamic station/task parameters, explicit create/dispatch separation, pause/resume state writeback, physical-mode command guards, fleet-status/task correlation, multi-AGV isolation, and the complete Simulator transport flow.
+The Release solution build passed on 2026-08-07 with 0 warnings and 0 errors, and all **190/190 tests passed**. Coverage now includes Profile/API station-catalog mapping for WPF task rows and batch submission, route-preview invalidation after a profile catalog change, serialized refresh state with stale-data reporting, dropoff pause/resume and final fleet-idle assertions in the local process verifier, and fail-closed physical preflight reasons without opening a device connection. The prior coverage of dynamic station/task parameters, explicit create/dispatch separation, pause/resume state writeback, physical-mode command guards, fleet-status/task correlation, multi-AGV isolation, and the complete Simulator transport flow remains green.
 
 ## Live verification
 
-The three service processes were started from the Release publish output on isolated local ports (`5361` Simulator, `5362` Adapter, `5363` MES) with fresh temporary MES/Adapter stores for process-level validation. Health checks and `scripts/verify-local.ps1` passed on 2026-08-07 for the default `2 -> 4` route and a configurable `2 -> 3` route: the script created a task, explicitly dispatched it, matched fleet status to the task's active operation, paused and resumed the assigned AGV with MES state writeback, simulated pickup/dropoff arrival, confirmed both operations, and observed `COMPLETED` with required audit events. The physical-robot run has not been completed.
+The three service processes were started from the Release output on isolated local ports (`5361/5362/5363` and a second run on `5371/5372/5373`) with fresh temporary MES/Adapter stores for process-level validation. Health checks and `scripts/verify-local.ps1` passed on 2026-08-07 for the default `2 -> 4` route and a configurable `2 -> 3` route: each run created a task, explicitly dispatched it, matched fleet status to the task's active operation, paused and resumed both transport legs with MES state writeback, simulated pickup/dropoff arrival, confirmed both operations, checked required audit events and `COMPLETED`, and confirmed the completed task left active fleet status. The physical-robot run has not been completed.
+
+## 2026-08-07 next-phase handoff
+
+The WPF task form no longer assumes the default `SAMPLE` catalog at runtime. It loads the complete station directory from MES and uses that directory for task-row names, batch-import code/name/AGV-ID resolution, and enabled-station validation. Refresh operations share a single-flight gate; the dashboard exposes whether the last successful snapshot is stale and when it was received. The local process scripts accept per-run URLs, isolated stores, run IDs and state paths, wait for health readiness, and stop only a matching PID/port instance. `docs/LOCAL-VERIFICATION.md` is the repeatable Simulator-only runbook.
+
+The next offline implementation order is:
+
+1. Bind route-preview validity to the station/profile snapshot and surface the difference between the nominal preview and the execution path returned after AGV assignment.
+2. Add explicit in-flight/confirmation semantics for pause, resume, cancel, retry and recover, including multi-AGV command-targeting and HTTP error-contract tests.
+3. Connect the WPF workflow editor to MES draft/validate/publish/version APIs, then add a dry-run execution entry point before wiring more workflow steps into transport dispatch.
+4. Extend process verification with failure, timeout, recovery, cancellation and restart-resume scenarios, then rehearse a Simulator-only publish/rollback package.
+
+The physical acceptance boundary remains separate and fail-closed: after the vehicle is powered and a fresh read-only preflight is authorized, compare the live map name/version/MD5, station catalog and directed edges with the profile, then confirm automatic mode, control ownership and safety gates. Until that evidence exists, keep `enableAutomaticDispatch=false` and do not connect or move the real AGV.
 
 The 2026-08-04 WPF Debug EXE verification also succeeded. The task-monitor refresh message, `每 2 秒从 MES 刷新`, is now fixed at the bottom of the monitoring layout in outer `Grid.Row="2"` and has hit testing disabled, so it no longer overlays the task list or prevents task clicks.
 
