@@ -333,6 +333,9 @@
                 </Grid.ColumnDefinitions>
                 <DataGrid Grid.Column="0" ItemsSource="{Binding Agvs}" SelectedItem="{Binding SelectedAgv}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single">
                     <DataGrid.Columns>
+                        <DataGridTextColumn Width="170" Header="MES 状态" Binding="{Binding MesTaskStatus}" />
+                        <DataGridTextColumn Width="110" Header="设备状态" Binding="{Binding DeviceState}" />
+                        <DataGridTextColumn Width="150" Header="目标站点" Binding="{Binding TargetStationId}" />
                         <DataGridTextColumn Width="140" Header="AGV ID" Binding="{Binding AgvId}" />
                         <DataGridTextColumn Width="100" Header="连接状态" Binding="{Binding OnlineText}" />
                         <DataGridTextColumn Width="120" Header="控制权" Binding="{Binding ControlOwner}" />
@@ -347,6 +350,13 @@
                         <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding SelectedAgv.AgvId}" />
                         <TextBlock Margin="0,8,0,0" Foreground="Gray" Text="当前任务" />
                         <TextBlock Text="{Binding SelectedAgv.CurrentTaskText}" TextWrapping="Wrap" />
+                        <TextBlock Margin="0,8,0,0" Foreground="Gray" Text="MES / 设备状态" />
+                        <TextBlock Text="{Binding SelectedAgv.MesTaskStatus}" TextWrapping="Wrap" />
+                        <TextBlock Margin="0,6,0,0" Text="{Binding SelectedAgv.DeviceState}" />
+                        <TextBlock Margin="0,8,0,0" Foreground="Gray" Text="目标 / 路径" />
+                        <TextBlock Text="{Binding SelectedAgv.TargetStationId}" />
+                        <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding SelectedAgv.ExecutionPath}" />
+                        <TextBlock Margin="0,6,0,0" Foreground="#B42318" TextWrapping="Wrap" Text="{Binding SelectedAgv.ExecutionError}" />
                         <TextBlock Margin="0,6,0,0" Foreground="Gray" Text="{Binding SelectedAgv.CapabilitySummary}" TextWrapping="Wrap" />
                         <Button Margin="0,18,0,0" MinHeight="34" Command="{Binding PauseAgvCommand}" Content="暂停当前任务" />
                         <Button Margin="0,8,0,0" MinHeight="34" Command="{Binding ResumeAgvCommand}" Content="恢复当前任务" />

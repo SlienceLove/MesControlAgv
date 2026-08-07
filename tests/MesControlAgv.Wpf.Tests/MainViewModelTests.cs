@@ -124,6 +124,10 @@ public class MainViewModelTests
         Assert.Contains("MovingToPickup", viewModel.AgvExecutionStatus, StringComparison.Ordinal);
         Assert.Contains("moving", viewModel.AgvExecutionStatus, StringComparison.Ordinal);
         Assert.Contains("ST_PREP_01", viewModel.AgvExecutionStatus, StringComparison.Ordinal);
+        Assert.Equal("MovingToPickup", viewModel.SelectedAgv?.MesTaskStatus);
+        Assert.Equal("moving", viewModel.SelectedAgv?.DeviceState);
+        Assert.Equal("ST_PREP_01", viewModel.SelectedAgv?.TargetStationId);
+        Assert.Contains("ST_PREP_01", viewModel.SelectedAgv?.ExecutionPath, StringComparison.Ordinal);
     }
 
     [Fact]

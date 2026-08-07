@@ -5,18 +5,35 @@ using MesControlAgv.Wpf.Services;
 
 namespace MesControlAgv.Wpf.ViewModels;
 
-public sealed class AgvRowViewModel(AgvDashboardSnapshot snapshot) : INotifyPropertyChanged
+public sealed class AgvRowViewModel : INotifyPropertyChanged
 {
-    private AgvDashboardSnapshot _snapshot = snapshot;
+    private AgvFleetDashboardStatus _status;
 
-    public string AgvId => _snapshot.AgvId;
-    public bool Online => _snapshot.Online;
+    public AgvRowViewModel(AgvDashboardSnapshot snapshot)
+        : this(new AgvFleetDashboardStatus(snapshot, null))
+    {
+    }
+
+    public AgvRowViewModel(AgvFleetDashboardStatus status) => _status = status;
+
+    private AgvDashboardSnapshot Snapshot => _status.Snapshot;
+    private AgvActiveTaskStatus? ActiveTask => _status.ActiveTask;
+
+    public string AgvId => Snapshot.AgvId;
+    public bool Online => Snapshot.Online;
     public string OnlineText => Online ? "\u5728\u7EBF" : "\u79BB\u7EBF";
-    public string ControlOwner => string.IsNullOrWhiteSpace(_snapshot.ControlOwner) ? "-" : _snapshot.ControlOwner;
-    public string CurrentStationId => _snapshot.CurrentStationId ?? "-";
-    public Guid? CurrentTaskId => _snapshot.CurrentTaskId;
+    public string ControlOwner => string.IsNullOrWhiteSpace(Snapshot.ControlOwner) ? "-" : Snapshot.ControlOwner;
+    public string CurrentStationId => Snapshot.CurrentStationId ?? "-";
+    public Guid? CurrentTaskId => Snapshot.CurrentTaskId;
     public string CurrentTaskText => CurrentTaskId?.ToString() ?? "\u7A7A\u95F2";
-    public AgvCapabilitiesResponse Capabilities => _snapshot.Capabilities ?? AgvCapabilitiesResponse.Standard;
+    public string MesTaskStatus => ActiveTask?.MesStatus ?? "\u65E0 MES \u6D3B\u52A8\u4EFB\u52A1";
+    public string DeviceState => ActiveTask?.DeviceState ?? "-";
+    public string TargetStationId => ActiveTask?.TargetStationId ?? "-";
+    public string ExecutionPath => ActiveTask?.Path is { Count: > 0 } path
+        ? string.Join(" -> ", path)
+        : "-";
+    public string ExecutionError => ActiveTask?.LastError ?? string.Empty;
+    public AgvCapabilitiesResponse Capabilities => Snapshot.Capabilities ?? AgvCapabilitiesResponse.Standard;
     public bool SupportsPause => Capabilities.SupportsPause;
     public bool SupportsResume => Capabilities.SupportsResume;
     public bool SupportsCancel => Capabilities.SupportsCancel;
@@ -41,9 +58,11 @@ public sealed class AgvRowViewModel(AgvDashboardSnapshot snapshot) : INotifyProp
         _ => false
     };
 
-    public void Update(AgvDashboardSnapshot snapshot)
+    public void Update(AgvDashboardSnapshot snapshot) => Update(new AgvFleetDashboardStatus(snapshot, null));
+
+    public void Update(AgvFleetDashboardStatus status)
     {
-        _snapshot = snapshot;
+        _status = status;
         OnPropertyChanged(string.Empty);
     }
 

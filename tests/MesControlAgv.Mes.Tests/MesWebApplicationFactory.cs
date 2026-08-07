@@ -23,7 +23,10 @@ public sealed class MesWebApplicationFactory : WebApplicationFactory<Program>
             services.RemoveAll<MesDbContext>();
             services.RemoveAll<IAgvGateway>();
             services.AddDbContext<MesDbContext>(options => options.UseSqlite($"Data Source={_databasePath}"));
-            services.AddScoped<IAgvGateway, TestAdapterClient>();
+            // Keep the adapter's current operation id across the create/dispatch
+            // request and the subsequent fleet-status request.  This gives API
+            // tests the same deterministic correlation signal as a real Adapter.
+            services.AddSingleton<IAgvGateway, TestAdapterClient>();
         });
     }
 }

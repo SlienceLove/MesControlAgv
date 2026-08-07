@@ -287,7 +287,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             if (!_stationsLoaded) await LoadStationsAsync();
             var tasks = await _mes.GetTasksAsync(CurrentTaskDate, _shutdown.Token);
             var fleetStatus = await _mes.GetAgvFleetStatusAsync(_shutdown.Token);
-            var fleet = fleetStatus.Select(item => item.Snapshot).ToList();
             await Kpi.RefreshAsync(_mes, CurrentTaskDate, _shutdown.Token);
             var selectedId = preferredTaskId ?? SelectedTask?.Id;
             Tasks.Clear();
@@ -302,9 +301,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             }
             finally { _suppressDetailRefresh = false; }
             await LoadTaskDetailAsync(SelectedTask?.Id, _shutdown.Token);
-            UpdateAgvs(fleet);
+            UpdateAgvs(fleetStatus);
             ConnectionStatus = "MES \u5DF2\u8FDE\u63A5";
-            var primary = fleet.FirstOrDefault();
+            var primary = fleetStatus.FirstOrDefault()?.Snapshot;
             AgvStatus = primary is null ? "\u65E0 AGV \u6570\u636E" : primary.Online ? $"\u5728\u7EBF / {primary.ControlOwner}" : "\u79BB\u7EBF";
             AgvStation = primary?.CurrentStationId ?? "-";
             var primaryStatus = fleetStatus.FirstOrDefault();
@@ -322,9 +321,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public async Task RefreshAgvAsync()
     {
         var fleetStatus = await _mes.GetAgvFleetStatusAsync(_shutdown.Token);
-        var fleet = fleetStatus.Select(item => item.Snapshot).ToList();
-        UpdateAgvs(fleet);
-        BatchStatus = $"AGV \u72B6\u6001\u5DF2\u5237\u65B0\uFF1A{fleet.Count} \u53F0";
+        UpdateAgvs(fleetStatus);
+        BatchStatus = $"AGV \u72B6\u6001\u5DF2\u5237\u65B0\uFF1A{fleetStatus.Count} \u53F0";
     }
 
     public Task ImportBatchFileAsync(string filePath)
@@ -398,16 +396,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         RefreshBatchCommandState();
     }
 
-    private void UpdateAgvs(IReadOnlyList<AgvDashboardSnapshot> snapshots)
+    private void UpdateAgvs(IReadOnlyList<AgvFleetDashboardStatus> statuses)
     {
         var selectedId = SelectedAgv?.AgvId;
         var byId = Agvs.ToDictionary(row => row.AgvId, StringComparer.Ordinal);
-        foreach (var snapshot in snapshots)
+        foreach (var status in statuses)
         {
-            if (byId.TryGetValue(snapshot.AgvId, out var row)) row.Update(snapshot);
-            else Agvs.Add(new AgvRowViewModel(snapshot));
+            if (byId.TryGetValue(status.Snapshot.AgvId, out var row)) row.Update(status);
+            else Agvs.Add(new AgvRowViewModel(status));
         }
-        foreach (var row in Agvs.Where(row => snapshots.All(snapshot => snapshot.AgvId != row.AgvId)).ToList()) Agvs.Remove(row);
+        foreach (var row in Agvs.Where(row => statuses.All(status => status.Snapshot.AgvId != row.AgvId)).ToList()) Agvs.Remove(row);
         SelectedAgv = Agvs.FirstOrDefault(row => row.AgvId == selectedId) ?? Agvs.FirstOrDefault();
         RefreshAgvCommandState();
     }

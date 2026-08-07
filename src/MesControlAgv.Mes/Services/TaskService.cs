@@ -218,8 +218,16 @@ public sealed class TaskService : ITaskApplicationService
         var results = new List<AgvFleetStatusResponse>(snapshots.Count);
         foreach (var snapshot in snapshots)
         {
-            var task = activeTasks.FirstOrDefault(candidate =>
-                StringComparer.Ordinal.Equals(candidate.ActiveAgvId, snapshot.AgvId));
+            // A single AGV can have more than one stale MES row after a restart,
+            // timeout, or recovery race.  The device snapshot is the strongest
+            // correlation signal: CurrentTaskId is the operation id currently
+            // reported by the Adapter (not the MES transport task id).
+            var agvTasks = activeTasks
+                .Where(candidate => StringComparer.Ordinal.Equals(candidate.ActiveAgvId, snapshot.AgvId))
+                .ToList();
+            var task = snapshot.CurrentTaskId is { } currentOperationId
+                ? agvTasks.FirstOrDefault(candidate => GetActiveOperationId(candidate) == currentOperationId)
+                : agvTasks.Count == 1 ? agvTasks[0] : null;
             if (task is null)
             {
                 results.Add(new AgvFleetStatusResponse(snapshot, null));
