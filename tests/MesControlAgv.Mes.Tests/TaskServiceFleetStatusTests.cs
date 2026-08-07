@@ -87,6 +87,49 @@ public sealed class TaskServiceFleetStatusTests
         Assert.Null(status.ActiveTask);
     }
 
+    [Fact]
+    public async Task Fleet_status_correlates_each_active_task_to_its_own_agv()
+    {
+        var adapter = new FleetStatusAdapter();
+        var service = CreateService(adapter);
+
+        var first = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        adapter.AgvByOperation[TransportOperationIds.Pickup(first.Id)] = "AGV-01";
+        var firstDispatched = await service.DispatchAsync(first.Id, CancellationToken.None);
+        var second = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        adapter.AgvByOperation[TransportOperationIds.Pickup(second.Id)] = "AGV-02";
+        var secondDispatched = await service.DispatchAsync(second.Id, CancellationToken.None);
+
+        adapter.Snapshots =
+        [
+            new AgvSnapshotResponse(
+                Online: true,
+                ControlOwner: "adapter",
+                CurrentStationId: "CHARGE_01",
+                CurrentTaskId: TransportOperationIds.Pickup(first.Id),
+                AgvId: "AGV-01"),
+            new AgvSnapshotResponse(
+                Online: true,
+                ControlOwner: "adapter",
+                CurrentStationId: "CHARGE_01",
+                CurrentTaskId: TransportOperationIds.Pickup(second.Id),
+                AgvId: "AGV-02")
+        ];
+
+        var statuses = await service.GetFleetStatusAsync(CancellationToken.None);
+
+        Assert.Equal(2, statuses.Count);
+        var firstStatus = Assert.Single(statuses, status => status.Snapshot.AgvId == "AGV-01");
+        var secondStatus = Assert.Single(statuses, status => status.Snapshot.AgvId == "AGV-02");
+        Assert.Equal(first.Id, firstStatus.ActiveTask?.TransportTaskId);
+        Assert.Equal(second.Id, secondStatus.ActiveTask?.TransportTaskId);
+        Assert.Equal("MovingToPickup", firstStatus.ActiveTask?.MesStatus);
+        Assert.Equal("MovingToPickup", secondStatus.ActiveTask?.MesStatus);
+        Assert.NotEqual(firstStatus.ActiveTask?.TransportTaskId, secondStatus.ActiveTask?.TransportTaskId);
+        Assert.Equal("AGV-01", firstDispatched.ActiveAgvId);
+        Assert.Equal("AGV-02", secondDispatched.ActiveAgvId);
+    }
+
     private static TaskService CreateService(FleetStatusAdapter adapter)
     {
         var options = new DbContextOptionsBuilder<MesDbContext>()
@@ -102,17 +145,22 @@ public sealed class TaskServiceFleetStatusTests
             new AgvSnapshotResponse(true, "adapter", null, null, "AGV-01")
         ];
 
+        public Dictionary<Guid, string> AgvByOperation { get; } = [];
+
         public Task<AgvTaskResponse> DispatchAsync(
             Guid operationId,
             string targetStationId,
-            CancellationToken cancellationToken) =>
-            Task.FromResult(new AgvTaskResponse(
+            CancellationToken cancellationToken)
+        {
+            var agvId = AgvByOperation.GetValueOrDefault(operationId, "AGV-01");
+            return Task.FromResult(new AgvTaskResponse(
                 operationId,
                 operationId.ToString("N"),
                 targetStationId,
                 "moving",
                 null,
-                "AGV-01"));
+                agvId));
+        }
 
         public Task<AgvTaskResponse?> GetTaskAsync(Guid operationId, CancellationToken cancellationToken) =>
             Task.FromResult<AgvTaskResponse?>(new AgvTaskResponse(
@@ -121,7 +169,7 @@ public sealed class TaskServiceFleetStatusTests
                 "SAMPLE_01",
                 "moving",
                 null,
-                "AGV-01"));
+                AgvByOperation.GetValueOrDefault(operationId, "AGV-01")));
 
         public Task<AgvTaskResponse?> CancelAsync(Guid operationId, CancellationToken cancellationToken) =>
             Task.FromResult<AgvTaskResponse?>(null);

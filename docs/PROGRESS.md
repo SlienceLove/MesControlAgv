@@ -1,6 +1,6 @@
 # AGV MES MVP Progress
 
-Last updated: 2026-08-06
+Last updated: 2026-08-07
 
 ## Current status
 
@@ -31,11 +31,11 @@ dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1
 dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
-The Release solution build passed on 2026-08-06 with 0 warnings and 0 errors, and all 158 tests passed: Domain 19, MES 32, Adapter 57, WPF 29, E2E 8, Simulator 4, and Workflow Contract 9. Coverage includes dynamic station/task parameters, explicit create/dispatch separation, pause/resume state writeback, physical-mode command guards, and the complete Simulator transport flow.
+The Release solution build passed on 2026-08-07 with 0 warnings and 0 errors, and all **172/172 tests passed**. Coverage includes dynamic station/task parameters, explicit create/dispatch separation, pause/resume state writeback, physical-mode command guards, fleet-status/task correlation, multi-AGV isolation, and the complete Simulator transport flow.
 
 ## Live verification
 
-The three service processes were started from the Release publish output on isolated local ports for process-level validation. Health checks and `scripts/verify-local.ps1` passed on 2026-08-06: the script created a task, explicitly dispatched it, paused and resumed the Adapter operation with MES state writeback, simulated pickup/dropoff arrival, confirmed both operations, and observed `COMPLETED` with required audit events. The physical-robot run has not been completed.
+The three service processes were started from the Release publish output on isolated local ports (`5361` Simulator, `5362` Adapter, `5363` MES) with fresh temporary MES/Adapter stores for process-level validation. Health checks and `scripts/verify-local.ps1` passed on 2026-08-07 for the default `2 -> 4` route and a configurable `2 -> 3` route: the script created a task, explicitly dispatched it, matched fleet status to the task's active operation, paused and resumed the assigned AGV with MES state writeback, simulated pickup/dropoff arrival, confirmed both operations, and observed `COMPLETED` with required audit events. The physical-robot run has not been completed.
 
 The 2026-08-04 WPF Debug EXE verification also succeeded. The task-monitor refresh message, `每 2 秒从 MES 刷新`, is now fixed at the bottom of the monitoring layout in outer `Grid.Row="2"` and has hit testing disabled, so it no longer overlays the task list or prevents task clicks.
 
@@ -462,3 +462,14 @@ No physical AGV was connected, commanded, or moved during this verification. Exi
 - 当前 physical-acceptance API、MES/WPF 接入脚手架在最新本地改动后仍未完成全量验证，不得部署或用于实车。详见 `docs/physical-acceptance/2026-08-06-pause-checkpoint.md`。
 
 本 checkpoint 仅更新文档；未执行 `commit`、`push`、`reset`、`clean`，也未在断电后连接、控制或移动实体 AGV。
+
+## 2026-08-07 WPF fleet status and configurable offline loop (pushed)
+
+- `448c85c` 将 WPF `AGV 通讯与调度` 页面接入 `/api/agvs/fleet/status`，每行展示 MES 任务状态、设备状态、目标站点、执行路径和错误；`MainViewModel.UpdateAgvs` 现在消费完整 fleet status，而不是只显示基础 AGV 快照。
+- 同一提交修复了历史活动任务误关联：MES fleet status 优先按 Simulator snapshot 的 `CurrentTaskId` 与当前 transport operation 精确匹配，无法确认时不静默选择旧任务。新增的 MES/WPF 回归覆盖了派发、暂停、恢复状态对账。
+- `0aa94ef` 将 `scripts/verify-local.ps1` 的路线改为 `-SourceStationCode` / `-TargetStationCode` 参数，并跟随 MES 返回的 `activeAgvId` 发送暂停、恢复和到站控制；进程校验要求临时 MES/Adapter SQLite 存储，避免历史活动任务污染结果。
+- 备用端口隔离进程验证已通过：Simulator `5361`、Adapter `5362`、MES `5363`。默认 `2 -> 4` 与可配置 `2 -> 3` 路线均完成创建、派发、fleet 状态对账、暂停、恢复、取货/卸货到站确认并达到 `COMPLETED`。
+- 新增 WPF 状态化回归覆盖动态创建、显式派发、暂停、恢复、两次到站、人工取货/放货确认和完成；MES 回归补充多 AGV 独立对账及取货后按卸货 operation 取消。
+- 最新 Release solution build 为 0 warnings、0 errors；Release 全量测试 **172/172 通过**（Domain 19、MES 38、Adapter 57、WPF 36、E2E 9、Simulator 4、Workflow Contract 9）。本轮仍只使用 Simulator，未连接、控制或移动实体 AGV。
+
+真实 AGV 继续保持 **NO-GO**：车辆断电，断电前地图 MD5、`manualBlock=true` 和自动模式 `unknown` 均为历史/未确认信息。下一次现场工作必须在隔离和明确授权后，从重新通电的只读预检开始，并重新比对地图、站点、直接有向边、自动模式和控制权；这些现场条件不阻塞当前离线 WPF 调度开发。

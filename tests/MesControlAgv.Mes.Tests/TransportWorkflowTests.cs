@@ -220,6 +220,23 @@ public class TransportWorkflowTests
     }
 
     [Fact]
+    public async Task Cancellation_after_pickup_uses_the_active_dropoff_operation()
+    {
+        var adapter = new FakeAdapterClient { CancelState = "cancelled" };
+        var service = CreateService(adapter);
+        var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        await service.DispatchAsync(task.Id, CancellationToken.None);
+        await service.RecordArrivalAsync(task.Id, CancellationToken.None);
+        var movingToDropoff = await service.ConfirmPickupAsync(task.Id, "operator", CancellationToken.None);
+
+        var cancelled = await service.CancelAsync(task.Id, "operator", CancellationToken.None);
+
+        Assert.Equal("MovingToDropoff", movingToDropoff.Status);
+        Assert.Equal("Cancelled", cancelled.Status);
+        Assert.Equal([TransportOperationIds.Dropoff(task.Id)], adapter.CancelOperationIds);
+    }
+
+    [Fact]
     public async Task Confirmed_pause_is_written_back_to_the_transport_task_and_audit_log()
     {
         var service = CreateService(new FakeAdapterClient());
@@ -379,6 +396,7 @@ internal sealed class FakeAdapterClient : IAgvGateway
     public AgvTaskResponse? Reconciled { get; set; }
     public string? CancelState { get; set; }
     public string? CancelError { get; set; }
+    public List<Guid> CancelOperationIds { get; } = [];
     public bool ThrowTimeout { get; set; }
     public Exception? DispatchException { get; set; }
     public bool ThrowGetHttpRequest { get; set; }
@@ -410,10 +428,13 @@ internal sealed class FakeAdapterClient : IAgvGateway
         return Task.FromResult(Reconciled);
     }
 
-    public Task<AgvTaskResponse?> CancelAsync(Guid operationId, CancellationToken cancellationToken) =>
-        Task.FromResult<AgvTaskResponse?>(CancelState is null
+    public Task<AgvTaskResponse?> CancelAsync(Guid operationId, CancellationToken cancellationToken)
+    {
+        CancelOperationIds.Add(operationId);
+        return Task.FromResult<AgvTaskResponse?>(CancelState is null
             ? null
             : new AgvTaskResponse(operationId, operationId.ToString("N"), "SAMPLE_01", CancelState, CancelError));
+    }
     public Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken) => Task.FromResult(new AgvSnapshotResponse(true, "adapter", null, null));
 
     public Task<AgvTaskResponse?> ExecuteAgvCommandAsync(

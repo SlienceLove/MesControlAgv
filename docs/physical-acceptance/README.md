@@ -80,5 +80,20 @@ dotnet test tests/MesControlAgv.Domain.Tests/MesControlAgv.Domain.Tests.csproj `
   -c Release --no-restore -p:UseSharedCompilation=false -m:1
 ```
 
+The 2026-08-07 WPF/Simulator dispatch loop was also verified offline from
+isolated Release processes: Simulator `5361`, Adapter `5362`, and MES `5363`,
+with temporary MES and Adapter SQLite stores. `scripts/verify-local.ps1` accepts
+`-SourceStationCode` and `-TargetStationCode` instead of assuming one fixed
+route, follows the AGV returned by MES, and verifies create, dispatch,
+fleet-status correlation, pause/resume, arrival confirmations, and
+`COMPLETED`. The default `2 -> 4` route and a configurable `2 -> 3` route both
+passed. Use `-RequireIsolatedStores` together with temporary database paths when
+running a process-level check; do not reuse a live development database.
+
+This verification is Simulator-only. The physical vehicle remains powered off
+and **NO-GO**. The historical map snapshot, `manualBlock=true`, and unknown
+automatic mode cannot authorize a dispatch. After a future authorized power-on,
+start with a new read-only preflight and map/station/directed-edge comparison.
+
 Do not start Adapter with this template while the AGV is unapproved, powered
 off, or outside an approved physical acceptance window.
