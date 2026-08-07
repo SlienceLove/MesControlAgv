@@ -125,7 +125,7 @@ New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
 .\scripts\stop-local.ps1 -RunId $runId
 ```
 
-Do not reuse development databases or use a physical-acceptance profile for process verification. See [Local Simulator verification](docs/LOCAL-VERIFICATION.md) and [WPF UI Automation verification](docs/WPF-UIA-VERIFICATION.md).
+Do not reuse development databases or use a physical-acceptance profile for process verification. See [Local Simulator verification](docs/LOCAL-VERIFICATION.md).
 
 ## Verification Matrix
 
@@ -148,7 +148,6 @@ The Adapter includes a configurable vendor TCP driver, but Simulator is the defa
 ## Documentation
 
 - [Local isolated-process verification](docs/LOCAL-VERIFICATION.md)
-- [WPF UI Automation offline verification](docs/WPF-UIA-VERIFICATION.md)
 - [Vendor TCP Adapter](docs/AGV-TCP-ADAPTER.md)
 - [Physical acceptance boundary](docs/physical-acceptance/README.md)
 - [Progress and handoff](docs/PROGRESS.md)

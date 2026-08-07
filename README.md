@@ -141,7 +141,7 @@ New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
 .\scripts\stop-local.ps1 -RunId $runId
 ```
 
-不要在进程级验证中复用开发数据库，也不要用物理验收 profile。完整场景说明见 [本地隔离进程验证](docs/LOCAL-VERIFICATION.md)；WPF UI Automation 说明见 [WPF 离线验证](docs/WPF-UIA-VERIFICATION.md)。
+不要在进程级验证中复用开发数据库，也不要用物理验收 profile。完整场景说明见 [本地隔离进程验证](docs/LOCAL-VERIFICATION.md)。
 
 ## 验证场景
 
@@ -193,7 +193,6 @@ Adapter 已提供配置选择的厂商 TCP 驱动，覆盖帧格式、控制权�
 ## 文档导航
 
 - [本地隔离进程验证](docs/LOCAL-VERIFICATION.md)
-- [WPF UI Automation 离线验证](docs/WPF-UIA-VERIFICATION.md)
 - [真实 AGV TCP Adapter](docs/AGV-TCP-ADAPTER.md)
 - [物理验收边界](docs/physical-acceptance/README.md)
 - [项目进度与交接记录](docs/PROGRESS.md)
