@@ -1,25 +1,45 @@
-using MesControlAgv.Mes.Services;
+﻿using MesControlAgv.Application;
+using MesControlAgv.Contracts;
 
 namespace MesControlAgv.Mes.Tests;
 
-public sealed class TestAdapterClient : IAdapterClient
+public sealed class TestAdapterClient : IAgvGateway, IFleetAwareAgvGateway
 {
-    public Task<AdapterTask> DispatchAsync(Guid operationId, string targetStationId, CancellationToken cancellationToken) =>
-        Task.FromResult(new AdapterTask(operationId, operationId.ToString("N"), targetStationId, "moving", null));
+    private Guid? _currentTaskId;
 
-    public Task<AdapterTask?> GetTaskAsync(Guid operationId, CancellationToken cancellationToken) =>
-        Task.FromResult<AdapterTask?>(null);
+    public Task<AgvTaskResponse> DispatchAsync(Guid operationId, string targetStationId, CancellationToken cancellationToken) =>
+        DispatchCoreAsync(operationId, targetStationId);
 
-    public Task<AdapterTask?> CancelAsync(Guid operationId, CancellationToken cancellationToken) =>
-        Task.FromResult<AdapterTask?>(null);
+    private Task<AgvTaskResponse> DispatchCoreAsync(Guid operationId, string targetStationId)
+    {
+        _currentTaskId = operationId;
+        return Task.FromResult(new AgvTaskResponse(operationId, operationId.ToString("N"), targetStationId, "moving", null));
+    }
 
-    public Task<AdapterSnapshot> GetSnapshotAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(new AdapterSnapshot(true, "adapter", "CHARGE_01", null));
+    public Task<AgvTaskResponse?> GetTaskAsync(Guid operationId, CancellationToken cancellationToken) =>
+        Task.FromResult<AgvTaskResponse?>(new AgvTaskResponse(
+            operationId,
+            operationId.ToString("N"),
+            "SAMPLE_01",
+            "moving",
+            null));
 
-    public Task<AdapterTask?> ExecuteAgvCommandAsync(
+    public Task<AgvTaskResponse?> CancelAsync(Guid operationId, CancellationToken cancellationToken) =>
+        Task.FromResult<AgvTaskResponse?>(null);
+
+    public Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(new AgvSnapshotResponse(true, "adapter", "CHARGE_01", _currentTaskId));
+
+    public Task<IReadOnlyList<AgvSnapshotResponse>> GetFleetSnapshotAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<AgvSnapshotResponse>>(
+        [new AgvSnapshotResponse(true, "adapter", "CHARGE_01", _currentTaskId)]);
+
+    public Task<AgvTaskResponse?> ExecuteAgvCommandAsync(
         string agvId,
         string command,
         Guid? taskId,
         CancellationToken cancellationToken) =>
-        Task.FromResult<AdapterTask?>(null);
+        Task.FromResult<AgvTaskResponse?>(null);
 }
+
+

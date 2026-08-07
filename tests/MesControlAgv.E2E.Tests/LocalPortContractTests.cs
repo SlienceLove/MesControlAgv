@@ -27,8 +27,38 @@ public sealed class LocalPortContractTests
         Assert.Contains("http://localhost:5183/", File.ReadAllText(Path.Combine(root, "src", "MesControlAgv.Adapter", "Program.cs")));
         Assert.Contains("http://localhost:5045/", File.ReadAllText(Path.Combine(root, "src", "MesControlAgv.Wpf", "App.xaml.cs")));
         var launcher = File.ReadAllText(Path.Combine(root, "scripts", "run-local.ps1"));
-        Assert.Contains("Adapter:   http://localhost:5041", launcher);
-        Assert.Contains("MES:       http://localhost:5045", launcher);
+        var stopper = File.ReadAllText(Path.Combine(root, "scripts", "stop-local.ps1"));
+        var verifier = File.ReadAllText(Path.Combine(root, "scripts", "verify-local.ps1"));
+
+        Assert.Contains("SimulatorUrl", launcher);
+        Assert.Contains("AdapterUrl", launcher);
+        Assert.Contains("MesUrl", launcher);
+        Assert.Contains("MesDatabasePath", launcher);
+        Assert.Contains("AdapterDatabasePath", launcher);
+        Assert.Contains("StatePath", launcher);
+        Assert.Contains("RunId", launcher);
+        Assert.Contains("Wait-Health", launcher);
+        Assert.Contains("ConnectionStrings__Mes", launcher);
+        Assert.Contains("ConnectionStrings__Adapter", launcher);
+
+        Assert.Contains("StatePath", stopper);
+        Assert.Contains("RunId", stopper);
+        Assert.Contains("Multiple local service state files", stopper);
+
+        Assert.Contains("MesUrl", verifier);
+        Assert.Contains("AdapterUrl", verifier);
+        Assert.Contains("SimulatorUrl", verifier);
+        Assert.Contains("MesDatabasePath", verifier);
+        Assert.Contains("AdapterDatabasePath", verifier);
+        Assert.Contains("StatePath", verifier);
+        Assert.Contains("RunId", verifier);
+        Assert.Contains("Scenario", verifier);
+        Assert.Contains("failure-retry", verifier);
+        Assert.Contains("WaitingDropoffConfirmation", verifier);
+        Assert.Contains("DeviceFailed", verifier);
+        Assert.Contains("RetryRequested", verifier);
+        Assert.Contains("Local Simulator transport verification", verifier);
+        Assert.DoesNotContain("Live AGV transport verification", verifier);
     }
 
     private static string FindRepositoryRoot()

@@ -42,12 +42,28 @@ public sealed class TaskRepository(MesDbContext database)
     public Task<TransportTask?> GetAsync(Guid taskId, CancellationToken cancellationToken) =>
         database.TransportTasks.SingleOrDefaultAsync(task => task.Id == taskId, cancellationToken);
 
-    public Task<List<TransportTask>> ListAsync(CancellationToken cancellationToken) =>
-        database.TransportTasks
+    public Task<TransportTask?> GetByActiveOperationAsync(Guid operationId, CancellationToken cancellationToken)
+    {
+        var deviceTaskId = operationId.ToString("N");
+        return database.TransportTasks.SingleOrDefaultAsync(
+            task => task.ActiveDeviceTaskId == deviceTaskId,
+            cancellationToken);
+    }
+
+    public Task<List<TransportTask>> ListAsync(DateOnly date, CancellationToken cancellationToken)
+    {
+        var start = date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+        var end = start.AddDays(1);
+        return database.TransportTasks
+            .Where(task => task.CreatedAt >= start && task.CreatedAt < end)
             .OrderByDescending(task => task.Priority)
             .ThenBy(task => task.CreatedAt)
             .ThenByDescending(task => task.UpdatedAt)
             .ToListAsync(cancellationToken);
+    }
+
+    public Task<List<TransportTask>> ListAsync(CancellationToken cancellationToken) =>
+        ListAsync(DateOnly.FromDateTime(DateTime.UtcNow), cancellationToken);
 
     public Task<List<TaskEventRecord>> GetEventsAsync(Guid taskId, CancellationToken cancellationToken) =>
         database.TaskEvents
@@ -58,17 +74,63 @@ public sealed class TaskRepository(MesDbContext database)
     public Task<List<TransportTask>> ListByStatusAsync(MesControlAgv.Domain.TaskStatus status, CancellationToken cancellationToken) =>
         database.TransportTasks.Where(task => task.Status == status).ToListAsync(cancellationToken);
 
+    public Task<List<TransportTask>> ListActiveAssignedAsync(CancellationToken cancellationToken) =>
+        database.TransportTasks
+            .Where(task => task.ActiveAgvId != null
+                && task.ActiveDeviceTaskId != null
+                && (task.Status == MesControlAgv.Domain.TaskStatus.Dispatching
+                    || task.Status == MesControlAgv.Domain.TaskStatus.MovingToPickup
+                    || task.Status == MesControlAgv.Domain.TaskStatus.MovingToDropoff
+                    || task.Status == MesControlAgv.Domain.TaskStatus.WaitingPickupConfirmation
+                    || task.Status == MesControlAgv.Domain.TaskStatus.WaitingDropoffConfirmation
+                    || task.Status == MesControlAgv.Domain.TaskStatus.Paused
+                    || task.Status == MesControlAgv.Domain.TaskStatus.Unknown))
+            .OrderByDescending(task => task.UpdatedAt)
+            .ToListAsync(cancellationToken);
+
     public async Task<TransportTask> SetActiveTargetAsync(
         Guid taskId,
         string targetStationId,
+        CancellationToken cancellationToken)
+        => await SetActiveRouteAsync(taskId, targetStationId, null, null, null, cancellationToken);
+
+    public async Task<TransportTask> SetActiveRouteAsync(
+        Guid taskId,
+        string targetStationId,
+        string? agvId,
+        string? deviceTaskId,
+        IReadOnlyList<string>? path,
         CancellationToken cancellationToken)
     {
         var task = await GetAsync(taskId, cancellationToken)
             ?? throw new KeyNotFoundException($"Task {taskId} was not found.");
         task.ActiveTargetStationId = targetStationId;
+        task.ActiveAgvId = agvId;
+        task.ActiveDeviceTaskId = deviceTaskId;
+        task.ActivePathJson = path is null ? null : JsonSerializer.Serialize(path);
         task.UpdatedAt = DateTime.UtcNow;
         await database.SaveChangesAsync(cancellationToken);
         return task;
+    }
+
+    public async Task RecordEventAsync(
+        Guid taskId,
+        string eventType,
+        object payload,
+        CancellationToken cancellationToken)
+    {
+        if (!await database.TransportTasks.AnyAsync(task => task.Id == taskId, cancellationToken))
+        {
+            throw new KeyNotFoundException($"Task {taskId} was not found.");
+        }
+
+        database.TaskEvents.Add(new TaskEventRecord
+        {
+            TaskId = taskId,
+            EventType = eventType,
+            Payload = JsonSerializer.Serialize(payload)
+        });
+        await database.SaveChangesAsync(cancellationToken);
     }
 
     public async Task<TransportTask> IncrementRetryAsync(Guid taskId, CancellationToken cancellationToken)
@@ -81,6 +143,7 @@ public sealed class TaskRepository(MesDbContext database)
         }
         task.RetryCount++;
         task.LastError = null;
+        task.EndedAt = null;
         task.UpdatedAt = DateTime.UtcNow;
         await database.SaveChangesAsync(cancellationToken);
         return task;
@@ -101,6 +164,18 @@ public sealed class TaskRepository(MesDbContext database)
         {
             task.LastError = error;
         }
+
+        if (task.Status is MesControlAgv.Domain.TaskStatus.Completed
+            or MesControlAgv.Domain.TaskStatus.Cancelled
+            or MesControlAgv.Domain.TaskStatus.Failed)
+        {
+            task.EndedAt = DateTime.UtcNow;
+        }
+        else if (taskEvent == TaskEvent.RetryRequested)
+        {
+            task.EndedAt = null;
+        }
+
         task.UpdatedAt = DateTime.UtcNow;
         database.TaskEvents.Add(new TaskEventRecord
         {

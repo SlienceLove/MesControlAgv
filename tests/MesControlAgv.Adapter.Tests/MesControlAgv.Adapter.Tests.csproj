@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
@@ -23,7 +23,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\MesControlAgv.Adapter\MesControlAgv.Adapter.csproj" />
+    <ProjectReference Include="..\..\src\MesControlAgv.Application\MesControlAgv.Application.csproj" />
     <ProjectReference Include="..\..\src\MesControlAgv.Domain\MesControlAgv.Domain.csproj" />
   </ItemGroup>
 
 </Project>
+
+

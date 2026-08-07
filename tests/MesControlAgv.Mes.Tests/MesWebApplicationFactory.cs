@@ -1,3 +1,4 @@
+﻿using MesControlAgv.Application;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Services;
 using Microsoft.AspNetCore.Hosting;
@@ -20,9 +21,14 @@ public sealed class MesWebApplicationFactory : WebApplicationFactory<Program>
         {
             services.RemoveAll<DbContextOptions<MesDbContext>>();
             services.RemoveAll<MesDbContext>();
-            services.RemoveAll<IAdapterClient>();
+            services.RemoveAll<IAgvGateway>();
             services.AddDbContext<MesDbContext>(options => options.UseSqlite($"Data Source={_databasePath}"));
-            services.AddScoped<IAdapterClient, TestAdapterClient>();
+            // Keep the adapter's current operation id across the create/dispatch
+            // request and the subsequent fleet-status request.  This gives API
+            // tests the same deterministic correlation signal as a real Adapter.
+            services.AddSingleton<IAgvGateway, TestAdapterClient>();
         });
     }
 }
+
+

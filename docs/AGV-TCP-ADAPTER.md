@@ -1,10 +1,47 @@
 # Real AGV TCP Adapter
 
-This project keeps the Simulator as the default driver. The vendor TCP driver is selected with `Agv:Driver = tcp` in the Adapter configuration.
+## Current physical-integration status
+
+A historical, lower-level controller integration was completed on 2026-08-05.
+It verified vendor-frame communication and read-only APIs `1060`, `1100`,
+`1101`, and `1110`; it also completed one controlled navigation from `LM5` to
+`LM1` through the controller-confirmed path `LM5 -> LM4 -> LM1`.
+
+This is not a complete application acceptance. It does not prove a
+`WPF -> MES -> Adapter -> AGV` production workflow, DI/DO behavior, emergency
+handling, obstacle recovery, or release readiness. The vehicle is not contacted
+as part of offline development. Historical results must not be treated as
+current control, map, localization, or safety state.
+
+The controller snapshot recorded for future re-verification is:
+
+- map: `guangzhou606`, version `1.0.6`
+- MD5: `e1b8d6b2b24362c1d44f1884c0abd8fb`
+- stations: `LM1`, `LM2`, `LM3`, `LM4`, `LM5`
+- confirmed directed edges: `LM1 -> LM2`, `LM2 -> LM3`, `LM1 -> LM4`,
+  `LM4 -> LM1`, `LM4 -> LM5`, `LM5 -> LM4`, `LM1 -> LM5`
+
+There is no direct `LM5 -> LM1` edge. The Simulator remains the default driver
+and default configuration contains no physical controller address.
+
+## Driver and deployment configuration
+
+`vendor-tcp` is the canonical Adapter driver value:
+
+```json
+{
+  "Agv": {
+    "Driver": "vendor-tcp"
+  }
+}
+```
+
+`tcp` remains a backward-compatible alias only. Physical host, port, and
+credential values belong in protected environment-specific deployment
+configuration, never in the committed default `appsettings.json`. See
+[physical acceptance configuration](physical-acceptance/README.md).
 
 ## Vendor protocol mapping
-
-The implementation follows `MES-WMS 对接 AGV 机器人技术指南.docx` and `机器人API2023(5).pdf`:
 
 | Capability | Port | API |
 |---|---:|---:|
@@ -12,68 +49,114 @@ The implementation follows `MES-WMS 对接 AGV 机器人技术指南.docx` and `
 | Fixed route navigation | 19206 | 3066 |
 | Task status reconciliation | 19204 | 1110 |
 | Pause/resume | 19206 | 3001 / 3002 |
-| Clear navigation path | 19206 | 3067 |
+| Standard route cancellation | 19206 | 3067 |
 | Status push configuration | 19207 | 9300 |
 | Status push stream | 19301 | 19301 |
 
-Every request channel is serialized. Packets use the vendor 16-byte header, big-endian payload length and API number, followed by UTF-8 JSON. Responses must use the request API number plus `10000` and a non-zero `ret_code` is retained as an AGV error.
+Packets use the vendor 16-byte header, big-endian payload length and API number,
+followed by UTF-8 JSON. The expected response API is request API plus `10000`.
+A non-zero `ret_code` is an AGV error.
 
-MES sends the fixed route source and target to Adapter. Adapter sends all three required 3066 fields: `task_id`, `source_id`, and `id`. The real client does not infer a source station from a nearest-point status.
+Every request channel is serialized. A timeout is unresolved until API `1110`
+reconciliation completes; the Adapter must not generate a replacement `task_id`
+merely because the original request timed out.
 
-## Configuration
+## Navigation request shape
 
-Set the following in the Adapter environment-specific settings only after the robot network information is confirmed:
+API `3066` requires a `move_task_list` wrapper. A naked JSON array is not a
+valid request shape.
 
 ```json
 {
-  "Agv": {
-    "Driver": "tcp",
-    "Tcp": {
-      "Host": "192.168.1.100",
-      "StatusPort": 19204,
-      "CommandPort": 19206,
-      "ControlPort": 19207,
-      "PushPort": 19301,
-      "NickName": "MesControlAgv.Adapter",
-      "AcquireControl": true,
-      "EnablePush": true,
-      "PushIntervalMs": 500,
-      "MinimumConfidence": 0.0,
-      "RequestTimeoutMs": 3000,
-      "ConnectTimeoutMs": 3000,
-      "CancelApiId": 3067
-    }
-  }
+  "move_task_list": [
+    { "task_id": "task-1", "source_id": "LM5", "id": "LM4" },
+    { "task_id": "task-2", "source_id": "LM4", "id": "LM1" }
+  ]
 }
 ```
 
-`CancelApiId` defaults to `3067`, which clears the current 3066 route. PDF revisions that support task-specific safe clearing can use `3068`; that API receives the current `task_id` and does not clear the current movement.
+Every segment must use a controller-confirmed direct edge. Reverse travel is
+allowed only when the reverse edge is independently present in the controller
+snapshot and physical-acceptance Profile.
 
-## State mapping
+## Dispatch lifecycle
 
-The vendor task states map to the existing Adapter contract as follows:
+The safe application boundary is a two-stage route decision:
 
-| Vendor status | Adapter state |
-|---:|---|
-| 0 / 1 | `accepted` |
-| 2 | `moving` |
-| 3 | `paused` |
-| 4 | `arrived` |
-| 5 | `failed` |
-| 6 | `cancelled` |
-| 7 / 404 | `unknown` |
+1. MES reads the Adapter snapshot and creates a candidate route from the business
+   source to the target. It records a `PathPlanned` event before dispatch, including
+   the observed AGV station, candidate path, cost, and observation time.
+2. Adapter treats that route as a proposal. It rechecks the active profile map,
+   current station, online/idle state, control owner, and dispatch policy. A stale
+   route is rejected; it is not silently sent to the vehicle.
+3. The Vendor TCP driver performs the final live readiness check and rechecks
+   control ownership immediately before writing `3066`. Only this final accepted
+   route reaches the vendor protocol.
+4. Adapter returns the AGV id, device task id, and route. MES persists the result
+   and reconciles it through `1110`; WPF displays the returned current route.
 
-On a request timeout the Adapter queries API 1110 before deciding `unknown`. It never generates a new robot task ID for an unresolved operation.
+The MES route is planning and audit data, not a safety decision. The controller,
+Adapter and driver remain authoritative for actual movement permission.
 
-Before 3066, the real client checks available safety fields from the push stream or API 1101: emergency, blocked, fatal/error arrays, relocation status, localization confidence and fork automatic mode. Missing optional fields are left to the site-specific acceptance procedure; present failing fields block dispatch.
+## Task state and cancellation semantics
 
-## Hardware handoff checklist
+| Vendor task status | Adapter state | Meaning |
+|---:|---|---|
+| 0 (`StatusNone`) | `unknown` | Non-active historical record; never treat as accepted. |
+| 1 | `accepted` | Accepted by the controller. |
+| 2 | `moving` | Executing movement. |
+| 3 | `paused` | Paused. |
+| 4 | `arrived` | Completed. |
+| 5 | `failed` | Failed. |
+| 6 | `cancelled` | Confirmed cancelled. |
+| 7 / 404 | `unknown` | Unresolved or unavailable. |
 
-- Confirm robot IP, firmware version, map name and the actual station IDs.
-- Confirm `source_id` and `id` are directly connected in the loaded map.
-- Confirm Adapter can acquire control with API 4005 and that RoboShop is not also controlling the robot.
-- Verify relocation (2002/1021/2003), emergency/fatal/error gates, automatic fork mode and status push.
-- Verify one pickup and one dropoff with the actual institution action and DI/DO confirmation.
-- Verify timeout, disconnect, robot restart, pause, cancel and retry with the same `task_id`.
+`3067` is the only configured standard cancellation API. A `ret_code=0`
+response means the cancellation request was accepted; it is not proof that the
+task is cancelled. Poll API `1110` and report `cancelled` only after the
+controller confirms status `6`. Timeout, missing data, or any other terminal
+ambiguity remains `unknown`.
 
-The current implementation deliberately does not invent fork, jack, roller, DI/DO or station-specific operation parameters. Those belong in the device-specific client after the robot model and mechanism interface are confirmed.
+API `3068` is not documented as a standard controller API in the confirmed
+integration and is disabled. Do not configure it, probe it, or infer task
+cleanup from its return value. A historical `StatusNone` record may remain in
+the controller list; no deletion or status-rewrite operation is assumed.
+
+## 2026-08-06 read-only preflight
+
+The authorized read-only preflight reached the current controller with APIs
+`1100` and `1101`. API `1101` requires the request body
+`{"return_laser":false}`; the Adapter now sends and tests that exact semantic
+payload.
+
+The live response confirmed map `guangzhou606`, MD5
+`e1b8d6b2b24362c1d44f1884c0abd8fb`, station `LM1`, localization confidence
+`0.9859`, stopped motion, and no reported emergency, block, error, or fatal
+condition. It did not provide a confirmed automatic-mode signal, map version,
+or direct-edge list. The observed `dispatch_mode=0` is not treated as proof of
+automatic mode because its site-specific safety meaning has not been approved.
+
+This is a partial read-only pass, not movement acceptance. No control,
+navigation, or cancellation API was sent, and the physical Profile remains
+dispatch-disabled.
+
+## Required physical safety gates
+
+Before any future `3066` dispatch, verify from current controller data:
+
+- Adapter owns control and no other application controls the AGV.
+- The loaded map name, version, MD5, stations, and direct edges exactly match
+  the approved Profile snapshot.
+- Localization is valid and above the approved confidence threshold.
+- No emergency stop, block, fault, fatal, or error condition is active.
+- The vehicle is in approved automatic mode.
+- The test is in an isolated area, at the approved low-speed limit, with
+  current active-task state captured.
+
+The current physical-acceptance configuration keeps automatic dispatch disabled
+until a controller map-query or equivalent live map verification is implemented.
+The historical map snapshot is not sufficient to enable unattended motion.
+
+A mismatch is a read-only investigation condition: do not send motion, control,
+or cancellation commands until a new approved snapshot and safety decision
+exist.

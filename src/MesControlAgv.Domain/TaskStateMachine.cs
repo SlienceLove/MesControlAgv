@@ -19,6 +19,7 @@ public static class TaskStateMachine
             [(TaskStatus.MovingToPickup, TaskEvent.PauseRequested)] = TaskStatus.Paused,
             [(TaskStatus.MovingToDropoff, TaskEvent.PauseRequested)] = TaskStatus.Paused,
             [(TaskStatus.Paused, TaskEvent.ResumeRequested)] = TaskStatus.MovingToPickup,
+            [(TaskStatus.Paused, TaskEvent.ResumeDropoffRequested)] = TaskStatus.MovingToDropoff,
             [(TaskStatus.MovingToPickup, TaskEvent.DeviceFailed)] = TaskStatus.Failed,
             [(TaskStatus.MovingToDropoff, TaskEvent.DeviceFailed)] = TaskStatus.Failed,
             [(TaskStatus.Failed, TaskEvent.RetryRequested)] = TaskStatus.Dispatching,

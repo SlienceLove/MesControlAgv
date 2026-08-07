@@ -1,4 +1,4 @@
-using MesControlAgv.Adapter.Contracts;
+using MesControlAgv.Contracts;
 using MesControlAgv.Adapter.Data;
 using MesControlAgv.Adapter.Entities;
 using MesControlAgv.Adapter.Services;
@@ -20,10 +20,11 @@ public class AdapterServiceTests
 
         Assert.Equal(first.DeviceTaskId, second.DeviceTaskId);
         Assert.Equal(1, simulator.NavigateCalls);
+        Assert.Equal(1, simulator.EnsureControlCalls);
     }
 
     [Fact]
-    public async Task Route_aware_dispatch_forwards_the_source_station()
+    public async Task Route_aware_dispatch_forwards_the_complete_planned_path_start()
     {
         var simulator = new FakeSimulatorClient();
         var service = CreateService(simulator);
@@ -31,7 +32,31 @@ public class AdapterServiceTests
 
         await service.DispatchAsync(taskId, "SAMPLE_01", "ST_PREP_01", CancellationToken.None);
 
-        Assert.Equal("SAMPLE_01", simulator.SourceStationId);
+        Assert.Equal("CHARGE_01", simulator.SourceStationId);
+        Assert.Equal(
+            ["CHARGE_01", "PICK_01", "SAMPLE_01", "ST_PREP_01"],
+            simulator.NavigatePath);
+    }
+
+    [Fact]
+    public async Task Persisted_path_is_forwarded_for_dispatch_status_and_cancellation()
+    {
+        var taskId = Guid.NewGuid();
+        string[] path = ["CHARGE_01", "PICK_01", "SAMPLE_01", "ST_PREP_01"];
+        var simulator = new FakeSimulatorClient
+        {
+            ReconciledTask = new(taskId, "device-route", "ST_PREP_01", "moving", null)
+        };
+        var service = CreateService(simulator);
+
+        var dispatched = await service.DispatchAsync(taskId, "SAMPLE_01", "ST_PREP_01", null, path, CancellationToken.None);
+        await service.GetAsync(taskId, CancellationToken.None);
+        await service.CancelAsync(taskId, CancellationToken.None);
+
+        Assert.Equal(path, dispatched.Path);
+        Assert.Equal(path, simulator.NavigatePath);
+        Assert.Equal(path, simulator.StatusPath);
+        Assert.Equal(path, simulator.CancelPath);
     }
 
     [Fact]
@@ -112,6 +137,41 @@ public class AdapterServiceTests
     }
 
     [Fact]
+    public async Task Disabled_automatic_dispatch_does_not_acquire_control_or_navigate()
+    {
+        var simulator = new FakeSimulatorClient();
+        var profile = MesControlAgv.Domain.Profiles.ProfileConfiguration.Default with
+        {
+            Features = MesControlAgv.Domain.Profiles.ProfileConfiguration.Default.Features with
+            {
+                EnableAutomaticDispatch = false
+            }
+        };
+        var (service, _) = CreateServiceWithDatabase(simulator, profile);
+
+        await Assert.ThrowsAsync<DispatchDisabledException>(() => service.DispatchAsync(
+            Guid.NewGuid(), "SAMPLE_01", CancellationToken.None));
+
+        Assert.Equal(0, simulator.EnsureControlCalls);
+        Assert.Equal(0, simulator.NavigateCalls);
+    }
+
+    [Fact]
+    public async Task Busy_agv_is_rejected_before_a_new_navigation_command()
+    {
+        var simulator = new FakeSimulatorClient
+        {
+            Snapshot = new(true, "adapter", "CHARGE_01", Guid.NewGuid())
+        };
+        var service = CreateService(simulator);
+
+        await Assert.ThrowsAsync<AgvUnavailableException>(() => service.DispatchAsync(
+            Guid.NewGuid(), "SAMPLE_01", CancellationToken.None));
+
+        Assert.Equal(0, simulator.NavigateCalls);
+    }
+
+    [Fact]
     public async Task Timeout_reconciles_to_actual_device_state_before_unknown()
     {
         var taskId = Guid.NewGuid();
@@ -134,7 +194,7 @@ public class AdapterServiceTests
         var taskId = Guid.NewGuid();
         var simulator = new FakeSimulatorClient
         {
-            ReconciledTask = new AdapterTaskResponse(taskId, "device-1", "SAMPLE_01", "arrived", null)
+            ReconciledTask = new AgvTaskResponse(taskId, "device-1", "SAMPLE_01", "arrived", null)
         };
         var service = CreateService(simulator);
         await service.DispatchAsync(taskId, "SAMPLE_01", CancellationToken.None);
@@ -144,6 +204,26 @@ public class AdapterServiceTests
         Assert.NotNull(task);
         Assert.Equal("arrived", task.State);
         Assert.Equal(1, simulator.StatusCalls);
+    }
+
+    [Fact]
+    public async Task Pause_and_resume_persist_confirmed_device_state()
+    {
+        var simulator = new FakeSimulatorClient();
+        var (service, database) = CreateServiceWithDatabase(simulator);
+        var taskId = Guid.NewGuid();
+        await service.DispatchAsync(taskId, "SAMPLE_01", CancellationToken.None);
+
+        var paused = await service.PauseAsync(taskId, CancellationToken.None);
+        var persistedPaused = await database.Tasks.FindAsync([taskId]);
+        Assert.Equal("paused", paused?.State);
+        Assert.Equal("paused", persistedPaused?.State);
+
+        var resumed = await service.ResumeAsync(taskId, CancellationToken.None);
+        var persistedResumed = await database.Tasks.FindAsync([taskId]);
+
+        Assert.Equal("moving", resumed?.State);
+        Assert.Equal("moving", persistedResumed?.State);
     }
 
     [Fact]
@@ -160,6 +240,28 @@ public class AdapterServiceTests
         Assert.NotNull(persisted);
         Assert.Equal("moving", persisted.State);
         Assert.Equal(1, simulator.CancelCalls);
+    }
+
+    [Fact]
+    public async Task Cancel_persists_unknown_when_device_cannot_confirm_cancellation()
+    {
+        var taskId = Guid.NewGuid();
+        var simulator = new FakeSimulatorClient
+        {
+            CancelState = "unknown",
+            CancelError = "cancel_not_confirmed_by_1110"
+        };
+        var (service, database) = CreateServiceWithDatabase(simulator);
+        await service.DispatchAsync(taskId, "SAMPLE_01", CancellationToken.None);
+
+        var result = await service.CancelAsync(taskId, CancellationToken.None);
+
+        Assert.Equal("unknown", result!.State);
+        Assert.Equal("cancel_not_confirmed_by_1110", result.LastError);
+        var persisted = await database.Tasks.FindAsync([taskId]);
+        Assert.NotNull(persisted);
+        Assert.Equal("unknown", persisted.State);
+        Assert.Equal("cancel_not_confirmed_by_1110", persisted.LastError);
     }
 
     [Fact]
@@ -201,13 +303,15 @@ public class AdapterServiceTests
         return CreateServiceWithDatabase(simulator).Service;
     }
 
-    private static (AdapterService Service, AdapterDbContext Database) CreateServiceWithDatabase(FakeSimulatorClient simulator)
+    private static (AdapterService Service, AdapterDbContext Database) CreateServiceWithDatabase(
+        FakeSimulatorClient simulator,
+        MesControlAgv.Domain.Profiles.ProfileConfiguration? profile = null)
     {
         var options = new DbContextOptionsBuilder<AdapterDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .Options;
         var database = new AdapterDbContext(options);
-        return (new AdapterService(database, simulator), database);
+        return (new AdapterService(database, simulator, profile: profile), database);
     }
 
     private static (AdapterService Service, AdapterDbContext Database) CreateFleetService(
@@ -233,49 +337,81 @@ internal sealed class FakeSimulatorClient : ISimulatorClient
     public int NavigateCalls => Volatile.Read(ref _navigateCalls);
     public int StatusCalls => Volatile.Read(ref _statusCalls);
     public int CancelCalls => Volatile.Read(ref _cancelCalls);
+    public int EnsureControlCalls { get; private set; }
     public string? SourceStationId { get; private set; }
+    public IReadOnlyList<string>? NavigatePath { get; private set; }
+    public IReadOnlyList<string>? StatusPath { get; private set; }
+    public IReadOnlyList<string>? CancelPath { get; private set; }
     public bool ThrowTimeout { get; init; }
     public bool ReturnFailed { get; init; }
     public string? CancelState { get; init; } = "cancelled";
+    public string? CancelError { get; init; }
     public string PauseState { get; init; } = "paused";
     public string ResumeState { get; init; } = "moving";
     public AgvSnapshotResponse Snapshot { get; set; } = new(true, "adapter", "CHARGE_01", null);
-    public AdapterTaskResponse? ReconciledTask { get; init; }
+    public AgvTaskResponse? ReconciledTask { get; init; }
     public TaskCompletionSource<bool>? NavigationStarted { get; init; }
     public TaskCompletionSource<bool>? AllowNavigation { get; init; }
 
-    public Task EnsureControlAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task EnsureControlAsync(CancellationToken cancellationToken)
+    {
+        EnsureControlCalls++;
+        return Task.CompletedTask;
+    }
 
     public Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken) => Task.FromResult(Snapshot);
 
-    public Task<AdapterTaskResponse?> GetTaskAsync(Guid taskId, CancellationToken cancellationToken)
+    public Task<AgvTaskResponse?> GetTaskAsync(Guid taskId, CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref _statusCalls);
         return Task.FromResult(ReconciledTask);
     }
 
-    public async Task<AdapterTaskResponse> NavigateAsync(Guid taskId, string? sourceStationId, string stationId, CancellationToken cancellationToken)
+    public Task<AgvTaskResponse?> GetTaskAsync(Guid taskId, IReadOnlyList<string>? path, CancellationToken cancellationToken)
+    {
+        StatusPath = path;
+        return GetTaskAsync(taskId, cancellationToken);
+    }
+
+    public async Task<AgvTaskResponse> NavigateAsync(Guid taskId, string? sourceStationId, string stationId, CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref _navigateCalls);
         SourceStationId = sourceStationId;
         NavigationStarted?.TrySetResult(true);
         if (ThrowTimeout) throw new TimeoutException();
         if (AllowNavigation is not null) await AllowNavigation.Task.WaitAsync(cancellationToken);
-        return new AdapterTaskResponse(taskId, $"device-{taskId:N}", stationId, ReturnFailed ? "failed" : "moving", ReturnFailed ? "device unavailable" : null);
+        return new AgvTaskResponse(taskId, $"device-{taskId:N}", stationId, ReturnFailed ? "failed" : "moving", ReturnFailed ? "device unavailable" : null);
     }
 
-    public Task<AdapterTaskResponse?> PauseAsync(Guid taskId, CancellationToken cancellationToken) =>
-        Task.FromResult<AdapterTaskResponse?>(new AdapterTaskResponse(taskId, $"device-{taskId:N}", "SAMPLE_01", PauseState, null));
+    public async Task<AgvTaskResponse> NavigateAsync(
+        Guid taskId,
+        string? sourceStationId,
+        string stationId,
+        IReadOnlyList<string>? path,
+        CancellationToken cancellationToken)
+    {
+        NavigatePath = path;
+        return (await NavigateAsync(taskId, sourceStationId, stationId, cancellationToken)) with { Path = path };
+    }
 
-    public Task<AdapterTaskResponse?> ResumeAsync(Guid taskId, CancellationToken cancellationToken) =>
-        Task.FromResult<AdapterTaskResponse?>(new AdapterTaskResponse(taskId, $"device-{taskId:N}", "SAMPLE_01", ResumeState, null));
+    public Task<AgvTaskResponse?> PauseAsync(Guid taskId, CancellationToken cancellationToken) =>
+        Task.FromResult<AgvTaskResponse?>(new AgvTaskResponse(taskId, $"device-{taskId:N}", "SAMPLE_01", PauseState, null));
 
-    public Task<AdapterTaskResponse?> CancelAsync(Guid taskId, CancellationToken cancellationToken)
+    public Task<AgvTaskResponse?> ResumeAsync(Guid taskId, CancellationToken cancellationToken) =>
+        Task.FromResult<AgvTaskResponse?>(new AgvTaskResponse(taskId, $"device-{taskId:N}", "SAMPLE_01", ResumeState, null));
+
+    public Task<AgvTaskResponse?> CancelAsync(Guid taskId, CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref _cancelCalls);
         return Task.FromResult(CancelState is null
             ? null
-            : new AdapterTaskResponse(taskId, $"device-{taskId:N}", "SAMPLE_01", CancelState, null));
+            : new AgvTaskResponse(taskId, $"device-{taskId:N}", "SAMPLE_01", CancelState, CancelError));
+    }
+
+    public Task<AgvTaskResponse?> CancelAsync(Guid taskId, IReadOnlyList<string>? path, CancellationToken cancellationToken)
+    {
+        CancelPath = path;
+        return CancelAsync(taskId, cancellationToken);
     }
 }
 
@@ -287,17 +423,17 @@ internal sealed class FakeFleetClient : IAgvFleetDeviceClient
         ["AGV-02"] = new(true, "adapter", "CHARGE_01", null, "AGV-02"),
         ["AGV-03"] = new(true, "adapter", "CHARGE_01", null, "AGV-03")
     };
-    private readonly Dictionary<(string AgvId, Guid TaskId), AdapterTaskResponse> _tasks = [];
+    private readonly Dictionary<(string AgvId, Guid TaskId), AgvTaskResponse> _tasks = [];
 
     public int NavigateCalls { get; private set; }
 
     public Task<IReadOnlyList<AgvSnapshotResponse>> GetFleetSnapshotAsync(CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<AgvSnapshotResponse>>(_snapshots.Values.ToArray());
 
-    public Task<AdapterTaskResponse?> GetTaskAsync(string agvId, Guid taskId, CancellationToken cancellationToken) =>
+    public Task<AgvTaskResponse?> GetTaskAsync(string agvId, Guid taskId, CancellationToken cancellationToken) =>
         Task.FromResult(_tasks.GetValueOrDefault((agvId, taskId)));
 
-    public Task<AdapterTaskResponse> NavigateAsync(
+    public Task<AgvTaskResponse> NavigateAsync(
         string agvId,
         Guid taskId,
         string? sourceStationId,
@@ -306,20 +442,20 @@ internal sealed class FakeFleetClient : IAgvFleetDeviceClient
         CancellationToken cancellationToken)
     {
         NavigateCalls++;
-        var task = new AdapterTaskResponse(taskId, taskId.ToString("N"), stationId, "moving", null, agvId, path);
+        var task = new AgvTaskResponse(taskId, taskId.ToString("N"), stationId, "moving", null, agvId, path);
         _tasks[(agvId, taskId)] = task;
         _snapshots[agvId] = _snapshots[agvId] with { CurrentTaskId = taskId };
         return Task.FromResult(task);
     }
 
-    public Task<AdapterTaskResponse?> PauseAsync(string agvId, Guid taskId, CancellationToken cancellationToken) =>
-        Task.FromResult<AdapterTaskResponse?>(_tasks.GetValueOrDefault((agvId, taskId)));
+    public Task<AgvTaskResponse?> PauseAsync(string agvId, Guid taskId, CancellationToken cancellationToken) =>
+        Task.FromResult<AgvTaskResponse?>(_tasks.GetValueOrDefault((agvId, taskId)));
 
-    public Task<AdapterTaskResponse?> ResumeAsync(string agvId, Guid taskId, CancellationToken cancellationToken) =>
-        Task.FromResult<AdapterTaskResponse?>(_tasks.GetValueOrDefault((agvId, taskId)));
+    public Task<AgvTaskResponse?> ResumeAsync(string agvId, Guid taskId, CancellationToken cancellationToken) =>
+        Task.FromResult<AgvTaskResponse?>(_tasks.GetValueOrDefault((agvId, taskId)));
 
-    public Task<AdapterTaskResponse?> CancelAsync(string agvId, Guid taskId, CancellationToken cancellationToken) =>
-        Task.FromResult<AdapterTaskResponse?>(_tasks.GetValueOrDefault((agvId, taskId)) is { } task
+    public Task<AgvTaskResponse?> CancelAsync(string agvId, Guid taskId, CancellationToken cancellationToken) =>
+        Task.FromResult<AgvTaskResponse?>(_tasks.GetValueOrDefault((agvId, taskId)) is { } task
             ? task with { State = "cancelled" }
             : null);
 }

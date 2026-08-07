@@ -16,7 +16,9 @@ public sealed record TaskResponse(
     string? LastError,
     int Priority = 0,
     string? Description = null,
-    string? ExternalId = null);
+    string? ExternalId = null,
+    DateTime CreatedAt = default,
+    DateTime? EndedAt = null);
 
 public sealed record TaskEventResponse(
     Guid Id,
@@ -35,6 +37,10 @@ public sealed record PlanPathRequest(
     string ToStationId,
     IReadOnlyCollection<string>? BlockedStations = null);
 
-public sealed record PlannedPathResponse(IReadOnlyList<string> Stations, double Cost);
+public sealed record PlannedPathResponse(
+    IReadOnlyList<string> Stations,
+    double Cost,
+    string? FromStationId = null,
+    string? ToStationId = null);
 
 public sealed record AgvCommandRequest(string Command, Guid? TaskId = null);

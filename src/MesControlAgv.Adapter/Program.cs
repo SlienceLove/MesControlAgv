@@ -1,34 +1,22 @@
-using MesControlAgv.Adapter.Contracts;
+using MesControlAgv.Adapter;
+using MesControlAgv.Contracts;
 using MesControlAgv.Adapter.Data;
+using MesControlAgv.Adapter.Drivers;
 using MesControlAgv.Adapter.Services;
+using MesControlAgv.Application;
 using MesControlAgv.Domain;
+using MesControlAgv.Domain.Profiles;
+using MesControlAgv.Domain.Workflows;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 
 var builder = WebApplication.CreateBuilder(args);
 var configuredConnectionString = builder.Configuration.GetConnectionString("Adapter") ?? "Data Source=data/adapter.db";
 var connectionString = ResolveSqliteConnectionString(configuredConnectionString);
-var simulatorUrl = builder.Configuration["Simulator:BaseUrl"] ?? "http://localhost:5183/";
-var agvDriver = builder.Configuration["Agv:Driver"] ?? "simulator";
-
-builder.Services.AddDbContext<AdapterDbContext>(options => options.UseSqlite(connectionString));
-builder.Services.Configure<TcpAgvOptions>(builder.Configuration.GetSection("Agv:Tcp"));
-builder.Services.AddHttpClient<SimulatorClient>(client => client.BaseAddress = new Uri(simulatorUrl));
-if (string.Equals(agvDriver, "tcp", StringComparison.OrdinalIgnoreCase))
-{
-    builder.Services.AddSingleton<TcpAgvClient>();
-    builder.Services.AddSingleton<IAgvDeviceClient>(services => services.GetRequiredService<TcpAgvClient>());
-    builder.Services.AddSingleton<IAgvFleetDeviceClient>(services =>
-        new SingleAgvFleetDeviceClient("AGV-01", services.GetRequiredService<IAgvDeviceClient>()));
-    builder.Services.AddHostedService(services => services.GetRequiredService<TcpAgvClient>());
-}
-else
-{
-    builder.Services.AddSingleton<IAgvDeviceClient>(services => services.GetRequiredService<SimulatorClient>());
-    builder.Services.AddSingleton<IAgvFleetDeviceClient>(services => services.GetRequiredService<SimulatorClient>());
-}
-builder.Services.AddSingleton(new MultiAgvScheduler(new PathPlanner(AgvMap.Default)));
-builder.Services.AddScoped<AdapterService>();
+var simulatorBaseUrl = builder.Configuration["Simulator:BaseUrl"] ?? "http://localhost:5183/";
+builder.Services.AddServices(builder.Configuration, connectionString, simulatorBaseUrl);
 
 var app = builder.Build();
 using (var scope = app.Services.CreateScope())
@@ -53,8 +41,32 @@ app.MapPost("/tasks/{taskId:guid}/dispatch", async (Guid taskId, DispatchRequest
             request.Path,
             cancellationToken));
     }
+    catch (DispatchDisabledException exception) { return Results.Conflict(new { detail = exception.Message }); }
     catch (ControlUnavailableException exception) { return Results.Conflict(new { detail = exception.Message }); }
     catch (AgvUnavailableException exception) { return Results.Conflict(new { detail = exception.Message }); }
+    catch (KeyNotFoundException exception) { return Results.UnprocessableEntity(new { detail = exception.Message }); }
+    catch (InvalidOperationException exception) { return Results.UnprocessableEntity(new { detail = exception.Message }); }
+});
+
+app.MapPost("/field-navigation-acceptances/{acceptanceId:guid}/dispatch", async (
+    Guid acceptanceId,
+    FieldNavigationDispatchCommand command,
+    AdapterService service,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        return Results.Ok(await service.DispatchFieldNavigationAcceptanceAsync(acceptanceId, command, cancellationToken));
+    }
+    catch (DispatchDisabledException exception) { return Results.Conflict(new { detail = exception.Message }); }
+    catch (ControlUnavailableException exception) { return Results.Conflict(new { detail = exception.Message }); }
+    catch (AgvUnavailableException exception) { return Results.Conflict(new { detail = exception.Message }); }
+    catch (PhysicalPreflightRejectedException exception)
+    {
+        return Results.UnprocessableEntity(new { detail = exception.Message, reasons = exception.Reasons });
+    }
+    catch (KeyNotFoundException exception) { return Results.UnprocessableEntity(new { detail = exception.Message }); }
+    catch (InvalidOperationException exception) { return Results.UnprocessableEntity(new { detail = exception.Message }); }
 });
 
 app.MapGet("/tasks/{taskId:guid}", async (Guid taskId, AdapterService service, CancellationToken cancellationToken) =>
@@ -82,7 +94,13 @@ app.MapPost("/tasks/{taskId:guid}/{action}", async (Guid taskId, string action, 
     }
 });
 
-app.MapGet("/agv/snapshot", async (IAgvDeviceClient device, CancellationToken cancellationToken) => Results.Ok(await device.GetSnapshotAsync(cancellationToken)));
+app.MapGet("/agv/snapshot", async (IAgvDeviceClient device, CancellationToken cancellationToken) =>
+{
+    var snapshot = await device.GetSnapshotAsync(cancellationToken);
+    return Results.Ok(snapshot with { Capabilities = snapshot.Capabilities ?? AgvCapabilitiesResponse.Standard });
+});
+app.MapGet("/physical/preflight", async (PhysicalAcceptancePreflightService service, CancellationToken cancellationToken) =>
+    Results.Ok(await service.GetAsync(cancellationToken)));
 app.MapGet("/agvs", async (AdapterService service, CancellationToken cancellationToken) => Results.Ok(await service.GetFleetAsync(cancellationToken)));
 
 app.MapPost("/agvs/{agvId}/command", async (

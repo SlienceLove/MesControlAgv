@@ -15,6 +15,7 @@ public class StationsTests
     public void Station_catalog_contains_all_seven_fixed_stations()
     {
         Assert.Equal(7, Stations.All.Count);
+        Assert.Contains(Stations.All, station => station.AgvStationId == "ST_PREP_01");
         Assert.All(Stations.All, station => Assert.True(station.AgvStationId.All(char.IsAscii)));
     }
 }

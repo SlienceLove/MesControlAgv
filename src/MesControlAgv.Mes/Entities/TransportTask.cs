@@ -20,11 +20,19 @@ public sealed class TransportTask
 
     public DateTime CreatedAt { get; init; } = DateTime.UtcNow;
 
+    public DateTime? EndedAt { get; set; }
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
     public int RetryCount { get; set; }
 
     public string? ActiveTargetStationId { get; set; }
+
+    public string? ActiveAgvId { get; set; }
+
+    public string? ActiveDeviceTaskId { get; set; }
+
+    public string? ActivePathJson { get; set; }
 
     public string? LastError { get; set; }
 }

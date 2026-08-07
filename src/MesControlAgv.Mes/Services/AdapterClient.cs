@@ -1,25 +1,10 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using MesControlAgv.Domain;
+using MesControlAgv.Application;
+using MesControlAgv.Contracts;
 
 namespace MesControlAgv.Mes.Services;
-
-public sealed record AdapterTask(
-    Guid TaskId,
-    string DeviceTaskId,
-    string TargetStationId,
-    string State,
-    string? LastError,
-    string AgvId = "AGV-01",
-    IReadOnlyList<string>? Path = null);
-
-public sealed record AdapterSnapshot(
-    bool Online,
-    string ControlOwner,
-    string? CurrentStationId,
-    Guid? CurrentTaskId,
-    string AgvId = "AGV-01");
 
 public sealed class AdapterHttpException(HttpStatusCode responseStatusCode, string? detail)
     : HttpRequestException(BuildMessage(responseStatusCode, detail), null, responseStatusCode)
@@ -33,35 +18,12 @@ public sealed class AdapterHttpException(HttpStatusCode responseStatusCode, stri
             : $"Adapter returned HTTP {(int)statusCode} ({statusCode}): {detail}";
 }
 
-public interface IAdapterClient
+public sealed class AdapterClient(HttpClient client) : IAgvGateway, IPathAwareAgvGateway, IFleetAwareAgvGateway, IPhysicalPreflightAgvGateway, IFieldNavigationAcceptanceGateway
 {
-    Task<AdapterTask> DispatchAsync(Guid operationId, string targetStationId, CancellationToken cancellationToken);
-    Task<AdapterTask?> GetTaskAsync(Guid operationId, CancellationToken cancellationToken);
-    Task<AdapterTask?> CancelAsync(Guid operationId, CancellationToken cancellationToken);
-    Task<AdapterSnapshot> GetSnapshotAsync(CancellationToken cancellationToken);
-    Task<AdapterTask?> ExecuteAgvCommandAsync(string agvId, string command, Guid? taskId, CancellationToken cancellationToken);
-}
-
-public interface IRouteAwareAdapterClient
-{
-    Task<AdapterTask> DispatchAsync(
-        Guid operationId,
-        string sourceStationId,
-        string targetStationId,
-        CancellationToken cancellationToken);
-}
-
-public interface IFleetAwareAdapterClient
-{
-    Task<IReadOnlyList<AdapterSnapshot>> GetFleetSnapshotAsync(CancellationToken cancellationToken);
-}
-
-public sealed class AdapterClient(HttpClient client) : IAdapterClient, IRouteAwareAdapterClient, IFleetAwareAdapterClient
-{
-    public async Task<AdapterTask> DispatchAsync(Guid operationId, string targetStationId, CancellationToken cancellationToken)
+    public async Task<AgvTaskResponse> DispatchAsync(Guid operationId, string targetStationId, CancellationToken cancellationToken)
         => await DispatchAsync(operationId, null, targetStationId, cancellationToken);
 
-    public async Task<AdapterTask> DispatchAsync(
+    public async Task<AgvTaskResponse> DispatchAsync(
         Guid operationId,
         string? sourceStationId,
         string targetStationId,
@@ -72,31 +34,47 @@ public sealed class AdapterClient(HttpClient client) : IAdapterClient, IRouteAwa
             : new { sourceStationId, targetStationId };
         var response = await client.PostAsJsonAsync($"tasks/{operationId}/dispatch", request, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
-        return await response.Content.ReadFromJsonAsync<AdapterTask>(cancellationToken)
+        return await response.Content.ReadFromJsonAsync<AgvTaskResponse>(cancellationToken)
             ?? throw new InvalidOperationException("Adapter returned no dispatch result.");
     }
 
-    public async Task<AdapterTask?> GetTaskAsync(Guid operationId, CancellationToken cancellationToken)
+    public async Task<AgvTaskResponse> DispatchAsync(
+        Guid operationId,
+        string sourceStationId,
+        string targetStationId,
+        IReadOnlyList<string> plannedPath,
+        CancellationToken cancellationToken)
+    {
+        var response = await client.PostAsJsonAsync(
+            $"tasks/{operationId}/dispatch",
+            new { sourceStationId, targetStationId, path = plannedPath },
+            cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<AgvTaskResponse>(cancellationToken)
+            ?? throw new InvalidOperationException("Adapter returned no dispatch result.");
+    }
+
+    public async Task<AgvTaskResponse?> GetTaskAsync(Guid operationId, CancellationToken cancellationToken)
     {
         var response = await client.GetAsync($"tasks/{operationId}", cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         await EnsureSuccessAsync(response, cancellationToken);
-        return await response.Content.ReadFromJsonAsync<AdapterTask>(cancellationToken);
+        return await response.Content.ReadFromJsonAsync<AgvTaskResponse>(cancellationToken);
     }
 
-    public async Task<AdapterTask?> CancelAsync(Guid operationId, CancellationToken cancellationToken)
+    public async Task<AgvTaskResponse?> CancelAsync(Guid operationId, CancellationToken cancellationToken)
     {
         var response = await client.PostAsync($"tasks/{operationId}/cancel", null, cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         await EnsureSuccessAsync(response, cancellationToken);
-        return await response.Content.ReadFromJsonAsync<AdapterTask>(cancellationToken);
+        return await response.Content.ReadFromJsonAsync<AgvTaskResponse>(cancellationToken);
     }
 
-    public async Task<AdapterSnapshot> GetSnapshotAsync(CancellationToken cancellationToken) =>
-        await client.GetFromJsonAsync<AdapterSnapshot>("agv/snapshot", cancellationToken)
+    public async Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken) =>
+        await client.GetFromJsonAsync<AgvSnapshotResponse>("agv/snapshot", cancellationToken)
         ?? throw new InvalidOperationException("Adapter returned no AGV snapshot.");
 
-    public async Task<AdapterTask?> ExecuteAgvCommandAsync(
+    public async Task<AgvTaskResponse?> ExecuteAgvCommandAsync(
         string agvId,
         string command,
         Guid? taskId,
@@ -108,12 +86,30 @@ public sealed class AdapterClient(HttpClient client) : IAdapterClient, IRouteAwa
             cancellationToken);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         await EnsureSuccessAsync(response, cancellationToken);
-        return await response.Content.ReadFromJsonAsync<AdapterTask>(cancellationToken);
+        return await response.Content.ReadFromJsonAsync<AgvTaskResponse>(cancellationToken);
     }
 
-    public async Task<IReadOnlyList<AdapterSnapshot>> GetFleetSnapshotAsync(CancellationToken cancellationToken) =>
-        await client.GetFromJsonAsync<IReadOnlyList<AdapterSnapshot>>("agvs", cancellationToken)
+    public async Task<IReadOnlyList<AgvSnapshotResponse>> GetFleetSnapshotAsync(CancellationToken cancellationToken) =>
+        await client.GetFromJsonAsync<IReadOnlyList<AgvSnapshotResponse>>("agvs", cancellationToken)
         ?? throw new InvalidOperationException("Adapter returned no AGV fleet.");
+
+    public async Task<PhysicalAgvPreflightResponse> GetPhysicalPreflightAsync(CancellationToken cancellationToken) =>
+        await client.GetFromJsonAsync<PhysicalAgvPreflightResponse>("physical/preflight", cancellationToken)
+        ?? throw new InvalidOperationException("Adapter returned no physical preflight result.");
+
+    public async Task<AgvTaskResponse> DispatchFieldNavigationAcceptanceAsync(
+        Guid acceptanceId,
+        FieldNavigationDispatchCommand command,
+        CancellationToken cancellationToken)
+    {
+        var response = await client.PostAsJsonAsync(
+            $"field-navigation-acceptances/{acceptanceId}/dispatch",
+            command,
+            cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<AgvTaskResponse>(cancellationToken)
+            ?? throw new InvalidOperationException("Adapter returned no field navigation dispatch result.");
+    }
 
     private static async Task EnsureSuccessAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
@@ -143,3 +139,5 @@ public sealed class AdapterClient(HttpClient client) : IAdapterClient, IRouteAwa
         return body;
     }
 }
+
+
