@@ -37,7 +37,7 @@ public partial class App : Application
             if (!runtimeMode.Equals("simulator", StringComparison.OrdinalIgnoreCase) &&
                 !runtimeMode.Equals("physical", StringComparison.OrdinalIgnoreCase))
             {
-                throw new InvalidOperationException("WPF_RUNTIME_MODE must be either 'simulator' or 'physical'.");
+                throw new InvalidOperationException("WPF_RUNTIME_MODE 只能设置为 simulator 或 physical。");
             }
 
             var isSimulator = runtimeMode.Equals("simulator", StringComparison.OrdinalIgnoreCase);
@@ -99,7 +99,7 @@ public partial class App : Application
             _startupCompleted = true;
             startupWindow.Close();
             MessageBox.Show(
-                $"无法启动本地服务：{exception.Message}",
+                $"中控启动失败：{exception.Message}",
                 "AGV MES 中控",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
@@ -125,7 +125,7 @@ public partial class App : Application
             (!uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
              !uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
         {
-            throw new InvalidOperationException($"{variableName} must be an absolute HTTP(S) URL.");
+            throw new InvalidOperationException($"{variableName} 必须是绝对 HTTP(S) 地址。");
         }
 
         return new Uri($"{uri.AbsoluteUri.TrimEnd('/')}/", UriKind.Absolute);

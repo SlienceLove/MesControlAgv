@@ -155,7 +155,7 @@ public sealed class WorkflowDefinition : INotifyPropertyChanged
         set => SetField(ref _isPreset, value);
     }
 
-    /// <summary>Latest MES publication observed for this local definition.</summary>
+    /// <summary>本地定义最近一次观察到的 MES 发布版本。</summary>
     public int? PublishedVersion { get; set; }
 
     public ObservableCollection<WorkflowNode> Nodes { get; set; } = [];

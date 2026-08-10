@@ -141,10 +141,10 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
             <StackPanel Grid.Row="0" Margin="0,0,0,10" Orientation="Horizontal">
-                <TextBlock Margin="0,0,8,0" VerticalAlignment="Center" Foreground="Gray" Text="Date:" />
+                <TextBlock Margin="0,0,8,0" VerticalAlignment="Center" Foreground="Gray" Text="日期：" />
                 <DatePicker Width="140" SelectedDate="{Binding TaskFilterDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                <Button Margin="8,0,0,0" Padding="12,4" Command="{Binding QueryTasksCommand}" Content="Query" />
-                <Button Margin="8,0,0,0" Padding="12,4" Command="{Binding RefreshTasksCommand}" Content="Refresh" />
+                <Button Margin="8,0,0,0" Padding="12,4" Command="{Binding QueryTasksCommand}" Content="查询" />
+                <Button Margin="8,0,0,0" Padding="12,4" Command="{Binding RefreshTasksCommand}" Content="刷新" />
             </StackPanel>
             <Grid Grid.Row="1" MinHeight="0" ClipToBounds="True">
             <Grid.ColumnDefinitions>
@@ -163,8 +163,8 @@
                     <DataGridTextColumn Width="150" Header="起点站" Binding="{Binding SourceStationName}" />
                     <DataGridTextColumn Width="170" Header="终点站" Binding="{Binding TargetStationName}" />
                     <DataGridTextColumn Width="140" Header="状态" Binding="{Binding StatusDescription}" />
-                    <DataGridTextColumn Width="145" Header="Created" Binding="{Binding CreatedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" />
-                    <DataGridTextColumn Width="145" Header="Ended" Binding="{Binding EndedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" />
+                    <DataGridTextColumn Width="145" Header="创建时间" Binding="{Binding CreatedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" />
+                    <DataGridTextColumn Width="145" Header="结束时间" Binding="{Binding EndedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" />
                     <DataGridTextColumn Width="70" Header="重试" Binding="{Binding RetryCount}" />
                     <DataGridTextColumn Width="*" Header="错误" Binding="{Binding ErrorDescription}" />
                 </DataGrid.Columns>
@@ -424,14 +424,14 @@
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
                     <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.NewWorkflowCommand}" Content="新建流程" />
-                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.CopyWorkflowCommand}" Content="澶嶅埗" />
+                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.CopyWorkflowCommand}" Content="复制" />
                     <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.DeleteWorkflowCommand}" Content="删除" />
                     <Button Margin="6,0,0,0" Padding="14,7" Background="#1769AA" Foreground="White" Command="{Binding WorkflowEditor.SaveCommand}" Content="保存" />
-                    <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.LoadFromMesCommand}" Content="MES Load" />
-                    <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.SaveDraftCommand}" Content="Save Draft" />
-                    <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.ValidateCommand}" Content="Validate" />
-                    <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.PublishCommand}" Content="Publish" />
-                    <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.DryRunCommand}" Content="Dry Run" />
+                    <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.LoadFromMesCommand}" Content="从 MES 加载" />
+                    <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.SaveDraftCommand}" Content="保存草稿" />
+                    <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.ValidateCommand}" Content="校验" />
+                    <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.PublishCommand}" Content="发布" />
+                    <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.DryRunCommand}" Content="试运行" />
                 </StackPanel>
             </DockPanel>
 
@@ -533,18 +533,18 @@
                                 </ListBox.ItemTemplate>
                             </ListBox>
                             <StackPanel Orientation="Horizontal">
-                                <Button Padding="10,5" Command="{Binding WorkflowEditor.MoveNodeLeftCommand}" Content="宸︾Щ" />
+                                <Button Padding="10,5" Command="{Binding WorkflowEditor.MoveNodeLeftCommand}" Content="左移" />
                                 <Button Margin="6,0,0,0" Padding="10,5" Command="{Binding WorkflowEditor.MoveNodeRightCommand}" Content="右移" />
                                 <Button Margin="6,0,0,0" Padding="10,5" Command="{Binding WorkflowEditor.AddNodeCommand}" Content="添加" />
                                 <Button Margin="6,0,0,0" Padding="10,5" Command="{Binding WorkflowEditor.DeleteNodeCommand}" Content="删除" />
                             </StackPanel>
                             <TextBlock Margin="0,12,0,4" Foreground="Gray" Text="节点类型" />
                             <ComboBox ItemsSource="{Binding WorkflowEditor.NodeTypeOptions}" DisplayMemberPath="DisplayName" SelectedValuePath="Value" SelectedValue="{Binding WorkflowEditor.SelectedNode.Type, UpdateSourceTrigger=PropertyChanged}" />
-                            <TextBlock Margin="0,10,0,4" Foreground="Gray" Text="鑺傜偣鍚嶇О" />
+                            <TextBlock Margin="0,10,0,4" Foreground="Gray" Text="节点名称" />
                             <TextBox Text="{Binding WorkflowEditor.SelectedNode.Name, UpdateSourceTrigger=PropertyChanged}" />
-                            <TextBlock Margin="0,10,0,4" Foreground="Gray" Text="鑺傜偣璇存槑" />
+                            <TextBlock Margin="0,10,0,4" Foreground="Gray" Text="节点说明" />
                             <TextBox MinHeight="58" AcceptsReturn="True" TextWrapping="Wrap" Text="{Binding WorkflowEditor.SelectedNode.Description, UpdateSourceTrigger=PropertyChanged}" />
-                            <TextBlock Margin="0,10,0,4" Foreground="Gray" Text="鐩爣绔欑偣" />
+                            <TextBlock Margin="0,10,0,4" Foreground="Gray" Text="目标站点" />
                             <TextBox Text="{Binding WorkflowEditor.SelectedNode.TargetStation, UpdateSourceTrigger=PropertyChanged}" />
                         </StackPanel>
                     </ScrollViewer>
@@ -557,7 +557,7 @@
              </StackPanel>
         </Grid>
     </TabItem>
-        <TabItem Header="Readiness / Map / Audit" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <TabItem Header="就绪 / 地图 / 审计" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
             <Grid Margin="0,12,0,0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -566,10 +566,10 @@
 
                 <DockPanel Margin="0,0,0,12">
                     <StackPanel DockPanel.Dock="Left">
-                        <TextBlock FontSize="22" FontWeight="SemiBold" Text="Readiness / Map / Audit" />
-                        <TextBlock Margin="0,4,0,0" Foreground="Gray" Text="Read-only profile comparison, preflight gates, active paths and task audit" />
+                        <TextBlock FontSize="22" FontWeight="SemiBold" Text="就绪 / 地图 / 审计" />
+                        <TextBlock Margin="0,4,0,0" Foreground="Gray" Text="只读查看配置对比、预检门禁、实际路径和任务审计" />
                     </StackPanel>
-                    <Button DockPanel.Dock="Right" Padding="14,7" Command="{Binding Readiness.RefreshCommand}" Content="Refresh readiness" />
+                    <Button DockPanel.Dock="Right" Padding="14,7" Command="{Binding Readiness.RefreshCommand}" Content="刷新就绪状态" />
                 </DockPanel>
 
                 <Grid Grid.Row="1">
@@ -583,31 +583,31 @@
                         <StackPanel>
                             <Border Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
                                 <StackPanel>
-                                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="Map and profile" />
-                                    <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="Profile map fingerprint" />
+                                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="地图与配置" />
+                                    <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="配置地图指纹" />
                                     <TextBlock Margin="0,3,0,0" TextWrapping="Wrap" Text="{Binding Readiness.ProfileFingerprint}" />
-                                    <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="Live controller fingerprint" />
+                                    <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="控制器实时指纹" />
                                     <TextBlock Margin="0,3,0,0" TextWrapping="Wrap" Text="{Binding Readiness.LiveFingerprint}" />
-                                    <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="Operating mode" />
+                                    <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="运行模式" />
                                     <TextBlock Margin="0,3,0,0" Text="{Binding Readiness.OperatingMode}" />
-                                    <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="Refresh status" />
+                                    <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="刷新状态" />
                                     <TextBlock Margin="0,3,0,0" Foreground="Gray" TextWrapping="Wrap" Text="{Binding Readiness.Status}" />
                                 </StackPanel>
                             </Border>
 
                             <Border Margin="0,12,0,0" Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
                                 <StackPanel>
-                                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="Preflight gate" />
-                                    <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="Dispatch permitted" />
+                                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="预检门禁" />
+                                    <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="允许派发" />
                                     <TextBlock Margin="0,3,0,0" FontWeight="SemiBold" Text="{Binding Readiness.DispatchPermitted}" />
-                                    <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="Blocking reasons" />
+                                    <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="阻断原因" />
                                     <TextBlock Margin="0,3,0,0" Foreground="#B42318" TextWrapping="Wrap" Text="{Binding Readiness.BlockingReasons}" />
                                 </StackPanel>
                             </Border>
 
                             <Border Margin="0,12,0,0" Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
                                 <StackPanel>
-                                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="Configured stations" />
+                                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="已配置站点" />
                                     <ItemsControl Margin="0,8,0,0" ItemsSource="{Binding Readiness.MapSnapshot.Stations}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
@@ -635,13 +635,13 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
-                            <TextBlock FontSize="16" FontWeight="SemiBold" Text="Directed map edges" />
+                            <TextBlock FontSize="16" FontWeight="SemiBold" Text="有向地图边" />
                             <DataGrid Grid.Row="1" Margin="0,10,0,0" ItemsSource="{Binding Readiness.MapSnapshot.Edges}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" HeadersVisibility="Column">
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn Width="*" Header="From" Binding="{Binding From}" />
-                                    <DataGridTextColumn Width="*" Header="To" Binding="{Binding To}" />
-                                    <DataGridTextColumn Width="90" Header="Cost" Binding="{Binding Cost}" />
-                                    <DataGridCheckBoxColumn Width="110" Header="Bidirectional" Binding="{Binding Bidirectional}" IsReadOnly="True" />
+                                    <DataGridTextColumn Width="*" Header="起点" Binding="{Binding From}" />
+                                    <DataGridTextColumn Width="*" Header="终点" Binding="{Binding To}" />
+                                    <DataGridTextColumn Width="90" Header="代价" Binding="{Binding Cost}" />
+                                    <DataGridCheckBoxColumn Width="110" Header="双向" Binding="{Binding Bidirectional}" IsReadOnly="True" />
                                 </DataGrid.Columns>
                             </DataGrid>
                         </Grid>
@@ -651,7 +651,7 @@
                         <StackPanel>
                             <Border Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
                                 <StackPanel>
-                                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="Actual AGV execution paths" />
+                                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="AGV 实际执行路径" />
                                     <ItemsControl Margin="0,8,0,0" ItemsSource="{Binding Readiness.FleetStatus}">
                                         <ItemsControl.ItemTemplate>
                                             <DataTemplate>
@@ -682,7 +682,7 @@
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="*" />
                                     </Grid.RowDefinitions>
-                                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="Selected task audit timeline" />
+                                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="所选任务审计时间线" />
                                     <ScrollViewer Grid.Row="1" Margin="0,8,0,0" VerticalScrollBarVisibility="Auto">
                                         <ItemsControl ItemsSource="{Binding TaskEvents}">
                                             <ItemsControl.ItemTemplate>
@@ -705,7 +705,7 @@
                 </Grid>
             </Grid>
         </TabItem>
-        <TabItem Header="Map view" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <TabItem Header="地图视图" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
             <Grid Margin="0,12,0,0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -713,13 +713,13 @@
                 </Grid.RowDefinitions>
                 <DockPanel Margin="0,0,0,12">
                     <StackPanel DockPanel.Dock="Left">
-                        <TextBlock FontSize="22" FontWeight="SemiBold" Text="Read-only map view" />
-                        <TextBlock Margin="0,4,0,0" Foreground="Gray" Text="Configured map geometry with live AGV status and path overlays" />
+                        <TextBlock FontSize="22" FontWeight="SemiBold" Text="只读地图视图" />
+                        <TextBlock Margin="0,4,0,0" Foreground="Gray" Text="配置地图几何、实时 AGV 状态和路径叠加" />
                     </StackPanel>
                     <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
                         <TextBlock Text="{Binding Readiness.Map.Fingerprint}" />
                         <TextBlock Margin="0,3,0,0" Foreground="Gray" Text="{Binding Readiness.Map.LiveFingerprint}" />
-                        <TextBlock Margin="0,3,0,0" FontWeight="SemiBold" Text="{Binding Readiness.Map.SyncStatus, StringFormat=Map sync: {0}}" />
+                        <TextBlock Margin="0,3,0,0" FontWeight="SemiBold" Text="{Binding Readiness.Map.SyncStatus, StringFormat=地图同步：{0}}" />
                     </StackPanel>
                 </DockPanel>
                 <Grid Grid.Row="1">
@@ -766,7 +766,7 @@
                                                 <StackPanel>
                                                     <TextBlock FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding StationId}" />
                                                     <TextBlock Margin="0,3,0,0" Foreground="Gray" TextWrapping="Wrap" Text="{Binding Name}" />
-                                                    <TextBlock Margin="0,3,0,0" Foreground="Gray" Text="{Binding Enabled, StringFormat=Enabled: {0}}" />
+                                                    <TextBlock Margin="0,3,0,0" Foreground="Gray" Text="{Binding Enabled, StringFormat=启用：{0}}" />
                                                 </StackPanel>
                                             </Border>
                                         </DataTemplate>
@@ -798,7 +798,7 @@
                     </Border>
                     <ScrollViewer Grid.Column="1" Margin="12,0,0,0" VerticalScrollBarVisibility="Auto">
                         <StackPanel>
-                            <TextBlock FontSize="16" FontWeight="SemiBold" Text="Live overlays" />
+                            <TextBlock FontSize="16" FontWeight="SemiBold" Text="实时叠加" />
                             <ItemsControl Margin="0,8,0,0" ItemsSource="{Binding Readiness.Map.Agvs}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
@@ -812,11 +812,11 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
-                            <TextBlock Margin="0,12,0,4" FontWeight="SemiBold" Text="Legend" />
-                            <TextBlock Foreground="#9AA7B8" Text="Gray: configured directed edge" />
-                            <TextBlock Foreground="#D97706" Text="Orange: reported active path" />
-                            <TextBlock Margin="0,12,0,4" FontWeight="SemiBold" Text="Safety" />
-                            <TextBlock Foreground="#B42318" TextWrapping="Wrap" Text="No dispatch or AGV control actions are available in this view." />
+                            <TextBlock Margin="0,12,0,4" FontWeight="SemiBold" Text="图例" />
+                            <TextBlock Foreground="#9AA7B8" Text="灰色：配置的有向边" />
+                            <TextBlock Foreground="#D97706" Text="橙色：报告的活动路径" />
+                            <TextBlock Margin="0,12,0,4" FontWeight="SemiBold" Text="安全" />
+                            <TextBlock Foreground="#B42318" TextWrapping="Wrap" Text="此视图不提供派发或 AGV 控制操作。" />
                         </StackPanel>
                     </ScrollViewer>
                 </Grid>

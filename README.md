@@ -82,7 +82,7 @@ dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1
 dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
-最近一次 Release 基线（2026-08-10）为 0 个警告、0 个错误，自动化测试 `230/230` 通过。
+最近一次 Release 基线（2026-08-10）为 0 个警告、0 个错误，自动化测试 `237/237` 通过。
 
 ### 直接启动 WPF
 

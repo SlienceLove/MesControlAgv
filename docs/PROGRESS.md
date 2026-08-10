@@ -16,6 +16,8 @@ Simulator arrival controls accept a specific transport operation ID. WPF updates
 
 The WPF application now includes experiment workflow management. Workflows can be preset and edited, their nodes can be adjusted through a visual drag-and-drop designer, and definitions are persisted locally as JSON for reuse between runs. The editor can also load MES definitions and versions, save a draft, persist validation, publish an immutable version, and issue a Simulator-safe dry-run admission request. Node parameters and explicit directed edges are preserved across local storage and the MES contract; dry-run remains an auditable next-step decision and does not call an AGV.
 
+The WPF startup window now uses the mode-independent Chinese title `正在启动中控`; startup failures are reported as `中控启动失败` so physical mode does not incorrectly refer to a local service. Operator-facing menus, comments, and status messages remain in simplified Chinese; product/protocol names and configured station or custom workflow names are retained.
+
 ## Vendor TCP implementation
 
 The vendor driver follows the supplied integration guide and API reference. It implements the 16-byte TCP frame, channels `19204`, `19206`, `19207`, and `19301`, control ownership (`1060`/`4005`), navigation (`3066`), status query (`1110`), active status push (`19301`/`9300`), pause/resume (`3001`/`3002`), cancellation (`3067`), and emergency-stop handling. The current controller reference documents `3067` as the cancellation API; `3068` was experimentally rejected as a task-specific cleanup mechanism because it returned success without changing the legacy record.
@@ -32,7 +34,7 @@ dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
 The post-merge Release build passed on 2026-08-10 with 0 warnings and 0 errors,
-and the combined solution test run passed **236/236 tests**. Coverage includes
+and the combined solution test run passed **237/237 tests**. Coverage includes
 WPF station/task contracts,
 workflow draft/validate/publish/version/dry-run APIs and audit readback,
 read-only map/readiness aggregation, timeout recovery without duplicate
@@ -44,6 +46,8 @@ fail-closed and never opens a device connection during offline verification.
 ## Live verification
 
 The three service processes were started from the Release output on isolated local ports with fresh temporary MES/Adapter stores for process-level validation. Existing positive and `failure-retry` runs passed, including pause/resume, arrival confirmations, audit evidence, and fleet cleanup. New isolated runs on `5511/5512/5513` passed `timeout-recover` (Simulator `timeout-unknown` -> MES `Unknown` -> same operation recreated -> `ReconciledMoving` -> completed), `5551/5552/5553` passed `multi-agv` (three distinct AGV assignments, fourth task failed closed with `DeviceFailed`, all three tasks completed), `5571/5572/5573` passed `restart-resume` (Simulator kept alive while Adapter/MES restarted and reconciled persisted work), and `5641/5642/5643` passed `workflow-publish-rollback` (three immutable versions, published pointer rollback, and lifecycle audits). The physical-robot run has not been completed.
+
+The full isolated process matrix was rerun from the Release output on 2026-08-10 with separate temporary stores and ports: `positive` (6101-6103), `failure-retry` (6111-6113), `timeout-recover` (6121-6123), `cancel` (6131-6133), `workflow-publish-rollback` (6141-6143), `multi-agv` (6151-6153), and `restart-resume` (6161-6163) all passed. All owned processes, listening ports, and state files were cleaned up afterward; no physical AGV was connected.
 
 ## 2026-08-10 concurrent continuation
 
@@ -129,7 +133,7 @@ MES processes with temporary SQLite stores.
   scenario must use a fresh Simulator process; if the AGV is already at the
   pickup station MES correctly bypasses navigation and no timeout is consumed.
 - Final Release verification: build `0 warnings / 0 errors`; tests
-  **230/230** (Domain 19, MES 42, Adapter 72, WPF 73, E2E 11, Simulator 4,
+  **237/237** (Domain 19, MES 45, Adapter 72, WPF 76, E2E 11, Simulator 5,
   Workflow Contract 9).
 
 Physical acceptance remains **NO-GO**. The vehicle is currently powered off,

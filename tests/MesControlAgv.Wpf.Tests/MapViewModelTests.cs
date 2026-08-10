@@ -41,7 +41,7 @@ public sealed class MapViewModelTests
         var viewModel = new MapViewModel();
         viewModel.Update(map, readiness, fleet);
 
-        Assert.Equal("SYNC", viewModel.SyncStatus);
+        Assert.Equal("一致", viewModel.SyncStatus);
         Assert.Equal(3, viewModel.Nodes.Count);
         Assert.Equal(2, viewModel.Edges.Count);
         Assert.Single(viewModel.Agvs);

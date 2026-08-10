@@ -41,7 +41,6 @@ public sealed record TaskRowViewModel(
         "Cancelled" => "已取消",
         _ => Status
     };
-
     public string ErrorDescription => Status == "Unknown" && string.IsNullOrWhiteSpace(LastError)
         ? "原因：无法确认 AGV 当前状态"
         : string.IsNullOrWhiteSpace(LastError)
@@ -72,9 +71,6 @@ public sealed record TaskRowViewModel(
             return configured?.Name ?? $"未知站点({code})";
         }
 
-        // Keep the legacy factory usable by isolated unit tests that do not
-        // provide a MES station catalog. Runtime rows are always created by
-        // MainViewModel with the catalog returned from /api/stations.
         try
         {
             return Stations.Get(code).Name;

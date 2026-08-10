@@ -1,7 +1,7 @@
 namespace MesControlAgv.Wpf.Services;
 
 /// <summary>
-/// A task row imported from a CSV or Excel workbook.
+/// 从 CSV 或 Excel 文件导入的任务行。
 /// </summary>
 public sealed record BatchTaskImportItem(
     int SourceRowNumber,
@@ -32,8 +32,8 @@ public sealed class BatchTaskImportResult
 public static class BatchTaskImportSorter
 {
     /// <summary>
-    /// Sorts higher priorities first, then planned tasks by time, and finally by source row.
-    /// Tasks without a planned time are placed after planned tasks at the same priority.
+    /// 先按优先级降序，再按计划时间，最后按来源行号排序。
+    /// 相同优先级下没有计划时间的任务排在有计划时间的任务之后。
     /// </summary>
     public static IReadOnlyList<BatchTaskImportItem> Sort(IEnumerable<BatchTaskImportItem> tasks)
     {

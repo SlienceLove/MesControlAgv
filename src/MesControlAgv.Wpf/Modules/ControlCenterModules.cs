@@ -118,7 +118,7 @@ public interface IControlCenterModule
 {
     ControlCenterModuleDescriptor Descriptor { get; }
 
-    // Default implementation keeps existing metadata-only modules source-compatible.
+    // é»˜è®¤å®ç°ä¿ç•™ä»…åŒ…å«å…ƒæ•°æ®çš„æ¨¡å—å…¼å®¹æ€§ã€‚
     ControlCenterModuleRegistrations Registrations => Descriptor.RegistrationSet;
 }
 
@@ -211,31 +211,31 @@ public sealed class ControlCenterModuleRegistry
         var registry = new ControlCenterModuleRegistry();
         registry.Register(new StandardControlCenterModule(new(
             ControlCenterModuleIds.TaskMonitor,
-            "ÈÎÎñ¼à¿Ø",
+            "ä»»åŠ¡ç›‘æ§",
             10,
             Registrations: new ControlCenterModuleRegistrations(
                 viewModels: [new(ControlCenterModuleIds.TaskMonitor, typeof(TaskMonitorViewModel), 10)]))));
         registry.Register(new StandardControlCenterModule(new(
             ControlCenterModuleIds.AgvCommunication,
-            "AGV Í¨Ñ¶",
+            "AGV é€šè®¯",
             20,
             Registrations: new ControlCenterModuleRegistrations(
                 viewModels: [new(ControlCenterModuleIds.AgvCommunication, typeof(AgvCommunicationViewModel), 20)]))));
         registry.Register(new StandardControlCenterModule(new(
             ControlCenterModuleIds.BatchImport,
-            "ÅúÁ¿µ¼Èë",
+            "æ‰¹é‡ä»»åŠ¡å¯¼å…¥",
             30,
             Registrations: new ControlCenterModuleRegistrations(
                 viewModels: [new(ControlCenterModuleIds.BatchImport, typeof(BatchImportViewModel), 30)]))));
         registry.Register(new StandardControlCenterModule(new(
             ControlCenterModuleIds.KpiDashboard,
-            "KPI ¿´°å",
+            "KPI çœ‹æ¿",
             40,
             Registrations: new ControlCenterModuleRegistrations(
                 viewModels: [new(ControlCenterModuleIds.KpiDashboard, typeof(KpiDashboardViewModel), 40)]))));
         registry.Register(new StandardControlCenterModule(new(
             ControlCenterModuleIds.WorkflowDesigner,
-            "Á÷³ÌÉè¼Æ",
+            "å®éªŒæµç¨‹ç®¡ç†",
             50,
             Registrations: new ControlCenterModuleRegistrations(
                 viewModels: [new(ControlCenterModuleIds.WorkflowDesigner, typeof(WorkflowEditorViewModel), 50)]))));

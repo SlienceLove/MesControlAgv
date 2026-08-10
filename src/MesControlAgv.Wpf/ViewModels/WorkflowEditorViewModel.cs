@@ -47,7 +47,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     private WorkflowNode? _selectedNode;
     private string _message = string.Empty;
     private WorkflowRemoteState _remoteState = WorkflowRemoteState.LocalFallback;
-    private string _remoteStatus = "Local only";
+    private string _remoteStatus = "仅使用本地数据";
     private bool _isRemoteBusy;
     private ContractWorkflowValidationResult? _lastValidation;
     private ContractWorkflowExecutionResult? _lastExecution;
@@ -71,19 +71,19 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         MoveNodeLeftCommand = new EditorCommand(() => MoveNode(-1), CanMoveNodeLeft);
         MoveNodeRightCommand = new EditorCommand(() => MoveNode(1), CanMoveNodeRight);
         LoadFromMesCommand = new AsyncCommand(
-            () => RunRemoteAsync("Load workflows", () => LoadFromMesCoreAsync(CancellationToken.None), CancellationToken.None),
+        () => RunRemoteAsync("加载工作流", () => LoadFromMesCoreAsync(CancellationToken.None), CancellationToken.None),
             CanUseRemote);
         SaveDraftCommand = new AsyncCommand(
-            () => RunRemoteAsync("Save draft", () => SaveDraftCoreAsync(CancellationToken.None), CancellationToken.None),
+        () => RunRemoteAsync("保存草稿", () => SaveDraftCoreAsync(CancellationToken.None), CancellationToken.None),
             CanSaveDraft);
         ValidateCommand = new AsyncCommand(
-            () => RunRemoteAsync("Validate workflow", () => ValidateCoreAsync(CancellationToken.None), CancellationToken.None),
+        () => RunRemoteAsync("校验工作流", () => ValidateCoreAsync(CancellationToken.None), CancellationToken.None),
             CanValidate);
         PublishCommand = new AsyncCommand(
-            () => RunRemoteAsync("Publish workflow", () => PublishCoreAsync(CancellationToken.None), CancellationToken.None),
+        () => RunRemoteAsync("发布工作流", () => PublishCoreAsync(CancellationToken.None), CancellationToken.None),
             CanPublish);
         DryRunCommand = new AsyncCommand(
-            () => RunRemoteAsync("Dry-run workflow", () => DryRunCoreAsync(CancellationToken.None), CancellationToken.None),
+        () => RunRemoteAsync("模拟运行工作流", () => DryRunCoreAsync(CancellationToken.None), CancellationToken.None),
             CanDryRun);
         RefreshRemoteCommand = LoadFromMesCommand;
 
@@ -172,17 +172,17 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 
     public string RemoteStateDescription => RemoteState switch
     {
-        WorkflowRemoteState.Loading => "MES workflow request in progress",
-        WorkflowRemoteState.DraftSaved => "MES draft saved",
-        WorkflowRemoteState.Validated => "MES validation passed",
-        WorkflowRemoteState.ValidationFailed => "MES validation failed",
-        WorkflowRemoteState.Published => "MES version published",
-        WorkflowRemoteState.DryRunAccepted => "Dry-run admitted; no AGV command sent",
-        WorkflowRemoteState.DryRunRejected => "Dry-run rejected",
-        WorkflowRemoteState.Cancelled => "MES workflow request cancelled; local JSON remains active",
-        WorkflowRemoteState.ServiceUnavailable => "MES unavailable; local JSON remains active",
-        WorkflowRemoteState.Error => "MES workflow operation failed",
-        _ => "Local JSON fallback"
+        WorkflowRemoteState.Loading => "MES 工作流请求进行中",
+        WorkflowRemoteState.DraftSaved => "MES 草稿已保存",
+        WorkflowRemoteState.Validated => "MES 校验通过",
+        WorkflowRemoteState.ValidationFailed => "MES 校验未通过",
+        WorkflowRemoteState.Published => "MES 版本已发布",
+        WorkflowRemoteState.DryRunAccepted => "模拟运行已受理，未发送 AGV 指令",
+        WorkflowRemoteState.DryRunRejected => "模拟运行被拒绝",
+        WorkflowRemoteState.Cancelled => "MES 工作流请求已取消，本地 JSON 仍可用",
+        WorkflowRemoteState.ServiceUnavailable => "MES 不可用，本地 JSON 仍可用",
+        WorkflowRemoteState.Error => "MES 工作流操作失败",
+        _ => "仅使用本地 JSON"
     };
 
     public bool IsLoading => IsRemoteBusy;
@@ -191,17 +191,17 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 
     public string RemoteVersionDescription => RemoteVersion is { } version
         ? $"v{version.Version} / {version.Status} / {version.PublishStatus}"
-        : "No MES version confirmed";
+        : "尚未确认 MES 版本";
 
     public ContractWorkflowValidationResult? ValidationResult => LastValidation;
 
     public ContractWorkflowExecutionResult? DryRunResult => LastExecution;
 
     public string DryRunSummary => DryRunResult is null
-        ? "Dry-run not executed"
+        ? "尚未执行模拟运行"
         : DryRunResult.IsAccepted
-            ? $"Admitted: {DryRunResult.NextStep?.NodeName ?? "no next step"}"
-            : $"Rejected: {DryRunResult.RejectionCode ?? "unknown"}";
+            ? $"已受理：{DryRunResult.NextStep?.NodeName ?? "无下一步"}"
+            : $"已拒绝：{DryRunResult.RejectionCode ?? "未知原因"}";
     public bool IsRemoteAvailable => _mes is not null;
 
     public bool IsRemoteBusy
@@ -232,10 +232,10 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     public ContractWorkflowExecutionResult? LastExecution => _lastExecution;
 
     public string ValidationSummary => _lastValidation is null
-        ? "Not validated"
+        ? "尚未校验"
         : _lastValidation.IsValid
-            ? (_lastValidation.HasWarnings ? "Valid with warnings" : "Valid")
-            : $"Invalid ({_lastValidation.Issues.Count} issue(s))";
+            ? (_lastValidation.HasWarnings ? "有效，但有警告" : "有效")
+            : $"无效（{_lastValidation.Issues.Count} 个问题）";
 
     public ICommand NewWorkflowCommand { get; }
     public ICommand CopyWorkflowCommand { get; }
@@ -317,7 +317,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 
         if (!await _remoteGate.WaitAsync(0))
         {
-            Message = "A workflow action is already running.";
+            Message = "已有工作流操作正在执行，请稍候。";
             return;
         }
 
@@ -331,25 +331,25 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             RemoteState = WorkflowRemoteState.Cancelled;
-            Message = "MES workflow request was cancelled; local JSON remains active.";
+            Message = "MES 工作流请求已取消，本地 JSON 仍可用。";
             RemoteStatus = RemoteStateDescription;
         }
         catch (OperationCanceledException exception)
         {
             RemoteState = WorkflowRemoteState.ServiceUnavailable;
-            Message = $"MES workflow request timed out: {exception.Message}; local JSON remains active.";
+            Message = $"MES 工作流请求超时：{exception.Message}；本地 JSON 仍可用。";
             RemoteStatus = RemoteStateDescription;
         }
         catch (HttpRequestException exception)
         {
             RemoteState = WorkflowRemoteState.ServiceUnavailable;
-            Message = $"MES unavailable: {exception.Message}; local JSON remains active.";
+            Message = $"MES 不可用：{exception.Message}；本地 JSON 仍可用。";
             RemoteStatus = RemoteStateDescription;
         }
         catch (Exception exception)
         {
             RemoteState = WorkflowRemoteState.Error;
-            Message = $"MES workflow operation failed: {exception.Message}";
+            Message = $"MES 工作流操作失败：{exception.Message}";
             RemoteStatus = RemoteStateDescription;
         }
         finally
@@ -361,19 +361,19 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     }
 
     public Task LoadRemoteAsync(CancellationToken cancellationToken = default) =>
-        RunRemoteAsync("Load workflows", () => LoadFromMesCoreAsync(cancellationToken), cancellationToken);
+        RunRemoteAsync("加载工作流", () => LoadFromMesCoreAsync(cancellationToken), cancellationToken);
 
     public Task SaveDraftAsync(CancellationToken cancellationToken = default) =>
-        RunRemoteAsync("Save draft", () => SaveDraftCoreAsync(cancellationToken), cancellationToken);
+        RunRemoteAsync("保存草稿", () => SaveDraftCoreAsync(cancellationToken), cancellationToken);
 
     public Task ValidateRemoteAsync(CancellationToken cancellationToken = default) =>
-        RunRemoteAsync("Validate workflow", () => ValidateCoreAsync(cancellationToken), cancellationToken);
+        RunRemoteAsync("校验工作流", () => ValidateCoreAsync(cancellationToken), cancellationToken);
 
     public Task PublishRemoteAsync(CancellationToken cancellationToken = default) =>
-        RunRemoteAsync("Publish workflow", () => PublishWithLifecycleCoreAsync(cancellationToken), cancellationToken);
+        RunRemoteAsync("发布工作流", () => PublishWithLifecycleCoreAsync(cancellationToken), cancellationToken);
 
     public Task ExecuteDryRunAsync(CancellationToken cancellationToken = default) =>
-        RunRemoteAsync("Dry-run workflow", () => DryRunCoreAsync(cancellationToken), cancellationToken);
+        RunRemoteAsync("模拟运行工作流", () => DryRunCoreAsync(cancellationToken), cancellationToken);
 
     private async Task LoadFromMesCoreAsync(CancellationToken cancellationToken)
     {
@@ -412,7 +412,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             SelectedWorkflow = Workflows.First(workflow => loadedIds.Contains(workflow.Id));
         }
 
-        UpdateRemotePresentation("Loaded " + definitions.Count + " workflow(s) from MES");
+        UpdateRemotePresentation($"已从 MES 加载 {definitions.Count} 个工作流");
         RemoteState = SelectedRemoteVersion?.PublishStatus == ContractWorkflowPublishStatus.Published
             ? WorkflowRemoteState.Published
             : SelectedRemoteVersion?.Status == ContractWorkflowVersionStatus.Validated
@@ -432,7 +432,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         catch (Exception exception)
         {
             RemoteState = WorkflowRemoteState.Error;
-            Message = $"Local workflow save failed; MES draft was not sent: {exception.Message}";
+            Message = $"本地工作流保存失败，未向 MES 发送草稿：{exception.Message}";
             return;
         }
 
@@ -455,7 +455,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 
         SetRemoteVersion(saved);
         RemoteState = WorkflowRemoteState.DraftSaved;
-        Message = $"Draft saved as v{saved.Version}.";
+        Message = $"草稿已保存为 v{saved.Version}。";
     }
 
     private async Task ValidateCoreAsync(CancellationToken cancellationToken)
@@ -476,7 +476,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             };
         }
 
-        UpdateRemotePresentation(result.IsValid ? "Validation passed" : "Validation failed");
+        UpdateRemotePresentation(result.IsValid ? "校验通过" : "校验未通过");
         RemoteState = result.IsValid ? WorkflowRemoteState.Validated : WorkflowRemoteState.ValidationFailed;
         OnPropertyChanged(nameof(LastValidation));
         OnPropertyChanged(nameof(ValidationSummary));
@@ -494,7 +494,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             cancellationToken);
         SetRemoteVersion(published);
         RemoteState = WorkflowRemoteState.Published;
-        Message = $"Workflow published as v{published.Version}.";
+        Message = $"工作流已发布为 v{published.Version}。";
     }
 
     private async Task PublishWithLifecycleCoreAsync(CancellationToken cancellationToken)
@@ -504,7 +504,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         if (SelectedRemoteVersion?.Validation?.IsValid != true)
         {
             RemoteState = WorkflowRemoteState.ValidationFailed;
-            Message = "Workflow validation failed; MES publish was not sent.";
+            Message = "工作流校验未通过，未向 MES 发送发布请求。";
             return;
         }
 
@@ -523,13 +523,13 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
                 RequestId = Guid.NewGuid(),
                 WorkflowId = workflow.Id,
                 RejectionCode = "WORKFLOW_VERSION_NOT_PUBLISHED",
-                RejectionReason = "A confirmed published MES workflow version is required for dry-run.",
+                RejectionReason = "模拟运行需要已确认发布的 MES 工作流版本。",
                 DryRun = true
             };
             RemoteState = WorkflowRemoteState.DryRunRejected;
             OnPropertyChanged(nameof(LastExecution));
             OnPropertyChanged(nameof(DryRunResult));
-            Message = "Dry-run rejected: WORKFLOW_VERSION_NOT_PUBLISHED.";
+            Message = "模拟运行被拒绝：WORKFLOW_VERSION_NOT_PUBLISHED。";
             RemoteStatus = Message;
             return;
         }
@@ -549,9 +549,9 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(LastExecution));
         Message = result.IsAccepted
             ? result.NextStep is null
-                ? "Dry-run accepted; workflow is terminal."
-                : $"Dry-run accepted; next step: {result.NextStep.NodeName}."
-            : $"Dry-run rejected: {result.RejectionCode ?? result.RejectionReason ?? "unknown"}.";
+                ? "模拟运行已受理，工作流已到达终点。"
+                : $"模拟运行已受理，下一步：{result.NextStep.NodeName}。"
+            : $"模拟运行被拒绝：{result.RejectionCode ?? result.RejectionReason ?? "未知原因"}。";
         RemoteStatus = Message;
     }
 
@@ -588,11 +588,11 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         }
         else if (SelectedRemoteVersion is { } version)
         {
-            RemoteStatus = $"MES v{version.Version}: {version.Status}/{version.PublishStatus}";
+            RemoteStatus = $"MES v{version.Version}：{version.Status}/{version.PublishStatus}";
         }
         else
         {
-            RemoteStatus = IsRemoteAvailable ? "No MES version" : "Local only";
+            RemoteStatus = IsRemoteAvailable ? "暂无 MES 版本" : "仅使用本地数据";
         }
 
         OnPropertyChanged(nameof(SelectedRemoteVersion));

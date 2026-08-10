@@ -16,7 +16,7 @@ public partial class App : Application
         var wpfPath = Path.Combine(AppContext.BaseDirectory, "MesControlAgv.Wpf.exe");
         if (!File.Exists(wpfPath))
         {
-            ShowStartupError($"WPF runtime was not found at '{wpfPath}'. Rebuild or publish the launcher.");
+            ShowStartupError($"未找到 WPF 运行文件：{wpfPath}。请重新构建或发布启动器。");
             return;
         }
 
@@ -37,7 +37,7 @@ public partial class App : Application
             _wpfProcess = Process.Start(startInfo);
             if (_wpfProcess is null)
             {
-                throw new InvalidOperationException("The WPF process could not be started.");
+                throw new InvalidOperationException("无法启动 WPF 中控进程。");
             }
 
             _wpfProcess.EnableRaisingEvents = true;
@@ -90,7 +90,7 @@ public partial class App : Application
     {
         MessageBox.Show(
             message,
-            "AGV MES Launcher",
+            "AGV MES 启动器",
             MessageBoxButton.OK,
             MessageBoxImage.Error);
         Current?.Shutdown(-1);

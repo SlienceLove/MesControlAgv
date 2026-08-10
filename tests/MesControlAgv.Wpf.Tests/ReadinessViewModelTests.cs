@@ -38,14 +38,14 @@ public sealed class ReadinessViewModelTests
                     ["SAMPLE_CUSTOM", "PREP_CUSTOM", "DROP_CUSTOM"]))
         ]);
 
-        Assert.Equal("Profile map: guangzhou606 / 2026.08 / e1b8d6b2b24362c1d44f1884c0abd8fb", readiness.ProfileFingerprint);
-        Assert.Equal("Live map: guangzhou606 / 816e68b9a367d9c8d5eaee9331a7ef58", readiness.LiveFingerprint);
-        Assert.Equal("unknown", readiness.OperatingMode);
+        Assert.Equal("配置地图：guangzhou606 / 2026.08 / e1b8d6b2b24362c1d44f1884c0abd8fb", readiness.ProfileFingerprint);
+        Assert.Equal("实时地图：guangzhou606 / 816e68b9a367d9c8d5eaee9331a7ef58", readiness.LiveFingerprint);
+        Assert.Equal("未知", readiness.OperatingMode);
         Assert.False(readiness.DispatchPermitted);
         Assert.Contains("manual_block_enabled", readiness.BlockingReasons, StringComparison.Ordinal);
         Assert.Contains("SAMPLE_CUSTOM -> DROP_CUSTOM", readiness.MapEdgeSummary, StringComparison.Ordinal);
         Assert.Contains("AGV-02: SAMPLE_CUSTOM -> PREP_CUSTOM -> DROP_CUSTOM", readiness.ActualExecutionPath, StringComparison.Ordinal);
-        Assert.Contains("Read-only snapshot received", readiness.Status, StringComparison.Ordinal);
+        Assert.Contains("只读快照已接收", readiness.Status, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -57,8 +57,8 @@ public sealed class ReadinessViewModelTests
         await readiness.RefreshAsync();
 
         Assert.False(readiness.DispatchPermitted);
-        Assert.Equal("Profile map: unknown", readiness.ProfileFingerprint);
-        Assert.Contains("Readiness refresh failed: MES unavailable", readiness.Status, StringComparison.Ordinal);
-        Assert.Contains("not been loaded", readiness.BlockingReasons, StringComparison.Ordinal);
+        Assert.Equal("配置地图：未知", readiness.ProfileFingerprint);
+        Assert.Contains("就绪状态刷新失败：MES unavailable", readiness.Status, StringComparison.Ordinal);
+        Assert.Contains("物理预检尚未加载", readiness.BlockingReasons, StringComparison.Ordinal);
     }
 }

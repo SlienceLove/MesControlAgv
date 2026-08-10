@@ -7,13 +7,13 @@ using MesControlAgv.Wpf.Modules;
 namespace MesControlAgv.Wpf.ViewModels;
 
 /// <summary>
-/// Aggregates batch-import state and the existing parser/sort behavior.
-/// Submission is intentionally still orchestrated by <see cref="MainViewModel"/>.
+/// 汇总批量导入状态并复用现有解析、排序行为。
+/// 提交操作暂由 <see cref="MainViewModel"/> 统一编排。
 /// </summary>
 public sealed class BatchImportViewModel : INotifyPropertyChanged
 {
     private readonly BatchTaskImportParser _parser = new();
-    private string _batchStatus = "请选择 CSV �?XLSX 文件导入任务";
+    private string _batchStatus = "请选择 CSV 或 XLSX 文件导入任务";
 
     public ObservableCollection<BatchTaskRowViewModel> BatchTasks { get; } = [];
     public ObservableCollection<string> BatchImportIssues { get; } = [];
@@ -29,16 +29,16 @@ public sealed class BatchImportViewModel : INotifyPropertyChanged
         var result = _parser.Parse(filePath);
         BatchTasks.Clear();
         BatchImportIssues.Clear();
-        foreach (var issue in result.Issues) BatchImportIssues.Add($"�?{issue.SourceRowNumber} 行：{issue.Message}");
+        foreach (var issue in result.Issues) BatchImportIssues.Add($"第 {issue.SourceRowNumber} 行：{issue.Message}");
         foreach (var task in result.Tasks) BatchTasks.Add(new BatchTaskRowViewModel(task));
-        BatchStatus = $"已导�?{BatchTasks.Count} 条任务，问题 {BatchImportIssues.Count} 条；可编辑优先级后提�?";
+        BatchStatus = $"已导入 {BatchTasks.Count} 条任务，发现 {BatchImportIssues.Count} 条问题；可编辑优先级后提交";
     }
 
     public void Clear()
     {
         BatchTasks.Clear();
         BatchImportIssues.Clear();
-        BatchStatus = "已清空导入列�?";
+        BatchStatus = "已清空导入列表";
     }
 
     public void Sort()
@@ -64,7 +64,7 @@ public sealed class BatchImportViewModel : INotifyPropertyChanged
 }
 
 /// <summary>
-/// Provides one stable composition boundary for the control-center module view models.
+/// 为中控各模块视图模型提供稳定的组合边界。
 /// </summary>
 public sealed class ControlCenterViewModel
 {
@@ -84,6 +84,3 @@ public sealed class ControlCenterViewModel
     public KpiDashboardViewModel KpiDashboard { get; } = new();
     public WorkflowEditorViewModel Workflow { get; }
 }
-
-
-

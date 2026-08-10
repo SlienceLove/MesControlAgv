@@ -345,9 +345,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         IsRefreshing = true;
         try
         {
-            // Refresh the profile catalog with the task/fleet snapshot. A
-            // profile reload must invalidate a route preview instead of
-            // allowing a task to be created against stale station metadata.
+            // 随任务和车队快照刷新配置站点目录；配置变更必须使路线预览失效，
+            // 避免使用过期站点元数据创建任务。
             await LoadStationsAsync();
             var tasks = await _mes.GetTasksAsync(CurrentTaskDate, _shutdown.Token);
             var fleetStatus = await _mes.GetAgvFleetStatusAsync(_shutdown.Token);
@@ -429,7 +428,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
         catch (Exception exception)
         {
-            BatchStatus = $"Batch import failed: {exception.Message}";
+            BatchStatus = $"批量导入失败：{exception.Message}";
             Message = exception.Message;
         }
 
@@ -440,12 +439,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         _modules.BatchImport.Sort();
         var submitted = 0;
+        var pendingCount = 0;
         foreach (var task in BatchTasks.Where(task => task.Status == "\u5F85\u63D0\u4EA4").ToList())
         {
             if (!TryResolveStationCode(task.SourceStation, out var source) ||
                 !TryResolveStationCode(task.TargetStation, out var target))
             {
-                task.MarkFailed("Source and target stations must be valid station codes or station IDs.");
+                task.MarkFailed("起点和终点必须是有效的站点编码或站点 ID。");
                 continue;
             }
 
@@ -467,8 +467,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             }
         }
 
-        var pending = BatchTasks.Count(task => task.Status == "���ύ");
-        BatchStatus = $"Batch submission complete: {submitted} succeeded, {pending} pending";
+        pendingCount = BatchTasks.Count(task => task.Status == "\u5F85\u63D0\u4EA4");
+        BatchStatus = $"批量提交完成：成功 {submitted} 条，待提交 {pendingCount} 条";
         RefreshBatchCommandState();
         await RefreshAsync();
     }
@@ -478,10 +478,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         var normalized = value.Trim();
         if (int.TryParse(normalized, NumberStyles.Integer, CultureInfo.InvariantCulture, out code))
         {
-            // When MES has returned a profile catalog, only enabled profile
-            // station codes are accepted. If an isolated unit test does not
-            // provide a catalog, retain the previous numeric-code behavior and
-            // let the MES API perform the final validation.
+            // MES 返回配置目录后只接受启用站点编码；隔离单测未提供目录时，
+            // 保留原有数字编码行为，最终由 MES 接口校验。
             var parsedCode = code;
             return _stationCatalog.Count == 0 || _stationCatalog.Any(station => station.Enabled && station.Code == parsedCode);
         }
@@ -527,16 +525,16 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         if (SelectedAgv is not { } agv || agv.CurrentTaskId is not { } taskId) return;
         var result = await _mes.ExecuteAgvCommandAsync(agv.AgvId, command, taskId, _shutdown.Token)
-            ?? throw new InvalidOperationException($"AGV {agv.AgvId} returned no result for '{command}'.");
+            ?? throw new InvalidOperationException($"AGV {agv.AgvId} 未返回“{command}”操作结果。");
         if (!string.IsNullOrWhiteSpace(result.LastError) ||
             string.Equals(result.State, "failed", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(result.State, "error", StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException(result.LastError ?? $"AGV {agv.AgvId} rejected '{command}'.");
+            throw new InvalidOperationException(result.LastError ?? $"AGV {agv.AgvId} 拒绝了“{command}”操作。");
         }
 
-        ActionStatus = $"AGV {agv.AgvId} {command} command accepted ({result.State}).";
-        BatchStatus = $"Sent {command} command to {agv.AgvId}";
+        ActionStatus = $"AGV {agv.AgvId} 已接受“{command}”操作（{result.State}）。";
+        BatchStatus = $"已向 {agv.AgvId} 发送“{command}”操作";
         await RefreshAgvAsync();
         await RefreshAsync();
     }
@@ -713,7 +711,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         try { await action(); }
         catch (Exception exception)
         {
-            ActionStatus = "\u64CD\u4F5C\u5931\u8D25";
+            ActionStatus = "操作失败";
             Message = exception.Message;
         }
         finally

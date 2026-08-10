@@ -4,10 +4,8 @@ using System.Windows;
 [assembly: InternalsVisibleTo("MesControlAgv.Wpf.Tests")]
 
 [assembly:ThemeInfo(
-    ResourceDictionaryLocation.None,            //where theme specific resource dictionaries are located
-                                                //(used if a resource is not found in the page,
-                                                // or application resource dictionaries)
-    ResourceDictionaryLocation.SourceAssembly   //where the generic resource dictionary is located
-                                                //(used if a resource is not found in the page,
-                                                // app, or any theme specific resource dictionaries)
+    ResourceDictionaryLocation.None,            // 主题资源字典所在位置
+                                                // （页面或应用资源字典中未找到资源时使用）
+    ResourceDictionaryLocation.SourceAssembly   // 通用资源字典所在位置
+                                                // （页面、应用或主题资源字典中未找到资源时使用）
 )]

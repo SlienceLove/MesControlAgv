@@ -7,6 +7,14 @@ namespace MesControlAgv.Wpf.Tests;
 public class MainViewModelTests
 {
     [Fact]
+    public void Operator_module_defaults_use_chinese_prompts()
+    {
+        Assert.Equal("未知", new AgvCommunicationViewModel().AgvStatus);
+        Assert.Equal("正在连接 MES", new TaskMonitorViewModel().ConnectionStatus);
+        Assert.Equal("请选择 CSV 或 XLSX 文件导入任务", new BatchImportViewModel().BatchStatus);
+    }
+
+    [Fact]
     public void Task_row_exposes_operator_friendly_task_description()
     {
         var task = new DashboardTask(Guid.NewGuid(), 2, 4, "MovingToPickup", 0, null);

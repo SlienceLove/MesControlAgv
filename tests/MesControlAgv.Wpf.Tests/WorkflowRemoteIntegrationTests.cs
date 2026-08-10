@@ -32,7 +32,7 @@ public sealed class WorkflowRemoteIntegrationTests
         Assert.True(File.Exists(fixture.Path));
         Assert.NotEmpty(new WorkflowStore(fixture.Path).Load());
         Assert.Equal(WorkflowRemoteState.ServiceUnavailable, viewModel.RemoteState);
-        Assert.Contains("local JSON remains active", viewModel.Message);
+        Assert.Contains("本地 JSON 仍可用", viewModel.Message);
         Assert.Equal(1, client.CreateDraftCallCount);
     }
 
@@ -68,7 +68,7 @@ public sealed class WorkflowRemoteIntegrationTests
 
         Assert.True(File.Exists(fixture.Path));
         Assert.Equal(WorkflowRemoteState.Cancelled, viewModel.RemoteState);
-        Assert.Contains("cancelled", viewModel.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("已取消", viewModel.Message, StringComparison.Ordinal);
         Assert.False(viewModel.IsLoading);
     }
 

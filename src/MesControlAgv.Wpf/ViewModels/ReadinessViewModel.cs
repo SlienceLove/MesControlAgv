@@ -7,8 +7,7 @@ using MesControlAgv.Wpf.Services;
 namespace MesControlAgv.Wpf.ViewModels;
 
 /// <summary>
-/// Read-only operator view of the configured map, live preflight and assigned
-/// execution paths. It never sends a device command.
+/// 只读展示配置地图、实时预检和已分配的执行路径，不发送设备命令。
 /// </summary>
 public sealed class ReadinessViewModel : INotifyPropertyChanged
 {
@@ -16,7 +15,7 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
     private DashboardMapSnapshot? _mapSnapshot;
     private PhysicalAgvPreflightResponse? _preflight;
     private IReadOnlyList<AgvFleetDashboardStatus> _fleetStatus = [];
-    private string _status = "Not refreshed";
+    private string _status = "尚未刷新";
     private bool _isRefreshing;
 
     public ReadinessViewModel(IMesClient mes)
@@ -95,22 +94,28 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
     public bool DispatchPermitted => Preflight?.DispatchPermitted == true;
 
     public string BlockingReasons => Preflight is null
-        ? "Physical preflight has not been loaded."
+        ? "物理预检尚未加载。"
         : Preflight.BlockingReasons.Count == 0
-            ? "None reported by the active driver."
-            : string.Join("; ", Preflight.BlockingReasons);
+            ? "当前驱动未报告阻断原因。"
+            : string.Join("；", Preflight.BlockingReasons);
 
-    public string OperatingMode => Preflight?.Readiness?.VehicleOperatingMode ?? "unknown";
+    public string OperatingMode => Preflight?.Readiness?.VehicleOperatingMode?.ToLowerInvariant() switch
+    {
+        "automatic" => "自动",
+        "manual" => "手动",
+        null or "" or "unknown" => "未知",
+        var mode => mode
+    };
 
     public string ProfileFingerprint
     {
         get
         {
-            if (MapSnapshot is null) return "Profile map: unknown";
-            var name = MapSnapshot.ProfileMapName ?? "unknown";
-            var version = MapSnapshot.ProfileMapVersion ?? "unknown";
-            var md5 = MapSnapshot.ProfileMapMd5 ?? "unknown";
-            return $"Profile map: {name} / {version} / {md5}";
+            if (MapSnapshot is null) return "配置地图：未知";
+            var name = MapSnapshot.ProfileMapName ?? "未知";
+            var version = MapSnapshot.ProfileMapVersion ?? "未知";
+            var md5 = MapSnapshot.ProfileMapMd5 ?? "未知";
+            return $"配置地图：{name} / {version} / {md5}";
         }
     }
 
@@ -119,18 +124,18 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
         get
         {
             var readiness = Preflight?.Readiness;
-            if (readiness is null) return "Live map: not supplied by active driver";
-            return $"Live map: {readiness.MapName ?? "unknown"} / {readiness.MapMd5 ?? "unknown"}";
+            if (readiness is null) return "实时地图：当前驱动未提供";
+            return $"实时地图：{readiness.MapName ?? "未知"} / {readiness.MapMd5 ?? "未知"}";
         }
     }
 
     public string MapStationSummary => MapSnapshot is null
-        ? "Map stations: not loaded"
-        : $"Map stations ({MapSnapshot.Stations.Count}): {string.Join(", ", MapSnapshot.Stations.Select(item => item.AgvStationId))}";
+        ? "地图站点：未加载"
+        : $"地图站点（{MapSnapshot.Stations.Count}）：{string.Join("、", MapSnapshot.Stations.Select(item => item.AgvStationId))}";
 
     public string MapEdgeSummary => MapSnapshot is null
-        ? "Map edges: not loaded"
-        : $"Directed/configured edges ({MapSnapshot.Edges.Count}): {string.Join(", ", MapSnapshot.Edges.Select(edge => $"{edge.From} -> {edge.To}"))}";
+        ? "地图边：未加载"
+        : $"有向/配置边（{MapSnapshot.Edges.Count}）：{string.Join("、", MapSnapshot.Edges.Select(edge => $"{edge.From} -> {edge.To}"))}";
 
     public string ActualExecutionPath
     {
@@ -140,7 +145,7 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
                 .Where(item => item.ActiveTask?.Path is { Count: > 0 })
                 .Select(item => $"{item.Snapshot.AgvId}: {string.Join(" -> ", item.ActiveTask!.Path!)}")
                 .ToArray();
-            return paths.Length == 0 ? "No active execution path reported." : string.Join(" | ", paths);
+            return paths.Length == 0 ? "暂无活动执行路径" : string.Join("；", paths);
         }
     }
 
@@ -148,7 +153,7 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
     {
         if (IsRefreshing) return;
         IsRefreshing = true;
-        Status = "Refreshing read-only readiness data...";
+        Status = "正在刷新只读就绪数据...";
         try
         {
             var mapTask = _mes.GetMapSnapshotAsync(cancellationToken);
@@ -156,15 +161,15 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
             await Task.WhenAll(mapTask, preflightTask);
             MapSnapshot = await mapTask;
             Preflight = await preflightTask;
-            Status = $"Read-only snapshot received at {DateTimeOffset.UtcNow:O}";
+            Status = $"只读快照已接收：{DateTimeOffset.UtcNow:O}";
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            Status = "Readiness refresh cancelled.";
+            Status = "就绪状态刷新已取消。";
         }
         catch (Exception exception)
         {
-            Status = $"Readiness refresh failed: {exception.Message}";
+            Status = $"就绪状态刷新失败：{exception.Message}";
         }
         finally
         {

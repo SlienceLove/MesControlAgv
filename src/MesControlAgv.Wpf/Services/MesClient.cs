@@ -146,7 +146,7 @@ public sealed class MesClient(HttpClient client) : IMesClient
 
     public Task<DashboardTask> CreateTaskAsync(CancellationToken cancellationToken) =>
         Task.FromException<DashboardTask>(new InvalidOperationException(
-            "Task creation requires source and target station parameters."));
+            "创建任务需要提供起点和终点站点参数。"));
 
     public Task<DashboardTask> CreateTaskAsync(
         int sourceStationCode,

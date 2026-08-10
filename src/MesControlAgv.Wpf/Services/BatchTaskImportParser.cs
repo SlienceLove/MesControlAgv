@@ -7,8 +7,8 @@ using System.Xml.Linq;
 namespace MesControlAgv.Wpf.Services;
 
 /// <summary>
-/// Parses batch transport tasks from .csv and .xlsx files without a third-party dependency.
-/// The first non-empty row is treated as the header row.
+/// 在不增加第三方依赖的情况下解析 .csv 和 .xlsx 批量运输任务。
+/// 第一行非空行作为表头。
 /// </summary>
 public sealed class BatchTaskImportParser
 {
@@ -221,7 +221,7 @@ public sealed class BatchTaskImportParser
             }
             catch (ArgumentException)
             {
-                // Fall through to the invalid value result.
+                // 继续返回无效值结果。
             }
         }
 

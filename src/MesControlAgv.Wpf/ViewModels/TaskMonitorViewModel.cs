@@ -5,13 +5,13 @@ using System.Runtime.CompilerServices;
 namespace MesControlAgv.Wpf.ViewModels;
 
 /// <summary>
-/// Aggregates task-list state for the task-monitor module.
-/// Task actions remain in <see cref="MainViewModel"/> during the first split step.
+/// 汇总任务监控模块的任务列表状态。
+/// 第一阶段拆分中，任务操作仍由 <see cref="MainViewModel"/> 负责。
 /// </summary>
 public sealed class TaskMonitorViewModel : INotifyPropertyChanged
 {
     private TaskRowViewModel? _selectedTask;
-    private string _connectionStatus = "姝ｅ湪杩炴帴 MES";
+    private string _connectionStatus = "正在连接 MES";
     private DateTime? _taskFilterDate = DateTime.UtcNow.Date;
 
     public ObservableCollection<TaskRowViewModel> Tasks { get; } = [];
@@ -49,4 +49,3 @@ public sealed class TaskMonitorViewModel : INotifyPropertyChanged
         return true;
     }
 }
-

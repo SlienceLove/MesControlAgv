@@ -6,12 +6,12 @@ using MesControlAgv.Wpf.Services;
 
 namespace MesControlAgv.Wpf.ViewModels;
 
-/// <summary>Read-only geometry and overlays for the configured AGV map.</summary>
+/// <summary>配置 AGV 地图的只读几何信息和状态叠加层。</summary>
 public sealed class MapViewModel : INotifyPropertyChanged
 {
-    private string _fingerprint = "Profile map: unknown";
-    private string _liveFingerprint = "Live map: unknown";
-    private string _syncStatus = "UNKNOWN";
+    private string _fingerprint = "配置地图：未知";
+    private string _liveFingerprint = "实时地图：未知";
+    private string _syncStatus = "未知";
 
     public ObservableCollection<MapNodeViewModel> Nodes { get; } = [];
     public ObservableCollection<MapEdgeViewModel> Edges { get; } = [];
@@ -39,11 +39,11 @@ public sealed class MapViewModel : INotifyPropertyChanged
 
         if (snapshot is null)
         {
-            Fingerprint = "Profile map: unknown";
+            Fingerprint = "配置地图：未知";
             LiveFingerprint = preflight?.Readiness is null
-                ? "Live map: unknown"
+                ? "实时地图：未知"
                 : FormatLive(preflight.Readiness.MapName, preflight.Readiness.MapMd5);
-            SyncStatus = "UNKNOWN";
+            SyncStatus = "未知";
             OnPropertyChanged(nameof(CanvasWidth));
             OnPropertyChanged(nameof(CanvasHeight));
             return;
@@ -52,7 +52,7 @@ public sealed class MapViewModel : INotifyPropertyChanged
         Fingerprint = FormatProfile(snapshot);
         LiveFingerprint = preflight?.Readiness is { } readiness
             ? FormatLive(readiness.MapName, readiness.MapMd5)
-            : "Live map: not supplied by active driver";
+            : "实时地图：当前驱动未提供";
         SyncStatus = CompareFingerprint(snapshot, preflight);
 
         var stationLookup = new Dictionary<string, MapNodeViewModel>(StringComparer.OrdinalIgnoreCase);
@@ -93,7 +93,7 @@ public sealed class MapViewModel : INotifyPropertyChanged
             Agvs.Add(new MapAgvOverlayViewModel(
                 status.Snapshot.AgvId,
                 current ?? "-",
-                status.ActiveTask?.MesStatus ?? "Idle",
+                status.ActiveTask?.MesStatus ?? "空闲",
                 status.ActiveTask?.DeviceState ?? "-",
                 path,
                 currentNode?.X ?? 8,
@@ -118,20 +118,20 @@ public sealed class MapViewModel : INotifyPropertyChanged
     }
 
     private static string FormatProfile(DashboardMapSnapshot snapshot) =>
-        $"Profile: {snapshot.ProfileMapName ?? "unknown"} / {snapshot.ProfileMapVersion ?? "unknown"} / {snapshot.ProfileMapMd5 ?? "unknown"}";
+        $"配置地图：{snapshot.ProfileMapName ?? "未知"} / {snapshot.ProfileMapVersion ?? "未知"} / {snapshot.ProfileMapMd5 ?? "未知"}";
 
     private static string FormatLive(string? name, string? md5) =>
-        $"Live: {name ?? "unknown"} / {md5 ?? "unknown"}";
+        $"实时地图：{name ?? "未知"} / {md5 ?? "未知"}";
 
     private static string CompareFingerprint(DashboardMapSnapshot snapshot, PhysicalAgvPreflightResponse? preflight)
     {
         var live = preflight?.Readiness;
-        if (live is null || string.IsNullOrWhiteSpace(snapshot.ProfileMapMd5) || string.IsNullOrWhiteSpace(live.MapMd5)) return "UNKNOWN";
+        if (live is null || string.IsNullOrWhiteSpace(snapshot.ProfileMapMd5) || string.IsNullOrWhiteSpace(live.MapMd5)) return "未知";
         return StringComparer.OrdinalIgnoreCase.Equals(snapshot.ProfileMapMd5, live.MapMd5) &&
             (string.IsNullOrWhiteSpace(snapshot.ProfileMapName) || string.IsNullOrWhiteSpace(live.MapName) ||
              StringComparer.OrdinalIgnoreCase.Equals(snapshot.ProfileMapName, live.MapName))
-            ? "SYNC"
-            : "MISMATCH";
+            ? "一致"
+            : "不一致";
     }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
@@ -181,6 +181,6 @@ public sealed record MapAgvOverlayViewModel(
     double Y,
     bool Online)
 {
-    public string PathText => Path.Count == 0 ? "No active path" : string.Join(" -> ", Path);
+    public string PathText => Path.Count == 0 ? "暂无活动路径" : string.Join(" -> ", Path);
     public string StatusText => $"{AgvId} / {MesStatus} / {DeviceState}";
 }

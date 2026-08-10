@@ -5,13 +5,13 @@ using System.Runtime.CompilerServices;
 namespace MesControlAgv.Wpf.ViewModels;
 
 /// <summary>
-/// Aggregates AGV fleet state for the AGV-communication module.
-/// AGV commands remain in <see cref="MainViewModel"/> during the first split step.
+/// 汇总 AGV 通讯模块的车队状态。
+/// 第一阶段拆分中，AGV 命令仍由 <see cref="MainViewModel"/> 负责。
 /// </summary>
 public sealed class AgvCommunicationViewModel : INotifyPropertyChanged
 {
     private AgvRowViewModel? _selectedAgv;
-    private string _agvStatus = "鏈煡";
+    private string _agvStatus = "未知";
     private string _agvStation = "-";
 
     public ObservableCollection<AgvRowViewModel> Agvs { get; } = [];
@@ -44,4 +44,3 @@ public sealed class AgvCommunicationViewModel : INotifyPropertyChanged
         return true;
     }
 }
-
