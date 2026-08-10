@@ -47,13 +47,17 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private bool _isActionInProgress;
     private string _currentAction = string.Empty;
 
-    public MainViewModel(IMesClient mes, ISimulatorControlClient? simulator = null, ControlCenterModuleRegistry? moduleRegistry = null)
+    public MainViewModel(
+        IMesClient mes,
+        ISimulatorControlClient? simulator = null,
+        ControlCenterModuleRegistry? moduleRegistry = null,
+        IMapLayoutSource? mapLayoutSource = null)
     {
         _mes = mes;
         _simulator = simulator;
         ModuleRegistry = moduleRegistry ?? ControlCenterModuleRegistry.CreateStandard();
         WorkflowEditor = new WorkflowEditorViewModel(new WorkflowStore(), _mes, () => OperatorName);
-        Readiness = new ReadinessViewModel(_mes);
+        Readiness = new ReadinessViewModel(_mes, mapLayoutSource);
         _modules = new ControlCenterViewModel(WorkflowEditor, ModuleRegistry);
         Kpi = _modules.KpiDashboard;
         CreateTaskCommand = CreateActionCommand("\u521B\u5EFA\u4EFB\u52A1", CreateTaskAsync, CanCreateTask);

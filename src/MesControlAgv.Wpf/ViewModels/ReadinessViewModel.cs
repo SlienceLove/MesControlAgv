@@ -12,15 +12,21 @@ namespace MesControlAgv.Wpf.ViewModels;
 public sealed class ReadinessViewModel : INotifyPropertyChanged
 {
     private readonly IMesClient _mes;
+    private readonly IMapLayoutSource _mapLayoutSource;
     private DashboardMapSnapshot? _mapSnapshot;
     private PhysicalAgvPreflightResponse? _preflight;
     private IReadOnlyList<AgvFleetDashboardStatus> _fleetStatus = [];
     private string _status = "尚未刷新";
     private bool _isRefreshing;
+    private bool _mapLayoutAttempted;
+    private string? _mapLayoutError;
+    private MapLayoutResult? _mapLayoutResult;
+    private MapIdentityVerificationResult? _mapIdentityVerification;
 
-    public ReadinessViewModel(IMesClient mes)
+    public ReadinessViewModel(IMesClient mes, IMapLayoutSource? mapLayoutSource = null)
     {
         _mes = mes ?? throw new ArgumentNullException(nameof(mes));
+        _mapLayoutSource = mapLayoutSource ?? EmptyMapLayoutSource.Instance;
         RefreshCommand = new AsyncCommand(() => RefreshAsync(), () => !IsRefreshing);
     }
 
@@ -29,6 +35,7 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
     public ICommand RefreshCommand { get; }
 
     public MapViewModel Map { get; } = new();
+    public MapViewportViewModel Viewport { get; } = new();
 
     public DashboardMapSnapshot? MapSnapshot
     {
@@ -41,6 +48,7 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(ProfileFingerprint));
             OnPropertyChanged(nameof(MapStationSummary));
             OnPropertyChanged(nameof(MapEdgeSummary));
+            VerifyMapLayoutIdentity();
             RefreshMap();
         }
     }
@@ -90,6 +98,39 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
         get => _status;
         private set => SetField(ref _status, value);
     }
+
+    public string? MapLayoutError
+    {
+        get => _mapLayoutError;
+        private set => SetField(ref _mapLayoutError, value);
+    }
+
+    public string MapLayoutVerificationStatus
+    {
+        get
+        {
+            if (_mapLayoutResult is null || !_mapLayoutResult.Loaded)
+            {
+                return MapLayoutError is null
+                    ? "未配置 .smap，使用 MES 自动布局"
+                    : "地图布局加载失败，使用 MES 自动布局";
+            }
+
+            return _mapIdentityVerification?.Status switch
+            {
+                MapIdentityVerificationStatus.Match => "已验证一致",
+                MapIdentityVerificationStatus.Mismatch => "不一致，已禁用运行叠加",
+                _ => "无法验证，已禁用运行叠加"
+            };
+        }
+    }
+
+    public string MapLayoutVerificationDetails => _mapIdentityVerification is null
+        ? MapLayoutError ?? "未加载独立 .smap 布局。"
+        : string.Join("；", _mapIdentityVerification.Reasons);
+
+    public bool IsMapLayoutVerified =>
+        _mapIdentityVerification?.Status == MapIdentityVerificationStatus.Match;
 
     public bool DispatchPermitted => Preflight?.DispatchPermitted == true;
 
@@ -158,10 +199,13 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
         {
             var mapTask = _mes.GetMapSnapshotAsync(cancellationToken);
             var preflightTask = _mes.GetPhysicalPreflightAsync(cancellationToken);
-            await Task.WhenAll(mapTask, preflightTask);
+            var layoutTask = LoadMapLayoutOnceAsync(cancellationToken);
+            await Task.WhenAll(mapTask, preflightTask, layoutTask);
             MapSnapshot = await mapTask;
             Preflight = await preflightTask;
-            Status = $"只读快照已接收：{DateTimeOffset.UtcNow:O}";
+            Status = MapLayoutError is null
+                ? $"只读快照已接收：{DateTimeOffset.UtcNow:O}"
+                : $"只读快照已接收；地图布局加载失败：{MapLayoutError}";
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -180,6 +224,43 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
     public void UpdateFleet(IReadOnlyList<AgvFleetDashboardStatus> statuses) => FleetStatus = statuses ?? [];
 
     private void RefreshMap() => Map.Update(MapSnapshot, Preflight, FleetStatus);
+
+    private async Task LoadMapLayoutOnceAsync(CancellationToken cancellationToken)
+    {
+        if (_mapLayoutAttempted) return;
+        _mapLayoutAttempted = true;
+        var result = await _mapLayoutSource.LoadAsync(cancellationToken);
+        _mapLayoutResult = result;
+        MapLayoutError = result.Error;
+        if (result.Loaded && result.Layout is not null)
+        {
+            Map.ApplyLayout(result.Layout, result.Mapping, Map.CanvasWidth, Map.CanvasHeight);
+            VerifyMapLayoutIdentity();
+        }
+
+        OnPropertyChanged(nameof(MapLayoutVerificationStatus));
+        OnPropertyChanged(nameof(MapLayoutVerificationDetails));
+        OnPropertyChanged(nameof(IsMapLayoutVerified));
+    }
+
+    private void VerifyMapLayoutIdentity()
+    {
+        if (_mapLayoutResult is not { Loaded: true })
+        {
+            _mapIdentityVerification = null;
+            return;
+        }
+
+        _mapIdentityVerification = MapLayoutIdentityVerifier.Verify(
+            _mapLayoutResult.Identity,
+            _mapLayoutResult.Mapping,
+            MapSnapshot);
+        Map.SetSmapOverlayAllowed(
+            _mapIdentityVerification.Status == MapIdentityVerificationStatus.Match);
+        OnPropertyChanged(nameof(MapLayoutVerificationStatus));
+        OnPropertyChanged(nameof(MapLayoutVerificationDetails));
+        OnPropertyChanged(nameof(IsMapLayoutVerified));
+    }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {
@@ -215,5 +296,13 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
         }
 
         public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private sealed class EmptyMapLayoutSource : IMapLayoutSource
+    {
+        public static EmptyMapLayoutSource Instance { get; } = new();
+
+        public Task<MapLayoutResult> LoadAsync(CancellationToken ct = default) =>
+            Task.FromResult(new MapLayoutResult(null, MesControlAgv.Domain.Map.StationMappingConfig.Empty, Loaded: false, Error: null));
     }
 }

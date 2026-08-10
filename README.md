@@ -13,7 +13,7 @@
 ![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)
 ![WPF](https://img.shields.io/badge/UI-WPF-0078D4)
 ![Runtime](https://img.shields.io/badge/runtime-Simulator--first-2E8B57)
-![Tests](https://img.shields.io/badge/tests-230%2F230%20passed-2E8B57)
+![Tests](https://img.shields.io/badge/tests-312%2F312%20passed-2E8B57)
 
 </div>
 
@@ -33,7 +33,7 @@
 | 任务编排 | 创建与显式派发、人工取货/放货确认、暂停/恢复/取消、失败重试 |
 | 可靠性 | `task_id` 幂等、超时状态对账、`Unknown` 恢复、MES/Adapter 重启恢复 |
 | 调度 | 多 AGV 车队状态、最短路径、活动路段冲突过滤、资源不足时闭环失败 |
-| 操作界面 | WPF MVVM 看板、任务详情与审计时间线、AGV 通讯、批量 CSV/XLSX 导入、KPI |
+| 操作界面 | WPF MVVM 看板、任务详情与审计时间线、AGV 通讯、批量 CSV/XLSX 导入、KPI、只读 `.smap` 地图 |
 | 设备边界 | Simulator 默认驱动；可配置厂商 TCP Adapter；真实模式隐藏 Simulator 控制 |
 | 可追溯性 | MES SQLite 任务库、Adapter 操作库、任务和工作流生命周期审计 |
 
@@ -82,7 +82,7 @@ dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1
 dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
-最近一次 Release 基线（2026-08-10）为 0 个警告、0 个错误，自动化测试 `237/237` 通过。
+最近一次 Release 基线（2026-08-10）为 0 个警告、0 个错误，自动化测试 `312/312` 通过。
 
 ### 直接启动 WPF
 
@@ -99,6 +99,8 @@ dotnet run --project src/MesControlAgv.Wpf -c Debug
 ```
 
 无需先运行 PowerShell 启动脚本。WPF 会显示启动状态，按 `Simulator -> Adapter -> MES` 的顺序拉起本机服务，并等待每个 `/health` 就绪后再进行首次刷新；这比固定等待几秒更可靠。关闭 WPF 时，它只会停止由自己启动的服务，已存在且健康的本地服务会被复用且不会被停止。
+
+如需加载本地 RoboshopPro 地图，可在启动前设置 `MAP_SMAP_PATH`；可选的 `MAP_STATION_MAPPING_PATH` 用于把 LM 标记映射到 MES 站点。地图身份与 MES Profile 不一致或无法验证时，界面仍显示静态 `.smap` 几何，但会关闭画布上的 AGV 与活动路径叠加。地图页可独立开关墙线、路线、站点标签、运行叠加和默认关闭的栅格背景；栅格使用单一有界 Gray8 位图而非逐点 WPF 元素。点击站点只显示 `.smap` 标记、MES 映射、坐标、启用状态和关联路线，不提供控制操作。远程桌面截图环境可设置 `WPF_SOFTWARE_RENDERING=true` 使用软件渲染。
 
 从 Visual Studio 启动 WPF 项目，或首次构建后直接打开 WPF 输出目录中的 `MesControlAgv.Wpf.exe`，行为相同。WPF 自行管理的 Simulator 数据库存放在 `%LOCALAPPDATA%\MesControlAgv\local-simulator`。
 

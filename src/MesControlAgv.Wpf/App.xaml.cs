@@ -1,5 +1,7 @@
 using System.Net.Http;
 using System.Windows;
+using System.Windows.Interop;
+using System.Windows.Media;
 using MesControlAgv.Wpf.Services;
 using MesControlAgv.Wpf.Modules;
 using MesControlAgv.Wpf.ViewModels;
@@ -16,6 +18,14 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+        if (string.Equals(
+                Environment.GetEnvironmentVariable("WPF_SOFTWARE_RENDERING"),
+                "true",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
+        }
+
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
         var startupWindow = new StartupWindow();
@@ -69,7 +79,10 @@ public partial class App : Application
             }
 
             var moduleRegistry = ControlCenterModuleRegistry.CreateStandard();
-            _viewModel = new MainViewModel(mesClient, simulatorClient, moduleRegistry);
+            var mapLayoutSource = new SmapMapLayoutSource(
+                () => Environment.GetEnvironmentVariable("MAP_SMAP_PATH"),
+                () => Environment.GetEnvironmentVariable("MAP_STATION_MAPPING_PATH"));
+            _viewModel = new MainViewModel(mesClient, simulatorClient, moduleRegistry, mapLayoutSource);
             var window = new MainWindow { DataContext = _viewModel };
             window.Closed += (_, _) =>
             {

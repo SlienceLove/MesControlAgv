@@ -6,6 +6,18 @@
 
 **Architecture:** 在 `MesControlAgv.Domain/Map/` 新增纯 .NET 的 `.smap` 解析器与坐标转换器（无 WPF 依赖，可被 net8.0 测试项目直接测试）；在 `MesControlAgv.Wpf` 侧新增地图数据加载器、交互状态 ViewModel 和动画控制器；`MapViewModel` 增加一条「使用 smap 布局」的路径，保留原有 MES 自动布局作为回退。
 
+**Implementation status (2026-08-10):** Tasks 1-9 are implemented. The runtime
+uses `advancedCurveList` for navigable Bezier routes and `advancedLineList` for
+wall lines, exposes route-area and full-map framing, places direction arrows
+inside curves, and disables runtime overlays when the loaded `.smap` identity
+cannot be proven against the MES Profile. Release solution tests pass
+`312/312`; the final local visual evidence includes
+`artifacts/wpf-map-route-focus-final-20260810.png` and
+`artifacts/wpf-map-observability-final-20260810.png`. The follow-on
+`2026-08-10-wpf-map-observability.md` plan delivered bounded raster scan
+points, layer toggles, and read-only station details. Map export and physical
+AGV acceptance remain outside both phases.
+
 **Tech Stack:** C# 12、.NET 8、`System.Text.Json`、WPF（Canvas / RenderTransform / DoubleAnimation）、xUnit。
 
 ## Global Constraints
@@ -197,7 +209,7 @@
 - Produces（`MapViewModel` 新成员）：
   - `void ApplyLayout(MapLayout layout, StationMappingConfig mapping, double canvasWidth, double canvasHeight)`：用 `MapCoordinateSystem` 把 `.smap` 站点/路线转换成既有的 `MapNodeViewModel`/`MapEdgeViewModel`（曲线额外产出 `MapPathSegmentViewModel` 的贝塞尔控制点）。站点名优先取 `mapping.TryResolve`，否则用 `.smap` `Id`。
   - `bool UsingSmapLayout { get; }`：为 true 时 `Update(...)` **不再**用自动布局重排节点，只更新 AGV overlay 与状态；为 false 时维持既有自动布局行为（**回退**）。
-  - 既有 `Update(...)` 签名不变（不破坏现有 237 测试）。
+  - 既有 `Update(...)` 签名不变（不破坏 MES 自动布局回退行为）。
 
 **Step 1 — Write failing test:**
 - `ApplyLayout_places_nodes_at_converted_coordinates`：构造含 2 站点 1 路线的 `MapLayout`，调用 `ApplyLayout`，断言 `Nodes` 数、坐标经 Y 翻转后落在 canvas 内、`Edges` 连接正确。
@@ -205,7 +217,7 @@
 - `Update_after_ApplyLayout_keeps_smap_positions`：`ApplyLayout` 后调用 `Update(snapshot,...)`，断言节点坐标不被自动布局覆盖，且 AGV overlay 已更新。
 - `Update_without_ApplyLayout_uses_autolayout`（回归）：不调 `ApplyLayout` 时行为与现状一致。
 
-**Step 2 — Verify fail. Step 3 — Implement:** 保持 `Update` 向后兼容；`ApplyLayout` 设 `UsingSmapLayout=true`。`ReadinessViewModel` 在构造/首次刷新时 `await _mapSource.LoadAsync()`，`Loaded` 为 true 则 `ApplyLayout`，否则维持现状。**Step 4 — Verify pass（含既有 237 测试全绿）. Step 5 — Commit:** `git commit -m "feat: render map from smap layout with mes fallback"`
+**Step 2 — Verify fail. Step 3 — Implement:** 保持 `Update` 向后兼容；`ApplyLayout` 设 `UsingSmapLayout=true`。`ReadinessViewModel` 在构造/首次刷新时 `await _mapSource.LoadAsync()`，`Loaded` 为 true 则 `ApplyLayout`，否则维持现状。**Step 4 — Verify pass（最终解决方案 312/312 全绿）. Step 5 — Commit:** `git commit -m "feat: render map from smap layout with mes fallback"`
 
 ---
 
@@ -283,9 +295,9 @@
 **手动验证清单:**
 1. 设 `MAP_SMAP_PATH` 指向 `guangzhou606.smap`，启动 WPF，地图显示 5 个站点（LM1..LM5）与 9 条路线，站点名可见。
 2. 滚轮缩放围绕鼠标锚点；拖拽平移；双击复位。
-3. 触发一次 AGV 任务，overlay 沿路线平滑移动且车头朝向正确。
+3. 身份校验通过时，活动 overlay 沿路线平滑移动且车头朝向正确；当前 Profile 与本地 `.smap` 不一致，运行叠加按设计关闭，动画协调器由定向测试覆盖。
 4. 不设 `MAP_SMAP_PATH` 时回退到 MES 自动布局，行为同现状。
-5. `dotnet build` 全绿（`TreatWarningsAsErrors=true`），既有 237 测试不回归。
+5. `dotnet build` 全绿（`TreatWarningsAsErrors=true`），解决方案测试 `312/312` 通过。
 
 **Commit:** `git commit -m "feat: wire smap map view with zoom/pan and agv animation"`
 
@@ -303,17 +315,16 @@
 - **`advancedCurveList` vs `advancedLineList`：** 已在上文「格式实测结论」修正——路线来自 `advancedCurveList`，`advancedLineList` 是墙体。Task 3 据此实现。
 - **缺失坐标键：** 解析器对缺失 `x`/`y` 填 `0.0`，不抛异常（Task 1 已含测试）。
 - **性能（3.6 万扫描点）：** 扫描点渲染为可选图层，默认可关闭；优先保证站点/路线/交互流畅。
-- **向后兼容：** `MapViewModel.Update(...)` 签名与语义在未 `ApplyLayout` 时保持不变，保护既有 237 测试。
+- **向后兼容：** `MapViewModel.Update(...)` 签名与语义在未 `ApplyLayout` 时保持不变，保护 MES 自动布局回退和既有调用方。
 - **中控软件并行调试：** 用户同时推进 AGV 中控调试（当前仅移动验证，机械臂抓取 API 未对接）。本计划纯属 WPF 只读可视化，不触碰 Adapter/Simulator 的控制链路，两条线互不阻塞。
 
 ## 全局验证
 
 - 每个 Domain/WPF 测试任务：`dotnet test <对应测试项目> --filter ...` 先红后绿。
-- 计划完成后：`dotnet build`（`TreatWarningsAsErrors=true` 必须零警告）+ `dotnet test`（全解决方案，既有 237 + 新增全绿）。
+- 计划完成后：`dotnet build`（`TreatWarningsAsErrors=true` 必须零警告）+ `dotnet test`（全解决方案 `312/312`）。
 - Task 9 手动验证清单见该任务。
 
 ## 未来工作（超出本计划范围）
 
 - 站点/AGV → MES 工作站的映射从「可选配置文件」升级为运行期动态绑定（用户提到站点当前硬编码，将来据地图映射）。
-- 栅格背景位图（`WriteableBitmap`）美化。
-- 命中测试（点击站点查看详情、点击路线查看代价）。
+- 地图导出（PNG/PDF）和基于历史任务的站点详情扩展。

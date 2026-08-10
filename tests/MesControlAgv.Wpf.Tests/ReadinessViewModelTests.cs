@@ -1,4 +1,5 @@
 using MesControlAgv.Contracts;
+using MesControlAgv.Domain.Map;
 using MesControlAgv.Wpf.Services;
 using MesControlAgv.Wpf.ViewModels;
 
@@ -60,5 +61,105 @@ public sealed class ReadinessViewModelTests
         Assert.Equal("配置地图：未知", readiness.ProfileFingerprint);
         Assert.Contains("就绪状态刷新失败：MES unavailable", readiness.Status, StringComparison.Ordinal);
         Assert.Contains("物理预检尚未加载", readiness.BlockingReasons, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Mismatched_smap_keeps_static_geometry_but_blocks_runtime_overlays()
+    {
+        var client = new FakeMesClient([]) { MapSnapshot = MatchingSnapshot() };
+        var identity = MatchingIdentity() with { Md5 = "different-md5" };
+        var readiness = new ReadinessViewModel(
+            client,
+            new StubMapLayoutSource(new MapLayoutResult(
+                Layout(),
+                StationMappingConfig.Empty,
+                Loaded: true,
+                Error: null,
+                identity)));
+
+        await readiness.RefreshAsync();
+        readiness.UpdateFleet([MovingFleetStatus()]);
+
+        Assert.Equal("不一致，已禁用运行叠加", readiness.MapLayoutVerificationStatus);
+        Assert.Contains("地图 MD5不一致", readiness.MapLayoutVerificationDetails, StringComparison.Ordinal);
+        Assert.False(readiness.IsMapLayoutVerified);
+        Assert.Equal(2, readiness.Map.Nodes.Count);
+        Assert.Single(readiness.Map.Agvs);
+        Assert.Empty(readiness.Map.VisualAgvs);
+        Assert.Empty(readiness.Map.AgvPathSegments);
+        Assert.False(readiness.Map.Layers.RuntimeOverlayAllowed);
+        Assert.False(readiness.Map.Layers.ShowRuntimeOverlays);
+    }
+
+    [Fact]
+    public async Task Matching_smap_allows_independent_runtime_geometry_overlays()
+    {
+        var client = new FakeMesClient([]) { MapSnapshot = MatchingSnapshot() };
+        var readiness = new ReadinessViewModel(
+            client,
+            new StubMapLayoutSource(new MapLayoutResult(
+                Layout(),
+                StationMappingConfig.Empty,
+                Loaded: true,
+                Error: null,
+                MatchingIdentity())));
+
+        await readiness.RefreshAsync();
+        readiness.UpdateFleet([MovingFleetStatus()]);
+
+        Assert.Equal("已验证一致", readiness.MapLayoutVerificationStatus);
+        Assert.True(readiness.IsMapLayoutVerified);
+        Assert.Single(readiness.Map.Agvs);
+        Assert.Single(readiness.Map.VisualAgvs);
+        Assert.Single(readiness.Map.AgvPathSegments);
+        Assert.True(readiness.Map.Layers.RuntimeOverlayAllowed);
+    }
+
+    private static MapLayout Layout() => new(
+        new SmapHeader("2D-Map", "test-map", new MapPoint(0, 0), new MapPoint(10, 10), 0.02, "1.0.6"),
+        [new MapStationLayout("LM1", new MapPoint(0, 0)), new MapStationLayout("LM2", new MapPoint(10, 10))],
+        [new MapRouteLayout(
+            "LM1-LM2",
+            "LM1",
+            "LM2",
+            new MapPoint(0, 0),
+            new MapPoint(10, 10),
+            new MapPoint(2, 2),
+            new MapPoint(8, 8),
+            0)],
+        new MapWallLayout([]),
+        []);
+
+    private static SmapMapIdentity MatchingIdentity() => new(
+        "test-map",
+        "1.0.6",
+        "abc123",
+        ["LM1", "LM2"],
+        [new SmapDirectedEdge("LM1", "LM2")]);
+
+    private static DashboardMapSnapshot MatchingSnapshot() => new(
+        [new DashboardStation(1, "LM1", "LM1", true), new DashboardStation(2, "LM2", "LM2", true)],
+        [new MapEdgeResponse("LM1", "LM2", 1, false)],
+        "product",
+        "profile",
+        "test-map",
+        "1.0.6",
+        "abc123");
+
+    private static AgvFleetDashboardStatus MovingFleetStatus() => new(
+        new AgvDashboardSnapshot(true, "adapter", "LM1", Guid.NewGuid(), "AGV-01"),
+        new AgvActiveTaskStatus(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            "MovingToPickup",
+            "device-1",
+            "moving",
+            "LM2",
+            null,
+            ["LM1", "LM2"]));
+
+    private sealed class StubMapLayoutSource(MapLayoutResult result) : IMapLayoutSource
+    {
+        public Task<MapLayoutResult> LoadAsync(CancellationToken ct = default) => Task.FromResult(result);
     }
 }

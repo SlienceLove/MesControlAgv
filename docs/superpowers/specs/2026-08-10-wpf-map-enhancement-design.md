@@ -2,7 +2,12 @@
 
 > **设计日期：** 2026-08-10  
 > **设计者：** Claude (Opus 5)  
-> **状态：** 待评审
+> **状态：** 已实现阶段 1-4（2026-08-10）；地图导出与真实 AGV 现场验收仍为后续 backlog
+
+> **实现校正：** 当前 WPF 使用 `MAP_SMAP_PATH` / `MAP_STATION_MAPPING_PATH` 环境变量，路线来自
+> `advancedCurveList`，`advancedLineList` 只作为墙体线层。缺少站点映射时保留 `.smap` 的 LM 标记；
+> 只有 `.smap` 未配置或加载失败才回退 MES 自动布局。地图身份（名称、版本、实际文件 MD5、站点集合、
+> 有向边集合）无法验证或不一致时，静态几何仍显示，但 AGV/活动路径画布叠加 fail-closed。
 
 ## 一、总体目标
 
@@ -13,6 +18,7 @@
 - ✅ 基于 `.smap` 文件的真实地图数据
 - ✅ 站点、路径、障碍物的可视化
 - ✅ 为将来的站点映射配置预留扩展点
+- ✅ 可选 Gray8 栅格背景、图层开关和站点只读详情
 
 ### 1.1 背景
 
@@ -130,9 +136,9 @@
 ```
 
 **交互处理：**
-- 鼠标滚轮事件 → 更新 `ZoomLevel`（1.0 = 100%，支持 0.5-5.0）
-- 鼠标中键拖拽 → 更新 `PanX/PanY`
-- 提供工具栏按钮：放大、缩小、适应窗口、重置视图
+- 鼠标滚轮事件 → 更新 `Scale`（当前范围 `0.2-8.0`，以鼠标锚点保持内容位置）
+- 左键拖拽 → 更新 `OffsetX/OffsetY`；双击或重置按钮恢复默认视图
+- 工具栏提供放大、缩小、路线区域、完整地图和重置视图
 
 #### 4.1.2 AGV 移动动画
 
@@ -173,8 +179,8 @@ public class AgvAnimationController
 - **header** - 地图元数据（名称、版本、边界、分辨率）
 - **normalPosList** - 栅格点列表（36559个点，用于障碍物/背景）
 - **advancedPointList** - 高级点列表（LocationMark 站点标记，5个）
-- **advancedLineList** - 特征线列表（路径边，151条）
-- **advancedCurveList** - 曲线列表（9条）
+- **advancedLineList** - 特征线列表（墙体线，151条）
+- **advancedCurveList** - 曲线列表（可行驶路线，9条）
 
 **关键对象类型：**
 - `LocationMark` - 站点位置标记（如 LM1, LM2）
@@ -310,7 +316,7 @@ public class GridMapRenderer
 
 #### 4.2.5 路径箭头渲染
 
-在 `advancedLineList` 的每条线中间绘制方向箭头：
+在 `advancedCurveList` 的每条贝塞尔路线中段绘制方向箭头：
 
 ```xaml
 <ItemsControl ItemsSource="{Binding Map.PathArrows}">
@@ -325,7 +331,7 @@ public class GridMapRenderer
 </ItemsControl>
 ```
 
-箭头位置和旋转角度从 .smap 的 `direction` 和 `directionPos` 属性计算。
+箭头位置和旋转角度由路线的贝塞尔点计算；`direction` 不被猜测为双向，只有存在反向曲线时才显示反向路线。
 
 ### 4.3 阶段3：站点映射配置
 
@@ -581,31 +587,16 @@ MES API 对比验证（站点数、MD5）
 
 ### 7.1 配置文件结构
 
-**appsettings.json 新增节点：**
+**运行环境变量：**
 
 ```json
-{
-  "MapView": {
-    "DataSource": "auto",
-    "SmapFilePath": "C:\Users\33206\AppData\Local\RoboshopPro\appInfo\robots\All\de48aac8dc641f04\maps\guangzhou606.smap",
-    "StationMappingPath": "config/station-mapping.json",
-    "EnableGridBackground": false,
-    "EnablePathArrows": true,
-    "AnimationDuration": 1600,
-    "PollingInterval": 2000,
-    "ZoomLimits": {
-      "Min": 0.5,
-      "Max": 5.0,
-      "Default": 1.0
-    }
-  }
-}
+MAP_SMAP_PATH=C:\path\to\map.smap
+MAP_STATION_MAPPING_PATH=C:\path\to\station-mapping.json
+WPF_SOFTWARE_RENDERING=true  # 可选：远程桌面/截图环境
 ```
 
-**DataSource 选项：**
-- `"smap"` - 强制使用 .smap + 映射配置，失败时报错
-- `"api"` - 强制使用 MES API + 自动布局
-- `"auto"` - 自动选择（优先 .smap，失败回退到 API）
+未配置 `MAP_SMAP_PATH` 或加载失败时使用 MES 自动布局；配置成功但身份校验失败时不回退几何，
+而是保留静态 `.smap` 并关闭运行叠加。
 
 ### 7.2 文件组织
 
@@ -643,40 +634,40 @@ MesControlAgv.sln
 
 ### 阶段1：核心交互
 
-- [ ] 鼠标滚轮缩放地图（0.5x - 5.0x）
-- [ ] 鼠标中键或拖拽平移地图
-- [ ] 工具栏缩放控制按钮可用
-- [ ] "适应窗口"按钮自动调整视图
-- [ ] AGV 位置变化时平滑动画移动（1.6秒）
-- [ ] 动画过程中 AGV 标记不闪烁
-- [ ] 多个 AGV 同时移动互不干扰
+- [x] 鼠标滚轮缩放地图（0.2x - 8.0x）
+- [x] 左键拖拽平移地图
+- [x] 工具栏缩放控制按钮可用
+- [x] 路线区域/完整地图取景按钮可用
+- [x] AGV 位置变化时平滑动画移动（默认 1.6 秒）
+- [x] 动画过程中 AGV 标记不闪烁
+- [x] 多个 AGV 同时移动互不干扰
 
 ### 阶段2：.smap 渲染
 
-- [ ] 成功解析 guangzhou606.smap 文件
-- [ ] 站点坐标从 .smap LocationMark 读取
-- [ ] 路径边从 .smap AdvancedLineList 渲染
-- [ ] 路径箭头正确显示方向
+- [x] 成功解析 guangzhou606.smap 文件
+- [x] 站点坐标从 .smap LocationMark 读取
+- [x] 路线从 .smap `advancedCurveList` 贝塞尔曲线渲染
+- [x] 路径箭头正确显示方向
 - [ ] 路径代价标签显示（可选）
-- [ ] 地图边界自动适配 .smap 的 minPos/maxPos
-- [ ] 栅格背景可选启用（性能可接受）
+- [x] 地图边界自动适配 .smap 的 minPos/maxPos
+- [x] 栅格背景可选启用（单一有界 Gray8 位图，默认关闭）
 
 ### 阶段3：站点映射
 
-- [ ] 读取 station-mapping.json 配置
-- [ ] LocationMark 正确映射到 MES 站点
-- [ ] MES API 验证显示同步状态
-- [ ] 映射缺失时回退到自动布局
-- [ ] 配置文件格式错误时友好提示
+- [x] 读取可选站点映射 JSON 配置
+- [x] LocationMark 可映射到 MES 站点并参与身份校验
+- [x] MES API 验证显示同步状态
+- [x] 映射缺失时保留 `.smap` LM 名称；`.smap` 缺失/加载失败时回退自动布局
+- [x] 配置文件格式错误时保留明确加载错误并回退
 
 ### 视觉增强
 
 - [ ] 站点节点显示图标和渐变背景
 - [ ] 站点根据状态变色
-- [ ] AGV 标记显示方向箭头
-- [ ] 活动路径高亮显示
-- [ ] 图层开关正常工作
-- [ ] 悬停站点显示详细信息（Tooltip）
+- [x] AGV 标记显示方向箭头
+- [x] 活动路径高亮显示（身份校验通过时）
+- [x] 图层开关正常工作（墙线、路线、站点标签、运行叠加、栅格）
+- [x] 点击站点显示只读详情（映射、坐标、状态、关联路线）
 
 ### 性能要求
 
@@ -701,7 +692,7 @@ MesControlAgv.sln
 
 ### 短期（1-2周内）
 
-- 站点详情面板（点击站点显示任务历史）
+- 站点详情面板扩展为显示任务历史
 - 路径规划可视化（显示 Dijkstra 算法结果）
 - 导出地图为图片（PNG/PDF）
 
@@ -743,5 +734,6 @@ MesControlAgv.sln
 ---
 
 **设计完成日期：** 2026-08-10  
-**下一步：** 等待用户审查批准，然后创建实施计划
-
+**当前状态：** 阶段 1-4 已实现并通过 Release 全量测试 `312/312`；
+路线/完整地图取景、方向箭头、地图身份 fail-closed、栅格背景、图层开关和站点只读详情均已完成。
+**后续：** 地图导出和真实 AGV 现场验收按独立任务推进；真实 AGV 继续 `NO-GO`。

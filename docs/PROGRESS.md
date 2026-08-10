@@ -34,7 +34,7 @@ dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
 The post-merge Release build passed on 2026-08-10 with 0 warnings and 0 errors,
-and the combined solution test run passed **237/237 tests**. Coverage includes
+and the combined solution test run passed **312/312 tests**. Coverage includes
 WPF station/task contracts,
 workflow draft/validate/publish/version/dry-run APIs and audit readback,
 read-only map/readiness aggregation, timeout recovery without duplicate
@@ -48,6 +48,61 @@ fail-closed and never opens a device connection during offline verification.
 The three service processes were started from the Release output on isolated local ports with fresh temporary MES/Adapter stores for process-level validation. Existing positive and `failure-retry` runs passed, including pause/resume, arrival confirmations, audit evidence, and fleet cleanup. New isolated runs on `5511/5512/5513` passed `timeout-recover` (Simulator `timeout-unknown` -> MES `Unknown` -> same operation recreated -> `ReconciledMoving` -> completed), `5551/5552/5553` passed `multi-agv` (three distinct AGV assignments, fourth task failed closed with `DeviceFailed`, all three tasks completed), `5571/5572/5573` passed `restart-resume` (Simulator kept alive while Adapter/MES restarted and reconciled persisted work), and `5641/5642/5643` passed `workflow-publish-rollback` (three immutable versions, published pointer rollback, and lifecycle audits). The physical-robot run has not been completed.
 
 The full isolated process matrix was rerun from the Release output on 2026-08-10 with separate temporary stores and ports: `positive` (6101-6103), `failure-retry` (6111-6113), `timeout-recover` (6121-6123), `cancel` (6131-6133), `workflow-publish-rollback` (6141-6143), `multi-agv` (6151-6153), and `restart-resume` (6161-6163) all passed. All owned processes, listening ports, and state files were cleaned up afterward; no physical AGV was connected.
+
+## 2026-08-10 WPF `.smap` map enhancement completion
+
+The offline WPF map phase is complete. No physical AGV was connected, controlled,
+dispatched, cancelled, or moved.
+
+- Domain now parses RoboshopPro `.smap` `1.0.6`, including omitted zero-valued
+  coordinates, map metadata, LocationMarks, feature walls, and
+  `advancedCurveList` Bezier routes. Routes come from `advancedCurveList`;
+  `advancedLineList` is rendered only as a low-contrast wall layer.
+- WPF loads the map through `MAP_SMAP_PATH`, optionally applies
+  `MAP_STATION_MAPPING_PATH`, preserves MES automatic layout when `.smap` is
+  absent or cannot be loaded, and compares map name, version, actual file MD5,
+  station set, and directed-edge set before showing runtime overlays.
+- Identity failure is fail-closed without hiding useful static context. The
+  `.smap` geometry and textual fleet status remain visible, while canvas AGV
+  markers and active paths are disabled for `Mismatch` or `Unverifiable`.
+- The map supports mouse-wheel zoom (`0.2x` to `8x`), drag pan, reset, full-map
+  fit, and a route-area fit used on first entry. Route-area framing prevents the
+  local navigation graph from being compressed by the much larger map header
+  bounds. Direction arrows are placed inside curves instead of stacking at
+  station endpoints.
+- AGV animation uses independent refresh-stable state per AGV, a default
+  `1.6s` segment duration, Bezier position and heading, and stops at segment
+  completion instead of looping. Runtime overlays remain intentionally hidden
+  for the currently mismatched Profile; coordinator behavior is covered by
+  focused tests.
+- The local `guangzhou606.smap` was verified as map `guangzhou606`, version
+  `1.0.6`, MD5 `816e68b9a367d9c8d5eaee9331a7ef58`, with 5 stations, 9 routes,
+  and 151 feature walls. Its station/edge sets and MD5 do not match the active
+  Simulator/Profile snapshot, so the WPF correctly reports mismatch and keeps
+  runtime overlays disabled.
+- Manual Release acceptance used software rendering plus UI Automation. All 5
+  station labels were visible; route focus increased the closest vertical label
+  gaps from `36px` to `82px`; full-map fit, route fit, button zoom, mouse-wheel
+  zoom, reset, and drag pan all changed the expected screen geometry. The final
+  screenshot is `artifacts/wpf-map-route-focus-final-20260810.png`.
+- The map observability follow-up renders `normalPosList` as one bounded Gray8
+  bitmap input (default hidden, no per-point WPF visuals), adds independent
+  wall/route/label/runtime/raster layer switches, and keeps the runtime switch
+  disabled whenever identity verification is not `Match`.
+- Station nodes now have a full-size transparent hit target and an accessible
+  read-only inspector with the `.smap` ID, optional MES mapping, physical
+  coordinate, enabled state, and connected route IDs. No map action dispatches
+  or controls an AGV.
+- Final Release verification passed **312/312** tests: Domain 35, MES 45,
+  Adapter 72, WPF 135, E2E 11, Simulator 5, Workflow Contract 9. Release
+  build completed with 0 warnings and 0 errors. UI Automation confirmed the
+  raster toggle, disabled runtime layer under mismatch, and `LM1` station
+  detail; visual evidence is `artifacts/wpf-map-observability-final-20260810.png`.
+
+Only map export remains in this visual backlog. A
+real AGV remains **NO-GO** until a new authorized, isolated read-only preflight
+proves the live map fingerprint, station catalog, directed edges, automatic
+mode, control ownership, and safety gates.
 
 ## 2026-08-10 concurrent continuation
 
@@ -133,7 +188,7 @@ MES processes with temporary SQLite stores.
   scenario must use a fresh Simulator process; if the AGV is already at the
   pickup station MES correctly bypasses navigation and no timeout is consumed.
 - Final Release verification: build `0 warnings / 0 errors`; tests
-  **237/237** (Domain 19, MES 45, Adapter 72, WPF 76, E2E 11, Simulator 5,
+  **312/312** (Domain 35, MES 45, Adapter 72, WPF 135, E2E 11, Simulator 5,
   Workflow Contract 9).
 
 Physical acceptance remains **NO-GO**. The vehicle is currently powered off,
