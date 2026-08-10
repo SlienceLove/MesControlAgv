@@ -25,6 +25,10 @@ public sealed class AgvRowViewModel : INotifyPropertyChanged
     public string ControlOwner => string.IsNullOrWhiteSpace(Snapshot.ControlOwner) ? "-" : Snapshot.ControlOwner;
     public string CurrentStationId => Snapshot.CurrentStationId ?? "-";
     public Guid? CurrentTaskId => Snapshot.CurrentTaskId;
+    public Guid? MesTransportTaskId => ActiveTask?.TransportTaskId;
+    public Guid? ActiveOperationId => ActiveTask?.OperationId;
+    public bool HasCorrelatedActiveTask =>
+        CurrentTaskId is { } operationId && ActiveTask?.OperationId == operationId;
     public string CurrentTaskText => CurrentTaskId?.ToString() ?? "\u7A7A\u95F2";
     public string MesTaskStatus => ActiveTask?.MesStatus ?? "\u65E0 MES \u6D3B\u52A8\u4EFB\u52A1";
     public string DeviceState => ActiveTask?.DeviceState ?? "-";

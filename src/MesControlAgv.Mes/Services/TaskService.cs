@@ -101,6 +101,15 @@ public sealed class TaskService : ITaskApplicationService
     public async Task<TaskResponse> CancelAsync(Guid taskId, string operatorName, CancellationToken cancellationToken)
     {
         var task = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
+        // An Unknown task has an unresolved device outcome.  Sending another
+        // cancellation command here could race a still-running AGV operation
+        // and would make the MES state lie about the device.  Reconcile the
+        // operation first; only a confirmed device cancellation may produce
+        // Cancelled.
+        if (task.Status == DomainTaskStatus.Unknown)
+        {
+            throw new InvalidTaskTransitionException(task.Status, TaskEvent.CancelConfirmed);
+        }
         if (task.Status == DomainTaskStatus.Created)
         {
             return ToResponse(await _repository.ApplyEventAsync(

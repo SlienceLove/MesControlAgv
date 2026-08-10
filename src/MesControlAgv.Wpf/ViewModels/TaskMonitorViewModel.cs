@@ -11,7 +11,7 @@ namespace MesControlAgv.Wpf.ViewModels;
 public sealed class TaskMonitorViewModel : INotifyPropertyChanged
 {
     private TaskRowViewModel? _selectedTask;
-    private string _connectionStatus = "姝ｅ湪杩炴帴 MES";
+    private string _connectionStatus = "正在连接 MES";
     private DateTime? _taskFilterDate = DateTime.UtcNow.Date;
 
     public ObservableCollection<TaskRowViewModel> Tasks { get; } = [];

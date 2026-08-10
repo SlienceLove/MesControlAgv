@@ -485,3 +485,15 @@ No physical AGV was connected, commanded, or moved during this verification. Exi
 - 最新 Release solution build 为 0 warnings、0 errors；Release 全量测试 **172/172 通过**（Domain 19、MES 38、Adapter 57、WPF 36、E2E 9、Simulator 4、Workflow Contract 9）。本轮仍只使用 Simulator，未连接、控制或移动实体 AGV。
 
 真实 AGV 继续保持 **NO-GO**：车辆断电，断电前地图 MD5、`manualBlock=true` 和自动模式 `unknown` 均为历史/未确认信息。下一次现场工作必须在隔离和明确授权后，从重新通电的只读预检开始，并重新比对地图、站点、直接有向边、自动模式和控制权；这些现场条件不阻塞当前离线 WPF 调度开发。
+
+## 2026-08-07 WPF control-center complete UIA loop (local only)
+
+- WPF 创建任务不再依赖固定的 `SAMPLE_01 -> ST_PREP_01` 默认值；界面从 MES 加载启用站点集合，并按操作员实际选择的起点、终点、优先级、描述和外部单号创建任务。Workflow 默认模板中的运输站点也改为空值，发布前按当前 MES 站点目录解析和校验。
+- Simulator 完整闭环已从 WPF 中控界面通过：动态参数创建任务、显式派发、暂停、恢复、取货到站确认、放货到站确认，最终进入 `Completed`。AGV 页命令要求 adapter 控制权以及 MES task/operation 精确关联；取消统一走 MES 任务取消接口，避免设备与 MES 状态分叉。
+- 默认最大化窗口下的 Windows UI Automation 运行 `wpf-ui-20260807-maximized` 已通过；随后加入运行时 `WindowPattern` 最大化断言，并由 `wpf-ui-20260807-runtime-maximized` 再次通过。两次验证结束时 MES `/api/agvs/fleet/status` 无活动任务，Adapter fleet 的 `currentTaskId` 全部为空，确认任务完成后 MES 与 Adapter 均恢复 fleet idle；第二次使用自定义 `StatePath`，清理脚本按该路径停止并删除状态文件。
+- 修复 WPF 命令状态更新：刷新开始、刷新完成及 AGV 状态恢复时会触发 `CanExecuteChanged`，关联的 `Paused` 任务在成功刷新后恢复按钮保持可执行；后台刷新期间保留上一轮有效 task/fleet 展示。
+- 修复站点集合刷新：MES 站点目录未变化时不再清空并重建 `AvailableStations`，从而保留已选站点、路线预览和 ComboBox/UIA 元素；UIA 脚本同时按 Windows PowerShell 5 语义展开顶层 JSON 数组，避免将整个 fleet 数组误判为单条活动记录。
+- WPF 定向测试 Debug **70/70**、Release **70/70** 通过，覆盖动态建单、完整状态流转、task/operation 关联、刷新快照保持、`CanExecuteChanged`、退出竞态和物理派单 fail-closed 门禁。Recover API 对未知任务/不可对账设备状态分别返回稳定的 404/409，WPF HTTP 合约保留错误详情。Release solution build 为 0 warnings、0 errors；Release 全量测试 **234/234** 通过（Domain 19、MES 49、Adapter 72、WPF 70、E2E 10、Simulator 5、Workflow Contract 9）。
+- WPF 主窗口已默认最大化显示，同时保留标准窗口边框和还原/最小化能力；该启动状态已经过上述最终 UIA 完整闭环复验。
+
+真实 AGV 继续保持 **NO-GO**。本轮没有重新通电，也没有执行实体设备连接、控制、派单或移动验证；断电前地图 MD5、`manualBlock=true` 和自动模式 `unknown` 仍不得作为当前放行证据。现场验证继续跳过，不阻塞 Simulator/WPF 离线闭环开发。

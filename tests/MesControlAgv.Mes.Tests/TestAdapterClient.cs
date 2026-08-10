@@ -17,12 +17,14 @@ public sealed class TestAdapterClient : IAgvGateway, IFleetAwareAgvGateway
     }
 
     public Task<AgvTaskResponse?> GetTaskAsync(Guid operationId, CancellationToken cancellationToken) =>
-        Task.FromResult<AgvTaskResponse?>(new AgvTaskResponse(
-            operationId,
-            operationId.ToString("N"),
-            "SAMPLE_01",
-            "moving",
-            null));
+        Task.FromResult(ReturnMissingTaskOnQuery
+            ? null
+            : new AgvTaskResponse(
+                operationId,
+                operationId.ToString("N"),
+                "SAMPLE_01",
+                "moving",
+                null));
 
     public Task<AgvTaskResponse?> CancelAsync(Guid operationId, CancellationToken cancellationToken) =>
         Task.FromResult<AgvTaskResponse?>(null);
@@ -38,8 +40,14 @@ public sealed class TestAdapterClient : IAgvGateway, IFleetAwareAgvGateway
         string agvId,
         string command,
         Guid? taskId,
-        CancellationToken cancellationToken) =>
-        Task.FromResult<AgvTaskResponse?>(null);
+        CancellationToken cancellationToken)
+    {
+        ExecuteAgvCommandCallCount++;
+        return Task.FromResult<AgvTaskResponse?>(null);
+    }
+
+    public int ExecuteAgvCommandCallCount { get; private set; }
+    public bool ReturnMissingTaskOnQuery { get; set; }
 }
 
 

@@ -250,6 +250,25 @@ public class TransportWorkflowTests
     }
 
     [Fact]
+    public async Task Unknown_task_must_be_reconciled_before_cancellation()
+    {
+        var adapter = new FakeAdapterClient { CancelState = "cancelled" };
+        var service = CreateService(adapter);
+        var task = await service.CreateAsync(new(2, 4), CancellationToken.None);
+        await service.DispatchAsync(task.Id, CancellationToken.None);
+        await service.MarkUnknownAsync(task.Id, CancellationToken.None);
+
+        await Assert.ThrowsAsync<InvalidTaskTransitionException>(() =>
+            service.CancelAsync(task.Id, "operator", CancellationToken.None));
+
+        Assert.Empty(adapter.CancelOperationIds);
+        var detail = await service.GetDetailAsync(task.Id, CancellationToken.None);
+        Assert.NotNull(detail);
+        Assert.Equal("Unknown", detail.Task.Status);
+        Assert.DoesNotContain(detail.Events, item => item.EventType == "CancelConfirmed");
+    }
+
+    [Fact]
     public async Task Confirmed_adapter_cancellation_records_cancel_confirmed()
     {
         var adapter = new FakeAdapterClient { CancelState = "cancelled" };

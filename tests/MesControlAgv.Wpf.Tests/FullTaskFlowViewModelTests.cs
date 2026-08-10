@@ -189,9 +189,6 @@ internal sealed class StatefulFlowMesClient : IMesClient
         CancellationToken cancellationToken) =>
         Task.FromResult(new DashboardPlannedPath([fromStationId, toStationId], 1));
 
-    public Task<DashboardTask> CreateTaskAsync(CancellationToken cancellationToken) =>
-        CreateTaskAsync(2, 4, 0, null, null, cancellationToken);
-
     public Task<DashboardTask> CreateTaskAsync(
         int sourceStationCode,
         int targetStationCode,
@@ -316,7 +313,7 @@ internal sealed class StatefulFlowMesClient : IMesClient
         if (task is null || task.Status is "Created" or "Completed" or "Cancelled")
         {
             return new AgvFleetDashboardStatus(
-                new AgvDashboardSnapshot(true, "simulator", _currentStationId, null),
+                new AgvDashboardSnapshot(true, "adapter", _currentStationId, null),
                 null);
         }
 
@@ -331,7 +328,7 @@ internal sealed class StatefulFlowMesClient : IMesClient
             task.LastError,
             task.ActivePath);
         return new AgvFleetDashboardStatus(
-            new AgvDashboardSnapshot(true, "simulator", _currentStationId, operationId),
+            new AgvDashboardSnapshot(true, "adapter", _currentStationId, operationId),
             active);
     }
 

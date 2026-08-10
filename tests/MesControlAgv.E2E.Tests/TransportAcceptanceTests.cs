@@ -92,6 +92,28 @@ public sealed class TransportAcceptanceTests
     }
 
     [Fact]
+    public async Task Simulator_task_cancellation_keeps_device_mes_and_fleet_idle_in_sync()
+    {
+        var simulator = new SimulatorState();
+        var adapter = new SimulatorAcceptanceAdapter(simulator);
+        var service = CreateService(adapter);
+
+        var created = await service.CreateAsync(new CreateTaskRequest(2, 4), CancellationToken.None);
+        var dispatched = await service.DispatchAsync(created.Id, CancellationToken.None);
+        var operationId = TransportOperationIds.Pickup(created.Id);
+
+        var cancelled = await service.CancelAsync(created.Id, "operator-cancel", CancellationToken.None);
+
+        Assert.Equal("MovingToPickup", dispatched.Status);
+        Assert.Equal("Cancelled", cancelled.Status);
+        Assert.Equal("cancelled", simulator.GetTask(operationId)?.State);
+        Assert.Null(simulator.GetSnapshot("AGV-01").CurrentTaskId);
+        var detail = await service.GetDetailAsync(created.Id, CancellationToken.None);
+        Assert.NotNull(detail);
+        Assert.Contains(detail.Events, item => item.EventType == "CancelConfirmed");
+    }
+
+    [Fact]
     public async Task Consecutive_tasks_keep_separate_device_operations()
     {
         var adapter = new AcceptanceAdapter();

@@ -43,6 +43,72 @@ public sealed class MesClientHttpContractTests
     }
 
     [Fact]
+    public async Task Readiness_clients_map_runtime_and_physical_evidence()
+    {
+        var runtime = new RuntimeReadinessResponse(
+            "CUSTOM",
+            "Custom MES",
+            "2.0",
+            UseSimulator: false,
+            AutomaticDispatchEnabled: true,
+            TaskCancellationEnabled: true,
+            ProfileFingerprint: new string('a', 64),
+            MapFingerprint: new string('b', 64),
+            StationIds: ["FROM", "TO"],
+            DirectedEdges: [new DirectedMapEdgeResponse("FROM", "TO", 2.5)],
+            ExpectedPhysicalMapName: "plant-map",
+            ExpectedPhysicalMapVersion: "v7",
+            ExpectedPhysicalMapMd5: "map-md5");
+        var safety = new AgvSafetyReadinessResponse(
+            "automatic",
+            "controller",
+            "plant-map",
+            "map-md5",
+            true,
+            1,
+            false,
+            true,
+            false,
+            false,
+            0,
+            0,
+            1,
+            0.99,
+            DateTimeOffset.UtcNow);
+        var preflight = new PhysicalAgvPreflightResponse(
+            new AgvSnapshotResponse(true, "adapter", "FROM", null, SafetyReadiness: safety),
+            safety,
+            true,
+            []);
+        var handler = new RecordingHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/runtime/readiness" => JsonResponse(runtime),
+            "/api/physical/preflight" => JsonResponse(preflight),
+            _ => new HttpResponseMessage(HttpStatusCode.NotFound)
+        });
+        using var httpClient = CreateClient(handler);
+        var client = new MesClient(httpClient);
+
+        var actualRuntime = await client.GetRuntimeReadinessAsync(CancellationToken.None);
+        var actualPreflight = await client.GetPhysicalPreflightAsync(CancellationToken.None);
+
+        Assert.NotNull(actualRuntime);
+        Assert.Equal(runtime.ProductId, actualRuntime.ProductId);
+        Assert.Equal(runtime.ProfileFingerprint, actualRuntime.ProfileFingerprint);
+        Assert.Equal(runtime.MapFingerprint, actualRuntime.MapFingerprint);
+        Assert.Equal(runtime.StationIds, actualRuntime.StationIds);
+        Assert.Equal(runtime.DirectedEdges, actualRuntime.DirectedEdges);
+        Assert.NotNull(actualPreflight);
+        Assert.True(actualPreflight.DispatchPermitted);
+        Assert.Equal("adapter", actualPreflight.Snapshot.ControlOwner);
+        Assert.Equal("plant-map", actualPreflight.Readiness?.MapName);
+        Assert.Empty(actualPreflight.BlockingReasons);
+        Assert.Equal(
+            ["/api/runtime/readiness", "/api/physical/preflight"],
+            handler.Requests.Select(request => request.Uri.AbsolutePath).ToArray());
+    }
+
+    [Fact]
     public async Task Plan_path_posts_station_ids_and_blocked_collection()
     {
         var handler = new RecordingHandler(_ => JsonResponse(
@@ -350,7 +416,7 @@ public sealed class MesClientHttpContractTests
     }
 
     [Fact]
-    public async Task Dispatch_conflict_exposes_http_status_code()
+    public async Task Dispatch_conflict_exposes_http_status_and_json_detail()
     {
         var taskId = Guid.NewGuid();
         var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.Conflict)
@@ -360,11 +426,59 @@ public sealed class MesClientHttpContractTests
         using var httpClient = CreateClient(handler);
         var client = new MesClient(httpClient);
 
-        var exception = await Assert.ThrowsAsync<HttpRequestException>(
+        var exception = await Assert.ThrowsAsync<MesApiException>(
             () => client.DispatchTaskAsync(taskId, CancellationToken.None));
 
         Assert.Equal(HttpStatusCode.Conflict, exception.StatusCode);
+        Assert.Equal("task cannot be dispatched", exception.Detail);
+        Assert.Contains("task cannot be dispatched", exception.Message, StringComparison.Ordinal);
         Assert.Equal($"/api/tasks/{taskId}/dispatch", Assert.Single(handler.Requests).Uri.AbsolutePath);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound, "Task was not found.")]
+    [InlineData(HttpStatusCode.Conflict, "Device task cannot be reconciled.")]
+    public async Task Recover_failure_exposes_http_status_and_json_detail(
+        HttpStatusCode statusCode,
+        string detail)
+    {
+        var taskId = Guid.NewGuid();
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(statusCode)
+        {
+            Content = JsonContent.Create(new { detail })
+        });
+        using var httpClient = CreateClient(handler);
+        var client = new MesClient(httpClient);
+
+        var exception = await Assert.ThrowsAsync<MesApiException>(
+            () => client.RecoverAsync(taskId, CancellationToken.None));
+
+        Assert.Equal(statusCode, exception.ResponseStatusCode);
+        Assert.Equal(detail, exception.Detail);
+        Assert.Contains(detail, exception.Message, StringComparison.Ordinal);
+        Assert.Equal($"/api/tasks/{taskId}/recover", Assert.Single(handler.Requests).Uri.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task Agv_command_conflict_exposes_json_detail()
+    {
+        var operationId = Guid.NewGuid();
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.Conflict)
+        {
+            Content = JsonContent.Create(new { detail = "Cancel the MES transport task instead." })
+        });
+        using var httpClient = CreateClient(handler);
+        var client = new MesClient(httpClient);
+
+        var exception = await Assert.ThrowsAsync<MesApiException>(() => client.ExecuteAgvCommandAsync(
+            "AGV-01",
+            "cancel",
+            operationId,
+            CancellationToken.None));
+
+        Assert.Equal(HttpStatusCode.Conflict, exception.ResponseStatusCode);
+        Assert.Equal("Cancel the MES transport task instead.", exception.Detail);
+        Assert.Contains("Cancel the MES transport task instead.", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]

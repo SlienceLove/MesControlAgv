@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
+using MesControlAgv.Contracts;
 using MesControlAgv.Domain;
 using MesControlAgv.Wpf.Infrastructure;
 using MesControlAgv.Wpf.Modules;
@@ -15,7 +16,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly IMesClient _mes;
     private readonly ISimulatorControlClient? _simulator;
     private readonly ControlCenterViewModel _modules;
-    private readonly PeriodicTimer _timer = new(TimeSpan.FromSeconds(2));
+    private static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(2);
     private readonly CancellationTokenSource _shutdown = new();
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private readonly SemaphoreSlim _actionGate = new(1, 1);
@@ -46,6 +47,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private DateTimeOffset? _lastRefreshAt;
     private bool _isActionInProgress;
     private string _currentAction = string.Empty;
+    private bool _hasFreshTaskSnapshot;
+    private bool _hasFreshFleetSnapshot;
+    private bool _isReloadingStationCatalog;
+    private RuntimeReadinessResponse? _runtimeReadinessEvidence;
+    private PhysicalAgvPreflightResponse? _physicalPreflightEvidence;
+    private string? _runtimeReadinessError;
+    private string? _physicalPreflightError;
 
     public MainViewModel(IMesClient mes, ISimulatorControlClient? simulator = null, ControlCenterModuleRegistry? moduleRegistry = null)
     {
@@ -63,7 +71,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         ConfirmDropoffCommand = CreateActionCommand("\u786E\u8BA4\u653E\u8D27", ConfirmDropoffAsync, () => HasOperator && SelectedTask?.Status == "WaitingDropoffConfirmation");
         RetryCommand = CreateActionCommand("\u91CD\u8BD5\u4EFB\u52A1", RetryAsync, () => SelectedTask?.Status == "Failed");
         RecoverCommand = CreateActionCommand("\u6062\u590D\u4EFB\u52A1", RecoverAsync, () => SelectedTask?.Status == "Unknown");
-        CancelCommand = CreateActionCommand("\u53D6\u6D88\u4EFB\u52A1", CancelAsync, () => HasOperator && SelectedTask is { Status: not "Completed" and not "Cancelled" });
+        CancelCommand = CreateActionCommand("\u53D6\u6D88\u4EFB\u52A1", CancelAsync, CanCancelTask);
         SimulatorArriveCommand = CreateActionCommand("\u4EFF\u771F\u5230\u7AD9", () => ApplySimulatorControlAsync("arrive"), () => IsSimulatorPanelVisible);
         SimulatorFailCommand = CreateActionCommand("\u6A21\u62DF\u5931\u8D25", () => ApplySimulatorControlAsync("fail"), () => IsSimulatorPanelVisible);
         SimulatorTimeoutCommand = CreateActionCommand("\u6A21\u62DF\u8D85\u65F6", () => ApplySimulatorControlAsync("timeout"), () => IsSimulatorPanelVisible);
@@ -74,7 +82,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         RefreshTasksCommand = CreateActionCommand("\u5237\u65B0\u4EFB\u52A1", () => RefreshAsync());
         PauseAgvCommand = CreateActionCommand("\u6682\u505C AGV", () => ExecuteAgvCommandAsync("pause"), () => CanControlSelectedAgv("pause"));
         ResumeAgvCommand = CreateActionCommand("\u6062\u590D AGV", () => ExecuteAgvCommandAsync("resume"), () => CanControlSelectedAgv("resume"));
-        CancelAgvCommand = CreateActionCommand("\u53D6\u6D88 AGV \u4EFB\u52A1", () => ExecuteAgvCommandAsync("cancel"), () => CanControlSelectedAgv("cancel"));
+        CancelAgvCommand = CreateActionCommand("\u53D6\u6D88 AGV \u4EFB\u52A1", CancelSelectedAgvTaskAsync, CanCancelSelectedAgvTask);
         SortBatchCommand = CreateActionCommand("\u6392\u5E8F\u6279\u91CF\u4EFB\u52A1", () => { SortBatchTasks(); return Task.CompletedTask; }, () => BatchTasks.Count > 1);
         SubmitBatchCommand = CreateActionCommand("\u63D0\u4EA4\u6279\u91CF\u4EFB\u52A1", SubmitBatchAsync, () => BatchTasks.Any(task => task.Status == "\u5F85\u63D0\u4EA4"));
         ClearBatchCommand = CreateActionCommand("\u6E05\u7A7A\u6279\u91CF\u4EFB\u52A1", () =>
@@ -108,6 +116,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             if (!SetField(ref _selectedTask, value)) return;
             _modules.TaskMonitor.SelectedTask = value;
             RefreshCommandState();
+            RefreshAgvCommandState();
+            OnPropertyChanged(nameof(AgvCommandGateStatus));
             if (!_suppressDetailRefresh) RequestTaskDetailRefresh();
         }
     }
@@ -120,6 +130,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             if (!SetField(ref _selectedAgv, value)) return;
             _modules.AgvCommunication.SelectedAgv = value;
             RefreshAgvCommandState();
+            OnPropertyChanged(nameof(AgvCommandGateStatus));
         }
     }
 
@@ -159,6 +170,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             if (!SetField(ref _isActionInProgress, value)) return;
             RefreshAllCommandState();
+            OnPropertyChanged(nameof(AgvCommandGateStatus));
         }
     }
     public string CurrentAction
@@ -172,7 +184,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         set
         {
             if (!SetField(ref _newTaskSourceStation, value)) return;
-            InvalidateRoutePreview();
+            if (!_isReloadingStationCatalog) InvalidateRoutePreview();
         }
     }
     public bool IsRefreshing
@@ -182,6 +194,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             if (!SetField(ref _isRefreshing, value)) return;
             OnPropertyChanged(nameof(RefreshStatus));
+            OnPropertyChanged(nameof(PhysicalPreflightStatus));
+            OnPropertyChanged(nameof(IsDispatchReadinessSatisfied));
+            RefreshCommandState();
+            RefreshAgvCommandState();
+            OnPropertyChanged(nameof(AgvCommandGateStatus));
         }
     }
     public bool IsDataStale
@@ -191,6 +208,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             if (!SetField(ref _isDataStale, value)) return;
             OnPropertyChanged(nameof(RefreshStatus));
+            OnPropertyChanged(nameof(PhysicalPreflightStatus));
+            OnPropertyChanged(nameof(IsDispatchReadinessSatisfied));
+            RefreshCommandState();
+            RefreshAgvCommandState();
+            OnPropertyChanged(nameof(AgvCommandGateStatus));
         }
     }
     public DateTimeOffset? LastRefreshAt
@@ -214,13 +236,36 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         get => _agvExecutionStatus;
         private set => SetField(ref _agvExecutionStatus, value);
     }
+    public string AgvCommandGateStatus
+    {
+        get
+        {
+            var task = SelectedTask;
+            var agv = SelectedAgv;
+            var taskId = task?.Id.ToString() ?? "-";
+            var mesTaskId = agv?.MesTransportTaskId?.ToString() ?? "-";
+            var operationId = agv?.ActiveOperationId?.ToString() ?? "-";
+            var currentTaskId = agv?.CurrentTaskId?.ToString() ?? "-";
+            var correlated = agv?.HasCorrelatedActiveTask == true;
+            var capabilities = agv is null
+                ? "-"
+                : $"pause={agv.SupportsPause},resume={agv.SupportsResume},cancel={agv.SupportsCancel}";
+            return $"action={IsActionInProgress}; refreshing={IsRefreshing}; stale={IsDataStale}; " +
+                   $"taskFresh={_hasFreshTaskSnapshot}; fleetFresh={_hasFreshFleetSnapshot}; " +
+                   $"task={taskId}/{task?.Status ?? "-"}; agv={agv?.AgvId ?? "-"}; " +
+                   $"online={agv?.Online ?? false}; owner={agv?.ControlOwner ?? "-"}; " +
+                   $"mesTask={mesTaskId}; operation={operationId}; currentTask={currentTaskId}; " +
+                   $"correlated={correlated}; capabilities={capabilities}; " +
+                   $"enabled=pause={PauseAgvCommand.CanExecute(null)},resume={ResumeAgvCommand.CanExecute(null)},cancel={CancelAgvCommand.CanExecute(null)}";
+        }
+    }
     public DashboardStation? NewTaskTargetStation
     {
         get => _newTaskTargetStation;
         set
         {
             if (!SetField(ref _newTaskTargetStation, value)) return;
-            InvalidateRoutePreview();
+            if (!_isReloadingStationCatalog) InvalidateRoutePreview();
         }
     }
     public int NewTaskPriority
@@ -249,8 +294,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             if (!SetField(ref _operatorName, value ?? string.Empty)) return;
             RefreshCommandState();
+            RefreshAgvCommandState();
             OnPropertyChanged(nameof(HasValidOperator));
             OnPropertyChanged(nameof(OperatorValidationMessage));
+            OnPropertyChanged(nameof(AgvCommandGateStatus));
         }
     }
     public bool HasValidOperator => HasOperator;
@@ -284,7 +331,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         set
         {
             if (value is not { } date) return;
-            if (SetField(ref _taskFilterDate, date.Date)) _modules.TaskMonitor.TaskFilterDate = date.Date;
+            if (SetField(ref _taskFilterDate, date.Date))
+            {
+                _modules.TaskMonitor.TaskFilterDate = date.Date;
+                InvalidateOperationalSnapshot();
+                IsDataStale = true;
+            }
         }
     }
 
@@ -304,6 +356,34 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         : IsSimulatorMode
             ? "Release \u5B89\u5168\u67E5\u770B\uFF1A\u4EFF\u771F\u63A7\u5236\u5DF2\u7981\u7528"
             : "\u624B\u5DE5\u5230\u7AD9\u4E0E\u5BFC\u822A\u63A7\u5236\u5DF2\u7981\u7528";
+    public RuntimeReadinessResponse? RuntimeReadinessEvidence => _runtimeReadinessEvidence;
+    public PhysicalAgvPreflightResponse? PhysicalPreflightEvidence => _physicalPreflightEvidence;
+    public bool IsDispatchReadinessSatisfied => IsSimulatorMode || GetPhysicalDispatchBlockingReasons().Count == 0;
+    public string RuntimeReadinessStatus => _runtimeReadinessEvidence is not { } readiness
+        ? $"未取得 MES 运行配置证据{FormatEvidenceError(_runtimeReadinessError)}"
+        : $"{readiness.ProductName} {readiness.ProductVersion} / " +
+          $"{(readiness.UseSimulator ? "Simulator" : "Physical")} / Profile SHA256 {readiness.ProfileFingerprint}";
+    public string MapReadinessStatus => _runtimeReadinessEvidence is not { } readiness
+        ? "地图配置指纹不可用"
+        : $"Map SHA256 {readiness.MapFingerprint} / {readiness.StationIds.Count} 站点 / " +
+          $"{readiness.DirectedEdges.Count} 条有向边 / 物理基线 " +
+          $"{readiness.ExpectedPhysicalMapName ?? "未配置"} {readiness.ExpectedPhysicalMapVersion ?? string.Empty} " +
+          $"MD5 {readiness.ExpectedPhysicalMapMd5 ?? "未配置"}";
+    public string PhysicalPreflightStatus
+    {
+        get
+        {
+            if (IsSimulatorMode) return "Simulator 模式：物理只读预检不适用。";
+            var reasons = GetPhysicalDispatchBlockingReasons();
+            if (reasons.Count == 0)
+            {
+                var observed = _physicalPreflightEvidence!.Readiness!;
+                return $"GO：Adapter 只读预检通过；地图 {observed.MapName} / MD5 {observed.MapMd5}。";
+            }
+
+            return $"NO-GO：{string.Join("；", reasons)}";
+        }
+    }
 
     public ICommand CreateTaskCommand { get; }
     public ICommand DispatchTaskCommand { get; }
@@ -339,12 +419,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         if (!await TryEnterRefreshAsync()) return;
 
+        InvalidateOperationalSnapshot();
         IsRefreshing = true;
         try
         {
             // Refresh the profile catalog with the task/fleet snapshot. A
             // profile reload must invalidate a route preview instead of
             // allowing a task to be created against stale station metadata.
+            await LoadReadinessEvidenceAsync();
             await LoadStationsAsync();
             var tasks = await _mes.GetTasksAsync(CurrentTaskDate, _shutdown.Token);
             var fleetStatus = await _mes.GetAgvFleetStatusAsync(_shutdown.Token);
@@ -373,6 +455,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 : $"MES {active.MesStatus} / \u8BBE\u5907 {active.DeviceState ?? "\u672A\u77E5"} -> {active.TargetStationId ?? "-"}";
             LastRefreshAt = DateTimeOffset.UtcNow;
             IsDataStale = false;
+            _hasFreshTaskSnapshot = true;
+            _hasFreshFleetSnapshot = fleetStatus.Count > 0;
+            RefreshCommandState();
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
         catch (Exception exception)
@@ -380,6 +465,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             ConnectionStatus = "MES \u4E0D\u53EF\u7528";
             Message = exception.Message;
             IsDataStale = true;
+            InvalidateOperationalSnapshot();
         }
         finally
         {
@@ -392,6 +478,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         if (!await TryEnterRefreshAsync()) return;
 
+        _hasFreshFleetSnapshot = false;
+        RefreshAgvCommandState();
         IsRefreshing = true;
         try
         {
@@ -400,10 +488,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             BatchStatus = $"AGV \u72B6\u6001\u5DF2\u5237\u65B0\uFF1A{fleetStatus.Count} \u53F0";
             LastRefreshAt = DateTimeOffset.UtcNow;
             IsDataStale = false;
+            _hasFreshFleetSnapshot = fleetStatus.Count > 0;
+            RefreshAgvCommandState();
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
         catch
         {
+            _hasFreshFleetSnapshot = false;
             IsDataStale = true;
             throw;
         }
@@ -462,7 +553,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             }
         }
 
-        var pending = BatchTasks.Count(task => task.Status == "���ύ");
+        var pending = BatchTasks.Count(task => task.Status == "待提交");
         BatchStatus = $"Batch submission complete: {submitted} succeeded, {pending} pending";
         RefreshBatchCommandState();
         await RefreshAsync();
@@ -516,11 +607,47 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         RefreshAgvCommandState();
     }
 
-    private bool CanControlSelectedAgv(string command) => SelectedAgv is { Online: true, CurrentTaskId: not null } agv && agv.Supports(command);
+    private bool CanControlSelectedAgv(string command)
+    {
+        if (!IsOperationalSnapshotReady ||
+            SelectedAgv is not { Online: true, ControlOwner: "adapter", HasCorrelatedActiveTask: true } agv ||
+            !agv.Supports(command) ||
+            SelectedTask is not { } selectedTask ||
+            agv.MesTransportTaskId != selectedTask.Id)
+        {
+            return false;
+        }
+
+        return command.Trim().ToLowerInvariant() switch
+        {
+            "pause" => selectedTask.Status is "MovingToPickup" or "MovingToDropoff",
+            "resume" => selectedTask.Status == "Paused",
+            _ => false
+        };
+    }
+
+    private bool CanCancelSelectedAgvTask() =>
+        IsOperationalSnapshotReady &&
+        HasOperator &&
+        SelectedAgv is { Online: true, ControlOwner: "adapter", HasCorrelatedActiveTask: true } agv &&
+        agv.Supports("cancel") &&
+        agv.MesTransportTaskId is { } transportTaskId &&
+        SelectedTask?.Id == transportTaskId &&
+        SelectedTask.Status is "MovingToPickup" or "MovingToDropoff" or "Paused";
+
+    private bool IsOperationalSnapshotReady =>
+        !IsRefreshing &&
+        !IsDataStale &&
+        _hasFreshTaskSnapshot &&
+        _hasFreshFleetSnapshot;
 
     private async Task ExecuteAgvCommandAsync(string command)
     {
         if (SelectedAgv is not { } agv || agv.CurrentTaskId is not { } taskId) return;
+        if (string.Equals(command, "cancel", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("请使用所选任务的取消操作，以保持 MES 与设备状态一致。");
+        }
         var result = await _mes.ExecuteAgvCommandAsync(agv.AgvId, command, taskId, _shutdown.Token)
             ?? throw new InvalidOperationException($"AGV {agv.AgvId} returned no result for '{command}'.");
         if (!string.IsNullOrWhiteSpace(result.LastError) ||
@@ -536,26 +663,166 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         await RefreshAsync();
     }
 
+    private async Task CancelSelectedAgvTaskAsync()
+    {
+        if (SelectedAgv?.MesTransportTaskId is not { } taskId) return;
+        await _mes.CancelAsync(taskId, OperatorName.Trim(), _shutdown.Token);
+        ActionStatus = $"AGV {SelectedAgv.AgvId} 的 MES 任务 {taskId} 已取消。";
+        await RefreshAsync(taskId);
+    }
+
+    private async Task LoadReadinessEvidenceAsync()
+    {
+        _runtimeReadinessEvidence = null;
+        _physicalPreflightEvidence = null;
+        _runtimeReadinessError = null;
+        _physicalPreflightError = null;
+        NotifyReadinessEvidenceChanged();
+
+        try
+        {
+            _runtimeReadinessEvidence = await _mes.GetRuntimeReadinessAsync(_shutdown.Token);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _runtimeReadinessError = exception.Message;
+        }
+
+        if (IsPhysicalMode)
+        {
+            try
+            {
+                _physicalPreflightEvidence = await _mes.GetPhysicalPreflightAsync(_shutdown.Token);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _physicalPreflightError = exception.Message;
+            }
+        }
+
+        NotifyReadinessEvidenceChanged();
+    }
+
+    private IReadOnlyList<string> GetPhysicalDispatchBlockingReasons()
+    {
+        if (IsSimulatorMode) return [];
+
+        var reasons = new List<string>();
+        if (IsRefreshing) reasons.Add("控制中心数据正在刷新");
+        if (IsDataStale) reasons.Add("控制中心快照已过期");
+
+        if (_runtimeReadinessEvidence is not { } runtime)
+        {
+            reasons.Add($"MES 运行配置证据缺失{FormatEvidenceError(_runtimeReadinessError)}");
+        }
+        else
+        {
+            if (runtime.UseSimulator) reasons.Add("MES Profile 仍配置为 Simulator");
+            if (!runtime.AutomaticDispatchEnabled) reasons.Add("MES Profile 禁止自动派单");
+            if (runtime.StationIds.Count == 0 || runtime.DirectedEdges.Count == 0)
+                reasons.Add("MES 地图站点或有向边证据为空");
+            if (string.IsNullOrWhiteSpace(runtime.ExpectedPhysicalMapName)) reasons.Add("物理地图名称基线未配置");
+            if (string.IsNullOrWhiteSpace(runtime.ExpectedPhysicalMapVersion)) reasons.Add("物理地图版本基线未配置");
+            if (string.IsNullOrWhiteSpace(runtime.ExpectedPhysicalMapMd5)) reasons.Add("物理地图 MD5 基线未配置");
+        }
+
+        if (_physicalPreflightEvidence is not { } preflight)
+        {
+            reasons.Add($"Adapter 只读预检证据缺失{FormatEvidenceError(_physicalPreflightError)}");
+            return reasons;
+        }
+
+        if (!preflight.DispatchPermitted)
+        {
+            reasons.AddRange(preflight.BlockingReasons.Select(reason => $"Adapter: {reason}"));
+            if (preflight.BlockingReasons.Count == 0) reasons.Add("Adapter 未许可物理派单");
+        }
+        if (!preflight.Snapshot.Online) reasons.Add("AGV 离线");
+        if (!string.Equals(preflight.Snapshot.ControlOwner, "adapter", StringComparison.Ordinal))
+            reasons.Add($"控制权不属于 Adapter（{preflight.Snapshot.ControlOwner}）");
+        if (preflight.Snapshot.CurrentTaskId is not null) reasons.Add("AGV 已有活动设备任务");
+
+        if (preflight.Readiness is not { } observed)
+        {
+            reasons.Add("控制器安全状态证据缺失");
+            return reasons;
+        }
+
+        if (!string.Equals(observed.VehicleOperatingMode, "automatic", StringComparison.OrdinalIgnoreCase))
+            reasons.Add("自动模式未确认");
+        if (observed.ManualBlock != false) reasons.Add("manualBlock 未明确解除");
+        if (observed.Emergency != false) reasons.Add("急停状态未明确解除");
+        if (observed.Blocked != false) reasons.Add("阻挡状态未明确解除");
+        if (observed.FatalCount != 0 || observed.ErrorCount != 0) reasons.Add("控制器仍有故障");
+        if (observed.RelocationStatus != 1 || observed.LocalizationConfidence is null)
+            reasons.Add("定位状态未确认");
+
+        if (_runtimeReadinessEvidence is { } configuredRuntime)
+        {
+            if (!string.Equals(observed.MapName, configuredRuntime.ExpectedPhysicalMapName, StringComparison.Ordinal))
+                reasons.Add("控制器地图名称与 MES 基线不一致");
+            if (!string.Equals(observed.MapMd5, configuredRuntime.ExpectedPhysicalMapMd5, StringComparison.OrdinalIgnoreCase))
+                reasons.Add("控制器地图 MD5 与 MES 基线不一致");
+        }
+
+        return reasons.Distinct(StringComparer.Ordinal).ToArray();
+    }
+
+    private void NotifyReadinessEvidenceChanged()
+    {
+        OnPropertyChanged(nameof(RuntimeReadinessEvidence));
+        OnPropertyChanged(nameof(PhysicalPreflightEvidence));
+        OnPropertyChanged(nameof(IsDispatchReadinessSatisfied));
+        OnPropertyChanged(nameof(RuntimeReadinessStatus));
+        OnPropertyChanged(nameof(MapReadinessStatus));
+        OnPropertyChanged(nameof(PhysicalPreflightStatus));
+        RefreshCommandState();
+    }
+
+    private static string FormatEvidenceError(string? error) =>
+        string.IsNullOrWhiteSpace(error) ? string.Empty : $"：{error}";
+
     private async Task LoadStationsAsync()
     {
         var sourceCode = NewTaskSourceStation?.Code;
         var targetCode = NewTaskTargetStation?.Code;
         var stations = (await _mes.GetStationsAsync(_shutdown.Token)).ToList();
+        var catalogChanged = !StationCatalogEquals(_stationCatalog, stations);
         _stationCatalog = stations;
-
-        AvailableStations.Clear();
-        foreach (var station in stations.Where(station => station.Enabled).OrderBy(station => station.Code))
+        if (!catalogChanged)
         {
-            AvailableStations.Add(station);
+            RefreshCreateTaskCommandState();
+            return;
         }
-        NewTaskSourceStation = sourceCode is { } source
-            ? AvailableStations.FirstOrDefault(station => station.Code == source)
-            : null;
-        NewTaskTargetStation = targetCode is { } target
-            ? AvailableStations.FirstOrDefault(station => station.Code == target)
-            : null;
-        RefreshCreateTaskCommandState();
+
+        _isReloadingStationCatalog = true;
+        try
+        {
+            AvailableStations.Clear();
+            foreach (var station in stations.Where(station => station.Enabled).OrderBy(station => station.Code))
+            {
+                AvailableStations.Add(station);
+            }
+            NewTaskSourceStation = sourceCode is { } source
+                ? AvailableStations.FirstOrDefault(station => station.Code == source)
+                : null;
+            NewTaskTargetStation = targetCode is { } target
+                ? AvailableStations.FirstOrDefault(station => station.Code == target)
+                : null;
+        }
+        finally
+        {
+            _isReloadingStationCatalog = false;
+        }
+
+        InvalidateRoutePreview();
     }
+
+    private static bool StationCatalogEquals(
+        IReadOnlyList<DashboardStation> current,
+        IReadOnlyList<DashboardStation> updated) =>
+        current.OrderBy(station => station.Code).ThenBy(station => station.AgvStationId, StringComparer.Ordinal)
+            .SequenceEqual(updated.OrderBy(station => station.Code).ThenBy(station => station.AgvStationId, StringComparer.Ordinal));
 
     private bool CanPlanRoute() =>
         NewTaskSourceStation is { Enabled: true } source &&
@@ -572,8 +839,29 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         string.Equals(route.Stations[^1], NewTaskTargetStation!.AgvStationId, StringComparison.Ordinal) &&
         (route.SourceStationId is null || string.Equals(route.SourceStationId, NewTaskSourceStation.AgvStationId, StringComparison.Ordinal)) &&
         (route.TargetStationId is null || string.Equals(route.TargetStationId, NewTaskTargetStation.AgvStationId, StringComparison.Ordinal));
-    private bool CanDispatchTask() => SelectedTask?.Status == "Created";
+    private bool CanDispatchTask() =>
+        IsOperationalSnapshotReady &&
+        IsDispatchReadinessSatisfied &&
+        SelectedTask?.Status == "Created";
     private bool HasOperator => !string.IsNullOrWhiteSpace(OperatorName);
+    private bool CanCancelTask()
+    {
+        if (!IsTaskSnapshotReady || !HasOperator || SelectedTask is not { } task) return false;
+        if (task.Status == "Created") return true;
+        if (task.Status is "Failed" or "Unknown" or "Completed" or "Cancelled") return false;
+        return task.Status is
+            "Dispatching" or
+            "MovingToPickup" or
+            "WaitingPickupConfirmation" or
+            "MovingToDropoff" or
+            "WaitingDropoffConfirmation" or
+            "Paused";
+    }
+
+    private bool IsTaskSnapshotReady =>
+        !IsRefreshing &&
+        !IsDataStale &&
+        _hasFreshTaskSnapshot;
     private bool CanApplyManualArrival() =>
         IsManualArrivalAvailable && SelectedTask?.Status is "MovingToPickup" or "MovingToDropoff";
 
@@ -586,7 +874,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         try
         {
             var path = await _mes.PlanPathAsync(source.AgvStationId, target.AgvStationId, null, _shutdown.Token);
-            if (NewTaskSourceStation?.Code != source.Code || NewTaskTargetStation?.Code != target.Code)
+            if (NewTaskSourceStation is not { } currentSource ||
+                NewTaskTargetStation is not { } currentTarget ||
+                currentSource.Code != source.Code ||
+                currentTarget.Code != target.Code ||
+                !string.Equals(currentSource.AgvStationId, source.AgvStationId, StringComparison.Ordinal) ||
+                !string.Equals(currentTarget.AgvStationId, target.AgvStationId, StringComparison.Ordinal))
             {
                 RoutePreview = "\u7AD9\u70B9\u5DF2\u53D8\u66F4\uFF0C\u8BF7\u91CD\u65B0\u9884\u89C8\u8DEF\u7EBF\u3002";
                 return;
@@ -723,7 +1016,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     private async Task RefreshLoopAsync(CancellationToken cancellationToken)
     {
-        try { while (await _timer.WaitForNextTickAsync(cancellationToken)) await RefreshAsync(); }
+        try
+        {
+            while (true)
+            {
+                await Task.Delay(RefreshInterval, cancellationToken);
+                await RefreshAsync();
+            }
+        }
         catch (OperationCanceledException) { }
     }
 
@@ -808,6 +1108,15 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         foreach (var taskEvent in detail.Events) TaskEvents.Add(TaskEventRowViewModel.From(taskEvent));
     }
 
+    private void InvalidateOperationalSnapshot()
+    {
+        _hasFreshTaskSnapshot = false;
+        _hasFreshFleetSnapshot = false;
+        RefreshCommandState();
+        RefreshAgvCommandState();
+        OnPropertyChanged(nameof(AgvCommandGateStatus));
+    }
+
     private void CancelPendingDetailRefresh() { _detailRefresh?.Cancel(); _detailRefresh?.Dispose(); _detailRefresh = null; }
 
     private async Task<bool> TryEnterRefreshAsync()
@@ -827,10 +1136,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         _shutdown.Cancel();
         CancelPendingDetailRefresh();
-        _timer.Dispose();
-        _refreshGate.Dispose();
-        _actionGate.Dispose();
-        _shutdown.Dispose();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

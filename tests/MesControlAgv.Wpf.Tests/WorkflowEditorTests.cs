@@ -23,6 +23,23 @@ public sealed class WorkflowEditorTests
     }
 
     [Fact]
+    public void Preset_workflows_require_explicit_station_targets_from_the_catalog()
+    {
+        using var fixture = new TempWorkflowFile();
+        var workflows = new WorkflowStore(fixture.Path).Load();
+
+        var transportNodes = workflows
+            .SelectMany(workflow => workflow.Nodes)
+            .Where(node => node.Type is WorkflowNodeType.Move or WorkflowNodeType.Pickup or WorkflowNodeType.Dropoff)
+            .ToList();
+
+        Assert.NotEmpty(transportNodes);
+        Assert.All(transportNodes, node => Assert.Null(node.TargetStation));
+        Assert.DoesNotContain(workflows.SelectMany(workflow => workflow.Nodes), node =>
+            node.TargetStation is "SAMPLE_01" or "ST_PREP_01");
+    }
+
+    [Fact]
     public void Store_round_trips_workflow_and_node_properties_as_json()
     {
         using var fixture = new TempWorkflowFile();

@@ -30,6 +30,9 @@ public sealed class LocalPortContractTests
         var stopper = File.ReadAllText(Path.Combine(root, "scripts", "stop-local.ps1"));
         var verifier = File.ReadAllText(Path.Combine(root, "scripts", "verify-local.ps1"));
         var restarter = File.ReadAllText(Path.Combine(root, "scripts", "restart-local.ps1"));
+        var wpfUiVerifier = File.ReadAllText(Path.Combine(root, "scripts", "verify-wpf-ui.ps1"));
+        var wpfUiDoc = File.ReadAllText(Path.Combine(root, "docs", "WPF-UIA-VERIFICATION.md"));
+        var wpfMainWindow = File.ReadAllText(Path.Combine(root, "src", "MesControlAgv.Wpf", "MainWindow.xaml"));
 
         Assert.Contains("SimulatorUrl", launcher);
         Assert.Contains("AdapterUrl", launcher);
@@ -80,6 +83,48 @@ public sealed class LocalPortContractTests
         Assert.Contains("Simulator remained running", restarter);
         Assert.Contains("Local Simulator transport verification", verifier);
         Assert.DoesNotContain("Live AGV transport verification", verifier);
+        Assert.Contains("UIAutomationClient", wpfUiVerifier);
+        Assert.Contains("WPF_RUNTIME_MODE", wpfUiVerifier);
+        Assert.Contains("SimulatorUrl", wpfUiVerifier);
+        Assert.Contains("SourceStationCode", wpfUiVerifier);
+        Assert.Contains("TargetStationCode", wpfUiVerifier);
+        Assert.Contains("PauseRequested", wpfUiVerifier);
+        Assert.Contains("ConfirmPickup", wpfUiVerifier);
+        Assert.Contains("ConfirmDropoff", wpfUiVerifier);
+        Assert.Contains("Completed WPF task remained active", wpfUiVerifier);
+        Assert.Contains("Get-JsonCollectionItems", wpfUiVerifier);
+        foreach (var automationId in new[]
+        {
+            "TaskMonitorTab",
+            "AgvCommunicationTab",
+            "TaskSourceStationCombo",
+            "TaskTargetStationCombo",
+            "TaskPriorityTextBox",
+            "TaskExternalIdTextBox",
+            "TaskOperatorTextBox",
+            "TaskDescriptionTextBox",
+            "PlanRouteButton",
+            "CreateTaskButton",
+            "DispatchTaskButton",
+            "SimulateArrivalButton",
+            "ConfirmPickupButton",
+            "ConfirmDropoffButton",
+            "PauseAgvButton",
+            "ResumeAgvButton",
+            "AgvCommandGateStatusText",
+            "TaskStatusText"
+        })
+        {
+            Assert.Contains($"AutomationProperties.AutomationId=\"{automationId}\"", wpfMainWindow);
+            Assert.Contains($"'{automationId}'", wpfUiVerifier);
+        }
+        Assert.Contains("RuntimeReadinessText", wpfMainWindow);
+        Assert.Contains("MapReadinessText", wpfMainWindow);
+        Assert.Contains("PhysicalPreflightText", wpfMainWindow);
+        Assert.Contains("WindowState=\"Maximized\"", wpfMainWindow);
+        Assert.Contains("AutomationId", wpfUiDoc);
+        Assert.Contains("2 -> 3", wpfUiDoc);
+        Assert.Contains("physical NO-GO", wpfUiDoc);
     }
 
     private static string FindRepositoryRoot()
