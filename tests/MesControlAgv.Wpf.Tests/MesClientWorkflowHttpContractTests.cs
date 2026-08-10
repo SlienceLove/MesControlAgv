@@ -87,7 +87,6 @@ public sealed class MesClientWorkflowHttpContractTests
                 return JsonResponse(validation);
             if (request.Method == HttpMethod.Post && path == $"/api/workflows/{workflowId}/versions/1/publish")
                 return JsonResponse(published);
-
             return new HttpResponseMessage(HttpStatusCode.NotFound);
         });
         using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://mes.local/") };

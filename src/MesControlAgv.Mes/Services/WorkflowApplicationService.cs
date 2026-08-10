@@ -147,8 +147,8 @@ public sealed class WorkflowApplicationService : IWorkflowApplicationService
         }
 
         var records = await query
-            .OrderByDescending(audit => audit.OccurredAtUtc)
-            .ThenByDescending(audit => audit.Id)
+            .OrderBy(audit => audit.OccurredAtUtc)
+            .ThenBy(audit => audit.Id)
             .Take(boundedLimit)
             .ToListAsync(cancellationToken);
 

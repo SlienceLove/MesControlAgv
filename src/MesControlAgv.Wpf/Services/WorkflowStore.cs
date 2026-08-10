@@ -110,6 +110,7 @@ public sealed class WorkflowStore
         Name = workflow.Name,
         Description = workflow.Description,
         IsPreset = workflow.IsPreset,
+        PublishedVersion = workflow.PublishedVersion,
         Nodes = new System.Collections.ObjectModel.ObservableCollection<WorkflowNode>(workflow.Nodes.OrderBy(node => node.Order).Select(node => new WorkflowNode
         {
             Id = node.Id,
@@ -119,7 +120,15 @@ public sealed class WorkflowStore
             TargetStation = node.TargetStation,
             X = node.X,
             Y = node.Y,
-            Order = node.Order
+            Order = node.Order,
+            Parameters = new System.Collections.ObjectModel.ObservableCollection<WorkflowNodeParameter>(node.Parameters.Select(parameter => new WorkflowNodeParameter
+            {
+                Name = parameter.Name,
+                Value = parameter.Value,
+                DataType = parameter.DataType,
+                IsRequired = parameter.IsRequired
+            })),
+            NextNodeIds = new System.Collections.ObjectModel.ObservableCollection<Guid>(node.NextNodeIds)
         }))
     };
 

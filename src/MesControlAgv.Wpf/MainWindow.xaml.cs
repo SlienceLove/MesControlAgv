@@ -136,10 +136,15 @@ public partial class MainWindow : Window
         var nodes = _workflowEditor?.SelectedWorkflow?.Nodes.OrderBy(node => node.Order).ToList();
         if (nodes is null || nodes.Count < 2) return;
 
-        for (var index = 0; index < nodes.Count - 1; index++)
+        var nodeById = nodes.ToDictionary(node => node.Id);
+        var links = nodes.Any(node => node.NextNodeIds.Count > 0)
+            ? nodes.SelectMany(source => source.NextNodeIds
+                .Where(nodeById.ContainsKey)
+                .Select(targetId => (Source: source, Target: nodeById[targetId])))
+            : nodes.Zip(nodes.Skip(1), (source, target) => (Source: source, Target: target));
+
+        foreach (var (source, target) in links)
         {
-            var source = nodes[index];
-            var target = nodes[index + 1];
             var x1 = source.X + 170;
             var y1 = source.Y + 41;
             var x2 = target.X;

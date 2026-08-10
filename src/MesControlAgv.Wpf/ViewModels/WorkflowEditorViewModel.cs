@@ -3,20 +3,20 @@ using System.ComponentModel;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
+using MesControlAgv.Wpf.Infrastructure;
 using MesControlAgv.Wpf.Services;
 using MesControlAgv.Wpf.Workflows;
 
 using ContractWorkflowDefinition = MesControlAgv.Contracts.Workflows.WorkflowDefinition;
 using ContractWorkflowNode = MesControlAgv.Contracts.Workflows.WorkflowNode;
-using ContractWorkflowNodeType = MesControlAgv.Contracts.Workflows.WorkflowNodeType;
 using ContractWorkflowExecutionRequest = MesControlAgv.Contracts.Workflows.WorkflowExecutionRequest;
 using ContractWorkflowExecutionResult = MesControlAgv.Contracts.Workflows.WorkflowExecutionResult;
 using ContractWorkflowExecutionStatus = MesControlAgv.Contracts.Workflows.WorkflowExecutionStatus;
-using ContractWorkflowValidationResult = MesControlAgv.Contracts.Workflows.WorkflowValidationResult;
 using ContractWorkflowVersion = MesControlAgv.Contracts.Workflows.WorkflowVersion;
-using ContractWorkflowVersionStatus = MesControlAgv.Contracts.Workflows.WorkflowVersionStatus;
+using ContractWorkflowParameter = MesControlAgv.Contracts.Workflows.WorkflowParameter;
 using ContractWorkflowPublishStatus = MesControlAgv.Contracts.Workflows.WorkflowPublishStatus;
-using ContractWorkflowValidationSeverity = MesControlAgv.Contracts.Workflows.WorkflowValidationSeverity;
+using ContractWorkflowValidationResult = MesControlAgv.Contracts.Workflows.WorkflowValidationResult;
+using ContractWorkflowVersionStatus = MesControlAgv.Contracts.Workflows.WorkflowVersionStatus;
 
 namespace MesControlAgv.Wpf.ViewModels;
 
@@ -39,43 +39,64 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 {
     private readonly WorkflowStore _store;
     private readonly IMesClient? _mes;
-    private readonly string _actor;
+    private readonly Func<string> _actorProvider;
+    private readonly SemaphoreSlim _remoteGate = new(1, 1);
+    private readonly Dictionary<Guid, ContractWorkflowVersion> _remoteVersions = [];
     private readonly ObservableCollection<WorkflowNode> _emptyNodes = [];
     private WorkflowDefinition? _selectedWorkflow;
     private WorkflowNode? _selectedNode;
     private string _message = string.Empty;
     private WorkflowRemoteState _remoteState = WorkflowRemoteState.LocalFallback;
-    private ContractWorkflowVersion? _remoteVersion;
-    private ContractWorkflowValidationResult? _validationResult;
-    private ContractWorkflowExecutionResult? _dryRunResult;
-    private bool _isLoading;
+    private string _remoteStatus = "Local only";
+    private bool _isRemoteBusy;
+    private ContractWorkflowValidationResult? _lastValidation;
+    private ContractWorkflowExecutionResult? _lastExecution;
 
-    public WorkflowEditorViewModel(WorkflowStore store, IMesClient? mes = null, string? actor = null)
+    public WorkflowEditorViewModel(
+        WorkflowStore store,
+        IMesClient? mes = null,
+        Func<string>? actorProvider = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _mes = mes;
-        _actor = string.IsNullOrWhiteSpace(actor) ? Environment.UserName : actor.Trim();
+        _actorProvider = actorProvider ?? (() => "wpf-editor");
         Workflows = new ObservableCollection<WorkflowDefinition>(_store.Load());
 
         NewWorkflowCommand = new EditorCommand(CreateWorkflow);
         CopyWorkflowCommand = new EditorCommand(CopyWorkflow, () => SelectedWorkflow is not null);
         DeleteWorkflowCommand = new EditorCommand(DeleteWorkflow, () => SelectedWorkflow is not null);
         SaveCommand = new EditorCommand(Save);
-        RefreshRemoteCommand = new AsyncEditorCommand(() => LoadRemoteAsync(), () => _mes is not null && !IsLoading);
-        SaveDraftCommand = new AsyncEditorCommand(() => SaveDraftAsync(), () => SelectedWorkflow is not null && !IsLoading);
-        ValidateCommand = new AsyncEditorCommand(() => ValidateRemoteAsync(), () => SelectedWorkflow is not null && !IsLoading);
-        PublishCommand = new AsyncEditorCommand(() => PublishRemoteAsync(), () => SelectedWorkflow is not null && !IsLoading);
-        DryRunCommand = new AsyncEditorCommand(() => ExecuteDryRunAsync(), () => SelectedWorkflow is not null && !IsLoading);
         AddNodeCommand = new EditorCommand(AddNode, () => SelectedWorkflow is not null);
         DeleteNodeCommand = new EditorCommand(DeleteNode, () => SelectedWorkflow is not null && SelectedNode is not null);
         MoveNodeLeftCommand = new EditorCommand(() => MoveNode(-1), CanMoveNodeLeft);
         MoveNodeRightCommand = new EditorCommand(() => MoveNode(1), CanMoveNodeRight);
+        LoadFromMesCommand = new AsyncCommand(
+            () => RunRemoteAsync("Load workflows", () => LoadFromMesCoreAsync(CancellationToken.None), CancellationToken.None),
+            CanUseRemote);
+        SaveDraftCommand = new AsyncCommand(
+            () => RunRemoteAsync("Save draft", () => SaveDraftCoreAsync(CancellationToken.None), CancellationToken.None),
+            CanSaveDraft);
+        ValidateCommand = new AsyncCommand(
+            () => RunRemoteAsync("Validate workflow", () => ValidateCoreAsync(CancellationToken.None), CancellationToken.None),
+            CanValidate);
+        PublishCommand = new AsyncCommand(
+            () => RunRemoteAsync("Publish workflow", () => PublishCoreAsync(CancellationToken.None), CancellationToken.None),
+            CanPublish);
+        DryRunCommand = new AsyncCommand(
+            () => RunRemoteAsync("Dry-run workflow", () => DryRunCoreAsync(CancellationToken.None), CancellationToken.None),
+            CanDryRun);
+        RefreshRemoteCommand = LoadFromMesCommand;
 
         SelectedWorkflow = Workflows.FirstOrDefault();
     }
 
+    public WorkflowEditorViewModel(WorkflowStore store, IMesClient? mes, string? actor)
+        : this(store, mes, () => string.IsNullOrWhiteSpace(actor) ? "wpf-editor" : actor.Trim())
+    {
+    }
+
     public WorkflowEditorViewModel(IMesClient mes, WorkflowStore store, string? actor = null)
-        : this(store, mes, actor)
+        : this(store, mes, () => string.IsNullOrWhiteSpace(actor) ? "wpf-editor" : actor.Trim())
     {
     }
 
@@ -100,8 +121,14 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             if (ReferenceEquals(_selectedWorkflow, value)) return;
             _selectedWorkflow = value;
             SelectedNode = value?.Nodes.OrderBy(node => node.Order).FirstOrDefault();
+            _lastValidation = value is not null && _remoteVersions.TryGetValue(value.Id, out var remote)
+                ? remote.Validation
+                : null;
             OnPropertyChanged();
             OnPropertyChanged(nameof(Nodes));
+            OnPropertyChanged(nameof(SelectedRemoteVersion));
+            OnPropertyChanged(nameof(RemoteStatus));
+            OnPropertyChanged(nameof(ValidationSummary));
             RefreshCommandStates();
         }
     }
@@ -158,51 +185,57 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         _ => "Local JSON fallback"
     };
 
-    public bool IsLoading
-    {
-        get => _isLoading;
-        private set
-        {
-            if (_isLoading == value) return;
-            _isLoading = value;
-            OnPropertyChanged();
-            RefreshRemoteCommandStates();
-        }
-    }
+    public bool IsLoading => IsRemoteBusy;
 
-    public ContractWorkflowVersion? RemoteVersion
-    {
-        get => _remoteVersion;
-        private set { if (ReferenceEquals(_remoteVersion, value)) return; _remoteVersion = value; OnPropertyChanged(); OnPropertyChanged(nameof(RemoteVersionDescription)); }
-    }
+    public ContractWorkflowVersion? RemoteVersion => SelectedRemoteVersion;
 
     public string RemoteVersionDescription => RemoteVersion is { } version
         ? $"v{version.Version} / {version.Status} / {version.PublishStatus}"
         : "No MES version confirmed";
 
-    public ContractWorkflowValidationResult? ValidationResult
-    {
-        get => _validationResult;
-        private set { _validationResult = value; OnPropertyChanged(); OnPropertyChanged(nameof(ValidationSummary)); }
-    }
+    public ContractWorkflowValidationResult? ValidationResult => LastValidation;
 
-    public string ValidationSummary => ValidationResult is null
-        ? "Not validated"
-        : ValidationResult.IsValid
-            ? (ValidationResult.HasWarnings ? $"Valid with {ValidationResult.Issues.Count} warning(s)" : "Valid")
-            : $"{ValidationResult.Issues.Count(issue => issue.Severity == ContractWorkflowValidationSeverity.Error)} error(s)";
-
-    public ContractWorkflowExecutionResult? DryRunResult
-    {
-        get => _dryRunResult;
-        private set { _dryRunResult = value; OnPropertyChanged(); OnPropertyChanged(nameof(DryRunSummary)); }
-    }
+    public ContractWorkflowExecutionResult? DryRunResult => LastExecution;
 
     public string DryRunSummary => DryRunResult is null
         ? "Dry-run not executed"
         : DryRunResult.IsAccepted
             ? $"Admitted: {DryRunResult.NextStep?.NodeName ?? "no next step"}"
             : $"Rejected: {DryRunResult.RejectionCode ?? "unknown"}";
+    public bool IsRemoteAvailable => _mes is not null;
+
+    public bool IsRemoteBusy
+    {
+        get => _isRemoteBusy;
+        private set
+        {
+            if (_isRemoteBusy == value) return;
+            _isRemoteBusy = value;
+            OnPropertyChanged();
+            RefreshCommandStates();
+        }
+    }
+
+    public string RemoteStatus
+    {
+        get => _remoteStatus;
+        private set => SetField(ref _remoteStatus, value);
+    }
+
+    public ContractWorkflowVersion? SelectedRemoteVersion =>
+        SelectedWorkflow is { } workflow && _remoteVersions.TryGetValue(workflow.Id, out var version)
+            ? version
+            : null;
+
+    public ContractWorkflowValidationResult? LastValidation => _lastValidation;
+
+    public ContractWorkflowExecutionResult? LastExecution => _lastExecution;
+
+    public string ValidationSummary => _lastValidation is null
+        ? "Not validated"
+        : _lastValidation.IsValid
+            ? (_lastValidation.HasWarnings ? "Valid with warnings" : "Valid")
+            : $"Invalid ({_lastValidation.Issues.Count} issue(s))";
 
     public ICommand NewWorkflowCommand { get; }
     public ICommand CopyWorkflowCommand { get; }
@@ -217,184 +250,9 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     public ICommand DeleteNodeCommand { get; }
     public ICommand MoveNodeLeftCommand { get; }
     public ICommand MoveNodeRightCommand { get; }
+    public ICommand LoadFromMesCommand { get; }
 
     public event PropertyChangedEventHandler? PropertyChanged;
-
-    public async Task LoadRemoteAsync(CancellationToken cancellationToken = default)
-    {
-        if (_mes is null) return;
-        await RunRemoteAsync(async () =>
-        {
-            var remote = await _mes.GetWorkflowsAsync(cancellationToken);
-            foreach (var definition in remote)
-            {
-                var local = ToWpfDefinition(definition);
-                var index = Workflows.ToList().FindIndex(item => item.Id == local.Id);
-                if (index >= 0)
-                {
-                    Workflows[index] = local;
-                    if (SelectedWorkflow?.Id == local.Id) SelectedWorkflow = local;
-                }
-                else Workflows.Add(local);
-            }
-
-            if (remote.Count > 0 && (SelectedWorkflow is null || !remote.Any(item => item.Id == SelectedWorkflow.Id)))
-            {
-                SelectedWorkflow = Workflows.FirstOrDefault(item => item.Id == remote[0].Id)
-                    ?? SelectedWorkflow
-                    ?? Workflows.FirstOrDefault();
-            }
-
-            if (SelectedWorkflow is not null)
-            {
-                var versions = await _mes.GetWorkflowVersionsAsync(SelectedWorkflow.Id, cancellationToken);
-                RemoteVersion = versions.OrderByDescending(item => item.Version).FirstOrDefault();
-                ValidationResult = RemoteVersion?.Validation;
-            }
-
-            RemoteState = RemoteVersion?.PublishStatus == ContractWorkflowPublishStatus.Published
-                ? WorkflowRemoteState.Published
-                : RemoteVersion?.Status == ContractWorkflowVersionStatus.Validated
-                    ? WorkflowRemoteState.Validated
-                    : WorkflowRemoteState.DraftSaved;
-            Message = "MES workflows loaded; local JSON remains available as fallback.";
-        }, cancellationToken);
-    }
-
-    public async Task SaveDraftAsync(CancellationToken cancellationToken = default)
-    {
-        if (SelectedWorkflow is not { } workflow) return;
-        try
-        {
-            Save();
-        }
-        catch (Exception exception)
-        {
-            RemoteState = WorkflowRemoteState.Error;
-            Message = $"Local workflow save failed; MES draft was not sent: {exception.Message}";
-            return;
-        }
-        if (_mes is null)
-        {
-            RemoteState = WorkflowRemoteState.LocalFallback;
-            return;
-        }
-
-        var definition = ToContractDefinition(workflow);
-        await RunRemoteAsync(async () =>
-        {
-            RemoteVersion = RemoteVersion is { WorkflowId: var id, Version: > 0 } version && id == workflow.Id &&
-                version.Status == ContractWorkflowVersionStatus.Draft && version.PublishStatus == ContractWorkflowPublishStatus.NotPublished
-                ? await _mes.UpdateWorkflowDraftAsync(workflow.Id, version.Version, definition, _actor, cancellationToken)
-                : await _mes.CreateWorkflowDraftAsync(definition, _actor, cancellationToken);
-            ValidationResult = RemoteVersion.Validation;
-            RemoteState = WorkflowRemoteState.DraftSaved;
-            Message = $"Local JSON saved and MES draft v{RemoteVersion.Version} confirmed.";
-        }, cancellationToken);
-    }
-
-    public async Task ValidateRemoteAsync(CancellationToken cancellationToken = default)
-    {
-        if (SelectedWorkflow is not { } workflow) return;
-        if (_mes is null)
-        {
-            ValidationResult = new MesControlAgv.Domain.Workflows.WorkflowValidator().Validate(ToContractDefinition(workflow));
-            RemoteState = ValidationResult.IsValid ? WorkflowRemoteState.Validated : WorkflowRemoteState.ValidationFailed;
-            Message = ValidationResult.IsValid ? "Local validation passed." : "Local validation failed.";
-            return;
-        }
-
-        await RunRemoteAsync(async () =>
-        {
-            ValidationResult = RemoteVersion is { WorkflowId: var id, Version: > 0 } version && id == workflow.Id
-                ? await _mes.ValidateWorkflowVersionAsync(workflow.Id, version.Version, cancellationToken)
-                : await _mes.ValidateWorkflowAsync(ToContractDefinition(workflow), cancellationToken);
-            RemoteState = ValidationResult.IsValid ? WorkflowRemoteState.Validated : WorkflowRemoteState.ValidationFailed;
-            Message = ValidationResult.IsValid ? "MES validation passed." : "MES validation failed; publish is blocked.";
-        }, cancellationToken);
-    }
-
-    public async Task PublishRemoteAsync(CancellationToken cancellationToken = default)
-    {
-        if (SelectedWorkflow is not { } workflow) return;
-        if (_mes is null)
-        {
-            RemoteState = WorkflowRemoteState.ServiceUnavailable;
-            Message = "MES is not configured; local JSON remains active and publishing is unavailable.";
-            return;
-        }
-        var version = RemoteVersion;
-        // Confirm the editor's current local definition in MES before the
-        // validation/publish transition, even when a draft was loaded.
-        await SaveDraftAsync(cancellationToken);
-        version = RemoteVersion;
-
-        if (RemoteState is WorkflowRemoteState.ServiceUnavailable or
-            WorkflowRemoteState.Cancelled or
-            WorkflowRemoteState.Error ||
-            version is null ||
-            version.WorkflowId != workflow.Id)
-        {
-            // Never publish a stale version when saving the current local
-            // definition did not receive a durable MES confirmation.
-            return;
-        }
-        await RunRemoteAsync(async () =>
-        {
-            ValidationResult = await _mes.ValidateWorkflowVersionAsync(workflow.Id, version.Version, cancellationToken);
-            if (!ValidationResult.IsValid)
-            {
-                RemoteState = WorkflowRemoteState.ValidationFailed;
-                Message = "MES validation failed; publish is blocked.";
-                return;
-            }
-
-            RemoteVersion = await _mes.PublishWorkflowAsync(workflow.Id, version.Version, _actor, cancellationToken);
-            ValidationResult = RemoteVersion.Validation ?? ValidationResult;
-            RemoteState = WorkflowRemoteState.Published;
-            Message = $"MES workflow v{RemoteVersion.Version} published.";
-        }, cancellationToken);
-    }
-
-    public async Task ExecuteDryRunAsync(CancellationToken cancellationToken = default)
-    {
-        if (SelectedWorkflow is not { } workflow) return;
-        if (_mes is null)
-        {
-            RemoteState = WorkflowRemoteState.ServiceUnavailable;
-            Message = "MES is not configured; dry-run is unavailable and no AGV command was sent.";
-            return;
-        }
-        if (RemoteVersion is not { WorkflowId: var id, Version: > 0 } version || id != workflow.Id ||
-            version.Status != ContractWorkflowVersionStatus.Published || version.PublishStatus != ContractWorkflowPublishStatus.Published)
-        {
-            RemoteState = WorkflowRemoteState.DryRunRejected;
-            Message = "Publish a confirmed MES version before dry-run.";
-            DryRunResult = new ContractWorkflowExecutionResult
-            {
-                Status = ContractWorkflowExecutionStatus.Rejected,
-                WorkflowId = workflow.Id,
-                RejectionCode = "WORKFLOW_VERSION_NOT_PUBLISHED",
-                RejectionReason = "No published MES version is confirmed.",
-                DryRun = true
-            };
-            return;
-        }
-
-        await RunRemoteAsync(async () =>
-        {
-            DryRunResult = await _mes.ExecuteWorkflowAsync(new ContractWorkflowExecutionRequest
-            {
-                WorkflowId = workflow.Id,
-                Version = version.Version,
-                RequestedBy = _actor,
-                DryRun = true
-            }, cancellationToken);
-            RemoteState = DryRunResult.IsAccepted ? WorkflowRemoteState.DryRunAccepted : WorkflowRemoteState.DryRunRejected;
-            Message = DryRunResult.IsAccepted ? "Workflow dry-run admitted; no AGV command was sent." :
-                $"Workflow dry-run rejected: {DryRunResult.RejectionCode ?? "unknown"}.";
-        }, cancellationToken);
-    }
 
     private void CreateWorkflow()
     {
@@ -436,6 +294,374 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     {
         _store.Save(Workflows);
         Message = $"已保存到 {_store.FilePath}";
+    }
+
+    private bool CanUseRemote() => _mes is not null && !IsRemoteBusy;
+
+    private bool CanSaveDraft() => CanUseRemote() && SelectedWorkflow is not null;
+
+    private bool CanValidate() => CanUseRemote() && SelectedWorkflow is not null;
+
+    private bool CanPublish() =>
+        CanUseRemote() &&
+        SelectedRemoteVersion is { Status: ContractWorkflowVersionStatus.Draft or ContractWorkflowVersionStatus.Validated } version &&
+        version.Validation?.IsValid == true;
+
+    private bool CanDryRun() =>
+        CanUseRemote() &&
+        SelectedRemoteVersion is { Status: ContractWorkflowVersionStatus.Published, PublishStatus: ContractWorkflowPublishStatus.Published };
+
+    private async Task RunRemoteAsync(string action, Func<Task> operation, CancellationToken cancellationToken)
+    {
+        if (_mes is null) return;
+
+        if (!await _remoteGate.WaitAsync(0))
+        {
+            Message = "A workflow action is already running.";
+            return;
+        }
+
+        IsRemoteBusy = true;
+        RemoteState = WorkflowRemoteState.Loading;
+        RemoteStatus = action + "...";
+        try
+        {
+            await operation();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            RemoteState = WorkflowRemoteState.Cancelled;
+            Message = "MES workflow request was cancelled; local JSON remains active.";
+            RemoteStatus = RemoteStateDescription;
+        }
+        catch (OperationCanceledException exception)
+        {
+            RemoteState = WorkflowRemoteState.ServiceUnavailable;
+            Message = $"MES workflow request timed out: {exception.Message}; local JSON remains active.";
+            RemoteStatus = RemoteStateDescription;
+        }
+        catch (HttpRequestException exception)
+        {
+            RemoteState = WorkflowRemoteState.ServiceUnavailable;
+            Message = $"MES unavailable: {exception.Message}; local JSON remains active.";
+            RemoteStatus = RemoteStateDescription;
+        }
+        catch (Exception exception)
+        {
+            RemoteState = WorkflowRemoteState.Error;
+            Message = $"MES workflow operation failed: {exception.Message}";
+            RemoteStatus = RemoteStateDescription;
+        }
+        finally
+        {
+            IsRemoteBusy = false;
+            _remoteGate.Release();
+            RefreshCommandStates();
+        }
+    }
+
+    public Task LoadRemoteAsync(CancellationToken cancellationToken = default) =>
+        RunRemoteAsync("Load workflows", () => LoadFromMesCoreAsync(cancellationToken), cancellationToken);
+
+    public Task SaveDraftAsync(CancellationToken cancellationToken = default) =>
+        RunRemoteAsync("Save draft", () => SaveDraftCoreAsync(cancellationToken), cancellationToken);
+
+    public Task ValidateRemoteAsync(CancellationToken cancellationToken = default) =>
+        RunRemoteAsync("Validate workflow", () => ValidateCoreAsync(cancellationToken), cancellationToken);
+
+    public Task PublishRemoteAsync(CancellationToken cancellationToken = default) =>
+        RunRemoteAsync("Publish workflow", () => PublishWithLifecycleCoreAsync(cancellationToken), cancellationToken);
+
+    public Task ExecuteDryRunAsync(CancellationToken cancellationToken = default) =>
+        RunRemoteAsync("Dry-run workflow", () => DryRunCoreAsync(cancellationToken), cancellationToken);
+
+    private async Task LoadFromMesCoreAsync(CancellationToken cancellationToken)
+    {
+        if (_mes is null) return;
+
+        var definitions = await _mes.GetWorkflowsAsync(cancellationToken);
+        var selectedId = SelectedWorkflow?.Id;
+        var loadedIds = new HashSet<Guid>();
+        foreach (var definition in definitions)
+        {
+            var local = FromContract(definition);
+            var versions = await _mes.GetWorkflowVersionsAsync(definition.Id, cancellationToken);
+            var latest = versions.OrderByDescending(version => version.Version).FirstOrDefault();
+            if (latest is not null) _remoteVersions[definition.Id] = latest;
+
+            var existing = Workflows.FirstOrDefault(workflow => workflow.Id == local.Id);
+            if (existing is null)
+            {
+                Workflows.Add(local);
+            }
+            else
+            {
+                var index = Workflows.IndexOf(existing);
+                Workflows[index] = local;
+            }
+
+            loadedIds.Add(local.Id);
+        }
+
+        if (selectedId is { } id && loadedIds.Contains(id))
+        {
+            SelectedWorkflow = Workflows.First(workflow => workflow.Id == id);
+        }
+        else if (loadedIds.Count > 0)
+        {
+            SelectedWorkflow = Workflows.First(workflow => loadedIds.Contains(workflow.Id));
+        }
+
+        UpdateRemotePresentation("Loaded " + definitions.Count + " workflow(s) from MES");
+        RemoteState = SelectedRemoteVersion?.PublishStatus == ContractWorkflowPublishStatus.Published
+            ? WorkflowRemoteState.Published
+            : SelectedRemoteVersion?.Status == ContractWorkflowVersionStatus.Validated
+                ? WorkflowRemoteState.Validated
+                : WorkflowRemoteState.DraftSaved;
+        Message = RemoteStatus;
+    }
+
+    private async Task SaveDraftCoreAsync(CancellationToken cancellationToken)
+    {
+        if (_mes is null || SelectedWorkflow is not { } workflow) return;
+
+        try
+        {
+            _store.Save(Workflows);
+        }
+        catch (Exception exception)
+        {
+            RemoteState = WorkflowRemoteState.Error;
+            Message = $"Local workflow save failed; MES draft was not sent: {exception.Message}";
+            return;
+        }
+
+        var definition = ToContract(workflow);
+        var current = SelectedRemoteVersion;
+        ContractWorkflowVersion saved;
+        if (current is { Status: ContractWorkflowVersionStatus.Draft, PublishStatus: ContractWorkflowPublishStatus.NotPublished })
+        {
+            saved = await _mes.UpdateWorkflowDraftAsync(
+                workflow.Id,
+                current.Version,
+                definition,
+                Actor,
+                cancellationToken);
+        }
+        else
+        {
+            saved = await _mes.CreateWorkflowDraftAsync(definition, Actor, cancellationToken);
+        }
+
+        SetRemoteVersion(saved);
+        RemoteState = WorkflowRemoteState.DraftSaved;
+        Message = $"Draft saved as v{saved.Version}.";
+    }
+
+    private async Task ValidateCoreAsync(CancellationToken cancellationToken)
+    {
+        if (_mes is null || SelectedWorkflow is not { } workflow) return;
+
+        var current = SelectedRemoteVersion;
+        var result = current is null
+            ? await _mes.ValidateWorkflowAsync(ToContract(workflow), cancellationToken)
+            : await _mes.ValidateWorkflowVersionAsync(workflow.Id, current.Version, cancellationToken);
+        _lastValidation = result;
+        if (current is not null)
+        {
+            _remoteVersions[workflow.Id] = current with
+            {
+                Validation = result,
+                Status = current.Status
+            };
+        }
+
+        UpdateRemotePresentation(result.IsValid ? "Validation passed" : "Validation failed");
+        RemoteState = result.IsValid ? WorkflowRemoteState.Validated : WorkflowRemoteState.ValidationFailed;
+        OnPropertyChanged(nameof(LastValidation));
+        OnPropertyChanged(nameof(ValidationSummary));
+        Message = ValidationSummary;
+    }
+
+    private async Task PublishCoreAsync(CancellationToken cancellationToken)
+    {
+        if (_mes is null || SelectedWorkflow is not { } workflow || SelectedRemoteVersion is not { } current) return;
+
+        var published = await _mes.PublishWorkflowAsync(
+            workflow.Id,
+            current.Version,
+            Actor,
+            cancellationToken);
+        SetRemoteVersion(published);
+        RemoteState = WorkflowRemoteState.Published;
+        Message = $"Workflow published as v{published.Version}.";
+    }
+
+    private async Task PublishWithLifecycleCoreAsync(CancellationToken cancellationToken)
+    {
+        await SaveDraftCoreAsync(cancellationToken);
+        await ValidateCoreAsync(cancellationToken);
+        if (SelectedRemoteVersion?.Validation?.IsValid != true)
+        {
+            RemoteState = WorkflowRemoteState.ValidationFailed;
+            Message = "Workflow validation failed; MES publish was not sent.";
+            return;
+        }
+
+        await PublishCoreAsync(cancellationToken);
+    }
+
+    private async Task DryRunCoreAsync(CancellationToken cancellationToken)
+    {
+        if (_mes is null || SelectedWorkflow is not { } workflow) return;
+
+        if (SelectedRemoteVersion is not { PublishStatus: ContractWorkflowPublishStatus.Published } version)
+        {
+            _lastExecution = new ContractWorkflowExecutionResult
+            {
+                Status = ContractWorkflowExecutionStatus.Rejected,
+                RequestId = Guid.NewGuid(),
+                WorkflowId = workflow.Id,
+                RejectionCode = "WORKFLOW_VERSION_NOT_PUBLISHED",
+                RejectionReason = "A confirmed published MES workflow version is required for dry-run.",
+                DryRun = true
+            };
+            RemoteState = WorkflowRemoteState.DryRunRejected;
+            OnPropertyChanged(nameof(LastExecution));
+            OnPropertyChanged(nameof(DryRunResult));
+            Message = "Dry-run rejected: WORKFLOW_VERSION_NOT_PUBLISHED.";
+            RemoteStatus = Message;
+            return;
+        }
+
+        var result = await _mes.ExecuteWorkflowAsync(
+            new ContractWorkflowExecutionRequest
+            {
+                WorkflowId = workflow.Id,
+                Version = version.Version,
+                RequestedBy = Actor,
+                CorrelationId = $"wpf-dry-run-{Guid.NewGuid():N}",
+                DryRun = true
+            },
+            cancellationToken);
+        _lastExecution = result;
+        RemoteState = result.IsAccepted ? WorkflowRemoteState.DryRunAccepted : WorkflowRemoteState.DryRunRejected;
+        OnPropertyChanged(nameof(LastExecution));
+        Message = result.IsAccepted
+            ? result.NextStep is null
+                ? "Dry-run accepted; workflow is terminal."
+                : $"Dry-run accepted; next step: {result.NextStep.NodeName}."
+            : $"Dry-run rejected: {result.RejectionCode ?? result.RejectionReason ?? "unknown"}.";
+        RemoteStatus = Message;
+    }
+
+    private string Actor
+    {
+        get
+        {
+            var actor = _actorProvider();
+            return string.IsNullOrWhiteSpace(actor) ? "wpf-editor" : actor.Trim();
+        }
+    }
+
+    private void SetRemoteVersion(ContractWorkflowVersion version)
+    {
+        _remoteVersions[version.WorkflowId] = version;
+        _lastValidation = version.Validation;
+        if (SelectedWorkflow?.Id == version.WorkflowId)
+        {
+            SelectedWorkflow.PublishedVersion = version.Definition.PublishedVersion;
+        }
+
+        OnPropertyChanged(nameof(SelectedRemoteVersion));
+        OnPropertyChanged(nameof(LastValidation));
+        OnPropertyChanged(nameof(ValidationSummary));
+        UpdateRemotePresentation();
+        RefreshCommandStates();
+    }
+
+    private void UpdateRemotePresentation(string? status = null)
+    {
+        if (status is not null)
+        {
+            RemoteStatus = status;
+        }
+        else if (SelectedRemoteVersion is { } version)
+        {
+            RemoteStatus = $"MES v{version.Version}: {version.Status}/{version.PublishStatus}";
+        }
+        else
+        {
+            RemoteStatus = IsRemoteAvailable ? "No MES version" : "Local only";
+        }
+
+        OnPropertyChanged(nameof(SelectedRemoteVersion));
+        OnPropertyChanged(nameof(ValidationSummary));
+    }
+
+    private static ContractWorkflowDefinition ToContract(WorkflowDefinition workflow) => new()
+    {
+        Id = workflow.Id,
+        Name = workflow.Name,
+        Description = workflow.Description,
+        IsPreset = workflow.IsPreset,
+        PublishedVersion = workflow.PublishedVersion,
+        Nodes = workflow.Nodes
+            .OrderBy(node => node.Order)
+            .Select(node => new ContractWorkflowNode
+            {
+                Id = node.Id,
+                Type = (MesControlAgv.Contracts.Workflows.WorkflowNodeType)node.Type,
+                Name = node.Name,
+                Description = node.Description,
+                TargetStation = node.TargetStation,
+                X = node.X,
+                Y = node.Y,
+                Order = node.Order,
+                Parameters = node.Parameters.Select(parameter => new ContractWorkflowParameter
+                {
+                    Name = parameter.Name,
+                    Value = parameter.Value,
+                    DataType = parameter.DataType,
+                    IsRequired = parameter.IsRequired
+                }).ToArray(),
+                NextNodeIds = node.NextNodeIds.ToArray()
+            })
+            .ToArray()
+    };
+
+    private static WorkflowDefinition FromContract(ContractWorkflowDefinition workflow)
+    {
+        var local = new WorkflowDefinition
+        {
+            Id = workflow.Id,
+            Name = workflow.Name,
+            Description = workflow.Description,
+            IsPreset = workflow.IsPreset,
+            PublishedVersion = workflow.PublishedVersion,
+            Nodes = new ObservableCollection<WorkflowNode>(workflow.Nodes
+                .OrderBy(node => node.Order)
+                .Select(node => new WorkflowNode
+                {
+                    Id = node.Id,
+                    Type = (WorkflowNodeType)node.Type,
+                    Name = node.Name,
+                    Description = node.Description,
+                    TargetStation = node.TargetStation,
+                    X = node.X,
+                    Y = node.Y,
+                    Order = node.Order,
+                    Parameters = new ObservableCollection<WorkflowNodeParameter>(node.Parameters.Select(parameter => new WorkflowNodeParameter
+                    {
+                        Name = parameter.Name,
+                        Value = parameter.Value,
+                        DataType = parameter.DataType,
+                        IsRequired = parameter.IsRequired
+                    })),
+                    NextNodeIds = new ObservableCollection<Guid>(node.NextNodeIds)
+                }))
+        };
+        return local;
     }
 
     private void AddNode() => AddNodeAt(WorkflowNodeType.Custom, null, null);
@@ -518,89 +744,39 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         foreach (var node in workflow.Nodes) node.Order = order++;
     }
 
-    private async Task RunRemoteAsync(Func<Task> operation, CancellationToken cancellationToken)
-    {
-        if (_mes is null) return;
-        IsLoading = true;
-        RemoteState = WorkflowRemoteState.Loading;
-        try
-        {
-            await operation();
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            RemoteState = WorkflowRemoteState.Cancelled;
-            Message = "MES workflow request was cancelled; local JSON remains active.";
-        }
-        catch (OperationCanceledException exception)
-        {
-            RemoteState = WorkflowRemoteState.ServiceUnavailable;
-            Message = $"MES workflow request timed out: {exception.Message}; local JSON remains active.";
-        }
-        catch (HttpRequestException exception)
-        {
-            RemoteState = WorkflowRemoteState.ServiceUnavailable;
-            Message = $"MES unavailable: {exception.Message}; local JSON remains active.";
-        }
-        catch (Exception exception)
-        {
-            RemoteState = WorkflowRemoteState.Error;
-            Message = $"MES workflow operation failed: {exception.Message}";
-        }
-        finally
-        {
-            IsLoading = false;
-        }
-    }
-
-    private static ContractWorkflowDefinition ToContractDefinition(WorkflowDefinition workflow)
-    {
-        var nodes = workflow.Nodes.OrderBy(node => node.Order).ToList();
-        return new ContractWorkflowDefinition
-        {
-            Id = workflow.Id,
-            Name = workflow.Name,
-            Description = workflow.Description,
-            IsPreset = workflow.IsPreset,
-            Nodes = nodes.Select((node, index) => new ContractWorkflowNode
-            {
-                Id = node.Id,
-                Type = (ContractWorkflowNodeType)node.Type,
-                Name = node.Name,
-                Description = node.Description,
-                TargetStation = node.TargetStation,
-                X = node.X,
-                Y = node.Y,
-                Order = node.Order,
-                NextNodeIds = index + 1 < nodes.Count ? [nodes[index + 1].Id] : []
-            }).ToList()
-        };
-    }
-
-    private static WorkflowDefinition ToWpfDefinition(ContractWorkflowDefinition definition) => new()
-    {
-        Id = definition.Id,
-        Name = definition.Name,
-        Description = definition.Description,
-        IsPreset = definition.IsPreset,
-        Nodes = new ObservableCollection<WorkflowNode>((definition.Nodes ?? Array.Empty<ContractWorkflowNode>())
-            .OrderBy(node => node.Order)
-            .Select(node => new WorkflowNode
-            {
-                Id = node.Id,
-                Type = (WorkflowNodeType)node.Type,
-                Name = node.Name,
-                Description = node.Description,
-                TargetStation = node.TargetStation,
-                X = node.X,
-                Y = node.Y,
-                Order = node.Order
-            }))
-    };
-
     private void RefreshCommandStates()
     {
-        foreach (var command in new[] { CopyWorkflowCommand, DeleteWorkflowCommand, AddNodeCommand, DeleteNodeCommand, MoveNodeLeftCommand, MoveNodeRightCommand }.OfType<EditorCommand>()) command.RaiseCanExecuteChanged();
+        foreach (var command in new[]
+        {
+            CopyWorkflowCommand,
+            DeleteWorkflowCommand,
+            AddNodeCommand,
+            DeleteNodeCommand,
+            MoveNodeLeftCommand,
+            MoveNodeRightCommand,
+            LoadFromMesCommand,
+            SaveDraftCommand,
+            ValidateCommand,
+            PublishCommand,
+            DryRunCommand
+        }.OfType<EditorCommand>()) command.RaiseCanExecuteChanged();
+
+        foreach (var command in new[]
+        {
+            LoadFromMesCommand,
+            SaveDraftCommand,
+            ValidateCommand,
+            PublishCommand,
+            DryRunCommand
+        }.OfType<AsyncCommand>()) command.RaiseCanExecuteChanged();
+    }
+
+    private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return false;
+        field = value;
+        OnPropertyChanged(propertyName);
+        return true;
     }
 
     private void RefreshRemoteCommandStates()

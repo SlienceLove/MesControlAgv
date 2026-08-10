@@ -14,7 +14,7 @@ Task state handling now distinguishes a known execution failure from an unresolv
 
 Simulator arrival controls accept a specific transport operation ID. WPF updates the simulator AGV first and then notifies MES, so the correct AGV is released after arrival and the normal flow can continue through `MOVING_TO_DROPOFF` to `COMPLETED`.
 
-The WPF application now includes experiment workflow management. Workflows can be preset and edited, their nodes can be adjusted through a visual drag-and-drop designer, and definitions are persisted locally as JSON for reuse between runs.
+The WPF application now includes experiment workflow management. Workflows can be preset and edited, their nodes can be adjusted through a visual drag-and-drop designer, and definitions are persisted locally as JSON for reuse between runs. The editor can also load MES definitions and versions, save a draft, persist validation, publish an immutable version, and issue a Simulator-safe dry-run admission request. Node parameters and explicit directed edges are preserved across local storage and the MES contract; dry-run remains an auditable next-step decision and does not call an AGV.
 
 ## Vendor TCP implementation
 
@@ -31,11 +31,19 @@ dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1
 dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
-The Release solution build passed on 2026-08-10 with 0 warnings and 0 errors, and all **230/230 tests passed**. Coverage now includes typed map/profile and physical-preflight HTTP contracts, read-only WPF readiness aggregation, Workflow draft/validate/publish/dry-run contracts, workflow audit queries, supervised field-navigation acceptance state transitions, directed-edge snapshot validation, fleet-aware path replanning from the assigned AGV, timeout recovery without duplicate operation IDs, restart-resume audit reconciliation, multi-AGV contention isolation, and the existing failure/retry, cancellation, pause/resume and full transport flow. Physical preflight remains fail-closed and never opens a device connection during offline verification. MES startup also contains an idempotent table-initialization path for the newly added field-acceptance records.
+The post-merge Release build passed on 2026-08-10 with 0 warnings and 0 errors,
+and the combined solution test run passed **236/236 tests**. Coverage includes
+WPF station/task contracts,
+workflow draft/validate/publish/version/dry-run APIs and audit readback,
+read-only map/readiness aggregation, timeout recovery without duplicate
+operation IDs, restart-resume reconciliation, multi-AGV contention, supervised
+field-navigation acceptance state transitions, and existing failure/retry,
+cancellation, pause/resume and full transport flow. Physical preflight remains
+fail-closed and never opens a device connection during offline verification.
 
 ## Live verification
 
-The three service processes were started from the Release output on isolated local ports (`5361/5362/5363` and a second run on `5371/5372/5373`) with fresh temporary MES/Adapter stores for process-level validation. Health checks and `scripts/verify-local.ps1` passed on 2026-08-07 for the default `2 -> 4` route and a configurable `2 -> 3` route: each run created a task, explicitly dispatched it, matched fleet status to the task's active operation, paused and resumed both transport legs with MES state writeback, simulated pickup/dropoff arrival, confirmed both operations, checked required audit events and `COMPLETED`, and confirmed the completed task left active fleet status. A separate isolated run on `5411/5412/5413` passed `failure-retry`: Simulator injected one navigation failure, MES persisted `Failed` and `DeviceFailed`, retry resumed the pickup leg, and the task completed with `RetryRequested` audit evidence and no active fleet entry. The physical-robot run has not been completed.
+The three service processes were started from the Release output on isolated local ports with fresh temporary MES/Adapter stores for process-level validation. Existing positive and `failure-retry` runs passed, including pause/resume, arrival confirmations, audit evidence, and fleet cleanup. New isolated runs on `5511/5512/5513` passed `timeout-recover` (Simulator `timeout-unknown` -> MES `Unknown` -> same operation recreated -> `ReconciledMoving` -> completed), `5551/5552/5553` passed `multi-agv` (three distinct AGV assignments, fourth task failed closed with `DeviceFailed`, all three tasks completed), `5571/5572/5573` passed `restart-resume` (Simulator kept alive while Adapter/MES restarted and reconciled persisted work), and `5641/5642/5643` passed `workflow-publish-rollback` (three immutable versions, published pointer rollback, and lifecycle audits). The physical-robot run has not been completed.
 
 ## 2026-08-10 concurrent continuation
 
@@ -51,11 +59,12 @@ No physical AGV was connected, controlled, dispatched, cancelled, or moved.
 
 The WPF task form no longer assumes the default `SAMPLE` catalog at runtime. It loads the complete station directory from MES and uses that directory for task-row names, batch-import code/name/AGV-ID resolution, and enabled-station validation. Refresh operations share a single-flight gate; the dashboard exposes whether the last successful snapshot is stale and when it was received. The local process scripts accept per-run URLs, isolated stores, run IDs and state paths, wait for health readiness, and stop only a matching PID/port instance. `docs/LOCAL-VERIFICATION.md` is the repeatable Simulator-only runbook.
 
-The next offline implementation order is:
+The workflow editor to MES lifecycle slice and the first expanded process-verification matrix are now complete for offline verification. The next offline implementation order is:
 
 1. Rehearse the complete Simulator-only package and preserve isolated run evidence before any site work.
-2. Complete MES audit/reporting integration for production operations and review workflow runtime admission against the active profile.
-3. Prepare an authorized on-site read-only preflight and map comparison; do not enable physical dispatch until every gate is evidenced.
+2. Complete MES audit/reporting integration and review published-workflow runtime admission against the active profile.
+3. Keep the local process matrix in CI/release rehearsal with explicit negative contracts for unavailable fleet/profile changes.
+4. Prepare an authorized on-site read-only preflight and map comparison; do not enable physical dispatch until every gate is evidenced.
 
 The physical acceptance boundary remains separate and fail-closed: after the vehicle is powered and a fresh read-only preflight is authorized, compare the live map name/version/MD5, station catalog and directed edges with the profile, then confirm automatic mode, control ownership and safety gates. Until that evidence exists, keep `enableAutomaticDispatch=false` and do not connect or move the real AGV.
 

@@ -52,8 +52,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _mes = mes;
         _simulator = simulator;
         ModuleRegistry = moduleRegistry ?? ControlCenterModuleRegistry.CreateStandard();
-        WorkflowEditor = new WorkflowEditorViewModel(new WorkflowStore(), mes);
-        Readiness = new ReadinessViewModel(mes);
+        WorkflowEditor = new WorkflowEditorViewModel(new WorkflowStore(), _mes, () => OperatorName);
+        Readiness = new ReadinessViewModel(_mes);
         _modules = new ControlCenterViewModel(WorkflowEditor, ModuleRegistry);
         Kpi = _modules.KpiDashboard;
         CreateTaskCommand = CreateActionCommand("\u521B\u5EFA\u4EFB\u52A1", CreateTaskAsync, CanCreateTask);
@@ -334,7 +334,6 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public async Task StartAsync()
     {
         await RefreshAsync();
-        await WorkflowEditor.LoadRemoteAsync(_shutdown.Token);
         await Readiness.RefreshAsync(_shutdown.Token);
         _refreshLoop = RefreshLoopAsync(_shutdown.Token);
     }
@@ -402,6 +401,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             var fleetStatus = await _mes.GetAgvFleetStatusAsync(_shutdown.Token);
             UpdateAgvs(fleetStatus);
+            Readiness.UpdateFleet(fleetStatus);
             BatchStatus = $"AGV \u72B6\u6001\u5DF2\u5237\u65B0\uFF1A{fleetStatus.Count} \u53F0";
             LastRefreshAt = DateTimeOffset.UtcNow;
             IsDataStale = false;

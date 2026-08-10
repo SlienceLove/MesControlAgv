@@ -59,6 +59,30 @@ public sealed record DashboardMapSnapshot(
     string? ProfileMapVersion,
     string? ProfileMapMd5);
 
+public sealed record DashboardWorkflowNextStep(
+    Guid StepRequestId,
+    Guid ExecutionId,
+    Guid WorkflowId,
+    int Version,
+    Guid NodeId,
+    int NodeType,
+    string NodeName,
+    string? TargetStation,
+    bool DryRun,
+    IReadOnlyDictionary<string, string?> Parameters);
+
+public sealed record DashboardWorkflowExecution(
+    bool IsAccepted,
+    bool IsIdempotentReplay,
+    Guid RequestId,
+    Guid ExecutionId,
+    Guid WorkflowId,
+    int Version,
+    bool DryRun,
+    string? RejectionCode,
+    string? RejectionReason,
+    DashboardWorkflowNextStep? NextStep);
+
 public interface IMesClient
 {
     Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken);
@@ -96,66 +120,32 @@ public interface IMesClient
     Task<DashboardTask> CancelAsync(Guid taskId, string operatorName, CancellationToken cancellationToken);
 
     Task<IReadOnlyList<WorkflowDefinition>> GetWorkflowsAsync(CancellationToken cancellationToken) =>
-        Task.FromException<IReadOnlyList<WorkflowDefinition>>(
-            new NotSupportedException("Workflow APIs are not supported by this MES client."));
+        Task.FromException<IReadOnlyList<WorkflowDefinition>>(new NotSupportedException("Workflow APIs are not supported by this MES client."));
 
     Task<WorkflowDefinition?> GetWorkflowAsync(Guid workflowId, CancellationToken cancellationToken) =>
-        Task.FromException<WorkflowDefinition?>(
-            new NotSupportedException("Workflow APIs are not supported by this MES client."));
+        Task.FromException<WorkflowDefinition?>(new NotSupportedException("Workflow APIs are not supported by this MES client."));
 
-    Task<IReadOnlyList<WorkflowVersion>> GetWorkflowVersionsAsync(
-        Guid workflowId,
-        CancellationToken cancellationToken) =>
-        Task.FromException<IReadOnlyList<WorkflowVersion>>(
-            new NotSupportedException("Workflow APIs are not supported by this MES client."));
+    Task<IReadOnlyList<WorkflowVersion>> GetWorkflowVersionsAsync(Guid workflowId, CancellationToken cancellationToken) =>
+        Task.FromException<IReadOnlyList<WorkflowVersion>>(new NotSupportedException("Workflow APIs are not supported by this MES client."));
 
-    Task<WorkflowVersion?> GetWorkflowVersionAsync(
-        Guid workflowId,
-        int version,
-        CancellationToken cancellationToken) =>
-        Task.FromException<WorkflowVersion?>(
-            new NotSupportedException("Workflow APIs are not supported by this MES client."));
+    Task<WorkflowVersion?> GetWorkflowVersionAsync(Guid workflowId, int version, CancellationToken cancellationToken) =>
+        Task.FromException<WorkflowVersion?>(new NotSupportedException("Workflow APIs are not supported by this MES client."));
 
-    Task<WorkflowVersion> CreateWorkflowDraftAsync(
-        WorkflowDefinition definition,
-        string actor,
-        CancellationToken cancellationToken) =>
-        Task.FromException<WorkflowVersion>(
-            new NotSupportedException("Workflow APIs are not supported by this MES client."));
+    Task<WorkflowVersion> CreateWorkflowDraftAsync(WorkflowDefinition definition, string actor, CancellationToken cancellationToken) =>
+        Task.FromException<WorkflowVersion>(new NotSupportedException("Workflow APIs are not supported by this MES client."));
 
-    Task<WorkflowVersion> UpdateWorkflowDraftAsync(
-        Guid workflowId,
-        int version,
-        WorkflowDefinition definition,
-        string actor,
-        CancellationToken cancellationToken) =>
-        Task.FromException<WorkflowVersion>(
-            new NotSupportedException("Workflow APIs are not supported by this MES client."));
+    Task<WorkflowVersion> UpdateWorkflowDraftAsync(Guid workflowId, int version, WorkflowDefinition definition, string actor, CancellationToken cancellationToken) =>
+        Task.FromException<WorkflowVersion>(new NotSupportedException("Workflow APIs are not supported by this MES client."));
 
-    Task<WorkflowValidationResult> ValidateWorkflowAsync(
-        WorkflowDefinition definition,
-        CancellationToken cancellationToken) =>
-        Task.FromException<WorkflowValidationResult>(
-            new NotSupportedException("Workflow APIs are not supported by this MES client."));
+    Task<WorkflowValidationResult> ValidateWorkflowAsync(WorkflowDefinition definition, CancellationToken cancellationToken) =>
+        Task.FromException<WorkflowValidationResult>(new NotSupportedException("Workflow APIs are not supported by this MES client."));
 
-    Task<WorkflowValidationResult> ValidateWorkflowVersionAsync(
-        Guid workflowId,
-        int version,
-        CancellationToken cancellationToken) =>
-        Task.FromException<WorkflowValidationResult>(
-            new NotSupportedException("Workflow APIs are not supported by this MES client."));
+    Task<WorkflowValidationResult> ValidateWorkflowVersionAsync(Guid workflowId, int version, CancellationToken cancellationToken) =>
+        Task.FromException<WorkflowValidationResult>(new NotSupportedException("Workflow APIs are not supported by this MES client."));
 
-    Task<WorkflowVersion> PublishWorkflowAsync(
-        Guid workflowId,
-        int version,
-        string actor,
-        CancellationToken cancellationToken) =>
-        Task.FromException<WorkflowVersion>(
-            new NotSupportedException("Workflow APIs are not supported by this MES client."));
+    Task<WorkflowVersion> PublishWorkflowAsync(Guid workflowId, int version, string actor, CancellationToken cancellationToken) =>
+        Task.FromException<WorkflowVersion>(new NotSupportedException("Workflow APIs are not supported by this MES client."));
 
-    Task<WorkflowExecutionResult> ExecuteWorkflowAsync(
-        WorkflowExecutionRequest request,
-        CancellationToken cancellationToken) =>
-        Task.FromException<WorkflowExecutionResult>(
-            new NotSupportedException("Workflow APIs are not supported by this MES client."));
+    Task<WorkflowExecutionResult> ExecuteWorkflowAsync(WorkflowExecutionRequest request, CancellationToken cancellationToken) =>
+        Task.FromException<WorkflowExecutionResult>(new NotSupportedException("Workflow APIs are not supported by this MES client."));
 }

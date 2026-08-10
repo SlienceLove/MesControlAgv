@@ -274,14 +274,7 @@ public sealed class MesClient(HttpClient client) : IMesClient
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        using var response = await client.PostAsJsonAsync(
-            "api/workflows/execute",
-            request,
-            cancellationToken);
-
-        // Workflow admission rejections are returned as the same stable result
-        // contract with a business HTTP status (404/409/422), so callers can
-        // inspect RejectionCode instead of handling transport exceptions.
+        using var response = await client.PostAsJsonAsync("api/workflows/execute", request, cancellationToken);
         if (response.IsSuccessStatusCode || IsWorkflowRejection(response.StatusCode))
         {
             return await response.Content.ReadFromJsonAsync<WorkflowExecutionResult>(cancellationToken)
@@ -312,7 +305,6 @@ public sealed class MesClient(HttpClient client) : IMesClient
         {
             request.Content = JsonContent.Create(body);
         }
-
         using var response = await client.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<WorkflowVersion>(cancellationToken)
@@ -329,7 +321,6 @@ public sealed class MesClient(HttpClient client) : IMesClient
         {
             request.Content = JsonContent.Create(body);
         }
-
         using var response = await client.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<WorkflowValidationResult>(cancellationToken)
