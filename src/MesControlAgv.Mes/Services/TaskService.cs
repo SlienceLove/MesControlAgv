@@ -566,7 +566,12 @@ public sealed class TaskService : ITaskApplicationService
                 return;
             }
 
+            // In a fleet, the pre-dispatch snapshot is only an advisory plan:
+            // Adapter may assign a different idle AGV whose current station
+            // differs from the MES snapshot. Let the fleet-aware Adapter plan
+            // from that assigned AGV instead of sending a stale path.
             var response = _adapter is IPathAwareAgvGateway pathAwareGateway
+                && _adapter is not IFleetAwareAgvGateway
                 && plannedPath is { Count: >= 2 }
                 && !string.IsNullOrWhiteSpace(preDispatchSnapshot.CurrentStationId)
                 ? await pathAwareGateway.DispatchAsync(

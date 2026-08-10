@@ -2,6 +2,7 @@
 using System.Net.Http;
 using System.Net.Http.Json;
 using MesControlAgv.Contracts;
+using MesControlAgv.Contracts.Workflows;
 using ContractAgvSnapshot = MesControlAgv.Contracts.AgvSnapshotResponse;
 using ContractAgvFleetStatus = MesControlAgv.Contracts.AgvFleetStatusResponse;
 using ContractAgvTask = MesControlAgv.Contracts.AgvTaskResponse;
@@ -68,6 +69,32 @@ public sealed class MesClient(HttpClient client) : IMesClient
         var path = await response.Content.ReadFromJsonAsync<ContractPlannedPath>(cancellationToken)
             ?? throw new InvalidOperationException("MES returned no planned path.");
         return new DashboardPlannedPath(path.Stations, path.Cost, path.FromStationId, path.ToStationId);
+    }
+
+    public async Task<DashboardMapSnapshot> GetMapSnapshotAsync(CancellationToken cancellationToken)
+    {
+        var snapshot = await client.GetFromJsonAsync<MapSnapshotResponse>("api/map", cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no map snapshot.");
+        return new DashboardMapSnapshot(
+            snapshot.Stations.Select(station => new DashboardStation(
+                station.Code,
+                station.Name,
+                station.AgvStationId,
+                station.Enabled)).ToList(),
+            snapshot.Edges,
+            snapshot.ProfileProductId,
+            snapshot.ProfileVersion,
+            snapshot.ProfileMapName,
+            snapshot.ProfileMapVersion,
+            snapshot.ProfileMapMd5);
+    }
+
+    public async Task<PhysicalAgvPreflightResponse?> GetPhysicalPreflightAsync(CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync("api/physical/preflight", cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<PhysicalAgvPreflightResponse>(cancellationToken);
     }
 
     public async Task<AgvDashboardSnapshot> GetAgvSnapshotAsync(CancellationToken cancellationToken)
@@ -151,6 +178,120 @@ public sealed class MesClient(HttpClient client) : IMesClient
     public Task<DashboardTask> CancelAsync(Guid taskId, string operatorName, CancellationToken cancellationToken) =>
         PostAsync($"api/tasks/{taskId}/cancel", new OperatorActionRequest(operatorName), cancellationToken);
 
+    public async Task<IReadOnlyList<WorkflowDefinition>> GetWorkflowsAsync(CancellationToken cancellationToken)
+    {
+        return await client.GetFromJsonAsync<List<WorkflowDefinition>>(
+            "api/workflows",
+            cancellationToken) ?? [];
+    }
+
+    public async Task<WorkflowDefinition?> GetWorkflowAsync(
+        Guid workflowId,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync($"api/workflows/{workflowId}", cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<WorkflowDefinition>(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<WorkflowVersion>> GetWorkflowVersionsAsync(
+        Guid workflowId,
+        CancellationToken cancellationToken)
+    {
+        return await client.GetFromJsonAsync<List<WorkflowVersion>>(
+            $"api/workflows/{workflowId}/versions",
+            cancellationToken) ?? [];
+    }
+
+    public async Task<WorkflowVersion?> GetWorkflowVersionAsync(
+        Guid workflowId,
+        int version,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync(
+            $"api/workflows/{workflowId}/versions/{version}",
+            cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<WorkflowVersion>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no workflow version.");
+    }
+
+    public Task<WorkflowVersion> CreateWorkflowDraftAsync(
+        WorkflowDefinition definition,
+        string actor,
+        CancellationToken cancellationToken) =>
+        SendWorkflowAsync(
+            HttpMethod.Post,
+            $"api/workflows?actor={Uri.EscapeDataString(actor)}",
+            definition,
+            cancellationToken);
+
+    public Task<WorkflowVersion> UpdateWorkflowDraftAsync(
+        Guid workflowId,
+        int version,
+        WorkflowDefinition definition,
+        string actor,
+        CancellationToken cancellationToken) =>
+        SendWorkflowAsync(
+            HttpMethod.Put,
+            $"api/workflows/{workflowId}/versions/{version}/draft?actor={Uri.EscapeDataString(actor)}",
+            definition,
+            cancellationToken);
+
+    public Task<WorkflowValidationResult> ValidateWorkflowAsync(
+        WorkflowDefinition definition,
+        CancellationToken cancellationToken) =>
+        SendWorkflowValidationAsync(
+            "api/workflows/validate",
+            definition,
+            cancellationToken);
+
+    public Task<WorkflowValidationResult> ValidateWorkflowVersionAsync(
+        Guid workflowId,
+        int version,
+        CancellationToken cancellationToken) =>
+        SendWorkflowValidationAsync(
+            $"api/workflows/{workflowId}/versions/{version}/validate",
+            body: null,
+            cancellationToken);
+
+    public Task<WorkflowVersion> PublishWorkflowAsync(
+        Guid workflowId,
+        int version,
+        string actor,
+        CancellationToken cancellationToken) =>
+        SendWorkflowAsync(
+            HttpMethod.Post,
+            $"api/workflows/{workflowId}/versions/{version}/publish?actor={Uri.EscapeDataString(actor)}",
+            body: null,
+            cancellationToken);
+
+    public async Task<WorkflowExecutionResult> ExecuteWorkflowAsync(
+        WorkflowExecutionRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        using var response = await client.PostAsJsonAsync(
+            "api/workflows/execute",
+            request,
+            cancellationToken);
+
+        // Workflow admission rejections are returned as the same stable result
+        // contract with a business HTTP status (404/409/422), so callers can
+        // inspect RejectionCode instead of handling transport exceptions.
+        if (response.IsSuccessStatusCode || IsWorkflowRejection(response.StatusCode))
+        {
+            return await response.Content.ReadFromJsonAsync<WorkflowExecutionResult>(cancellationToken)
+                ?? throw new InvalidOperationException("MES returned no workflow execution result.");
+        }
+
+        response.EnsureSuccessStatusCode();
+        throw new InvalidOperationException("MES returned no workflow execution result.");
+    }
+
     private async Task<DashboardTask> PostAsync(string path, object? body, CancellationToken cancellationToken)
     {
         using var response = await client.PostAsJsonAsync(path, body, cancellationToken);
@@ -159,6 +300,46 @@ public sealed class MesClient(HttpClient client) : IMesClient
             ?? throw new InvalidOperationException("MES returned no task.");
         return ToDashboardTask(task);
     }
+
+    private async Task<WorkflowVersion> SendWorkflowAsync(
+        HttpMethod method,
+        string path,
+        WorkflowDefinition? body,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(method, path);
+        if (body is not null)
+        {
+            request.Content = JsonContent.Create(body);
+        }
+
+        using var response = await client.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<WorkflowVersion>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no workflow version.");
+    }
+
+    private async Task<WorkflowValidationResult> SendWorkflowValidationAsync(
+        string path,
+        WorkflowDefinition? body,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, path);
+        if (body is not null)
+        {
+            request.Content = JsonContent.Create(body);
+        }
+
+        using var response = await client.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<WorkflowValidationResult>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no workflow validation result.");
+    }
+
+    private static bool IsWorkflowRejection(HttpStatusCode statusCode) =>
+        statusCode is HttpStatusCode.NotFound
+            or HttpStatusCode.Conflict
+            or HttpStatusCode.UnprocessableEntity;
 
     private static DashboardTask ToDashboardTask(ContractTaskResponse task) => new(
         task.Id,

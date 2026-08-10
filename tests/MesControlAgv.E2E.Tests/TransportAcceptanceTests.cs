@@ -92,6 +92,35 @@ public sealed class TransportAcceptanceTests
     }
 
     [Fact]
+    public async Task Simulator_cancellation_during_dropoff_releases_the_agv_and_records_terminal_audit()
+    {
+        var simulator = new SimulatorState();
+        var adapter = new SimulatorAcceptanceAdapter(simulator);
+        var service = CreateService(adapter);
+
+        var created = await service.CreateAsync(new CreateTaskRequest(2, 4), CancellationToken.None);
+        await service.DispatchAsync(created.Id, CancellationToken.None);
+        var pickupOperation = TransportOperationIds.Pickup(created.Id);
+        simulator.ApplyControl(pickupOperation, "arrive");
+        await service.RecordArrivalAsync(created.Id, CancellationToken.None);
+        await service.ConfirmPickupAsync(created.Id, "simulator-cancellation-e2e", CancellationToken.None);
+
+        var dropoffOperation = TransportOperationIds.Dropoff(created.Id);
+        Assert.Equal("moving", simulator.GetTask(dropoffOperation)!.State);
+
+        var cancelled = await service.CancelAsync(created.Id, "simulator-cancellation-e2e", CancellationToken.None);
+        var detail = await service.GetDetailAsync(created.Id, CancellationToken.None);
+
+        Assert.Equal("Cancelled", cancelled.Status);
+        Assert.NotNull(cancelled.EndedAt);
+        Assert.Equal("cancelled", simulator.GetTask(dropoffOperation)!.State);
+        Assert.Null(simulator.CurrentTaskId);
+        Assert.NotNull(detail);
+        Assert.Contains(detail.Events, item => item.EventType == "CancelConfirmed");
+        Assert.DoesNotContain(detail.Events, item => item.EventType == "DropoffConfirmed");
+    }
+
+    [Fact]
     public async Task Consecutive_tasks_keep_separate_device_operations()
     {
         var adapter = new AcceptanceAdapter();
@@ -184,6 +213,22 @@ public sealed class TransportAcceptanceTests
         Assert.Contains(detail.Events, item => item.EventType == "ReconciledMoving");
     }
 
+    [Fact]
+    public async Task Fleet_aware_dispatch_replans_from_the_assigned_agv_instead_of_using_stale_mes_path()
+    {
+        var adapter = new FleetAwareAcceptanceAdapter();
+        var service = CreateService(adapter);
+
+        var created = await service.CreateAsync(new CreateTaskRequest(2, 4), CancellationToken.None);
+        var dispatched = await service.DispatchAsync(created.Id, CancellationToken.None);
+
+        Assert.Equal("MovingToPickup", dispatched.Status);
+        Assert.Equal("AGV-02", dispatched.ActiveAgvId);
+        Assert.Equal(["CHARGE_01", "ST_PREP_01", "SAMPLE_01"], dispatched.ActivePath);
+        Assert.Equal(1, adapter.RouteDispatchCallCount);
+        Assert.Equal(0, adapter.PathDispatchCallCount);
+    }
+
     private TaskService CreateService(IAgvGateway adapter)
     {
         var options = new DbContextOptionsBuilder<MesDbContext>()
@@ -271,6 +316,68 @@ internal sealed class SimulatorAcceptanceAdapter(SimulatorState simulator) : IAg
     }
 
     public Task<AgvTaskResponse?> ExecuteAgvCommandAsync(string agvId, string command, Guid? taskId, CancellationToken cancellationToken) =>
+        Task.FromResult<AgvTaskResponse?>(null);
+}
+
+internal sealed class FleetAwareAcceptanceAdapter : IAgvGateway, IRouteAwareAgvGateway, IPathAwareAgvGateway, IFleetAwareAgvGateway
+{
+    private readonly Dictionary<Guid, AgvTaskResponse> _tasks = [];
+
+    public int RouteDispatchCallCount { get; private set; }
+    public int PathDispatchCallCount { get; private set; }
+
+    public Task<AgvTaskResponse> DispatchAsync(Guid operationId, string targetStationId, CancellationToken cancellationToken) =>
+        DispatchAsync(operationId, "CHARGE_01", targetStationId, cancellationToken);
+
+    public Task<AgvTaskResponse> DispatchAsync(
+        Guid operationId,
+        string sourceStationId,
+        string targetStationId,
+        CancellationToken cancellationToken)
+    {
+        RouteDispatchCallCount++;
+        var response = new AgvTaskResponse(
+            operationId,
+            operationId.ToString("N"),
+            targetStationId,
+            "moving",
+            null,
+            "AGV-02",
+            ["CHARGE_01", "ST_PREP_01", targetStationId]);
+        _tasks[operationId] = response;
+        return Task.FromResult(response);
+    }
+
+    public Task<AgvTaskResponse> DispatchAsync(
+        Guid operationId,
+        string sourceStationId,
+        string targetStationId,
+        IReadOnlyList<string> plannedPath,
+        CancellationToken cancellationToken)
+    {
+        PathDispatchCallCount++;
+        throw new InvalidOperationException("A stale MES path was sent to the fleet-aware adapter.");
+    }
+
+    public Task<AgvTaskResponse?> GetTaskAsync(Guid operationId, CancellationToken cancellationToken) =>
+        Task.FromResult(_tasks.GetValueOrDefault(operationId));
+
+    public Task<AgvTaskResponse?> CancelAsync(Guid operationId, CancellationToken cancellationToken) =>
+        Task.FromResult<AgvTaskResponse?>(new AgvTaskResponse(operationId, operationId.ToString("N"), string.Empty, "cancelled", null, "AGV-02"));
+
+    public Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken) =>
+        Task.FromResult(new AgvSnapshotResponse(true, "adapter", "ST_PREP_01", null, "AGV-01"));
+
+    public Task<IReadOnlyList<AgvSnapshotResponse>> GetFleetSnapshotAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<AgvSnapshotResponse>>([
+            new AgvSnapshotResponse(true, "adapter", "ST_PREP_01", null, "AGV-01"),
+            new AgvSnapshotResponse(true, "adapter", "CHARGE_01", null, "AGV-02")]);
+
+    public Task<AgvTaskResponse?> ExecuteAgvCommandAsync(
+        string agvId,
+        string command,
+        Guid? taskId,
+        CancellationToken cancellationToken) =>
         Task.FromResult<AgvTaskResponse?>(null);
 }
 

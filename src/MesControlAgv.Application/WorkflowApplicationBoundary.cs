@@ -37,6 +37,13 @@ public interface IWorkflowApplicationService : IWorkflowVersionReader, IWorkflow
     Task<WorkflowDefinition?> GetAsync(Guid workflowId, CancellationToken cancellationToken);
     Task<IReadOnlyList<WorkflowVersion>> ListVersionsAsync(Guid workflowId, CancellationToken cancellationToken);
 
+    /// <summary>Returns persisted lifecycle and execution audits, newest first.</summary>
+    Task<IReadOnlyList<WorkflowAuditResponse>> ListAuditsAsync(
+        Guid workflowId,
+        int? version,
+        int limit,
+        CancellationToken cancellationToken);
+
     /// <summary>Creates version 1 (or the next version) in Draft state.</summary>
     Task<WorkflowVersion> CreateDraftAsync(
         WorkflowDefinition definition,

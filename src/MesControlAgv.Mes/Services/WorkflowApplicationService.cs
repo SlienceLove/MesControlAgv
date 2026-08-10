@@ -126,6 +126,35 @@ public sealed class WorkflowApplicationService : IWorkflowApplicationService
             .ToArray();
     }
 
+    public async Task<IReadOnlyList<WorkflowAuditResponse>> ListAuditsAsync(
+        Guid workflowId,
+        int? version,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        if (workflowId == Guid.Empty)
+        {
+            throw new ArgumentException("A workflow id is required.", nameof(workflowId));
+        }
+
+        var boundedLimit = Math.Clamp(limit <= 0 ? 100 : limit, 1, 500);
+        var query = _database.WorkflowAudits
+            .AsNoTracking()
+            .Where(audit => audit.WorkflowId == workflowId);
+        if (version is not null)
+        {
+            query = query.Where(audit => audit.Version == version.Value);
+        }
+
+        var records = await query
+            .OrderByDescending(audit => audit.OccurredAtUtc)
+            .ThenByDescending(audit => audit.Id)
+            .Take(boundedLimit)
+            .ToListAsync(cancellationToken);
+
+        return records.Select(WorkflowPersistence.ToAuditContract).ToArray();
+    }
+
     public Task<WorkflowVersion?> GetVersionAsync(
         Guid workflowId,
         int version,
@@ -530,6 +559,46 @@ internal static class WorkflowPersistence
             Id = record.WorkflowId,
             PublishedVersion = publishedVersion
         };
+
+    public static WorkflowAuditResponse ToAuditContract(WorkflowAuditRecord record) => new()
+    {
+        Id = record.Id,
+        EventType = record.EventType,
+        Outcome = record.Outcome,
+        Code = record.Code,
+        Reason = record.Reason,
+        WorkflowId = record.WorkflowId,
+        Version = record.Version,
+        RequestId = record.RequestId,
+        ExecutionId = record.ExecutionId,
+        Actor = record.Actor,
+        CorrelationId = record.CorrelationId,
+        Details = DeserializeDetails(record.DetailsJson),
+        OccurredAt = new DateTimeOffset(DateTime.SpecifyKind(record.OccurredAtUtc, DateTimeKind.Utc))
+    };
+
+    public static IReadOnlyDictionary<string, string?> DeserializeDetails(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, string?>>(value, SerializerOptions)
+                ?? new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        }
+        catch (JsonException)
+        {
+            // Preserve the audit row even when an old or vendor-specific payload
+            // is not a string dictionary; the raw value remains inspectable.
+            return new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["raw"] = value
+            };
+        }
+    }
 
     public static WorkflowVersionStatus ParseStatus(WorkflowVersionRecord record) =>
         Enum.TryParse<WorkflowVersionStatus>(record.Status, ignoreCase: true, out var status)

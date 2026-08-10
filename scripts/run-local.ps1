@@ -250,6 +250,9 @@ try {
             Url = $service.Url
             ProcessId = [int]$process.Id
             Executable = $dotnet
+            Dll = $service.Dll
+            WorkingDirectory = $service.ProjectRoot
+            EnvironmentVariables = $service.EnvironmentVariables
             DatabasePath = $service.DatabasePath
             StartedAtUtc = [DateTime]::UtcNow.ToString('O')
         })

@@ -4,13 +4,6 @@ using MesControlAgv.Domain.Workflows;
 
 namespace MesControlAgv.Application;
 
-/// <summary>Outcome of accepting or rejecting a workflow execution request.</summary>
-public enum WorkflowExecutionStatus
-{
-    Rejected,
-    Accepted
-}
-
 /// <summary>Stable rejection codes returned by the workflow runtime boundary.</summary>
 public static class WorkflowExecutionRejectionCodes
 {
@@ -25,76 +18,6 @@ public static class WorkflowExecutionRejectionCodes
     public const string NextStepUnavailable = "WORKFLOW_NEXT_STEP_UNAVAILABLE";
     public const string BranchUnsupported = "WORKFLOW_BRANCH_UNSUPPORTED";
     public const string CycleDetected = "WORKFLOW_CYCLE_DETECTED";
-}
-
-/// <summary>
-/// The first executable step prepared by the runtime. It is a request for a
-/// later application/device adapter, not a device command and has no side effect.
-/// </summary>
-public sealed record WorkflowNextStepRequest
-{
-    public Guid StepRequestId { get; init; }
-    public Guid ExecutionId { get; init; }
-    public Guid WorkflowId { get; init; }
-    public int Version { get; init; }
-    public Guid NodeId { get; init; }
-    public WorkflowNodeType NodeType { get; init; }
-    public string NodeName { get; init; } = string.Empty;
-    public string? TargetStation { get; init; }
-    public bool DryRun { get; init; }
-    public IReadOnlyDictionary<string, string?> Parameters { get; init; } =
-        new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-}
-
-/// <summary>
-/// One immutable audit record returned with every runtime decision. Persistence
-/// belongs to the consuming application service; the executor never writes it.
-/// </summary>
-public sealed record WorkflowExecutionAuditEntry
-{
-    public Guid EventId { get; init; }
-    public string EventType { get; init; } = string.Empty;
-    public string Outcome { get; init; } = string.Empty;
-    public string? Code { get; init; }
-    public string? Reason { get; init; }
-    public Guid RequestId { get; init; }
-    public Guid ExecutionId { get; init; }
-    public Guid WorkflowId { get; init; }
-    public int Version { get; init; }
-    public string? RequestedBy { get; init; }
-    public string? CorrelationId { get; init; }
-    public DateTimeOffset OccurredAt { get; init; }
-    public string? WorkflowName { get; init; }
-    public Guid? NextNodeId { get; init; }
-    public IReadOnlyDictionary<string, string?> Details { get; init; } =
-        new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-}
-
-/// <summary>
-/// Auditable result of the runtime admission decision. A rejected result never
-/// contains a next step. An accepted result may contain the first executable
-/// step, while the actual step execution remains outside this boundary.
-/// </summary>
-public sealed record WorkflowExecutionResult
-{
-    public WorkflowExecutionStatus Status { get; init; }
-    public bool IsAccepted => Status == WorkflowExecutionStatus.Accepted;
-    public bool IsRejected => Status == WorkflowExecutionStatus.Rejected;
-    public bool IsIdempotentReplay { get; init; }
-    public Guid RequestId { get; init; }
-    public Guid ExecutionId { get; init; }
-    public Guid WorkflowId { get; init; }
-    public int Version { get; init; }
-    public DateTimeOffset RequestedAt { get; init; }
-    public bool DryRun { get; init; }
-    public string? RejectionCode { get; init; }
-    public string? RejectionReason { get; init; }
-    public IReadOnlyList<WorkflowValidationIssue> ValidationIssues { get; init; } =
-        Array.Empty<WorkflowValidationIssue>();
-    public WorkflowNextStepRequest? NextStepRequest { get; init; }
-    public WorkflowNextStepRequest? NextStep => NextStepRequest;
-    public bool HasNextStep => NextStepRequest is not null;
-    public WorkflowExecutionAuditEntry Audit { get; init; } = new();
 }
 
 /// <summary>

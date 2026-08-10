@@ -13,7 +13,7 @@
 ![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)
 ![WPF](https://img.shields.io/badge/UI-WPF-0078D4)
 ![Runtime](https://img.shields.io/badge/runtime-Simulator--first-2E8B57)
-![Tests](https://img.shields.io/badge/tests-210%2F210%20passed-2E8B57)
+![Tests](https://img.shields.io/badge/tests-230%2F230%20passed-2E8B57)
 
 </div>
 
@@ -82,9 +82,9 @@ dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1
 dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
-最近一次 Release 基线（2026-08-07）为 0 个警告、0 个错误，自动化测试 `210/210` 通过。
+最近一次 Release 基线（2026-08-10）为 0 个警告、0 个错误，自动化测试 `230/230` 通过。
 
-### 启动本地服务
+### 直接启动 WPF
 
 服务按 `Simulator -> Adapter -> MES` 的顺序启动。默认本地端点为：
 
@@ -95,22 +95,31 @@ dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 | MES | `http://localhost:5045` | 任务、审计和业务 API |
 
 ```powershell
+dotnet run --project src/MesControlAgv.Wpf -c Debug
+```
+
+无需先运行 PowerShell 启动脚本。WPF 会显示启动状态，按 `Simulator -> Adapter -> MES` 的顺序拉起本机服务，并等待每个 `/health` 就绪后再进行首次刷新；这比固定等待几秒更可靠。关闭 WPF 时，它只会停止由自己启动的服务，已存在且健康的本地服务会被复用且不会被停止。
+
+从 Visual Studio 启动 WPF 项目，或首次构建后直接打开 WPF 输出目录中的 `MesControlAgv.Wpf.exe`，行为相同。WPF 自行管理的 Simulator 数据库存放在 `%LOCALAPPDATA%\MesControlAgv\local-simulator`。
+
+### 一键启动桌面程序
+
+构建发布目录：
+
+```powershell
+dotnet publish src/MesControlAgv.Launcher -c Release --no-restore
+```
+
+然后双击 `src/MesControlAgv.Launcher/bin/Release/net8.0-windows/publish/MesControlAgv.Launcher.exe`。启动器会打开一个服务启动状态窗口，自动按 `Simulator -> Adapter -> MES` 顺序启动并验证 `/health`；验证通过后显示默认最大化的 WPF 主界面。关闭主界面会自动停止本次启动的本地服务。
+
+### 仅启动服务或执行隔离验证
+
+`run-local.ps1` 继续保留给服务单独启动和进程级验收；它不会启动 WPF，也不应作为日常桌面使用的前置步骤：
+
+```powershell
 .\scripts\run-local.ps1
 .\scripts\verify-local.ps1
-```
-
-完成 WPF 验证后，先关闭客户端，再执行：
-
-```powershell
 .\scripts\stop-local.ps1
-```
-
-WPF 客户端单独运行：
-
-```powershell
-$env:MES_BASE_URL = 'http://localhost:5045/'
-$env:WPF_RUNTIME_MODE = 'simulator'
-dotnet run --project src/MesControlAgv.Wpf
 ```
 
 ### 隔离进程验证

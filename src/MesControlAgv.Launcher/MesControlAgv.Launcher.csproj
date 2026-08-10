@@ -1,0 +1,83 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>MesControlAgv.Launcher</AssemblyName>
+    <RootNamespace>MesControlAgv.Launcher</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <WpfClientProject Include="$(MSBuildProjectDirectory)\..\MesControlAgv.Wpf\MesControlAgv.Wpf.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <BuildDependsOn>BuildWpfClient;$(BuildDependsOn)</BuildDependsOn>
+  </PropertyGroup>
+
+  <Target Name="BuildWpfClient">
+    <MSBuild Projects="@(WpfClientProject)"
+             Targets="Build"
+             Properties="Configuration=$(Configuration);Platform=$(Platform)" />
+  </Target>
+
+  <Target Name="CopyWpfClientRuntime" AfterTargets="Build" DependsOnTargets="BuildWpfClient">
+    <PropertyGroup>
+      <WpfClientOutputRoot>$(MSBuildProjectDirectory)\..\MesControlAgv.Wpf\bin\$(Configuration)\net8.0-windows\</WpfClientOutputRoot>
+    </PropertyGroup>
+    <ItemGroup>
+      <WpfClientRootFiles Include="$(WpfClientOutputRoot)*.*" />
+      <WpfClientServiceFiles Include="$(WpfClientOutputRoot)services\**\*"
+                             Exclude="$(WpfClientOutputRoot)services\**\publish\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WpfClientRootFiles)"
+          DestinationFiles="@(WpfClientRootFiles->'$(OutDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(WpfClientServiceFiles)"
+          DestinationFiles="@(WpfClientServiceFiles->'$(OutDir)services\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="ValidateWpfClientRuntime" AfterTargets="Build" DependsOnTargets="CopyWpfClientRuntime">
+    <Error Condition="!Exists('$(OutDir)MesControlAgv.Wpf.exe')"
+           Text="Launcher output is missing MesControlAgv.Wpf.exe. Rebuild the WPF client." />
+    <Error Condition="!Exists('$(OutDir)services\Simulator\MesControlAgv.Simulator.dll')"
+           Text="Launcher output is missing the Simulator runtime. Rebuild the WPF client." />
+    <Error Condition="!Exists('$(OutDir)services\Adapter\MesControlAgv.Adapter.dll')"
+           Text="Launcher output is missing the Adapter runtime. Rebuild the WPF client." />
+    <Error Condition="!Exists('$(OutDir)services\Mes\MesControlAgv.Mes.dll')"
+           Text="Launcher output is missing the MES runtime. Rebuild the WPF client." />
+  </Target>
+
+  <Target Name="PublishWpfClient" BeforeTargets="Publish">
+    <PropertyGroup>
+      <WpfClientPublishDir>$(MSBuildProjectDirectory)\..\MesControlAgv.Wpf\bin\$(Configuration)\net8.0-windows\publish\</WpfClientPublishDir>
+    </PropertyGroup>
+    <MSBuild Projects="@(WpfClientProject)"
+             Targets="Publish"
+             Properties="Configuration=$(Configuration);Platform=$(Platform);PublishDir=$(WpfClientPublishDir)" />
+  </Target>
+
+  <Target Name="CopyWpfClientPublishRuntime" AfterTargets="Publish" DependsOnTargets="PublishWpfClient">
+    <ItemGroup>
+      <WpfClientPublishedFiles Include="$(WpfClientPublishDir)**\*"
+                               Exclude="$(WpfClientPublishDir)**\publish\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WpfClientPublishedFiles)"
+          DestinationFiles="@(WpfClientPublishedFiles->'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="ValidateWpfClientPublishRuntime" AfterTargets="Publish" DependsOnTargets="CopyWpfClientPublishRuntime">
+    <Error Condition="!Exists('$(PublishDir)MesControlAgv.Wpf.exe')"
+           Text="Launcher publish output is missing MesControlAgv.Wpf.exe. Rebuild the launcher." />
+    <Error Condition="!Exists('$(PublishDir)services\Simulator\MesControlAgv.Simulator.dll')"
+           Text="Launcher publish output is missing the Simulator runtime. Rebuild the launcher." />
+    <Error Condition="!Exists('$(PublishDir)services\Adapter\MesControlAgv.Adapter.dll')"
+           Text="Launcher publish output is missing the Adapter runtime. Rebuild the launcher." />
+    <Error Condition="!Exists('$(PublishDir)services\Mes\MesControlAgv.Mes.dll')"
+           Text="Launcher publish output is missing the MES runtime. Rebuild the launcher." />
+  </Target>
+</Project>

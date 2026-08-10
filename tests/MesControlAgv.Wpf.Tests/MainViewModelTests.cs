@@ -1,3 +1,4 @@
+using MesControlAgv.Contracts;
 using MesControlAgv.Wpf.Services;
 using MesControlAgv.Wpf.ViewModels;
 
@@ -331,6 +332,9 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
     public Exception? DispatchException { get; set; }
     public TaskCompletionSource<bool>? DispatchGate { get; set; }
     public IReadOnlyList<AgvFleetDashboardStatus>? FleetStatus { get; set; }
+    public DashboardMapSnapshot? MapSnapshot { get; set; }
+    public PhysicalAgvPreflightResponse? PhysicalPreflight { get; set; }
+    public Exception? ReadinessException { get; set; }
     public AgvCommandResult? CommandResult { get; set; }
     public int AgvCommandCallCount { get; private set; }
     public (string AgvId, string Command, Guid? TaskId)? LastAgvCommand { get; private set; }
@@ -385,6 +389,14 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
         GetStationsCallCount++;
         return Task.FromResult<IReadOnlyList<DashboardStation>>(_stations);
     }
+    public Task<DashboardMapSnapshot> GetMapSnapshotAsync(CancellationToken cancellationToken) =>
+        ReadinessException is { } exception
+            ? Task.FromException<DashboardMapSnapshot>(exception)
+            : Task.FromResult(MapSnapshot ?? new DashboardMapSnapshot([], [], null, null, null, null, null));
+    public Task<PhysicalAgvPreflightResponse?> GetPhysicalPreflightAsync(CancellationToken cancellationToken) =>
+        ReadinessException is { } exception
+            ? Task.FromException<PhysicalAgvPreflightResponse?>(exception)
+            : Task.FromResult(PhysicalPreflight);
     public Task<DashboardPlannedPath> PlanPathAsync(
         string fromStationId,
         string toStationId,

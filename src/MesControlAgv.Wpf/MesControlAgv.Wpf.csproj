@@ -13,4 +13,66 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
   </PropertyGroup>
+
+  <ItemGroup>
+    <LocalServiceProjects Include="$(MSBuildProjectDirectory)\..\MesControlAgv.Simulator\MesControlAgv.Simulator.csproj" />
+    <LocalServiceProjects Include="$(MSBuildProjectDirectory)\..\MesControlAgv.Adapter\MesControlAgv.Adapter.csproj" />
+    <LocalServiceProjects Include="$(MSBuildProjectDirectory)\..\MesControlAgv.Mes\MesControlAgv.Mes.csproj" />
+  </ItemGroup>
+
+  <Target Name="BuildLocalServices" BeforeTargets="Build;Publish">
+    <MSBuild Projects="@(LocalServiceProjects)"
+             Targets="Build"
+             Properties="Configuration=$(Configuration);Platform=$(Platform)" />
+  </Target>
+
+  <Target Name="CopyLocalServiceRuntimeAfterBuild" AfterTargets="Build">
+    <PropertyGroup>
+      <LocalServiceDestinationRoot>$(OutDir)services\</LocalServiceDestinationRoot>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <SimulatorRuntimeFiles Include="$(MSBuildProjectDirectory)\..\MesControlAgv.Simulator\bin\$(Configuration)\net8.0\**\*"
+                            Exclude="$(MSBuildProjectDirectory)\..\MesControlAgv.Simulator\bin\$(Configuration)\net8.0\publish\**\*" />
+      <AdapterRuntimeFiles Include="$(MSBuildProjectDirectory)\..\MesControlAgv.Adapter\bin\$(Configuration)\net8.0\**\*"
+                          Exclude="$(MSBuildProjectDirectory)\..\MesControlAgv.Adapter\bin\$(Configuration)\net8.0\publish\**\*" />
+      <MesRuntimeFiles Include="$(MSBuildProjectDirectory)\..\MesControlAgv.Mes\bin\$(Configuration)\net8.0\**\*"
+                      Exclude="$(MSBuildProjectDirectory)\..\MesControlAgv.Mes\bin\$(Configuration)\net8.0\publish\**\*" />
+    </ItemGroup>
+
+    <Copy SourceFiles="@(SimulatorRuntimeFiles)"
+          DestinationFiles="@(SimulatorRuntimeFiles->'$(LocalServiceDestinationRoot)Simulator\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(AdapterRuntimeFiles)"
+          DestinationFiles="@(AdapterRuntimeFiles->'$(LocalServiceDestinationRoot)Adapter\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(MesRuntimeFiles)"
+          DestinationFiles="@(MesRuntimeFiles->'$(LocalServiceDestinationRoot)Mes\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyLocalServiceRuntimeAfterPublish" AfterTargets="Publish">
+    <PropertyGroup>
+      <LocalServiceDestinationRoot>$(PublishDir)services\</LocalServiceDestinationRoot>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <SimulatorPublishedRuntimeFiles Include="$(MSBuildProjectDirectory)\..\MesControlAgv.Simulator\bin\$(Configuration)\net8.0\**\*"
+                                      Exclude="$(MSBuildProjectDirectory)\..\MesControlAgv.Simulator\bin\$(Configuration)\net8.0\publish\**\*" />
+      <AdapterPublishedRuntimeFiles Include="$(MSBuildProjectDirectory)\..\MesControlAgv.Adapter\bin\$(Configuration)\net8.0\**\*"
+                                    Exclude="$(MSBuildProjectDirectory)\..\MesControlAgv.Adapter\bin\$(Configuration)\net8.0\publish\**\*" />
+      <MesPublishedRuntimeFiles Include="$(MSBuildProjectDirectory)\..\MesControlAgv.Mes\bin\$(Configuration)\net8.0\**\*"
+                                Exclude="$(MSBuildProjectDirectory)\..\MesControlAgv.Mes\bin\$(Configuration)\net8.0\publish\**\*" />
+    </ItemGroup>
+
+    <Copy SourceFiles="@(SimulatorPublishedRuntimeFiles)"
+          DestinationFiles="@(SimulatorPublishedRuntimeFiles->'$(LocalServiceDestinationRoot)Simulator\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(AdapterPublishedRuntimeFiles)"
+          DestinationFiles="@(AdapterPublishedRuntimeFiles->'$(LocalServiceDestinationRoot)Adapter\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(MesPublishedRuntimeFiles)"
+          DestinationFiles="@(MesPublishedRuntimeFiles->'$(LocalServiceDestinationRoot)Mes\%(RecursiveDir)%(Filename)%(Extension)')"
+          SkipUnchangedFiles="true" />
+  </Target>
 </Project>

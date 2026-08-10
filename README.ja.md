@@ -13,7 +13,7 @@
 ![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)
 ![WPF](https://img.shields.io/badge/UI-WPF-0078D4)
 ![Runtime](https://img.shields.io/badge/runtime-Simulator--first-2E8B57)
-![Tests](https://img.shields.io/badge/tests-210%2F210%20passed-2E8B57)
+![Tests](https://img.shields.io/badge/tests-230%2F230%20passed-2E8B57)
 
 </div>
 
@@ -74,9 +74,9 @@ dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1
 dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
-最新 Release 基線（2026-08-07）は、警告 0、エラー 0、テスト `210/210` 成功です。
+最新 Release 基線（2026-08-10）は、警告 0、エラー 0、テスト `230/230` 成功です。
 
-### ローカル起動
+### WPF を直接起動
 
 サービスは `Simulator -> Adapter -> MES` の順に起動します。
 
@@ -87,17 +87,20 @@ dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 | MES | `http://localhost:5045` |
 
 ```powershell
-.\scripts\run-local.ps1
-.\scripts\verify-local.ps1
+dotnet run --project src/MesControlAgv.Wpf -c Debug
 ```
 
-WPF クライアントは別の PowerShell で実行し、終了後にサービスを停止します。
+起動用 PowerShell スクリプトは不要です。WPF は起動状態を表示し、`Simulator -> Adapter -> MES` の順でローカルサービスを起動して各 `/health` の完了を待機します。固定秒数の待機より確実です。終了時には WPF 自身が起動したサービスだけを停止し、既に正常稼働していたサービスは再利用して停止しません。
+
+Visual Studio から WPF プロジェクトを起動する場合も、ビルド出力の `MesControlAgv.Wpf.exe` を開く場合も同じ動作です。
+
+### サービス単体起動と分離検証
+
+`run-local.ps1` はプロセスレベル検証用の入口として残ります。WPF は起動せず、通常のデスクトップ利用には不要です。
 
 ```powershell
-$env:MES_BASE_URL = 'http://localhost:5045/'
-$env:WPF_RUNTIME_MODE = 'simulator'
-dotnet run --project src/MesControlAgv.Wpf
-
+.\scripts\run-local.ps1
+.\scripts\verify-local.ps1
 .\scripts\stop-local.ps1
 ```
 

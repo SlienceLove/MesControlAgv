@@ -13,7 +13,7 @@ A lightweight AGV task-control system for laboratory automation, built with `.NE
 ![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)
 ![WPF](https://img.shields.io/badge/UI-WPF-0078D4)
 ![Runtime](https://img.shields.io/badge/runtime-Simulator--first-2E8B57)
-![Tests](https://img.shields.io/badge/tests-210%2F210%20passed-2E8B57)
+![Tests](https://img.shields.io/badge/tests-230%2F230%20passed-2E8B57)
 
 </div>
 
@@ -75,9 +75,9 @@ dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1
 dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
-The latest Release baseline (2026-08-07) completed with 0 warnings, 0 errors, and `210/210` automated tests passing.
+The latest Release baseline (2026-08-10) completed with 0 warnings, 0 errors, and `230/230` automated tests passing.
 
-### Run locally
+### Start WPF directly
 
 Services start in `Simulator -> Adapter -> MES` order.
 
@@ -88,17 +88,20 @@ Services start in `Simulator -> Adapter -> MES` order.
 | MES | `http://localhost:5045` | Tasks, audit, and business API |
 
 ```powershell
-.\scripts\run-local.ps1
-.\scripts\verify-local.ps1
+dotnet run --project src/MesControlAgv.Wpf -c Debug
 ```
 
-Run the desktop client separately, then close it before stopping services:
+No startup PowerShell script is needed. WPF displays startup status, starts local services in `Simulator -> Adapter -> MES` order, and waits for each `/health` response before its first refresh. This is more reliable than a fixed delay. On exit, WPF stops only processes it created; healthy services that were already running are reused and left alone.
+
+Starting the WPF project from Visual Studio or opening `MesControlAgv.Wpf.exe` from a built output directory has the same behavior. WPF-managed Simulator databases are stored under `%LOCALAPPDATA%\MesControlAgv\local-simulator`.
+
+### Service-only and isolated verification
+
+`run-local.ps1` remains the service-only entry point for process-level verification. It does not launch WPF and is not required for normal desktop use:
 
 ```powershell
-$env:MES_BASE_URL = 'http://localhost:5045/'
-$env:WPF_RUNTIME_MODE = 'simulator'
-dotnet run --project src/MesControlAgv.Wpf
-
+.\scripts\run-local.ps1
+.\scripts\verify-local.ps1
 .\scripts\stop-local.ps1
 ```
 

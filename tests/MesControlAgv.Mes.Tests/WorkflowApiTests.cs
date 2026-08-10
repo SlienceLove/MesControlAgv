@@ -60,6 +60,15 @@ public sealed class WorkflowApiTests : IClassFixture<MesWebApplicationFactory>
         var replayResult = await replay.Content.ReadFromJsonAsync<WorkflowExecutionResult>();
         Assert.True(replayResult!.IsIdempotentReplay);
         Assert.Equal(accepted.ExecutionId, replayResult.ExecutionId);
+
+        var audits = await _client.GetFromJsonAsync<IReadOnlyList<WorkflowAuditResponse>>(
+            $"/api/workflows/{draft.WorkflowId}/audits?version={draft.Version}");
+        Assert.NotNull(audits);
+        Assert.NotEmpty(audits!);
+        Assert.Contains(audits, audit => audit.EventType == "WorkflowDraftCreated");
+        Assert.Contains(audits, audit => audit.EventType == "WorkflowVersionPublished");
+        Assert.Contains(audits, audit => audit.EventType == "WorkflowExecutionAccepted");
+        Assert.All(audits, audit => Assert.Equal(draft.WorkflowId, audit.WorkflowId));
     }
 
     private static WorkflowDefinition CreateValidWorkflow()

@@ -52,7 +52,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _mes = mes;
         _simulator = simulator;
         ModuleRegistry = moduleRegistry ?? ControlCenterModuleRegistry.CreateStandard();
-        WorkflowEditor = new WorkflowEditorViewModel(new WorkflowStore());
+        WorkflowEditor = new WorkflowEditorViewModel(new WorkflowStore(), mes);
+        Readiness = new ReadinessViewModel(mes);
         _modules = new ControlCenterViewModel(WorkflowEditor, ModuleRegistry);
         Kpi = _modules.KpiDashboard;
         CreateTaskCommand = CreateActionCommand("\u521B\u5EFA\u4EFB\u52A1", CreateTaskAsync, CanCreateTask);
@@ -93,6 +94,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ObservableCollection<string> BatchImportIssues => _modules.BatchImport.BatchImportIssues;
     public ObservableCollection<DashboardStation> AvailableStations { get; } = [];
     public WorkflowEditorViewModel WorkflowEditor { get; }
+    public ReadinessViewModel Readiness { get; }
     public KpiDashboardViewModel Kpi { get; }
     public ControlCenterModuleRegistry ModuleRegistry { get; }
     public ControlCenterViewModel Modules => _modules;
@@ -332,6 +334,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public async Task StartAsync()
     {
         await RefreshAsync();
+        await WorkflowEditor.LoadRemoteAsync(_shutdown.Token);
+        await Readiness.RefreshAsync(_shutdown.Token);
         _refreshLoop = RefreshLoopAsync(_shutdown.Token);
     }
 
@@ -363,6 +367,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             finally { _suppressDetailRefresh = false; }
             await LoadTaskDetailAsync(SelectedTask?.Id, _shutdown.Token);
             UpdateAgvs(fleetStatus);
+            Readiness.UpdateFleet(fleetStatus);
             ConnectionStatus = "MES \u5DF2\u8FDE\u63A5";
             var primary = fleetStatus.FirstOrDefault()?.Snapshot;
             AgvStatus = primary is null ? "\u65E0 AGV \u6570\u636E" : primary.Online ? $"\u5728\u7EBF / {primary.ControlOwner}" : "\u79BB\u7EBF";

@@ -10,7 +10,7 @@ param(
     [string]$IsolationLabel,
     [int]$SourceStationCode = 2,
     [int]$TargetStationCode = 4,
-    [ValidateSet('positive', 'failure-retry')]
+    [ValidateSet('positive', 'failure-retry', 'cancellation', 'timeout-recovery', 'restart-resume', 'multi-agv')]
     [string]$Scenario = 'positive',
     [switch]$RequireIsolatedStores
 )
@@ -207,6 +207,212 @@ function Get-FleetEntryForTask {
         Select-Object -First 1)
 }
 
+function Get-PortOwners {
+    param([int]$Port)
+
+    if ($Port -le 0) { return @() }
+
+    $owners = [System.Collections.Generic.List[int]]::new()
+    foreach ($line in @(netstat -ano -p TCP | Select-String 'LISTENING')) {
+        $parts = ($line.ToString() -split '\s+') | Where-Object { $_ }
+        if ($parts.Count -ge 5 -and $parts[0] -eq 'TCP' -and $parts[1] -match (':{0}$' -f $Port) -and $parts[3] -eq 'LISTENING') {
+            $owners.Add([int]$parts[4])
+        }
+    }
+
+    @($owners | Sort-Object -Unique)
+}
+
+function Wait-TaskStatus {
+    param(
+        [Guid]$TaskId,
+        [string[]]$ExpectedStatus,
+        [int]$Timeout = $TimeoutSeconds
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($Timeout)
+    do {
+        $response = Invoke-RestMethod -Uri "$mes/api/tasks/$TaskId"
+        $current = if ($null -ne $response.PSObject.Properties['task']) { $response.task } else { $response }
+        if ($ExpectedStatus -contains [string]$current.status) { return $current }
+        Start-Sleep -Milliseconds 400
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    throw "Task $TaskId did not reach one of [$($ExpectedStatus -join ', ')] (last status: $($current.status))."
+}
+
+function Complete-TransportTask {
+    param(
+        [AllowNull()][object]$Task,
+        [string]$OperatorName
+    )
+
+    if ($null -eq $Task) { throw 'Cannot complete a missing transport task.' }
+    $taskId = [Guid]$Task.id
+    $agvId = [string]$Task.activeAgvId
+    if ([string]::IsNullOrWhiteSpace($agvId)) { throw "Task $taskId has no assigned AGV." }
+    $encodedAgvId = [Uri]::EscapeDataString($agvId)
+
+    Invoke-RestMethod -Method Post -Uri "$simulator/agvs/$encodedAgvId/controls/arrive" | Out-Null
+    $arrived = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$taskId/arrived"
+    if ($arrived.status -ne 'WaitingPickupConfirmation') {
+        throw "Unexpected pickup arrival status for task ${taskId}: $($arrived.status)"
+    }
+
+    $operatorBody = @{ operatorName = $OperatorName } | ConvertTo-Json
+    $pickup = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$taskId/confirm-pickup" -ContentType 'application/json' -Body $operatorBody
+    if ($pickup.status -ne 'MovingToDropoff') {
+        throw "Unexpected dropoff status for task ${taskId}: $($pickup.status)"
+    }
+    $dropoffAgvId = [string]$pickup.activeAgvId
+    if ([string]::IsNullOrWhiteSpace($dropoffAgvId)) { throw "Task $taskId lost its AGV assignment at dropoff." }
+    $encodedDropoffAgvId = [Uri]::EscapeDataString($dropoffAgvId)
+
+    Invoke-RestMethod -Method Post -Uri "$simulator/agvs/$encodedDropoffAgvId/controls/arrive" | Out-Null
+    $dropoffArrived = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$taskId/arrived"
+    if ($dropoffArrived.status -ne 'WaitingDropoffConfirmation') {
+        throw "Unexpected dropoff arrival status for task ${taskId}: $($dropoffArrived.status)"
+    }
+
+    $completed = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$taskId/confirm-dropoff" -ContentType 'application/json' -Body $operatorBody
+    if ($completed.status -ne 'Completed') { throw "Task $taskId did not complete: $($completed.status)" }
+    return $completed
+}
+
+function Restart-MesProcess {
+    if ($null -eq $runState -or $null -eq $stateMes) {
+        throw 'restart-resume requires a run-local state file so only the owned MES process can be restarted.'
+    }
+    if ($null -eq $stateMes.PSObject.Properties['ProcessId'] -or $null -eq $stateMes.PSObject.Properties['Dll']) {
+        throw 'The local state file does not contain restart metadata. Start a fresh run with the current run-local.ps1.'
+    }
+
+    $oldPid = [int]$stateMes.ProcessId
+    $process = Get-Process -Id $oldPid -ErrorAction SilentlyContinue
+    if ($null -eq $process) { throw "MES process $oldPid is not running." }
+    if (-not [string]::IsNullOrWhiteSpace([string]$stateMes.Executable)) {
+        $actualPath = $null
+        try { $actualPath = $process.Path } catch { }
+        if (-not [string]::IsNullOrWhiteSpace($actualPath) -and
+            -not [string]::Equals($actualPath, [string]$stateMes.Executable, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "MES PID $oldPid executable does not match the owned dotnet host."
+        }
+    }
+    $owners = @(Get-PortOwners ([int]$stateMes.Port))
+    if ($owners.Count -gt 0 -and ($owners | Where-Object { $_ -ne $oldPid }).Count -gt 0) {
+        throw "MES port $($stateMes.Port) is also owned by another process; restart aborted."
+    }
+
+    Stop-Process -Id $oldPid -Force
+    try { $process.WaitForExit(5000) | Out-Null } catch { }
+    if (Get-Process -Id $oldPid -ErrorAction SilentlyContinue) {
+        throw "MES process $oldPid did not exit before restart."
+    }
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = if ([string]::IsNullOrWhiteSpace([string]$stateMes.Executable)) { 'dotnet' } else { [string]$stateMes.Executable }
+    $startInfo.WorkingDirectory = if ($null -ne $stateMes.PSObject.Properties['WorkingDirectory'] -and -not [string]::IsNullOrWhiteSpace([string]$stateMes.WorkingDirectory)) {
+        [string]$stateMes.WorkingDirectory
+    } else {
+        Join-Path $repoRoot 'src\MesControlAgv.Mes'
+    }
+    $startInfo.UseShellExecute = $true
+    $dllArgument = ([string]$stateMes.Dll).Replace('"', '\"')
+    $urlArgument = ([string]$stateMes.Url).Replace('"', '\"')
+    $startInfo.Arguments = '"{0}" --urls "{1}" --environment Development' -f $dllArgument, $urlArgument
+    if ($null -ne $stateMes.PSObject.Properties['EnvironmentVariables'] -and $null -ne $stateMes.EnvironmentVariables) {
+        foreach ($entry in $stateMes.EnvironmentVariables.PSObject.Properties) {
+            $startInfo.Environment[$entry.Name] = [string]$entry.Value
+        }
+    }
+
+    $stdoutPath = Join-Path ([IO.Path]::GetTempPath()) "MesControlAgv-restart-$RunId-out.log"
+    $stderrPath = Join-Path ([IO.Path]::GetTempPath()) "MesControlAgv-restart-$RunId-error.log"
+    $savedEnvironment = @{}
+    try {
+        if ($null -ne $stateMes.PSObject.Properties['EnvironmentVariables'] -and $null -ne $stateMes.EnvironmentVariables) {
+            foreach ($entry in $stateMes.EnvironmentVariables.PSObject.Properties) {
+                $savedEnvironment[$entry.Name] = [Environment]::GetEnvironmentVariable($entry.Name, 'Process')
+                [Environment]::SetEnvironmentVariable($entry.Name, [string]$entry.Value, 'Process')
+            }
+        }
+        $newProcess = Start-Process -FilePath $startInfo.FileName -ArgumentList $startInfo.Arguments `
+            -WorkingDirectory $startInfo.WorkingDirectory -WindowStyle Hidden -PassThru `
+            -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+    }
+    finally {
+        foreach ($entry in $savedEnvironment.GetEnumerator()) {
+            [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, 'Process')
+        }
+    }
+    if ($null -eq $newProcess) { throw 'MES process could not be restarted.' }
+    $stateMes.ProcessId = [int]$newProcess.Id
+    $stateMes.StartedAtUtc = [DateTime]::UtcNow.ToString('O')
+    $runState | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resolvedStatePath -Encoding UTF8
+    Wait-Health $mes 'mes' $TimeoutSeconds
+    Write-Host "MES restarted for local recovery verification (new PID $($newProcess.Id))."
+}
+
+function Invoke-CancellationScenario {
+    $verificationId = [Guid]::NewGuid().ToString('N')
+    $externalId = if ([string]::IsNullOrWhiteSpace($IsolationLabel)) {
+        "verify-local-cancellation-$verificationId"
+    } else {
+        "$IsolationLabel-cancellation-$verificationId"
+    }
+    $createBody = @{
+        sourceStationCode = $SourceStationCode
+        targetStationCode = $TargetStationCode
+        externalId = $externalId
+        description = "Offline cancellation verification ($externalId)"
+    } | ConvertTo-Json
+    $task = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks" -ContentType 'application/json' -Body $createBody
+    if ($task.status -ne 'Created') { throw "Unexpected created status for cancellation scenario: $($task.status)" }
+
+    $task = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($task.id)/dispatch"
+    if ($task.status -ne 'MovingToPickup') { throw "Unexpected pickup dispatch status for cancellation scenario: $($task.status)" }
+    $taskId = [Guid]$task.id
+    $pickupOperationId = [Guid]::Parse([string]$task.activeDeviceTaskId)
+    $agvId = [string]$task.activeAgvId
+    if ([string]::IsNullOrWhiteSpace($agvId)) { throw 'Cancellation scenario did not return the assigned AGV.' }
+    $encodedAgvId = [Uri]::EscapeDataString($agvId)
+
+    # Complete pickup first so cancellation exercises the active dropoff
+    # operation and proves that the simulator releases the assigned AGV.
+    Invoke-RestMethod -Method Post -Uri "$simulator/agvs/$encodedAgvId/controls/arrive" | Out-Null
+    $arrived = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($task.id)/arrived"
+    if ($arrived.status -ne 'WaitingPickupConfirmation') { throw "Unexpected pickup arrival status: $($arrived.status)" }
+
+    $operatorBody = @{ operatorName = 'verify-local-cancellation' } | ConvertTo-Json
+    $pickup = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($task.id)/confirm-pickup" -ContentType 'application/json' -Body $operatorBody
+    if ($pickup.status -ne 'MovingToDropoff') { throw "Unexpected dropoff status before cancellation: $($pickup.status)" }
+    $dropoffOperationId = [Guid]::Parse([string]$pickup.activeDeviceTaskId)
+    if ([string]$pickup.activeAgvId -ne $agvId) { throw 'Cancellation scenario changed AGV assignment between transport legs.' }
+
+    $cancelled = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($task.id)/cancel" -ContentType 'application/json' -Body $operatorBody
+    if ($cancelled.status -ne 'Cancelled') { throw "Expected cancellation to complete, got status: $($cancelled.status)" }
+    if ([string]::IsNullOrWhiteSpace([string]$cancelled.endedAt)) { throw 'Cancelled task did not record endedAt.' }
+
+    $deviceTask = Invoke-RestMethod -Uri "$simulator/agvs/$encodedAgvId/tasks/$dropoffOperationId"
+    if ($deviceTask.state -ne 'cancelled') { throw "Simulator did not confirm dropoff cancellation: $($deviceTask.state)" }
+    $snapshot = Invoke-RestMethod -Uri "$simulator/agvs/$encodedAgvId/snapshot"
+    if ($null -ne $snapshot.currentTaskId) { throw 'Cancelled AGV still reports an active simulator task.' }
+
+    $detail = Invoke-RestMethod -Uri "$mes/api/tasks/$($task.id)"
+    if ($detail.task.status -ne 'Cancelled') { throw "Cancelled task detail did not record Cancelled: $($detail.task.status)" }
+    $eventTypes = @($detail.events | ForEach-Object { $_.eventType })
+    foreach ($requiredEvent in @('TaskCreated', 'DispatchRequested', 'PickupArrived', 'PickupConfirmed', 'CancelConfirmed')) {
+        if ($eventTypes -notcontains $requiredEvent) { throw "Cancellation scenario missing audit event: $requiredEvent" }
+    }
+    if ($eventTypes -contains 'DropoffConfirmed') { throw 'Cancelled task unexpectedly recorded DropoffConfirmed.' }
+    if (@(Get-FleetEntryForTask (Invoke-RestMethod -Uri "$mes/api/agvs/fleet/status") $taskId).Count -gt 0) {
+        throw 'Cancelled task still appears as an active fleet task.'
+    }
+
+    $runSuffix = if ([string]::IsNullOrWhiteSpace($RunId)) { '' } else { " (run $RunId)" }
+    Write-Host "Local Simulator cancellation verification passed for task $($task.id), pickup $pickupOperationId, dropoff $dropoffOperationId$runSuffix."
+}
+
 function Invoke-FailureRecoveryScenario {
     $verificationId = [Guid]::NewGuid().ToString('N')
     $externalId = if ([string]::IsNullOrWhiteSpace($IsolationLabel)) {
@@ -284,12 +490,172 @@ function Invoke-FailureRecoveryScenario {
     Write-Host "Local Simulator failure/retry verification passed for task $($task.id)$runSuffix."
 }
 
+function Invoke-TimeoutRecoveryScenario {
+    $verificationId = [Guid]::NewGuid().ToString('N')
+    $externalId = if ([string]::IsNullOrWhiteSpace($IsolationLabel)) {
+        "verify-local-timeout-$verificationId"
+    } else {
+        "$IsolationLabel-timeout-$verificationId"
+    }
+    $createBody = @{
+        sourceStationCode = $SourceStationCode
+        targetStationCode = $TargetStationCode
+        externalId = $externalId
+        description = "Offline timeout recovery verification ($externalId)"
+    } | ConvertTo-Json
+    $task = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks" -ContentType 'application/json' -Body $createBody
+    if ($task.status -ne 'Created') { throw "Unexpected created status for timeout scenario: $($task.status)" }
+
+    # Simulator accepts and stores the operation before returning 504. Adapter
+    # must reconcile that operation and never issue a second navigation request.
+    Invoke-RestMethod -Method Post -Uri "$simulator/controls/timeout" | Out-Null
+    $dispatched = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($task.id)/dispatch"
+    if ($dispatched.status -notin @('MovingToPickup', 'Unknown')) {
+        throw "Unexpected timeout dispatch status: $($dispatched.status)"
+    }
+    $operationId = [string]$dispatched.activeDeviceTaskId
+    if ([string]::IsNullOrWhiteSpace($operationId)) { throw 'Timeout dispatch did not persist its operation ID.' }
+
+    $recovered = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($task.id)/recover"
+    if ($recovered.status -ne 'MovingToPickup') {
+        throw "Timeout recovery did not return MovingToPickup: $($recovered.status)"
+    }
+    if ([string]$recovered.activeDeviceTaskId -ne $operationId) {
+        throw 'Timeout recovery changed the operation ID; a duplicate dispatch may have occurred.'
+    }
+
+    $detail = Invoke-RestMethod -Uri "$mes/api/tasks/$($task.id)"
+    $eventTypes = @($detail.events | ForEach-Object { $_.eventType })
+    if ($dispatched.status -eq 'Unknown') {
+        foreach ($requiredEvent in @('Timeout', 'ReconciledMoving')) {
+            if ($eventTypes -notcontains $requiredEvent) { throw "Timeout scenario missing audit event: $requiredEvent" }
+        }
+    }
+
+    $completed = Complete-TransportTask $recovered 'verify-local-timeout'
+    if ($completed.status -ne 'Completed') { throw "Timeout recovery task did not complete: $($completed.status)" }
+    $runSuffix = if ([string]::IsNullOrWhiteSpace($RunId)) { '' } else { " (run $RunId)" }
+    Write-Host "Local Simulator timeout recovery verification passed for task $($task.id), operation $operationId$runSuffix."
+}
+
+function Invoke-RestartResumeScenario {
+    $verificationId = [Guid]::NewGuid().ToString('N')
+    $externalId = if ([string]::IsNullOrWhiteSpace($IsolationLabel)) {
+        "verify-local-restart-$verificationId"
+    } else {
+        "$IsolationLabel-restart-$verificationId"
+    }
+    $createBody = @{
+        sourceStationCode = $SourceStationCode
+        targetStationCode = $TargetStationCode
+        externalId = $externalId
+        description = "Offline restart/resume verification ($externalId)"
+    } | ConvertTo-Json
+    $created = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks" -ContentType 'application/json' -Body $createBody
+    $dispatched = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($created.id)/dispatch"
+    if ($dispatched.status -ne 'MovingToPickup') { throw "Unexpected restart setup status: $($dispatched.status)" }
+    $operationId = [string]$dispatched.activeDeviceTaskId
+    if ([string]::IsNullOrWhiteSpace($operationId)) { throw 'Restart setup did not return an operation ID.' }
+
+    Restart-MesProcess
+    $resumed = Wait-TaskStatus -TaskId ([Guid]$created.id) -ExpectedStatus @('MovingToPickup', 'Unknown') -Timeout $TimeoutSeconds
+    if ($resumed.status -eq 'Unknown') {
+        $resumed = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($created.id)/recover"
+    }
+    if ($resumed.status -ne 'MovingToPickup') { throw "Restart recovery did not resume pickup: $($resumed.status)" }
+    if ([string]$resumed.activeDeviceTaskId -ne $operationId) {
+        throw 'Restart recovery changed the persisted operation ID.'
+    }
+
+    $detail = Invoke-RestMethod -Uri "$mes/api/tasks/$($created.id)"
+    $eventTypes = @($detail.events | ForEach-Object { $_.eventType })
+    foreach ($requiredEvent in @('Timeout', 'ReconciledMoving')) {
+        if ($eventTypes -notcontains $requiredEvent) { throw "Restart scenario missing audit event: $requiredEvent" }
+    }
+
+    Complete-TransportTask $resumed 'verify-local-restart' | Out-Null
+    $runSuffix = if ([string]::IsNullOrWhiteSpace($RunId)) { '' } else { " (run $RunId)" }
+    Write-Host "Local Simulator restart/resume verification passed for task $($created.id), operation $operationId$runSuffix."
+}
+
+function Invoke-MultiAgvContentionScenario {
+    $verificationId = [Guid]::NewGuid().ToString('N')
+    $taskIds = [System.Collections.Generic.List[Guid]]::new()
+    $tasks = [System.Collections.Generic.List[object]]::new()
+    foreach ($suffix in @('a', 'b')) {
+        $externalId = if ([string]::IsNullOrWhiteSpace($IsolationLabel)) {
+            "verify-local-contention-$suffix-$verificationId"
+        } else {
+            "$IsolationLabel-contention-$suffix-$verificationId"
+        }
+        $createBody = @{
+            sourceStationCode = $SourceStationCode
+            targetStationCode = $TargetStationCode
+            externalId = $externalId
+            description = "Offline multi-AGV contention verification ($externalId)"
+        } | ConvertTo-Json
+        $created = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks" -ContentType 'application/json' -Body $createBody
+        if ($created.status -ne 'Created') { throw "Unexpected contention create status: $($created.status)" }
+        $taskIds.Add([Guid]$created.id)
+        $tasks.Add($created)
+    }
+
+    $first = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($taskIds[0])/dispatch"
+    $second = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$($taskIds[1])/dispatch"
+    if ($first.status -ne 'MovingToPickup' -or $second.status -ne 'MovingToPickup') {
+        throw "Multi-AGV contention did not keep both tasks active: $($first.status), $($second.status)"
+    }
+    $firstAgv = [string]$first.activeAgvId
+    $secondAgv = [string]$second.activeAgvId
+    if ([string]::IsNullOrWhiteSpace($firstAgv) -or [string]::IsNullOrWhiteSpace($secondAgv)) {
+        throw 'Multi-AGV contention did not return both AGV assignments.'
+    }
+    if ($firstAgv -eq $secondAgv) { throw "Scheduler assigned both concurrent tasks to $firstAgv." }
+
+    $fleet = Invoke-RestMethod -Uri "$mes/api/agvs/fleet/status"
+    if (@(Get-FleetEntryForTask $fleet $taskIds[0]).Count -ne 1) { throw 'Fleet status lost the first contending task.' }
+    if (@(Get-FleetEntryForTask $fleet $taskIds[1]).Count -ne 1) { throw 'Fleet status lost the second contending task.' }
+
+    $operatorBody = @{ operatorName = 'verify-local-contention' } | ConvertTo-Json
+    foreach ($taskId in $taskIds) {
+        $cancelled = Invoke-RestMethod -Method Post -Uri "$mes/api/tasks/$taskId/cancel" -ContentType 'application/json' -Body $operatorBody
+        if ($cancelled.status -ne 'Cancelled') { throw "Contending task $taskId did not cancel: $($cancelled.status)" }
+    }
+    $finalFleet = Invoke-RestMethod -Uri "$mes/api/agvs/fleet/status"
+    foreach ($taskId in $taskIds) {
+        if (@(Get-FleetEntryForTask $finalFleet $taskId).Count -gt 0) { throw "Cancelled contending task $taskId remains active." }
+    }
+
+    $runSuffix = if ([string]::IsNullOrWhiteSpace($RunId)) { '' } else { " (run $RunId)" }
+    Write-Host "Local Simulator multi-AGV contention verification passed: $firstAgv and $secondAgv handled isolated tasks$runSuffix."
+}
+
 Wait-Health $simulator 'simulator' $TimeoutSeconds
 Wait-Health $adapter 'adapter' $TimeoutSeconds
 Wait-Health $mes 'mes' $TimeoutSeconds
 
 if ($Scenario -eq 'failure-retry') {
     Invoke-FailureRecoveryScenario
+    return
+}
+
+if ($Scenario -eq 'cancellation') {
+    Invoke-CancellationScenario
+    return
+}
+
+if ($Scenario -eq 'timeout-recovery') {
+    Invoke-TimeoutRecoveryScenario
+    return
+}
+
+if ($Scenario -eq 'restart-resume') {
+    Invoke-RestartResumeScenario
+    return
+}
+
+if ($Scenario -eq 'multi-agv') {
+    Invoke-MultiAgvContentionScenario
     return
 }
 

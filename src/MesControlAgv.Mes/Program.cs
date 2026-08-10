@@ -28,6 +28,8 @@ builder.Services.AddScoped<WorkflowRuntimeExecutor>();
 builder.Services.AddScoped<IWorkflowRuntimeExecutor>(services => services.GetRequiredService<WorkflowRuntimeExecutor>());
 builder.Services.AddScoped<WorkflowApplicationService>();
 builder.Services.AddScoped<IWorkflowApplicationService>(services => services.GetRequiredService<WorkflowApplicationService>());
+builder.Services.AddScoped<FieldNavigationAcceptanceRepository>();
+builder.Services.AddScoped<IFieldNavigationAcceptanceApplicationService, FieldNavigationAcceptanceService>();
 builder.Services.AddScoped<TaskRepository>();
 builder.Services.AddScoped<ITaskApplicationService, TaskService>();
 builder.Services.AddScoped<IKpiDashboardApplicationService, KpiDashboardService>();
@@ -41,6 +43,7 @@ using (var scope = app.Services.CreateScope())
     await database.Database.EnsureCreatedAsync();
     await EnsureTaskColumnsAsync(database);
     await EnsureWorkflowTablesAsync(database);
+    await EnsureFieldNavigationAcceptanceTablesAsync(database);
 }
 
 app.MapGet("/health", () => Results.Ok(new { service = "mes", status = "ok" }));
@@ -62,6 +65,27 @@ app.MapGet("/api/workflows/{workflowId:guid}/versions", async (
     IWorkflowApplicationService service,
     CancellationToken cancellationToken) =>
     Results.Ok(await service.ListVersionsAsync(workflowId, cancellationToken)));
+
+app.MapGet("/api/workflows/{workflowId:guid}/audits", async (
+    Guid workflowId,
+    int? version,
+    int? limit,
+    IWorkflowApplicationService service,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        return Results.Ok(await service.ListAuditsAsync(
+            workflowId,
+            version,
+            limit ?? 100,
+            cancellationToken));
+    }
+    catch (ArgumentException exception)
+    {
+        return Results.BadRequest(new { detail = exception.Message });
+    }
+});
 
 app.MapGet("/api/workflows/{workflowId:guid}/versions/{version:int}", async (
     Guid workflowId,
@@ -181,6 +205,101 @@ app.MapPost("/api/workflows/execute", async (
         _ => Results.UnprocessableEntity(result)
     };
 });
+
+app.MapPost("/api/field-navigation-acceptances", async (
+    CreateFieldNavigationAcceptanceRequest request,
+    IFieldNavigationAcceptanceApplicationService service,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var acceptance = await service.CreateAsync(request, cancellationToken);
+        return Results.Created($"/api/field-navigation-acceptances/{acceptance.Id}", acceptance);
+    }
+    catch (ArgumentException exception)
+    {
+        return Results.BadRequest(new { detail = exception.Message });
+    }
+    catch (KeyNotFoundException exception)
+    {
+        return Results.UnprocessableEntity(new { detail = exception.Message });
+    }
+    catch (InvalidOperationException exception)
+    {
+        return Results.UnprocessableEntity(new { detail = exception.Message });
+    }
+});
+
+app.MapGet("/api/field-navigation-acceptances/{acceptanceId:guid}", async (
+    Guid acceptanceId,
+    IFieldNavigationAcceptanceApplicationService service,
+    CancellationToken cancellationToken) =>
+{
+    var acceptance = await service.GetAsync(acceptanceId, cancellationToken);
+    return acceptance is null ? Results.NotFound() : Results.Ok(acceptance);
+});
+
+app.MapPost("/api/field-navigation-acceptances/{acceptanceId:guid}/authorize", async (
+    Guid acceptanceId,
+    AuthorizeFieldNavigationAcceptanceRequest request,
+    IFieldNavigationAcceptanceApplicationService service,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        return Results.Ok(await service.AuthorizeAsync(acceptanceId, request, cancellationToken));
+    }
+    catch (KeyNotFoundException)
+    {
+        return Results.NotFound();
+    }
+    catch (ArgumentException exception)
+    {
+        return Results.BadRequest(new { detail = exception.Message });
+    }
+    catch (InvalidOperationException exception)
+    {
+        return Results.Conflict(new { detail = exception.Message });
+    }
+});
+
+app.MapPost("/api/field-navigation-acceptances/{acceptanceId:guid}/dispatch", async (
+    Guid acceptanceId,
+    IFieldNavigationAcceptanceApplicationService service,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        return Results.Ok(await service.DispatchAsync(acceptanceId, cancellationToken));
+    }
+    catch (KeyNotFoundException)
+    {
+        return Results.NotFound();
+    }
+    catch (InvalidOperationException exception)
+    {
+        return Results.Conflict(new { detail = exception.Message });
+    }
+});
+
+app.MapPost("/api/field-navigation-acceptances/{acceptanceId:guid}/cancel", async (
+    Guid acceptanceId,
+    IFieldNavigationAcceptanceApplicationService service,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        return Results.Ok(await service.CancelAsync(acceptanceId, cancellationToken));
+    }
+    catch (KeyNotFoundException)
+    {
+        return Results.NotFound();
+    }
+    catch (InvalidOperationException exception)
+    {
+        return Results.Conflict(new { detail = exception.Message });
+    }
+});
 app.MapGet("/api/agv", async (IAgvGateway adapter, CancellationToken cancellationToken) =>
     Results.Ok(await adapter.GetSnapshotAsync(cancellationToken)));
 
@@ -237,11 +356,23 @@ app.MapPost("/api/agvs/{agvId}/command", async (
     }
 });
 
-app.MapGet("/api/map", (ProfileConfiguration configuredProfile, AgvMap configuredMap) => Results.Ok(new
-{
-    stations = Stations.FromProfile(configuredProfile),
-    edges = configuredMap.Edges
-}));
+app.MapGet("/api/map", (ProfileConfiguration configuredProfile, AgvMap configuredMap) =>
+    Results.Ok(new MapSnapshotResponse(
+        Stations.FromProfile(configuredProfile)
+            .Select(station => new StationResponse(
+                station.Code,
+                station.Name,
+                station.AgvStationId,
+                station.Enabled))
+            .ToList(),
+        configuredMap.Edges
+            .Select(edge => new MapEdgeResponse(edge.From, edge.To, edge.Cost, edge.Bidirectional))
+            .ToList(),
+        configuredProfile.Product.ProductId,
+        configuredProfile.Product.Version,
+        configuredProfile.PhysicalAcceptance?.MapSnapshot.MapName,
+        configuredProfile.PhysicalAcceptance?.MapSnapshot.Version,
+        configuredProfile.PhysicalAcceptance?.MapSnapshot.Md5)));
 
 app.MapPost("/api/planning/path", (PlanPathRequest request, PathPlanner planner) =>
 {
@@ -420,6 +551,61 @@ static async Task EnsureWorkflowTablesAsync(MesDbContext database)
         "CREATE INDEX IF NOT EXISTS IX_WorkflowExecutions_WorkflowId_Version_CreatedAtUtc ON WorkflowExecutions (WorkflowId, Version, CreatedAtUtc);",
         "CREATE INDEX IF NOT EXISTS IX_WorkflowAudits_WorkflowId_Version_OccurredAtUtc ON WorkflowAudits (WorkflowId, Version, OccurredAtUtc);",
         "CREATE INDEX IF NOT EXISTS IX_WorkflowAudits_RequestId ON WorkflowAudits (RequestId);"
+    };
+
+    foreach (var statement in statements)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = statement;
+        await command.ExecuteNonQueryAsync();
+    }
+}
+
+static async Task EnsureFieldNavigationAcceptanceTablesAsync(MesDbContext database)
+{
+    var connection = database.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open)
+    {
+        await connection.OpenAsync();
+    }
+
+    var statements = new[]
+    {
+        """
+        CREATE TABLE IF NOT EXISTS FieldNavigationAcceptances (
+            Id TEXT NOT NULL PRIMARY KEY,
+            Status TEXT NOT NULL,
+            AgvId TEXT NOT NULL,
+            SourceStationId TEXT NOT NULL,
+            TargetStationId TEXT NOT NULL,
+            MapName TEXT NOT NULL,
+            MapMd5 TEXT NOT NULL,
+            PlannedPathJson TEXT NOT NULL,
+            Description TEXT NULL,
+            OperatorName TEXT NULL,
+            SafetyObserverName TEXT NULL,
+            PermitId TEXT NULL,
+            AuthorizedAtUtc TEXT NULL,
+            ExpiresAtUtc TEXT NULL,
+            PermitConsumedAtUtc TEXT NULL,
+            DeviceTaskId TEXT NULL,
+            LastError TEXT NULL,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS FieldNavigationAcceptanceAudits (
+            Id TEXT NOT NULL PRIMARY KEY,
+            AcceptanceId TEXT NOT NULL,
+            EventType TEXT NOT NULL,
+            DetailsJson TEXT NOT NULL,
+            OccurredAtUtc TEXT NOT NULL
+        );
+        """,
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_FieldNavigationAcceptances_PermitId ON FieldNavigationAcceptances (PermitId);",
+        "CREATE INDEX IF NOT EXISTS IX_FieldNavigationAcceptances_Status_CreatedAtUtc ON FieldNavigationAcceptances (Status, CreatedAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_FieldNavigationAcceptanceAudits_AcceptanceId_OccurredAtUtc ON FieldNavigationAcceptanceAudits (AcceptanceId, OccurredAtUtc);"
     };
 
     foreach (var statement in statements)

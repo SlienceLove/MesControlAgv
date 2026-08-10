@@ -1,6 +1,6 @@
 # AGV MES MVP Progress
 
-Last updated: 2026-08-07
+Last updated: 2026-08-10
 
 ## Current status
 
@@ -31,11 +31,21 @@ dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1
 dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
-The Release solution build passed on 2026-08-07 with 0 warnings and 0 errors, and all **203/203 tests passed**. Coverage now includes Profile/API station-catalog mapping for WPF task rows and batch submission, route-preview invalidation and response endpoint validation, serialized refresh state with stale-data reporting, shared WPF action single-flight and AGV result/error guards, real `MesClient` HTTP JSON/error contracts, dropoff pause/resume and final fleet-idle assertions in the local process verifier, a Simulator failure/retry recovery scenario, and fail-closed physical preflight reasons without opening a device connection. The prior coverage of dynamic station/task parameters, explicit create/dispatch separation, pause/resume state writeback, physical-mode command guards, fleet-status/task correlation, multi-AGV isolation, and the complete Simulator transport flow remains green.
+The Release solution build passed on 2026-08-10 with 0 warnings and 0 errors, and all **230/230 tests passed**. Coverage now includes typed map/profile and physical-preflight HTTP contracts, read-only WPF readiness aggregation, Workflow draft/validate/publish/dry-run contracts, workflow audit queries, supervised field-navigation acceptance state transitions, directed-edge snapshot validation, fleet-aware path replanning from the assigned AGV, timeout recovery without duplicate operation IDs, restart-resume audit reconciliation, multi-AGV contention isolation, and the existing failure/retry, cancellation, pause/resume and full transport flow. Physical preflight remains fail-closed and never opens a device connection during offline verification. MES startup also contains an idempotent table-initialization path for the newly added field-acceptance records.
 
 ## Live verification
 
 The three service processes were started from the Release output on isolated local ports (`5361/5362/5363` and a second run on `5371/5372/5373`) with fresh temporary MES/Adapter stores for process-level validation. Health checks and `scripts/verify-local.ps1` passed on 2026-08-07 for the default `2 -> 4` route and a configurable `2 -> 3` route: each run created a task, explicitly dispatched it, matched fleet status to the task's active operation, paused and resumed both transport legs with MES state writeback, simulated pickup/dropoff arrival, confirmed both operations, checked required audit events and `COMPLETED`, and confirmed the completed task left active fleet status. A separate isolated run on `5411/5412/5413` passed `failure-retry`: Simulator injected one navigation failure, MES persisted `Failed` and `DeviceFailed`, retry resumed the pickup leg, and the task completed with `RetryRequested` audit evidence and no active fleet entry. The physical-robot run has not been completed.
+
+## 2026-08-10 concurrent continuation
+
+No physical AGV was connected, controlled, dispatched, cancelled, or moved.
+
+- Workflow editing now uses MES draft, validation, publication, version and dry-run APIs while preserving local JSON as the offline fallback. Remote failure, cancellation and service-unavailable outcomes remain explicit to the operator.
+- The WPF read-only map view renders the configured station/edge topology, map fingerprint status, current fleet state and active execution-path overlays. It consumes only MES read APIs and does not add a physical control action.
+- MES exposes a bounded, read-only workflow-audit query for lifecycle and dry-run traceability.
+- MES also has a separate supervised field-navigation-acceptance state machine for a future single low-speed route. It records draft, permit authorization, dispatch outcome, cancellation outcome and audits, but the feature remains disabled by default. The Adapter still runs fresh physical preflight immediately before any future movement.
+- See `docs/physical-acceptance/FIELD-NAVIGATION-ACCEPTANCE.md` for the required on-site gates. The live controller map catalog/directed-edge comparison and vendor confirmation of automatic mode remain hard blockers.
 
 ## 2026-08-07 next-phase handoff
 
@@ -43,9 +53,9 @@ The WPF task form no longer assumes the default `SAMPLE` catalog at runtime. It 
 
 The next offline implementation order is:
 
-1. Connect the WPF workflow editor to MES draft/validate/publish/version APIs, then add a dry-run execution entry point before wiring more workflow steps into transport dispatch.
-2. Extend process verification with timeout, cancellation, restart-resume and multi-AGV contention scenarios, then rehearse a Simulator-only publish/rollback package.
-3. Add a read-only WPF readiness/route/audit pane, including map/profile fingerprint and the actual execution path returned after AGV assignment.
+1. Rehearse the complete Simulator-only package and preserve isolated run evidence before any site work.
+2. Complete MES audit/reporting integration for production operations and review workflow runtime admission against the active profile.
+3. Prepare an authorized on-site read-only preflight and map comparison; do not enable physical dispatch until every gate is evidenced.
 
 The physical acceptance boundary remains separate and fail-closed: after the vehicle is powered and a fresh read-only preflight is authorized, compare the live map name/version/MD5, station catalog and directed edges with the profile, then confirm automatic mode, control ownership and safety gates. Until that evidence exists, keep `enableAutomaticDispatch=false` and do not connect or move the real AGV.
 
@@ -83,6 +93,42 @@ The WPF control center now includes a `KPI 看板` tab. It presents today's task
 KPI aggregation is exposed by MES at `GET /api/dashboard/kpi?date=yyyy-MM-dd` and is calculated from the persisted transport-task data. Sample statistics currently describe transport-task status aggregation and include a data-source note. Consumable inventory is explicitly marked `未接入` until a site inventory interface is available; real laboratory instrument status is also not fabricated and is marked as not yet connected. Current instrument/AGV status is sourced from the Adapter/AGV snapshot, and the Simulator remains the default runtime path.
 
 No third-party chart package was added. The donut and trend charts are rendered by WPF controls, keeping the MVP dependency surface unchanged.
+
+## 2026-08-10 offline readiness and recovery continuation
+
+No physical AGV was connected, controlled, dispatched, cancelled, or moved in
+this session. All process verification used fresh local Simulator, Adapter and
+MES processes with temporary SQLite stores.
+
+- WPF now has a read-only `Readiness / Map / Audit` tab. It shows the Profile
+  and live controller map fingerprints, configured stations, directed edges,
+  physical preflight blocking reasons, assigned AGV execution paths and the
+  selected task audit timeline. The refresh command only reads MES endpoints.
+- MES `GET /api/map` returns typed map/profile metadata and
+  `GET /api/physical/preflight` is consumed by the WPF client. Missing or
+  rejected physical preflight remains unavailable/blocked in the UI.
+- In fleet mode MES now treats its pre-dispatch path as advisory and lets the
+  fleet-aware Adapter replan from the AGV it actually assigns. This prevents a
+  stale default-AGV path from being sent to another idle AGV.
+- `scripts/verify-local.ps1` now supports `timeout-recovery`, `restart-resume`
+  and `multi-agv` in addition to `positive`, `failure-retry` and
+  `cancellation`. The restart scenario restarts only the MES PID recorded by
+  `run-local.ps1`, preserves environment/database settings, verifies the same
+  operation ID and checks `Timeout` plus `ReconciledMoving` audit events.
+- Verified offline HTTP runs: positive, timeout recovery, failure/retry,
+  cancellation, restart/resume and multi-AGV contention. A timeout/fault
+  scenario must use a fresh Simulator process; if the AGV is already at the
+  pickup station MES correctly bypasses navigation and no timeout is consumed.
+- Final Release verification: build `0 warnings / 0 errors`; tests
+  **230/230** (Domain 19, MES 42, Adapter 72, WPF 73, E2E 11, Simulator 4,
+  Workflow Contract 9).
+
+Physical acceptance remains **NO-GO**. The vehicle is currently powered off,
+the last known map fingerprint is stale, `manualBlock=true` was previously
+observed, and automatic mode was not proven. The next physical step is a newly
+authorized, isolated read-only preflight and map/station/directed-edge
+comparison; keep `enableAutomaticDispatch=false` until that evidence and site
+safety authorization exist.
 
 ## Extension verification
 
@@ -485,3 +531,24 @@ No physical AGV was connected, commanded, or moved during this verification. Exi
 - 最新 Release solution build 为 0 warnings、0 errors；Release 全量测试 **172/172 通过**（Domain 19、MES 38、Adapter 57、WPF 36、E2E 9、Simulator 4、Workflow Contract 9）。本轮仍只使用 Simulator，未连接、控制或移动实体 AGV。
 
 真实 AGV 继续保持 **NO-GO**：车辆断电，断电前地图 MD5、`manualBlock=true` 和自动模式 `unknown` 均为历史/未确认信息。下一次现场工作必须在隔离和明确授权后，从重新通电的只读预检开始，并重新比对地图、站点、直接有向边、自动模式和控制权；这些现场条件不阻塞当前离线 WPF 调度开发。
+## 2026-08-07 concurrent next-phase checkpoint (paused)
+
+This checkpoint records the work completed before the next development session was paused. No physical AGV was connected, controlled, or moved.
+
+### Completed in this session
+
+- Runtime packaging hardening: WPF ordinary Build now copies Simulator, Adapter, and MES runtimes to `OutDir/services`; Publish uses `PublishDir/services`. Nested service `publish` trees are excluded. Launcher Build/Publish outputs validate the WPF executable and all three service DLLs, so incomplete one-click packages fail during build.
+- Simulator-only cancellation verification: `scripts/verify-local.ps1 -Scenario cancellation` now dispatches a task, completes pickup, cancels the active dropoff leg, and verifies terminal MES state, `CancelConfirmed`, simulator cancellation, AGV release, and absence from active fleet status. The isolated HTTP run and E2E coverage passed `10/10`.
+
+### Paused work
+
+- WPF Workflow API client integration is partially staged in `IMesClient` and `MesClient` for workflow list/read, draft create/update, validation, and publish. It is intentionally not wired into the Workflow editor UI yet and still needs the dry-run `/api/workflows/execute` client method and focused HTTP contract tests.
+- The remaining UI work is to connect the existing local workflow editor to MES draft/validate/publish/version state, expose a dry-run admission result, and keep local JSON storage as a fallback until remote persistence is confirmed.
+
+### Resume order
+
+1. Inspect and complete the paused Workflow client changes; add `WorkflowExecutionRequest`/`WorkflowExecutionResult` dry-run support and HTTP contract tests.
+2. Run the WPF and Workflow test projects before wiring the editor UI.
+3. Connect the editor to remote draft/validate/publish/version APIs with explicit loading, validation-error, publish-success, and service-unavailable states.
+4. Run the full solution Build/Test and the isolated Simulator positive, failure-retry, and cancellation scenarios.
+5. Keep physical acceptance **NO-GO** until a new read-only preflight confirms the live map fingerprint, station catalog, directed edges, automatic mode, control ownership, and safety gates.

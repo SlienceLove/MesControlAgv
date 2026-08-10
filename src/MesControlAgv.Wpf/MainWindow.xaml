@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:MesControlAgv.Wpf.Controls"
         Title="AGV MES 中控"
+        WindowState="Maximized"
         Width="1420"
         Height="860"
         MinWidth="1180"
@@ -427,6 +428,13 @@
                     <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.DeleteWorkflowCommand}" Content="删除" />
                     <Button Margin="6,0,0,0" Padding="14,7" Background="#1769AA" Foreground="White" Command="{Binding WorkflowEditor.SaveCommand}" Content="保存" />
                 </StackPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.SaveDraftCommand}" Content="MES Draft" />
+                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.ValidateCommand}" Content="Validate" />
+                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.PublishCommand}" Content="Publish" />
+                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.DryRunCommand}" Content="Dry-run" />
+                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.RefreshRemoteCommand}" Content="Refresh MES" />
+                </StackPanel>
             </DockPanel>
 
             <Grid Grid.Row="1" MinHeight="0" ClipToBounds="True">
@@ -540,6 +548,13 @@
                             <TextBox MinHeight="58" AcceptsReturn="True" TextWrapping="Wrap" Text="{Binding WorkflowEditor.SelectedNode.Description, UpdateSourceTrigger=PropertyChanged}" />
                             <TextBlock Margin="0,10,0,4" Foreground="Gray" Text="鐩爣绔欑偣" />
                             <TextBox Text="{Binding WorkflowEditor.SelectedNode.TargetStation, UpdateSourceTrigger=PropertyChanged}" />
+                             <Separator Margin="0,14" />
+                             <TextBlock FontWeight="SemiBold" Text="MES workflow state" />
+                             <TextBlock Margin="0,4,0,0" Foreground="Gray" TextWrapping="Wrap" Text="{Binding WorkflowEditor.RemoteStateDescription}" />
+                             <TextBlock Margin="0,3,0,0" Foreground="Gray" TextWrapping="Wrap" Text="{Binding WorkflowEditor.RemoteVersionDescription}" />
+                             <TextBlock Margin="0,3,0,0" Foreground="#315B87" TextWrapping="Wrap" Text="{Binding WorkflowEditor.ValidationSummary}" />
+                             <TextBlock Margin="0,3,0,0" Foreground="#315B87" TextWrapping="Wrap" Text="{Binding WorkflowEditor.DryRunSummary}" />
+                             <TextBlock Margin="0,3,0,0" Foreground="#B42318" TextWrapping="Wrap" Text="{Binding WorkflowEditor.Message}" />
                         </StackPanel>
                     </ScrollViewer>
                 </Border>
@@ -547,5 +562,270 @@
              <TextBlock Grid.Row="2" Margin="0,10,0,0" Foreground="Gray" Text="修改后点击保存，流程会持久化到本地 JSON 文件。" />
         </Grid>
     </TabItem>
+        <TabItem Header="Readiness / Map / Audit" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+            <Grid Margin="0,12,0,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <DockPanel Margin="0,0,0,12">
+                    <StackPanel DockPanel.Dock="Left">
+                        <TextBlock FontSize="22" FontWeight="SemiBold" Text="Readiness / Map / Audit" />
+                        <TextBlock Margin="0,4,0,0" Foreground="Gray" Text="Read-only profile comparison, preflight gates, active paths and task audit" />
+                    </StackPanel>
+                    <Button DockPanel.Dock="Right" Padding="14,7" Command="{Binding Readiness.RefreshCommand}" Content="Refresh readiness" />
+                </DockPanel>
+
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="1.05*" />
+                        <ColumnDefinition Width="1.4*" />
+                        <ColumnDefinition Width="1.05*" />
+                    </Grid.ColumnDefinitions>
+
+                    <ScrollViewer Grid.Column="0" Margin="0,0,12,0" VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                            <Border Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
+                                <StackPanel>
+                                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="Map and profile" />
+                                    <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="Profile map fingerprint" />
+                                    <TextBlock Margin="0,3,0,0" TextWrapping="Wrap" Text="{Binding Readiness.ProfileFingerprint}" />
+                                    <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="Live controller fingerprint" />
+                                    <TextBlock Margin="0,3,0,0" TextWrapping="Wrap" Text="{Binding Readiness.LiveFingerprint}" />
+                                    <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="Operating mode" />
+                                    <TextBlock Margin="0,3,0,0" Text="{Binding Readiness.OperatingMode}" />
+                                    <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="Refresh status" />
+                                    <TextBlock Margin="0,3,0,0" Foreground="Gray" TextWrapping="Wrap" Text="{Binding Readiness.Status}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Margin="0,12,0,0" Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
+                                <StackPanel>
+                                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="Preflight gate" />
+                                    <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="Dispatch permitted" />
+                                    <TextBlock Margin="0,3,0,0" FontWeight="SemiBold" Text="{Binding Readiness.DispatchPermitted}" />
+                                    <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="Blocking reasons" />
+                                    <TextBlock Margin="0,3,0,0" Foreground="#B42318" TextWrapping="Wrap" Text="{Binding Readiness.BlockingReasons}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Margin="0,12,0,0" Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
+                                <StackPanel>
+                                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="Configured stations" />
+                                    <ItemsControl Margin="0,8,0,0" ItemsSource="{Binding Readiness.MapSnapshot.Stations}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="0,3">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="72" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Foreground="Gray" Text="{Binding Code}" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding AgvStationId}" />
+                                                    <TextBlock Grid.Column="2" Foreground="Gray" Text="{Binding Enabled}" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <Border Grid.Column="1" Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <TextBlock FontSize="16" FontWeight="SemiBold" Text="Directed map edges" />
+                            <DataGrid Grid.Row="1" Margin="0,10,0,0" ItemsSource="{Binding Readiness.MapSnapshot.Edges}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" HeadersVisibility="Column">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Width="*" Header="From" Binding="{Binding From}" />
+                                    <DataGridTextColumn Width="*" Header="To" Binding="{Binding To}" />
+                                    <DataGridTextColumn Width="90" Header="Cost" Binding="{Binding Cost}" />
+                                    <DataGridCheckBoxColumn Width="110" Header="Bidirectional" Binding="{Binding Bidirectional}" IsReadOnly="True" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
+                    </Border>
+
+                    <ScrollViewer Grid.Column="2" Margin="12,0,0,0" VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                            <Border Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
+                                <StackPanel>
+                                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="Actual AGV execution paths" />
+                                    <ItemsControl Margin="0,8,0,0" ItemsSource="{Binding Readiness.FleetStatus}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Margin="0,0,0,8" Padding="8" Background="#F6F8FA" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="4">
+                                                    <StackPanel>
+                                                        <TextBlock FontWeight="SemiBold" Text="{Binding Snapshot.AgvId}" />
+                                                        <TextBlock Margin="0,3,0,0" Foreground="Gray" Text="{Binding Snapshot.CurrentStationId}" />
+                                                        <TextBlock Margin="0,3,0,0" Text="{Binding ActiveTask.MesStatus}" />
+                                                        <ItemsControl Margin="0,4,0,0" ItemsSource="{Binding ActiveTask.Path}">
+                                                            <ItemsControl.ItemTemplate>
+                                                                <DataTemplate>
+                                                                    <TextBlock Foreground="#315B87" Text="{Binding}" />
+                                                                </DataTemplate>
+                                                            </ItemsControl.ItemTemplate>
+                                                        </ItemsControl>
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <TextBlock Margin="0,4,0,0" Foreground="Gray" TextWrapping="Wrap" Text="{Binding Readiness.ActualExecutionPath}" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Margin="0,12,0,0" Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="Selected task audit timeline" />
+                                    <ScrollViewer Grid.Row="1" Margin="0,8,0,0" VerticalScrollBarVisibility="Auto">
+                                        <ItemsControl ItemsSource="{Binding TaskEvents}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border Margin="0,0,0,8" Padding="8" Background="#F6F8FA" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="4">
+                                                        <StackPanel>
+                                                            <TextBlock FontWeight="SemiBold" Text="{Binding EventType}" />
+                                                            <TextBlock Margin="0,2,0,0" Foreground="Gray" Text="{Binding CreatedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" />
+                                                            <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding Payload}" />
+                                                        </StackPanel>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </Grid>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </Grid>
+        </TabItem>
+        <TabItem Header="Map view" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+            <Grid Margin="0,12,0,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <DockPanel Margin="0,0,0,12">
+                    <StackPanel DockPanel.Dock="Left">
+                        <TextBlock FontSize="22" FontWeight="SemiBold" Text="Read-only map view" />
+                        <TextBlock Margin="0,4,0,0" Foreground="Gray" Text="Configured map geometry with live AGV status and path overlays" />
+                    </StackPanel>
+                    <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
+                        <TextBlock Text="{Binding Readiness.Map.Fingerprint}" />
+                        <TextBlock Margin="0,3,0,0" Foreground="Gray" Text="{Binding Readiness.Map.LiveFingerprint}" />
+                        <TextBlock Margin="0,3,0,0" FontWeight="SemiBold" Text="{Binding Readiness.Map.SyncStatus, StringFormat=Map sync: {0}}" />
+                    </StackPanel>
+                </DockPanel>
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="290" />
+                    </Grid.ColumnDefinitions>
+                    <Border Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6" ClipToBounds="True">
+                        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                            <Canvas Width="{Binding Readiness.Map.CanvasWidth}" Height="{Binding Readiness.Map.CanvasHeight}" Background="#FBFCFE">
+                                <ItemsControl ItemsSource="{Binding Readiness.Map.Edges}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><Canvas /></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Line X1="{Binding X1}" Y1="{Binding Y1}" X2="{Binding X2}" Y2="{Binding Y2}" Stroke="#9AA7B8" StrokeThickness="1.5" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <ItemsControl ItemsSource="{Binding Readiness.Map.AgvPathSegments}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><Canvas /></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Line X1="{Binding X1}" Y1="{Binding Y1}" X2="{Binding X2}" Y2="{Binding Y2}" Stroke="#D97706" StrokeThickness="4" Opacity="0.65" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <ItemsControl ItemsSource="{Binding Readiness.Map.Nodes}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><Canvas /></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemContainerStyle>
+                                        <Style TargetType="ContentPresenter">
+                                            <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                            <Setter Property="Canvas.Top" Value="{Binding Y}" />
+                                        </Style>
+                                    </ItemsControl.ItemContainerStyle>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Width="112" MinHeight="60" Padding="8" Background="#E8F1FF" BorderBrush="#4285C5" BorderThickness="1.5" CornerRadius="6">
+                                                <StackPanel>
+                                                    <TextBlock FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding StationId}" />
+                                                    <TextBlock Margin="0,3,0,0" Foreground="Gray" TextWrapping="Wrap" Text="{Binding Name}" />
+                                                    <TextBlock Margin="0,3,0,0" Foreground="Gray" Text="{Binding Enabled, StringFormat=Enabled: {0}}" />
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <ItemsControl ItemsSource="{Binding Readiness.Map.Agvs}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate><Canvas /></ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemContainerStyle>
+                                        <Style TargetType="ContentPresenter">
+                                            <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                            <Setter Property="Canvas.Top" Value="{Binding Y}" />
+                                        </Style>
+                                    </ItemsControl.ItemContainerStyle>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Margin="-4,-28,0,0" Padding="5" Background="#FFF7ED" BorderBrush="#D97706" BorderThickness="1" CornerRadius="4">
+                                                <StackPanel>
+                                                    <TextBlock FontWeight="SemiBold" Text="{Binding AgvId}" />
+                                                    <TextBlock FontSize="10" Text="{Binding CurrentStation}" />
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Canvas>
+                        </ScrollViewer>
+                    </Border>
+                    <ScrollViewer Grid.Column="1" Margin="12,0,0,0" VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                            <TextBlock FontSize="16" FontWeight="SemiBold" Text="Live overlays" />
+                            <ItemsControl Margin="0,8,0,0" ItemsSource="{Binding Readiness.Map.Agvs}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,0,0,8" Padding="8" Background="#F6F8FA" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="4">
+                                            <StackPanel>
+                                                <TextBlock FontWeight="SemiBold" Text="{Binding StatusText}" />
+                                                <TextBlock Margin="0,3,0,0" Foreground="Gray" Text="{Binding CurrentStation}" />
+                                                <TextBlock Margin="0,3,0,0" Foreground="#315B87" TextWrapping="Wrap" Text="{Binding PathText}" />
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Margin="0,12,0,4" FontWeight="SemiBold" Text="Legend" />
+                            <TextBlock Foreground="#9AA7B8" Text="Gray: configured directed edge" />
+                            <TextBlock Foreground="#D97706" Text="Orange: reported active path" />
+                            <TextBlock Margin="0,12,0,4" FontWeight="SemiBold" Text="Safety" />
+                            <TextBlock Foreground="#B42318" TextWrapping="Wrap" Text="No dispatch or AGV control actions are available in this view." />
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </Grid>
+        </TabItem>
     </TabControl>
 </Window>

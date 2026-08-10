@@ -9,6 +9,89 @@ namespace MesControlAgv.Wpf.Tests;
 public sealed class MesClientHttpContractTests
 {
     [Fact]
+    public async Task Get_map_snapshot_maps_profile_metadata_stations_and_directed_edges()
+    {
+        var handler = new RecordingHandler(_ => JsonResponse(new MapSnapshotResponse(
+            [
+                new StationResponse(2, "Sample", "SAMPLE_CUSTOM", true),
+                new StationResponse(4, "Dropoff", "DROP_CUSTOM", true)
+            ],
+            [new MapEdgeResponse("SAMPLE_CUSTOM", "DROP_CUSTOM", 12.5, false)],
+            "agv-product",
+            "profile-7",
+            "guangzhou606",
+            "2026.08",
+            "e1b8d6b2b24362c1d44f1884c0abd8fb")));
+        using var httpClient = CreateClient(handler);
+        var client = new MesClient(httpClient);
+
+        var snapshot = await client.GetMapSnapshotAsync(CancellationToken.None);
+
+        Assert.Equal("agv-product", snapshot.ProfileProductId);
+        Assert.Equal("profile-7", snapshot.ProfileVersion);
+        Assert.Equal("guangzhou606", snapshot.ProfileMapName);
+        Assert.Equal("2026.08", snapshot.ProfileMapVersion);
+        Assert.Equal("e1b8d6b2b24362c1d44f1884c0abd8fb", snapshot.ProfileMapMd5);
+        Assert.Equal("SAMPLE_CUSTOM", snapshot.Stations[0].AgvStationId);
+        var edge = Assert.Single(snapshot.Edges);
+        Assert.Equal("SAMPLE_CUSTOM", edge.From);
+        Assert.Equal("DROP_CUSTOM", edge.To);
+        Assert.Equal(12.5, edge.Cost);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Equal("/api/map", request.Uri.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task Get_physical_preflight_preserves_fail_closed_reasons_and_readiness_facts()
+    {
+        var readiness = new AgvSafetyReadinessResponse(
+            "unknown",
+            null,
+            "guangzhou606",
+            "816e68b9a367d9c8d5eaee9331a7ef58",
+            null,
+            0,
+            true,
+            false,
+            false,
+            false,
+            0,
+            0,
+            1,
+            0.9827,
+            DateTimeOffset.Parse("2026-08-06T08:00:00Z"));
+        var response = new PhysicalAgvPreflightResponse(
+            new AgvSnapshotResponse(false, "none", "LM1", null, "AGV-01", null, readiness),
+            readiness,
+            false,
+            ["manual_block_enabled", "automatic_mode_unknown", "map_md5_mismatch"]);
+        var handler = new RecordingHandler(_ => JsonResponse(response));
+        using var httpClient = CreateClient(handler);
+        var client = new MesClient(httpClient);
+
+        var actual = await client.GetPhysicalPreflightAsync(CancellationToken.None);
+
+        Assert.NotNull(actual);
+        Assert.False(actual!.DispatchPermitted);
+        Assert.Equal(new[] { "manual_block_enabled", "automatic_mode_unknown", "map_md5_mismatch" }, actual.BlockingReasons);
+        Assert.Equal("unknown", actual.Readiness!.VehicleOperatingMode);
+        Assert.Equal("LM1", actual.Snapshot.CurrentStationId);
+        Assert.Equal("/api/physical/preflight", Assert.Single(handler.Requests).Uri.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task Missing_physical_preflight_is_reported_as_unavailable_without_throwing()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound));
+        using var httpClient = CreateClient(handler);
+        var client = new MesClient(httpClient);
+
+        Assert.Null(await client.GetPhysicalPreflightAsync(CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Get_stations_maps_collection_and_preserves_enabled_flag()
     {
         var handler = new RecordingHandler(_ => JsonResponse(new StationResponse[] {

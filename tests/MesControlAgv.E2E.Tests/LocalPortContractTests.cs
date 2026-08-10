@@ -29,6 +29,8 @@ public sealed class LocalPortContractTests
         var launcher = File.ReadAllText(Path.Combine(root, "scripts", "run-local.ps1"));
         var stopper = File.ReadAllText(Path.Combine(root, "scripts", "stop-local.ps1"));
         var verifier = File.ReadAllText(Path.Combine(root, "scripts", "verify-local.ps1"));
+        var wpfStartup = File.ReadAllText(Path.Combine(root, "src", "MesControlAgv.Wpf", "App.xaml.cs"));
+        var wpfProject = File.ReadAllText(Path.Combine(root, "src", "MesControlAgv.Wpf", "MesControlAgv.Wpf.csproj"));
 
         Assert.Contains("SimulatorUrl", launcher);
         Assert.Contains("AdapterUrl", launcher);
@@ -40,6 +42,13 @@ public sealed class LocalPortContractTests
         Assert.Contains("Wait-Health", launcher);
         Assert.Contains("ConnectionStrings__Mes", launcher);
         Assert.Contains("ConnectionStrings__Adapter", launcher);
+
+        Assert.Contains("LocalSimulatorRuntime", wpfStartup);
+        Assert.Contains("WPF_MANAGE_LOCAL_SERVICES", wpfStartup);
+        Assert.Contains("OnExit", wpfStartup);
+        Assert.Contains("BuildLocalServices", wpfProject);
+        Assert.Contains("CopyLocalServiceRuntime", wpfProject);
+        Assert.Contains("LocalServiceProjects", wpfProject);
 
         Assert.Contains("StatePath", stopper);
         Assert.Contains("RunId", stopper);
@@ -54,6 +63,8 @@ public sealed class LocalPortContractTests
         Assert.Contains("RunId", verifier);
         Assert.Contains("Scenario", verifier);
         Assert.Contains("failure-retry", verifier);
+        Assert.Contains("cancellation", verifier);
+        Assert.Contains("CancelConfirmed", verifier);
         Assert.Contains("WaitingDropoffConfirmation", verifier);
         Assert.Contains("DeviceFailed", verifier);
         Assert.Contains("RetryRequested", verifier);

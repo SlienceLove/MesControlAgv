@@ -160,3 +160,97 @@ public sealed record WorkflowExecutionRequest
     public DateTimeOffset RequestedAt { get; init; } = DateTimeOffset.UtcNow;
     public bool DryRun { get; init; }
 }
+
+/// <summary>The admission outcome returned by the workflow runtime.</summary>
+public enum WorkflowExecutionStatus
+{
+    Rejected,
+    Accepted
+}
+
+/// <summary>The first workflow step prepared for a later application/device adapter.</summary>
+public sealed record WorkflowNextStepRequest
+{
+    public Guid StepRequestId { get; init; }
+    public Guid ExecutionId { get; init; }
+    public Guid WorkflowId { get; init; }
+    public int Version { get; init; }
+    public Guid NodeId { get; init; }
+    public WorkflowNodeType NodeType { get; init; }
+    public string NodeName { get; init; } = string.Empty;
+    public string? TargetStation { get; init; }
+    public bool DryRun { get; init; }
+    public IReadOnlyDictionary<string, string?> Parameters { get; init; } =
+        new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+}
+
+/// <summary>Audit information attached to every workflow admission decision.</summary>
+public sealed record WorkflowExecutionAuditEntry
+{
+    public Guid EventId { get; init; }
+    public string EventType { get; init; } = string.Empty;
+    public string Outcome { get; init; } = string.Empty;
+    public string? Code { get; init; }
+    public string? Reason { get; init; }
+    public Guid RequestId { get; init; }
+    public Guid ExecutionId { get; init; }
+    public Guid WorkflowId { get; init; }
+    public int Version { get; init; }
+    public string? RequestedBy { get; init; }
+    public string? CorrelationId { get; init; }
+    public DateTimeOffset OccurredAt { get; init; }
+    public string? WorkflowName { get; init; }
+    public Guid? NextNodeId { get; init; }
+    public IReadOnlyDictionary<string, string?> Details { get; init; } =
+        new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+}
+
+/// <summary>
+/// The stable HTTP result for dry-run and execution admission. A rejected result
+/// carries a stable code and validation issues; an accepted result may include
+/// the first step request, but never performs device I/O itself.
+/// </summary>
+public sealed record WorkflowExecutionResult
+{
+    public WorkflowExecutionStatus Status { get; init; }
+    public bool IsAccepted => Status == WorkflowExecutionStatus.Accepted;
+    public bool IsRejected => Status == WorkflowExecutionStatus.Rejected;
+    public bool IsIdempotentReplay { get; init; }
+    public Guid RequestId { get; init; }
+    public Guid ExecutionId { get; init; }
+    public Guid WorkflowId { get; init; }
+    public int Version { get; init; }
+    public DateTimeOffset RequestedAt { get; init; }
+    public bool DryRun { get; init; }
+    public string? RejectionCode { get; init; }
+    public string? RejectionReason { get; init; }
+    public IReadOnlyList<WorkflowValidationIssue> ValidationIssues { get; init; } =
+        Array.Empty<WorkflowValidationIssue>();
+    public WorkflowNextStepRequest? NextStepRequest { get; init; }
+    public WorkflowNextStepRequest? NextStep => NextStepRequest;
+    public bool HasNextStep => NextStepRequest is not null;
+    public WorkflowExecutionAuditEntry Audit { get; init; } = new();
+}
+
+/// <summary>
+/// A persisted workflow lifecycle or execution audit entry exposed for
+/// operational traceability. Details remain string-valued at the HTTP boundary
+/// so older records and vendor-specific metadata can be displayed safely.
+/// </summary>
+public sealed record WorkflowAuditResponse
+{
+    public Guid Id { get; init; }
+    public string EventType { get; init; } = string.Empty;
+    public string Outcome { get; init; } = string.Empty;
+    public string? Code { get; init; }
+    public string? Reason { get; init; }
+    public Guid WorkflowId { get; init; }
+    public int Version { get; init; }
+    public Guid? RequestId { get; init; }
+    public Guid? ExecutionId { get; init; }
+    public string? Actor { get; init; }
+    public string? CorrelationId { get; init; }
+    public IReadOnlyDictionary<string, string?> Details { get; init; } =
+        new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+    public DateTimeOffset OccurredAt { get; init; }
+}

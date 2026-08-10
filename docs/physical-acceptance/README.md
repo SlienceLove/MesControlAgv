@@ -68,6 +68,11 @@ controller-to-Profile comparison remains a required read-only on-site preflight
 until a controller map-query adapter is added; this template must not be treated
 as a current controller-state assertion.
 
+The separate [supervised field-navigation acceptance](FIELD-NAVIGATION-ACCEPTANCE.md)
+flow records one authorized low-speed route and its audit trail. It remains
+disabled by default and does not replace the on-site authorization or the fresh
+read-only map comparison described above.
+
 `vendor-tcp` is the canonical driver name. `tcp` is accepted only as a
 backward-compatible Adapter configuration alias.
 
