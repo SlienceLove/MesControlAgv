@@ -236,6 +236,7 @@ public sealed class TcpAgvClient :
     private readonly TcpApiChannel _statusChannel;
     private readonly TcpApiChannel _commandChannel;
     private readonly TcpApiChannel _controlChannel;
+    private readonly SemaphoreSlim _releaseControlGate = new(1, 1);
     private readonly object _snapshotLock = new();
     private readonly ConcurrentDictionary<Guid, RoutePlan> _routes = new();
     private readonly ConcurrentDictionary<Guid, Guid> _parentTaskIds = new();
@@ -290,17 +291,26 @@ public sealed class TcpAgvClient :
     public async Task<bool> ReleaseControlAsync(CancellationToken cancellationToken)
     {
         ThrowIfMutationIsBlocked("control release");
-        var current = await QueryControlAsync(cancellationToken);
-        if (current.Owner != "adapter") return false;
+        await _releaseControlGate.WaitAsync(cancellationToken);
+        try
+        {
+            // Keep ownership read, mutation audit, 4006 write, and confirmation as one transaction.
+            var current = await QueryControlAsync(cancellationToken);
+            if (current.Owner != "adapter") return false;
 
-        LogMutationRequest(ReleaseControlApi, new { });
-        using var response = await _controlChannel.RequestAsync(ReleaseControlApi, null, cancellationToken);
-        LogMutationResponse(ReleaseControlApi, response.RootElement);
-        EnsureSuccess(response, ReleaseControlApi);
+            LogMutationRequest(ReleaseControlApi, new { });
+            using var response = await _controlChannel.RequestAsync(ReleaseControlApi, null, cancellationToken);
+            LogMutationResponse(ReleaseControlApi, response.RootElement);
+            EnsureSuccess(response, ReleaseControlApi);
 
-        var released = await QueryControlAsync(cancellationToken);
-        if (released.Owner == "adapter") throw new ControlReleaseUnconfirmedException();
-        return true;
+            var released = await QueryControlAsync(cancellationToken);
+            if (released.Owner == "adapter") throw new ControlReleaseUnconfirmedException();
+            return true;
+        }
+        finally
+        {
+            _releaseControlGate.Release();
+        }
     }
 
     public async Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken)
@@ -647,6 +657,7 @@ public sealed class TcpAgvClient :
         _statusChannel.Dispose();
         _commandChannel.Dispose();
         _controlChannel.Dispose();
+        _releaseControlGate.Dispose();
         _lifetime?.Dispose();
     }
 

@@ -14,6 +14,7 @@ public sealed class AdapterService
 {
     private static readonly object DispatchGatesLock = new();
     private static readonly Dictionary<Guid, DispatchGate> DispatchGates = new();
+    private static readonly SemaphoreSlim FieldNavigationSessionGate = new(1, 1);
 
     private readonly AdapterDbContext _database;
     private readonly IAgvDeviceClient _device;
@@ -67,6 +68,22 @@ public sealed class AdapterService
         DispatchCoreAsync(taskId, sourceStationId, targetStationId, requestedAgvId, requestedPath, DispatchPermission.Standard, cancellationToken);
 
     public async Task<AgvTaskResponse> DispatchFieldNavigationAcceptanceAsync(
+        Guid acceptanceId,
+        FieldNavigationDispatchCommand command,
+        CancellationToken cancellationToken)
+    {
+        await FieldNavigationSessionGate.WaitAsync(cancellationToken);
+        try
+        {
+            return await DispatchFieldNavigationAcceptanceCoreAsync(acceptanceId, command, cancellationToken);
+        }
+        finally
+        {
+            FieldNavigationSessionGate.Release();
+        }
+    }
+
+    private async Task<AgvTaskResponse> DispatchFieldNavigationAcceptanceCoreAsync(
         Guid acceptanceId,
         FieldNavigationDispatchCommand command,
         CancellationToken cancellationToken)

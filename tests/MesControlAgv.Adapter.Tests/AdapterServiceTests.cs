@@ -283,6 +283,36 @@ public class AdapterServiceTests
     }
 
     [Fact]
+    public async Task Concurrent_field_navigation_sessions_do_not_release_control_during_another_sessions_preflight()
+    {
+        var postControlReadinessStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowPostControlReadiness = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var simulator = CreateReadyPhysicalSimulator();
+        simulator.Snapshot = simulator.Snapshot with { ControlOwner = "none" };
+        simulator.AcquireControlOnEnsure = true;
+        simulator.RejectOnReadinessCall = 2;
+        simulator.PostControlReadinessStarted = postControlReadinessStarted;
+        simulator.AllowPostControlReadiness = allowPostControlReadiness;
+        var service = CreatePhysicalAcceptanceService(simulator);
+        var command = new FieldNavigationDispatchCommand("AGV-01", "LM1", "LM2", ["LM1", "LM2"]);
+
+        var first = service.DispatchFieldNavigationAcceptanceAsync(Guid.NewGuid(), command, CancellationToken.None);
+        await postControlReadinessStarted.Task;
+        var second = service.DispatchFieldNavigationAcceptanceAsync(Guid.NewGuid(), command, CancellationToken.None);
+
+        Assert.False(second.IsCompleted);
+        Assert.Equal(1, simulator.EnsureControlCalls);
+
+        allowPostControlReadiness.TrySetResult(true);
+        await Assert.ThrowsAsync<PhysicalPreflightRejectedException>(() => first);
+        var secondResult = await second;
+
+        Assert.Equal("moving", secondResult.State);
+        Assert.Equal(1, simulator.ReleaseControlCalls);
+        Assert.Equal(1, simulator.NavigateCalls);
+    }
+
+    [Fact]
     public async Task Standard_simulator_dispatch_does_not_release_control()
     {
         var simulator = new FakeSimulatorClient();
@@ -588,13 +618,14 @@ internal sealed class FakeSimulatorClient : ISimulatorClient, IPhysicalAgvDevice
     private int _navigateCalls;
     private int _statusCalls;
     private int _cancelCalls;
+    private int _readinessCalls;
 
     public int NavigateCalls => Volatile.Read(ref _navigateCalls);
     public int StatusCalls => Volatile.Read(ref _statusCalls);
     public int CancelCalls => Volatile.Read(ref _cancelCalls);
     public int EnsureControlCalls { get; private set; }
     public int ReleaseControlCalls { get; private set; }
-    public int ReadinessCalls { get; private set; }
+    public int ReadinessCalls => Volatile.Read(ref _readinessCalls);
     public int MapEvidenceCalls { get; private set; }
     public string? SourceStationId { get; private set; }
     public IReadOnlyList<string>? NavigatePath { get; private set; }
@@ -603,6 +634,7 @@ internal sealed class FakeSimulatorClient : ISimulatorClient, IPhysicalAgvDevice
     public bool ThrowTimeout { get; init; }
     public bool AcquireControlOnEnsure { get; set; }
     public bool RejectAfterFirstReadiness { get; set; }
+    public int? RejectOnReadinessCall { get; set; }
     public Exception? ReleaseControlException { get; set; }
     public Exception? PostControlPreflightException { get; set; }
     public bool ReturnFailed { get; init; }
@@ -617,6 +649,8 @@ internal sealed class FakeSimulatorClient : ISimulatorClient, IPhysicalAgvDevice
     public AgvTaskResponse? ReconciledTask { get; init; }
     public TaskCompletionSource<bool>? NavigationStarted { get; init; }
     public TaskCompletionSource<bool>? AllowNavigation { get; init; }
+    public TaskCompletionSource<bool>? PostControlReadinessStarted { get; set; }
+    public TaskCompletionSource<bool>? AllowPostControlReadiness { get; set; }
 
     public Task EnsureControlAsync(CancellationToken cancellationToken)
     {
@@ -641,12 +675,19 @@ internal sealed class FakeSimulatorClient : ISimulatorClient, IPhysicalAgvDevice
             : Snapshot);
     }
 
-    public Task<AgvSafetyReadinessResponse> GetSafetyReadinessAsync(CancellationToken cancellationToken)
+    public async Task<AgvSafetyReadinessResponse> GetSafetyReadinessAsync(CancellationToken cancellationToken)
     {
-        ReadinessCalls++;
-        return Task.FromResult(RejectAfterFirstReadiness && ReadinessCalls > 1
+        var readinessCall = Interlocked.Increment(ref _readinessCalls);
+        if (readinessCall > 1 && PostControlReadinessStarted is not null)
+        {
+            PostControlReadinessStarted.TrySetResult(true);
+            if (AllowPostControlReadiness is not null)
+                await AllowPostControlReadiness.Task.WaitAsync(cancellationToken);
+        }
+
+        return RejectAfterFirstReadiness && readinessCall > 1 || RejectOnReadinessCall == readinessCall
             ? Readiness with { VehicleOperatingMode = "unknown", VehicleOperatingModeSource = null }
-            : Readiness);
+            : Readiness;
     }
 
     public Task<ControllerMapEvidenceResponse?> GetControllerMapEvidenceAsync(CancellationToken cancellationToken)

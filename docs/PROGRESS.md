@@ -943,18 +943,28 @@ Detailed continuation notes are in
   read-only-preflight rejection before opening a channel, post-control
   preflight rejection, AGV/station mismatch, transport failure, cancellation,
   and the no-release-after-dispatch boundary.
-- Verification passed: Adapter tests **106/106**, vendor TCP E2E tests
+- Initial verification passed: Adapter tests **106/106**, vendor TCP E2E tests
   **2/2**, solution build **0 warnings / 0 errors**, and `git diff --check`.
   All verification used loopback/fake controllers; no real controller was
   contacted and no running process was stopped.
 - The automated Codex adversarial-review command was unavailable because the
   switched provider returned `503 Service Unavailable` after all channels were
   circuit-broken. Manual adversarial review found and the implementation fixed
-  the post-control transport/cancellation control-leak paths. A separate
-  concurrent duplicate-release/audit-ordering concern remains as follow-up;
-  it does not add a post-`3066` release path.
+  the post-control transport/cancellation control-leak paths.
+- Follow-up concurrency hardening serializes `4006` ownership read, mutation
+  audit, write, and `1060` confirmation per TCP client. It also serializes
+  field-navigation sessions across the post-control preflight/rollback window,
+  so one session cannot release control during another session's preflight.
+  Regression tests cover exactly one `4006` with ordered audit records,
+  cancellation while waiting for the release gate, and the cross-session
+  rollback race. Current-source verification passed: Adapter tests **109/109**
+  (isolated Release output), Vendor TCP E2E tests **2/2**, and `git diff
+  --check`.
+  A new full Release solution run was not possible because pre-existing local
+  Development MES, Adapter, and Simulator hosts held their Release DLLs open;
+  no running process was stopped.
 - Physical acceptance remains **NO-GO**. The committed physical template is
   still `read-only-preflight` with automatic dispatch disabled; a fresh
   authorized site preflight, renewed movement authorization, and a new unique
-  acceptance ID are required before any supervised route attempt. No commit
-  or push has been made.
+  acceptance ID are required before any supervised route attempt. No real
+  controller was contacted by this follow-up.

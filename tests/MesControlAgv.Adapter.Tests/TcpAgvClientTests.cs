@@ -159,6 +159,107 @@ public sealed class TcpAgvClientTests
     }
 
     [Fact]
+    public async Task Concurrent_release_control_calls_send_one_4006_and_audit_one_ordered_attempt()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var statusRequestCount = 0;
+        await using var statusServer = new TcpApiTestServer(3, packet =>
+        {
+            Assert.Equal((ushort)1060, packet.ApiId);
+            var requestNumber = Interlocked.Increment(ref statusRequestCount);
+            var payload = requestNumber == 1
+                ? "{\"ret_code\":0,\"locked\":true,\"nick_name\":\"MesControlAgv.Adapter\"}"
+                : "{\"ret_code\":0,\"locked\":false}";
+            return Task.FromResult(Encoding.UTF8.GetBytes(payload));
+        });
+        await using var controlServer = new TcpApiTestServer(1, packet =>
+        {
+            Assert.Equal((ushort)4006, packet.ApiId);
+            Assert.Empty(packet.Payload);
+            return Task.FromResult(Encoding.UTF8.GetBytes("{\"ret_code\":0}"));
+        });
+        var logger = new RecordingLogger<TcpAgvClient>();
+        using var client = new TcpAgvClient(
+            Options.Create(new TcpAgvOptions
+            {
+                Host = "127.0.0.1",
+                StatusPort = statusServer.Port,
+                CommandPort = statusServer.Port,
+                ControlPort = controlServer.Port,
+                EnablePush = false,
+                RequestTimeoutMs = 1000,
+                ConnectTimeoutMs = 1000
+            }),
+            logger);
+
+        var first = client.ReleaseControlAsync(cancellation.Token);
+        var second = client.ReleaseControlAsync(cancellation.Token);
+        var results = await Task.WhenAll(first, second);
+
+        Assert.Equal(1, results.Count(released => released));
+        Assert.Equal(1, results.Count(released => !released));
+        Assert.Equal([1060, 1060, 1060], statusServer.ApiIds);
+        Assert.Equal([4006], controlServer.ApiIds);
+        var releaseAudits = logger.Messages
+            .Where(message => message.Contains("\"api_id\":4006", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Equal(2, releaseAudits.Length);
+        Assert.Contains("request audit", releaseAudits[0], StringComparison.Ordinal);
+        Assert.Contains("response audit", releaseAudits[1], StringComparison.Ordinal);
+        await Task.WhenAll(statusServer.Completion, controlServer.Completion);
+    }
+
+    [Fact]
+    public async Task Cancelled_concurrent_release_does_not_send_an_extra_4006()
+    {
+        using var firstCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var waitingCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var ownershipReadStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowOwnershipResponse = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var statusServer = new TcpApiTestServer(2, async packet =>
+        {
+            Assert.Equal((ushort)1060, packet.ApiId);
+            if (!ownershipReadStarted.Task.IsCompleted)
+            {
+                ownershipReadStarted.TrySetResult(true);
+                await allowOwnershipResponse.Task;
+                return Encoding.UTF8.GetBytes(
+                    "{\"ret_code\":0,\"locked\":true,\"nick_name\":\"MesControlAgv.Adapter\"}");
+            }
+
+            return Encoding.UTF8.GetBytes("{\"ret_code\":0,\"locked\":false}");
+        });
+        await using var controlServer = new TcpApiTestServer(1, packet =>
+        {
+            Assert.Equal((ushort)4006, packet.ApiId);
+            return Task.FromResult(Encoding.UTF8.GetBytes("{\"ret_code\":0}"));
+        });
+        using var client = new TcpAgvClient(
+            Options.Create(new TcpAgvOptions
+            {
+                Host = "127.0.0.1",
+                StatusPort = statusServer.Port,
+                CommandPort = statusServer.Port,
+                ControlPort = controlServer.Port,
+                EnablePush = false,
+                RequestTimeoutMs = 1000,
+                ConnectTimeoutMs = 1000
+            }),
+            NullLogger<TcpAgvClient>.Instance);
+
+        var first = client.ReleaseControlAsync(firstCancellation.Token);
+        await ownershipReadStarted.Task;
+        var cancelledWaiter = client.ReleaseControlAsync(waitingCancellation.Token);
+        waitingCancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cancelledWaiter);
+        allowOwnershipResponse.TrySetResult(true);
+        Assert.True(await first);
+        Assert.Equal([4006], controlServer.ApiIds);
+        await Task.WhenAll(statusServer.Completion, controlServer.Completion);
+    }
+
+    [Fact]
     public async Task Release_control_fails_explicitly_when_4006_returns_nonzero()
     {
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
