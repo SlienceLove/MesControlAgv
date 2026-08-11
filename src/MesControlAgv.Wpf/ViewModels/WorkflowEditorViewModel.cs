@@ -51,6 +51,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     private bool _isRemoteBusy;
     private ContractWorkflowValidationResult? _lastValidation;
     private ContractWorkflowExecutionResult? _lastExecution;
+    private bool _profileDefaultsApplied;
 
     public WorkflowEditorViewModel(
         WorkflowStore store,
@@ -102,6 +103,45 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 
     public ObservableCollection<WorkflowDefinition> Workflows { get; }
 
+    public bool ApplyProfileStations(IReadOnlyList<DashboardStation> stations)
+    {
+        ArgumentNullException.ThrowIfNull(stations);
+        if (_profileDefaultsApplied || !_store.LastLoadUsedDefaults)
+        {
+            return false;
+        }
+
+        var enabled = stations
+            .Where(station => station.Enabled && !string.IsNullOrWhiteSpace(station.AgvStationId))
+            .OrderBy(station => station.Code)
+            .ToList();
+        if (enabled.Count < 2)
+        {
+            return false;
+        }
+
+        var source = FindPreferredStation(enabled, ["Sample", "Pickup"]) ?? enabled[0];
+        var remaining = enabled
+            .Where(station => !string.Equals(station.AgvStationId, source.AgvStationId, StringComparison.Ordinal))
+            .ToList();
+        if (remaining.Count == 0)
+        {
+            return false;
+        }
+        var target = FindPreferredStation(remaining, ["Preparation", "Dropoff"]) ?? remaining[^1];
+        var defaults = WorkflowStore.CreateDefaultWorkflows(source.AgvStationId, target.AgvStationId);
+
+        Workflows.Clear();
+        foreach (var workflow in defaults)
+        {
+            Workflows.Add(workflow);
+        }
+
+        _profileDefaultsApplied = true;
+        SelectedWorkflow = Workflows.FirstOrDefault();
+        return true;
+    }
+
     public IReadOnlyList<WorkflowNodeTypeOption> NodeTypeOptions { get; } =
     [
         new(WorkflowNodeType.Start, "开始"),
@@ -112,6 +152,23 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         new(WorkflowNodeType.Custom, "自定义"),
         new(WorkflowNodeType.End, "结束")
     ];
+
+    private static DashboardStation? FindPreferredStation(
+        IEnumerable<DashboardStation> stations,
+        IReadOnlyList<string> preferredTypes)
+    {
+        foreach (var type in preferredTypes)
+        {
+            var station = stations.FirstOrDefault(candidate =>
+                string.Equals(candidate.Type, type, StringComparison.OrdinalIgnoreCase));
+            if (station is not null)
+            {
+                return station;
+            }
+        }
+
+        return null;
+    }
 
     public WorkflowDefinition? SelectedWorkflow
     {

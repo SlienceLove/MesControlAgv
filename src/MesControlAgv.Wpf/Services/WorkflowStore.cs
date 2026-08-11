@@ -23,24 +23,37 @@ public sealed class WorkflowStore
 
     public string FilePath { get; }
 
+    public bool LastLoadUsedDefaults { get; private set; }
+
     public IReadOnlyList<WorkflowDefinition> Load()
     {
-        if (!File.Exists(FilePath)) return CreateDefaultWorkflows();
+        if (!File.Exists(FilePath))
+        {
+            LastLoadUsedDefaults = true;
+            return CreateDefaultWorkflows();
+        }
 
         try
         {
             var json = File.ReadAllText(FilePath);
             var workflows = JsonSerializer.Deserialize<List<WorkflowDefinition>>(json, JsonOptions);
-            if (workflows is null || workflows.Count == 0) return CreateDefaultWorkflows();
+            if (workflows is null || workflows.Count == 0)
+            {
+                LastLoadUsedDefaults = true;
+                return CreateDefaultWorkflows();
+            }
             Normalize(workflows);
+            LastLoadUsedDefaults = false;
             return workflows;
         }
         catch (JsonException)
         {
+            LastLoadUsedDefaults = true;
             return CreateDefaultWorkflows();
         }
         catch (IOException)
         {
+            LastLoadUsedDefaults = true;
             return CreateDefaultWorkflows();
         }
     }
@@ -57,22 +70,33 @@ public sealed class WorkflowStore
         var temporaryPath = FilePath + ".tmp";
         File.WriteAllText(temporaryPath, json);
         File.Move(temporaryPath, FilePath, overwrite: true);
+        LastLoadUsedDefaults = false;
     }
 
     public static IReadOnlyList<WorkflowDefinition> CreateDefaultWorkflows() =>
-    [
+        CreateDefaultWorkflows("SAMPLE_01", "ST_PREP_01");
+
+    public static IReadOnlyList<WorkflowDefinition> CreateDefaultWorkflows(
+        string sourceStationId,
+        string targetStationId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceStationId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(targetStationId);
+
+        return
+        [
         new WorkflowDefinition
         {
             Name = "标准搬运实验",
-            Description = "从样品位取货，运输到液体前处理工作站并放货。",
+            Description = "从配置取货位取货，运输到配置放货位并放货。",
             IsPreset = true,
             Nodes =
             [
                 Node(WorkflowNodeType.Start, "开始", "启动实验流程", null, 0, 100, 1),
-                Node(WorkflowNodeType.Move, "前往取货位", "AGV 前往样品位", "SAMPLE_01", 180, 100, 2),
-                Node(WorkflowNodeType.Pickup, "确认取货", "操作员确认已完成取货", "SAMPLE_01", 360, 100, 3),
-                Node(WorkflowNodeType.Move, "前往放货位", "AGV 前往前处理工作站", "ST_PREP_01", 540, 100, 4),
-                Node(WorkflowNodeType.Dropoff, "确认放货", "操作员确认已完成放货", "ST_PREP_01", 720, 100, 5),
+                Node(WorkflowNodeType.Move, "前往取货位", "AGV 前往配置取货位", sourceStationId, 180, 100, 2),
+                Node(WorkflowNodeType.Pickup, "确认取货", "操作员确认已完成取货", sourceStationId, 360, 100, 3),
+                Node(WorkflowNodeType.Move, "前往放货位", "AGV 前往配置放货位", targetStationId, 540, 100, 4),
+                Node(WorkflowNodeType.Dropoff, "确认放货", "操作员确认已完成放货", targetStationId, 720, 100, 5),
                 Node(WorkflowNodeType.End, "结束", "实验流程完成", null, 900, 100, 6)
             ]
         },
@@ -84,14 +108,15 @@ public sealed class WorkflowStore
             Nodes =
             [
                 Node(WorkflowNodeType.Start, "开始", "启动故障恢复实验", null, 0, 260, 1),
-                Node(WorkflowNodeType.Move, "前往取货位", "发送取货运输任务", "SAMPLE_01", 180, 260, 2),
+                Node(WorkflowNodeType.Move, "前往取货位", "发送取货运输任务", sourceStationId, 180, 260, 2),
                 Node(WorkflowNodeType.Wait, "模拟超时", "等待并观察超时状态", null, 360, 260, 3),
                 Node(WorkflowNodeType.Custom, "恢复并重试", "恢复 AGV 后重新执行任务", null, 540, 260, 4),
-                Node(WorkflowNodeType.Dropoff, "确认放货", "确认恢复后的任务完成放货", "ST_PREP_01", 720, 260, 5),
+                Node(WorkflowNodeType.Dropoff, "确认放货", "确认恢复后的任务完成放货", targetStationId, 720, 260, 5),
                 Node(WorkflowNodeType.End, "结束", "实验流程完成", null, 900, 260, 6)
             ]
         }
-    ];
+        ];
+    }
 
     private static WorkflowNode Node(WorkflowNodeType type, string name, string description, string? targetStation, double x, double y, int order) => new()
     {

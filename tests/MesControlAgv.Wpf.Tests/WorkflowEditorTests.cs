@@ -23,6 +23,62 @@ public sealed class WorkflowEditorTests
     }
 
     [Fact]
+    public void Missing_store_rebuilds_presets_from_enabled_profile_station_types()
+    {
+        using var fixture = new TempWorkflowFile();
+        var editor = new WorkflowEditorViewModel(new WorkflowStore(fixture.Path));
+
+        var changed = editor.ApplyProfileStations(
+        [
+            new DashboardStation(1, "Disabled sample", "SAMPLE_DISABLED", false, "Sample"),
+            new DashboardStation(2, "Profile sample", "SAMPLE_PROFILE", true, "Sample"),
+            new DashboardStation(3, "Profile preparation", "PREP_PROFILE", true, "Preparation"),
+            new DashboardStation(4, "Fallback", "FALLBACK", true, "Dropoff")
+        ]);
+
+        Assert.True(changed);
+        var targets = editor.Workflows
+            .SelectMany(workflow => workflow.Nodes)
+            .Where(node => node.TargetStation is not null)
+            .Select(node => node.TargetStation)
+            .ToHashSet(StringComparer.Ordinal);
+        Assert.Equal(new[] { "PREP_PROFILE", "SAMPLE_PROFILE" }, targets.OrderBy(value => value));
+        Assert.DoesNotContain("SAMPLE_01", targets);
+        Assert.DoesNotContain("ST_PREP_01", targets);
+        Assert.False(editor.ApplyProfileStations(
+        [
+            new DashboardStation(10, "Other source", "OTHER_SOURCE", true),
+            new DashboardStation(11, "Other target", "OTHER_TARGET", true)
+        ]));
+    }
+
+    [Fact]
+    public void Persisted_workflows_are_not_rewritten_from_profile_stations()
+    {
+        using var fixture = new TempWorkflowFile();
+        var store = new WorkflowStore(fixture.Path);
+        var workflow = new WorkflowDefinition { Name = "Persisted" };
+        workflow.Nodes.Add(new WorkflowNode
+        {
+            Type = WorkflowNodeType.Move,
+            Name = "Existing move",
+            TargetStation = "SAVED_STATION",
+            Order = 1
+        });
+        store.Save([workflow]);
+        var editor = new WorkflowEditorViewModel(store);
+
+        var changed = editor.ApplyProfileStations(
+        [
+            new DashboardStation(1, "Source", "PROFILE_SOURCE", true, "Pickup"),
+            new DashboardStation(2, "Target", "PROFILE_TARGET", true, "Dropoff")
+        ]);
+
+        Assert.False(changed);
+        Assert.Equal("SAVED_STATION", Assert.Single(Assert.Single(editor.Workflows).Nodes).TargetStation);
+    }
+
+    [Fact]
     public void Store_round_trips_workflow_and_node_properties_as_json()
     {
         using var fixture = new TempWorkflowFile();

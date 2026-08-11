@@ -44,7 +44,7 @@ public sealed record AgvFleetDashboardStatus(
 public sealed record AgvCommandResult(Guid TaskId, string DeviceTaskId, string TargetStationId, string State, string? LastError, string AgvId = "AGV-01", IReadOnlyList<string>? Path = null);
 public sealed record DashboardTaskEvent(Guid Id, string EventType, string Payload, DateTime CreatedAt);
 public sealed record DashboardTaskDetail(DashboardTask Task, IReadOnlyList<DashboardTaskEvent> Events);
-public sealed record DashboardStation(int Code, string Name, string AgvStationId, bool Enabled);
+public sealed record DashboardStation(int Code, string Name, string AgvStationId, bool Enabled, string? Type = null);
 public sealed record DashboardPlannedPath(
     IReadOnlyList<string> Stations,
     double Cost,

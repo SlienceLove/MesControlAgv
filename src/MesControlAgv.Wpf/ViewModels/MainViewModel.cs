@@ -536,6 +536,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             AvailableStations.Add(station);
         }
+        WorkflowEditor.ApplyProfileStations(stations);
         NewTaskSourceStation = sourceCode is { } source
             ? AvailableStations.FirstOrDefault(station => station.Code == source)
             : null;

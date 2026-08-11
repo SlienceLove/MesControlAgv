@@ -52,7 +52,8 @@ public sealed class MesClient(HttpClient client) : IMesClient
             station.Code,
             station.Name,
             station.AgvStationId,
-            station.Enabled)).ToList();
+            station.Enabled,
+            station.Type)).ToList();
     }
 
     public async Task<DashboardPlannedPath> PlanPathAsync(
@@ -80,7 +81,8 @@ public sealed class MesClient(HttpClient client) : IMesClient
                 station.Code,
                 station.Name,
                 station.AgvStationId,
-                station.Enabled)).ToList(),
+                station.Enabled,
+                station.Type)).ToList(),
             snapshot.Edges,
             snapshot.ProfileProductId,
             snapshot.ProfileVersion,

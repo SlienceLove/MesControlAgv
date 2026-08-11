@@ -13,7 +13,7 @@ public sealed class MesClientHttpContractTests
     {
         var handler = new RecordingHandler(_ => JsonResponse(new MapSnapshotResponse(
             [
-                new StationResponse(2, "Sample", "SAMPLE_CUSTOM", true),
+                new StationResponse(2, "Sample", "SAMPLE_CUSTOM", true, "Sample"),
                 new StationResponse(4, "Dropoff", "DROP_CUSTOM", true)
             ],
             [new MapEdgeResponse("SAMPLE_CUSTOM", "DROP_CUSTOM", 12.5, false)],
@@ -33,6 +33,7 @@ public sealed class MesClientHttpContractTests
         Assert.Equal("2026.08", snapshot.ProfileMapVersion);
         Assert.Equal("e1b8d6b2b24362c1d44f1884c0abd8fb", snapshot.ProfileMapMd5);
         Assert.Equal("SAMPLE_CUSTOM", snapshot.Stations[0].AgvStationId);
+        Assert.Equal("Sample", snapshot.Stations[0].Type);
         var edge = Assert.Single(snapshot.Edges);
         Assert.Equal("SAMPLE_CUSTOM", edge.From);
         Assert.Equal("DROP_CUSTOM", edge.To);
@@ -95,7 +96,7 @@ public sealed class MesClientHttpContractTests
     public async Task Get_stations_maps_collection_and_preserves_enabled_flag()
     {
         var handler = new RecordingHandler(_ => JsonResponse(new StationResponse[] {
-            new StationResponse(2, "Sample", "SAMPLE_CUSTOM", true),
+            new StationResponse(2, "Sample", "SAMPLE_CUSTOM", true, "Sample"),
             new StationResponse(9, "Disabled", "DISABLED_CUSTOM", false) }));
         using var httpClient = CreateClient(handler);
         var client = new MesClient(httpClient);
@@ -110,6 +111,7 @@ public sealed class MesClientHttpContractTests
                 Assert.Equal("Sample", station.Name);
                 Assert.Equal("SAMPLE_CUSTOM", station.AgvStationId);
                 Assert.True(station.Enabled);
+                Assert.Equal("Sample", station.Type);
             },
             station =>
             {

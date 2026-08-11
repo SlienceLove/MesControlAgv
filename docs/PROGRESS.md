@@ -1021,3 +1021,26 @@ Detailed continuation notes are in
 - No physical controller was contacted. Further `MainViewModel` extraction
   now requires a larger command/use-case redesign rather than another local
   state move.
+
+## 2026-08-11 profile-driven workflow preset continuation
+
+- Station type now flows from the active Profile through the Domain station
+  catalog, MES `/api/stations` and `/api/map` responses, and the WPF dashboard
+  model. The new response field is optional for backward JSON compatibility.
+- When no valid local workflow file exists, WPF rebuilds its preset workflows
+  from enabled active-Profile stations. It prefers `Sample`/`Pickup` for the
+  source and `Preparation`/`Dropoff` for the target, falls back to distinct
+  enabled stations, applies the catalog only once, and never rewrites a saved
+  operator workflow. Fewer than two distinct enabled AGV station IDs remains a
+  fail-closed no-change result.
+- Preset node targets are now direct template parameters and their descriptions
+  no longer name the historical sample/preparation route. The legacy
+  `SAMPLE_01` and `ST_PREP_01` values remain only as offline compatibility
+  defaults until a MES station catalog is available.
+- Verification passed: WPF tests **155/155**, full Debug solution **376/376**,
+  solution build **0 warnings / 0 errors**, and `git diff --check`.
+- No physical controller was contacted. The next configuration step would
+  require a WPF runtime-settings contract and startup compatibility design;
+  real workflow execution would additionally require durable execution state,
+  recovery, idempotency, transport-state transitions, and audit correlation.
+  Those are larger cross-service changes rather than another local cleanup.

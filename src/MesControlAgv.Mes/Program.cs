@@ -364,7 +364,8 @@ app.MapGet("/api/map", (ProfileConfiguration configuredProfile, AgvMap configure
                 station.Code,
                 station.Name,
                 station.AgvStationId,
-                station.Enabled))
+                station.Enabled,
+                station.Type))
             .ToList(),
         configuredMap.Edges
             .Select(edge => new MapEdgeResponse(edge.From, edge.To, edge.Cost, edge.Bidirectional))
@@ -397,7 +398,8 @@ app.MapGet("/api/stations", (ProfileConfiguration configuredProfile) => Results.
     station.Code,
     station.Name,
     station.AgvStationId,
-    station.Enabled))));
+    station.Enabled,
+    station.Type))));
 
 app.MapPost("/api/tasks", async (
     CreateTaskRequest request,

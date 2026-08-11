@@ -163,10 +163,11 @@ public sealed class TaskApiTests : IClassFixture<MesWebApplicationFactory>
         Assert.NotNull(stations);
         Assert.Equal(7, stations.Count);
         Assert.Equal("SAMPLE_01", stations.Single(station => station.Code == 2).AgvStationId);
+        Assert.Equal("Sample", stations.Single(station => station.Code == 2).Type);
     }
 }
 
 public sealed record TaskResponse(Guid Id, int SourceStationCode, int TargetStationCode, string Status, int RetryCount, string? LastError, DateTime CreatedAt, DateTime? EndedAt);
 public sealed record TaskDetailResponse(TaskResponse Task, List<TaskEventResponse> Events);
 public sealed record TaskEventResponse(string EventType);
-public sealed record StationResponse(int Code, string Name, string AgvStationId, bool Enabled);
+public sealed record StationResponse(int Code, string Name, string AgvStationId, bool Enabled, string? Type = null);

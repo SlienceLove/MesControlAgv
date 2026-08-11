@@ -12,7 +12,7 @@ public static class Stations
         ArgumentNullException.ThrowIfNull(configuration.Stations);
         return configuration.Stations.ToDictionary(
             station => station.Code,
-            station => new Station(station.Code, station.Name, station.AgvStationId, station.Enabled));
+            station => new Station(station.Code, station.Name, station.AgvStationId, station.Enabled, station.Type));
     }
 
     private static readonly IReadOnlyCollection<Station> AllStations = Catalog.Values.ToArray();
