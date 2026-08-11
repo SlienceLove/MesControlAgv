@@ -401,6 +401,11 @@ app.MapGet("/api/stations", (ProfileConfiguration configuredProfile) => Results.
     station.Enabled,
     station.Type))));
 
+app.MapGet("/api/runtime-settings", (ProfileConfiguration configuredProfile) => Results.Ok(new RuntimeSettingsResponse(
+    configuredProfile.Product.ProductId,
+    configuredProfile.Product.Version,
+    configuredProfile.Timeouts.TaskPollingInterval)));
+
 app.MapPost("/api/tasks", async (
     CreateTaskRequest request,
     ITaskApplicationService service,

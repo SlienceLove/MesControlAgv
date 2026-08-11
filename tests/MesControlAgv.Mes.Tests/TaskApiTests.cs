@@ -165,9 +165,21 @@ public sealed class TaskApiTests : IClassFixture<MesWebApplicationFactory>
         Assert.Equal("SAMPLE_01", stations.Single(station => station.Code == 2).AgvStationId);
         Assert.Equal("Sample", stations.Single(station => station.Code == 2).Type);
     }
+
+    [Fact]
+    public async Task Runtime_settings_endpoint_returns_active_profile_identity_and_refresh_interval()
+    {
+        var settings = await _client.GetFromJsonAsync<RuntimeSettingsResponse>("/api/runtime-settings");
+
+        Assert.NotNull(settings);
+        Assert.Equal("MES-AGV", settings.ProfileProductId);
+        Assert.Equal("1.0", settings.ProfileVersion);
+        Assert.Equal(TimeSpan.FromSeconds(2), settings.TaskRefreshInterval);
+    }
 }
 
 public sealed record TaskResponse(Guid Id, int SourceStationCode, int TargetStationCode, string Status, int RetryCount, string? LastError, DateTime CreatedAt, DateTime? EndedAt);
 public sealed record TaskDetailResponse(TaskResponse Task, List<TaskEventResponse> Events);
 public sealed record TaskEventResponse(string EventType);
 public sealed record StationResponse(int Code, string Name, string AgvStationId, bool Enabled, string? Type = null);
+public sealed record RuntimeSettingsResponse(string? ProfileProductId, string? ProfileVersion, TimeSpan TaskRefreshInterval);

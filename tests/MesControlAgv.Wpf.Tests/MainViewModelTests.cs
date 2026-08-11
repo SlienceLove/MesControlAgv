@@ -107,6 +107,35 @@ public class MainViewModelTests
     }
 
     [Fact]
+    public async Task Start_uses_active_profile_refresh_interval()
+    {
+        var client = new FakeMesClient([])
+        {
+            RuntimeSettings = new DashboardRuntimeSettings("profile-a", "7.2", TimeSpan.FromMinutes(1))
+        };
+        using var viewModel = new MainViewModel(client);
+
+        await viewModel.StartAsync();
+
+        Assert.Equal(1, client.GetRuntimeSettingsCallCount);
+        Assert.Equal(TimeSpan.FromMinutes(1), viewModel.TaskRefreshInterval);
+    }
+
+    [Fact]
+    public async Task Start_falls_back_when_runtime_settings_cannot_be_loaded()
+    {
+        var client = new FakeMesClient([])
+        {
+            RuntimeSettingsException = new HttpRequestException("old MES unavailable")
+        };
+        using var viewModel = new MainViewModel(client);
+
+        await viewModel.StartAsync();
+
+        Assert.Equal(DashboardRuntimeSettings.Default.TaskRefreshInterval, viewModel.TaskRefreshInterval);
+    }
+
+    [Fact]
     public async Task Refresh_displays_correlated_mes_and_device_execution_state()
     {
         var taskId = Guid.NewGuid();
@@ -347,6 +376,9 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
     public int AgvCommandCallCount { get; private set; }
     public (string AgvId, string Command, Guid? TaskId)? LastAgvCommand { get; private set; }
     public DashboardPlannedPath? PlannedPath { get; set; }
+    public DashboardRuntimeSettings RuntimeSettings { get; set; } = DashboardRuntimeSettings.Default;
+    public Exception? RuntimeSettingsException { get; set; }
+    public int GetRuntimeSettingsCallCount { get; private set; }
     public (string FromStationId, string ToStationId, IReadOnlyCollection<string>? BlockedStations)? LastPlanRequest { get; private set; }
     public (int SourceStationCode, int TargetStationCode, int Priority, string? Description, string? ExternalId)? LastCreateRequest { get; private set; }
     public IReadOnlyList<DashboardStation> Stations => _stations;
@@ -396,6 +428,13 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
     {
         GetStationsCallCount++;
         return Task.FromResult<IReadOnlyList<DashboardStation>>(_stations);
+    }
+    public Task<DashboardRuntimeSettings> GetRuntimeSettingsAsync(CancellationToken cancellationToken)
+    {
+        GetRuntimeSettingsCallCount++;
+        return RuntimeSettingsException is { } exception
+            ? Task.FromException<DashboardRuntimeSettings>(exception)
+            : Task.FromResult(RuntimeSettings);
     }
     public Task<DashboardMapSnapshot> GetMapSnapshotAsync(CancellationToken cancellationToken) =>
         ReadinessException is { } exception

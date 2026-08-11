@@ -30,6 +30,11 @@ public sealed record TaskDetailResponse(TaskResponse Task, IReadOnlyList<TaskEve
 
 public sealed record StationResponse(int Code, string Name, string AgvStationId, bool Enabled, string? Type = null);
 
+public sealed record RuntimeSettingsResponse(
+    string? ProfileProductId,
+    string? ProfileVersion,
+    TimeSpan TaskRefreshInterval);
+
 public sealed record OperatorActionRequest(string OperatorName);
 
 public sealed record PlanPathRequest(

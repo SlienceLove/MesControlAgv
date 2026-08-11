@@ -1044,3 +1044,24 @@ Detailed continuation notes are in
   real workflow execution would additionally require durable execution state,
   recovery, idempotency, transport-state transitions, and audit correlation.
   Those are larger cross-service changes rather than another local cleanup.
+
+## 2026-08-12 profile-driven WPF runtime settings continuation
+
+- MES now exposes the read-only `/api/runtime-settings` contract from the
+  active Profile: product ID, Profile version, and
+  `timeouts.taskPollingInterval` as the dashboard refresh interval.
+- WPF resolves this setting after its initial dashboard and readiness refresh,
+  then creates the periodic refresh loop with the Profile value. Existing
+  `IMesClient` implementations retain a default method, and old MES instances
+  that return `404`, missing/invalid settings, or a transient settings-request
+  failure preserve the established two-second interval. Caller cancellation is
+  still propagated.
+- Added MES endpoint, WPF HTTP-contract, startup configuration, invalid-value,
+  old-service, and fallback coverage. Verification passed: MES tests **49/49**,
+  WPF tests **159/159**, full Debug solution **381/381**, solution build
+  **0 warnings / 0 errors**, and `git diff --check`.
+- No controller, Adapter device driver, or physical AGV was contacted. The
+  remaining workflow-runtime change needs a durable execution state machine,
+  idempotent transport-operation ownership, crash recovery, state correlation,
+  and audit linkage across Application, MES, and Adapter; it is a deliberate
+  larger design boundary.

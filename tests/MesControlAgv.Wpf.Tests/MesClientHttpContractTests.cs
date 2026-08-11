@@ -128,6 +128,44 @@ public sealed class MesClientHttpContractTests
     }
 
     [Fact]
+    public async Task Get_runtime_settings_maps_profile_identity_and_refresh_interval()
+    {
+        var handler = new RecordingHandler(_ => JsonResponse(new RuntimeSettingsResponse(
+            "profile-a",
+            "7.2",
+            TimeSpan.FromSeconds(7))));
+        using var httpClient = CreateClient(handler);
+        var client = new MesClient(httpClient);
+
+        var settings = await client.GetRuntimeSettingsAsync(CancellationToken.None);
+
+        Assert.Equal("profile-a", settings.ProfileProductId);
+        Assert.Equal("7.2", settings.ProfileVersion);
+        Assert.Equal(TimeSpan.FromSeconds(7), settings.TaskRefreshInterval);
+        Assert.Equal("/api/runtime-settings", Assert.Single(handler.Requests).Uri.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task Missing_or_invalid_runtime_settings_use_backward_compatible_default()
+    {
+        foreach (var response in new[]
+        {
+            new HttpResponseMessage(HttpStatusCode.NotFound),
+            JsonResponse(new RuntimeSettingsResponse("profile-a", "7.2", TimeSpan.Zero)),
+            new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+        })
+        {
+            var handler = new RecordingHandler(_ => response);
+            using var httpClient = CreateClient(handler);
+            var client = new MesClient(httpClient);
+
+            var settings = await client.GetRuntimeSettingsAsync(CancellationToken.None);
+
+            Assert.Equal(DashboardRuntimeSettings.Default, settings);
+        }
+    }
+
+    [Fact]
     public async Task Plan_path_posts_station_ids_and_blocked_collection()
     {
         var handler = new RecordingHandler(_ => JsonResponse(

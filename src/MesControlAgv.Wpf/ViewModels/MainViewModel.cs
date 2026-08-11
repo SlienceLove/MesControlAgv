@@ -16,7 +16,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly ISimulatorControlClient? _simulator;
     private readonly ControlCenterCommandCoordinator _commands;
     private readonly ControlCenterViewModel _modules;
-    private readonly PeriodicTimer _timer = new(TimeSpan.FromSeconds(2));
+    private PeriodicTimer? _timer;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private readonly SemaphoreSlim _actionGate = new(1, 1);
@@ -39,6 +39,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private DateTimeOffset? _lastRefreshAt;
     private bool _isActionInProgress;
     private string _currentAction = string.Empty;
+    private TimeSpan _taskRefreshInterval = DashboardRuntimeSettings.Default.TaskRefreshInterval;
 
     public MainViewModel(
         IMesClient mes,
@@ -305,6 +306,11 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public bool IsSimulatorMode => _simulator is not null;
     public bool IsPhysicalMode => !IsSimulatorMode;
+    public TimeSpan TaskRefreshInterval
+    {
+        get => _taskRefreshInterval;
+        private set => SetField(ref _taskRefreshInterval, value);
+    }
 #if DEBUG
     public bool IsSimulatorPanelVisible => IsSimulatorMode;
 #else
@@ -346,7 +352,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         await RefreshAsync();
         await Readiness.RefreshAsync(_shutdown.Token);
-        _refreshLoop = RefreshLoopAsync(_shutdown.Token);
+        if (_refreshLoop is not null)
+        {
+            return;
+        }
+
+        TaskRefreshInterval = await ResolveTaskRefreshIntervalAsync(_shutdown.Token);
+        _timer = new PeriodicTimer(TaskRefreshInterval);
+        _refreshLoop = RefreshLoopAsync(_timer, _shutdown.Token);
     }
 
     public async Task RefreshAsync(Guid? preferredTaskId = null)
@@ -711,9 +724,28 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    private async Task RefreshLoopAsync(CancellationToken cancellationToken)
+    private async Task<TimeSpan> ResolveTaskRefreshIntervalAsync(CancellationToken cancellationToken)
     {
-        try { while (await _timer.WaitForNextTickAsync(cancellationToken)) await RefreshAsync(); }
+        try
+        {
+            var settings = await _mes.GetRuntimeSettingsAsync(cancellationToken);
+            return settings.TaskRefreshInterval > TimeSpan.Zero
+                ? settings.TaskRefreshInterval
+                : DashboardRuntimeSettings.Default.TaskRefreshInterval;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return DashboardRuntimeSettings.Default.TaskRefreshInterval;
+        }
+    }
+
+    private async Task RefreshLoopAsync(PeriodicTimer timer, CancellationToken cancellationToken)
+    {
+        try { while (await timer.WaitForNextTickAsync(cancellationToken)) await RefreshAsync(); }
         catch (OperationCanceledException) { }
     }
 
@@ -817,7 +849,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         _shutdown.Cancel();
         CancelPendingDetailRefresh();
-        _timer.Dispose();
+        _timer?.Dispose();
         _refreshGate.Dispose();
         _actionGate.Dispose();
         _shutdown.Dispose();

@@ -56,6 +56,35 @@ public sealed class MesClient(HttpClient client) : IMesClient
             station.Type)).ToList();
     }
 
+    public async Task<DashboardRuntimeSettings> GetRuntimeSettingsAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await client.GetAsync("api/runtime-settings", cancellationToken);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                return DashboardRuntimeSettings.Default;
+            }
+
+            response.EnsureSuccessStatusCode();
+            var settings = await response.Content.ReadFromJsonAsync<RuntimeSettingsResponse>(cancellationToken);
+            return settings is not null && settings.TaskRefreshInterval > TimeSpan.Zero
+                ? new DashboardRuntimeSettings(
+                    settings.ProfileProductId,
+                    settings.ProfileVersion,
+                    settings.TaskRefreshInterval)
+                : DashboardRuntimeSettings.Default;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or NotSupportedException or System.Text.Json.JsonException or TaskCanceledException)
+        {
+            return DashboardRuntimeSettings.Default;
+        }
+    }
+
     public async Task<DashboardPlannedPath> PlanPathAsync(
         string fromStationId,
         string toStationId,
