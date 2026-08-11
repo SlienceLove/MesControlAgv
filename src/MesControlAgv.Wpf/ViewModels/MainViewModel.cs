@@ -14,6 +14,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 {
     private readonly IMesClient _mes;
     private readonly ISimulatorControlClient? _simulator;
+    private readonly ControlCenterCommandCoordinator _commands;
     private readonly ControlCenterViewModel _modules;
     private readonly PeriodicTimer _timer = new(TimeSpan.FromSeconds(2));
     private readonly CancellationTokenSource _shutdown = new();
@@ -47,6 +48,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         _mes = mes;
         _simulator = simulator;
+        _commands = new ControlCenterCommandCoordinator(mes, simulator);
         ModuleRegistry = moduleRegistry ?? ControlCenterModuleRegistry.CreateStandard();
         WorkflowEditor = new WorkflowEditorViewModel(new WorkflowStore(), _mes, () => OperatorName);
         Readiness = new ReadinessViewModel(_mes, mapLayoutSource);
@@ -460,7 +462,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
             try
             {
-                await _mes.CreateTaskAsync(
+                await _commands.CreateTaskAsync(
                     source,
                     target,
                     task.Priority,
@@ -514,14 +516,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private async Task ExecuteAgvCommandAsync(string command)
     {
         if (SelectedAgv is not { } agv || agv.CurrentTaskId is not { } taskId) return;
-        var result = await _mes.ExecuteAgvCommandAsync(agv.AgvId, command, taskId, _shutdown.Token)
-            ?? throw new InvalidOperationException($"AGV {agv.AgvId} 未返回“{command}”操作结果。");
-        if (!string.IsNullOrWhiteSpace(result.LastError) ||
-            string.Equals(result.State, "failed", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(result.State, "error", StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException(result.LastError ?? $"AGV {agv.AgvId} 拒绝了“{command}”操作。");
-        }
+        var result = await _commands.ExecuteAgvCommandAsync(agv.AgvId, command, taskId, _shutdown.Token);
 
         ActionStatus = $"AGV {agv.AgvId} 已接受“{command}”操作（{result.State}）。";
         BatchStatus = $"已向 {agv.AgvId} 发送“{command}”操作";
@@ -609,7 +604,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         if (NewTaskSourceStation is not { } source || NewTaskTargetStation is not { } target) return;
 
-        var created = await _mes.CreateTaskAsync(
+        var created = await _commands.CreateTaskAsync(
             source.Code,
             target.Code,
             NewTaskPriority,
@@ -625,7 +620,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         if (SelectedTask is null || SelectedTask.Status != "Created") return;
 
-        var dispatched = await _mes.DispatchTaskAsync(SelectedTask.Id, _shutdown.Token);
+        var dispatched = await _commands.DispatchTaskAsync(SelectedTask.Id, _shutdown.Token);
         ActionStatus = $"\u4EFB\u52A1 {dispatched.Id} \u5DF2\u6D3E\u53D1\uFF0C\u7B49\u5F85 AGV \u6267\u884C\u3002";
         await RefreshAsync(dispatched.Id);
     }
@@ -634,48 +629,49 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         if (!IsManualArrivalAvailable || _simulator is null || SelectedTask is null) return;
 
-        var deviceTaskId = SelectedTask.Status == "MovingToDropoff" ? TransportOperationIds.Dropoff(SelectedTask.Id) : TransportOperationIds.Pickup(SelectedTask.Id);
-        await _simulator.ApplyControlAsync(deviceTaskId, "arrive", _shutdown.Token);
-        await _mes.MarkArrivedAsync(SelectedTask.Id, _shutdown.Token);
+        await _commands.MarkSimulatorArrivalAsync(
+            SelectedTask.Id,
+            SelectedTask.Status == "MovingToDropoff",
+            _shutdown.Token);
         await RefreshAsync();
     }
 
     private async Task ConfirmPickupAsync()
     {
         if (SelectedTask is null) return;
-        await _mes.ConfirmPickupAsync(SelectedTask.Id, OperatorName.Trim(), _shutdown.Token);
+        await _commands.ConfirmPickupAsync(SelectedTask.Id, OperatorName.Trim(), _shutdown.Token);
         ActionStatus = $"\u4EFB\u52A1 {SelectedTask.Id} \u5DF2\u786E\u8BA4\u53D6\u8D27\uFF0C\u7EE7\u7EED\u524D\u5F80\u653E\u8D27\u7AD9\u3002";
         await RefreshAsync();
     }
     private async Task ConfirmDropoffAsync()
     {
         if (SelectedTask is null) return;
-        await _mes.ConfirmDropoffAsync(SelectedTask.Id, OperatorName.Trim(), _shutdown.Token);
+        await _commands.ConfirmDropoffAsync(SelectedTask.Id, OperatorName.Trim(), _shutdown.Token);
         ActionStatus = $"\u4EFB\u52A1 {SelectedTask.Id} \u5DF2\u786E\u8BA4\u653E\u8D27\uFF0C\u6D41\u7A0B\u5DF2\u5B8C\u6210\u3002";
         await RefreshAsync();
     }
     private async Task RetryAsync()
     {
         if (SelectedTask is null) return;
-        await _mes.RetryAsync(SelectedTask.Id, _shutdown.Token);
+        await _commands.RetryAsync(SelectedTask.Id, _shutdown.Token);
         ActionStatus = $"\u4EFB\u52A1 {SelectedTask.Id} \u5DF2\u91CD\u8BD5\uFF0C\u7B49\u5F85 AGV \u6267\u884C\u3002";
         await RefreshAsync();
     }
     private async Task RecoverAsync()
     {
         if (SelectedTask is null) return;
-        await _mes.RecoverAsync(SelectedTask.Id, _shutdown.Token);
+        await _commands.RecoverAsync(SelectedTask.Id, _shutdown.Token);
         ActionStatus = $"\u4EFB\u52A1 {SelectedTask.Id} \u5DF2\u91CD\u65B0\u8BFB\u53D6\u72B6\u6001\u3002";
         await RefreshAsync();
     }
     private async Task CancelAsync()
     {
         if (SelectedTask is null) return;
-        await _mes.CancelAsync(SelectedTask.Id, OperatorName.Trim(), _shutdown.Token);
+        await _commands.CancelAsync(SelectedTask.Id, OperatorName.Trim(), _shutdown.Token);
         ActionStatus = $"\u4EFB\u52A1 {SelectedTask.Id} \u5DF2\u53D6\u6D88\u3002";
         await RefreshAsync();
     }
-    private async Task ApplySimulatorControlAsync(string mode) { if (!IsSimulatorPanelVisible || _simulator is null) return; await _simulator.ApplyControlAsync(mode, _shutdown.Token); await RefreshAsync(); }
+    private async Task ApplySimulatorControlAsync(string mode) { if (!IsSimulatorPanelVisible || _simulator is null) return; await _commands.ApplySimulatorControlAsync(mode, _shutdown.Token); await RefreshAsync(); }
 
     private AsyncCommand CreateActionCommand(string actionName, Func<Task> action, Func<bool>? canExecute = null) =>
         new(

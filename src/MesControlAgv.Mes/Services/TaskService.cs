@@ -741,7 +741,7 @@ public sealed class TaskService : ITaskApplicationService
 
 public sealed class UnsupportedRouteException : InvalidOperationException
 {
-    public UnsupportedRouteException() : base("MVP only supports SAMPLE_01 to ST_PREP_01.") { }
+    public UnsupportedRouteException() : base("The requested route is not supported by the active profile.") { }
     public UnsupportedRouteException(string message) : base(message) { }
 }
 

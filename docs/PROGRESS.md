@@ -1003,3 +1003,21 @@ Detailed continuation notes are in
   orchestration. WPF tests remained **150/150**. Further extraction would
   require a larger command/use-case boundary redesign and is intentionally
   paused at that boundary.
+
+## 2026-08-11 offline command-boundary continuation
+
+- The verified baseline was committed as `585e0bb`.
+- Added `ControlCenterCommandCoordinator` as the first cross-module command
+  boundary. MES task mutations, Simulator arrival/control calls, and AGV
+  command result validation now run through the coordinator; `MainViewModel`
+  keeps presentation state, command availability, status text, and refresh
+  orchestration.
+- Added coordinator coverage for request forwarding, Simulator/MES arrival,
+  missing AGV results, and failed AGV results. WPF tests passed **153/153**,
+  and the full Debug solution passed **374/374**.
+- Removed the stale `SAMPLE_01 -> ST_PREP_01` wording from the generic route
+  exception; unsupported routes now report that they are not supported by the
+  active Profile.
+- No physical controller was contacted. Further `MainViewModel` extraction
+  now requires a larger command/use-case redesign rather than another local
+  state move.
