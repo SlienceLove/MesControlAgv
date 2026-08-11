@@ -13,7 +13,7 @@
 ![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)
 ![WPF](https://img.shields.io/badge/UI-WPF-0078D4)
 ![Runtime](https://img.shields.io/badge/runtime-Simulator--first-2E8B57)
-![Tests](https://img.shields.io/badge/tests-312%2F312%20passed-2E8B57)
+![Tests](https://img.shields.io/badge/tests-338%2F338%20passed-2E8B57)
 
 </div>
 
@@ -82,7 +82,7 @@ dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1
 dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
-最近一次 Release 基线（2026-08-10）为 0 个警告、0 个错误，自动化测试 `312/312` 通过。
+最近一次 Release 基线（2026-08-11）为 0 个警告、0 个错误，自动化测试 `338/338` 通过。
 
 ### 直接启动 WPF
 
@@ -192,12 +192,19 @@ Invoke-RestMethod -Method Post http://localhost:5183/controls/fail
 
 Adapter 已提供配置选择的厂商 TCP 驱动，覆盖帧格式、控制权、导航、状态查询、暂停/恢复、取消和安全门禁映射。Simulator 仍是默认驱动。
 
-启用 `Agv:Driver=tcp` 前，必须在隔离环境完成：
+启用物理 Profile 前，先使用启动配置 `Adapter:RunMode=read-only-preflight`；该模式只能在 Adapter 重启时切换，WPF 和 HTTP 不能动态修改。离线调试的 1-5 步只使用 fake controller 和临时数据库，不通电、不连接、不发送实体命令：
 
-1. 地图名称、版本、MD5、站点 ID 和直接有向边比对；
-2. 机器人 IP、固件版本、自动模式和控制权确认；
-3. 定位置信度、急停、障碍、低速限制和机构 DI/DO 只读预检；
-4. 经过授权的低速、空载现场验收。
+1. 验证启动模式和 Profile 门禁；
+2. 验证只读 HTTP 只允许 `GET`/`HEAD`；
+3. 验证 TCP 只读 API `1060`、`1110`、`1101`、`1021`、`1000`；
+4. 验证 `4005`、`9300`、`3066`、`3001`、`3002`、`3067` 等 mutation API 不会发出；
+5. 验证地图证据缺失时 `physical/preflight` 保持 `DispatchPermitted=false`。
+
+车辆通电后的现场步骤另行执行：在隔离和明确授权后，重新读取地图名称、版本、MD5、站点 ID、直接有向边、机器人型号/固件、自动模式、控制权、定位置信度、急停、障碍、低速限制和机构 DI/DO；W500-SZ 使用已批准的 `not-exposed-by-approved-model` 策略时，必须以 `1000.model` 精确匹配为前提，明确手动状态仍阻断。只有全部证据通过后，才可评估授权的低速空载验收。
+
+只读模式下 `GET /health` 应报告 `runMode=read-only-preflight`，随后只调用 `GET /physical/preflight`；所有写请求都会被 Adapter 拒绝。厂商驱动已通过只读 API `1000/1021/1300/1301/1302/4011` 实现设备、定位和地图证据读取，任何超时、协议错误、地图解析失败或不一致仍会按 fail-closed 阻断派单。真实控制器的 `19207/4011` 读取必须单独获得现场授权。详见 [物理验收配置](docs/physical-acceptance/README.md)。
+
+一次受监督的 `LM1 -> LM2` 单段尝试没有让车辆移动：两阶段预检通过、控制权申请成功，但按任务 ID 查询 `1110` 返回 `404`，全局任务列表为空。离线定位到派发前的 `404` 被误判为已有任务，导致在写入 `3066` 之前返回 `unknown`。修复后派发前全为 `404` 只允许一次首发，写入尝试之后的空/`404` 状态一律返回 `unknown` 并标记 `dispatch_not_confirmed_by_1110`，相同任务 ID 不再自动重发。控制权由现场操作员手动释放，随后只读 `1060` 确认 `locked=false`。实车结论仍为 **NO-GO**，下一次尝试需要新的授权只读预检和新的唯一验收/任务 ID。
 
 相关资料：[真实 AGV TCP Adapter](docs/AGV-TCP-ADAPTER.md)、[现场验收清单](docs/physical-acceptance/README.md)。
 

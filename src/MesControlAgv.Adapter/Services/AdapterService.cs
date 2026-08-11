@@ -1,10 +1,12 @@
 using System.Text.Json;
+using MesControlAgv.Adapter;
 using MesControlAgv.Contracts;
 using MesControlAgv.Adapter.Data;
 using MesControlAgv.Adapter.Entities;
 using MesControlAgv.Domain;
 using MesControlAgv.Domain.Profiles;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace MesControlAgv.Adapter.Services;
 
@@ -20,6 +22,8 @@ public sealed class AdapterService
     private readonly PathPlanner _planner;
     private readonly ProfileConfiguration _profile;
     private readonly PhysicalAcceptancePreflightService? _physicalPreflight;
+    private readonly AdapterRunMode _runMode;
+    private readonly ILogger<AdapterService> _logger;
 
     public AdapterService(
         AdapterDbContext database,
@@ -28,7 +32,9 @@ public sealed class AdapterService
         MultiAgvScheduler? scheduler = null,
         PathPlanner? planner = null,
         ProfileConfiguration? profile = null,
-        PhysicalAcceptancePreflightService? physicalPreflight = null)
+        PhysicalAcceptancePreflightService? physicalPreflight = null,
+        AdapterRunMode? runMode = null,
+        ILogger<AdapterService>? logger = null)
     {
         _database = database;
         _device = device;
@@ -37,6 +43,8 @@ public sealed class AdapterService
         _scheduler = scheduler ?? new MultiAgvScheduler(new PathPlanner(AgvMap.FromProfile(_profile.Map)));
         _planner = planner ?? new PathPlanner(AgvMap.FromProfile(_profile.Map));
         _physicalPreflight = physicalPreflight;
+        _runMode = runMode ?? AdapterRunMode.Standard;
+        _logger = logger ?? NullLogger<AdapterService>.Instance;
     }
 
     public Task<AgvTaskResponse> DispatchAsync(Guid taskId, string targetStationId, CancellationToken cancellationToken) =>
@@ -63,6 +71,7 @@ public sealed class AdapterService
         FieldNavigationDispatchCommand command,
         CancellationToken cancellationToken)
     {
+        EnsureMutationIsAllowed("field-navigation dispatch");
         ArgumentNullException.ThrowIfNull(command);
         if (_profile.PhysicalAcceptance is null)
             throw new InvalidOperationException("Field navigation acceptance requires a physical acceptance profile.");
@@ -76,14 +85,31 @@ public sealed class AdapterService
 
         var preflight = _physicalPreflight
             ?? throw new InvalidOperationException("Physical navigation preflight is not configured.");
-        var assessment = await preflight.GetForFieldNavigationAcceptanceAsync(cancellationToken);
-        if (!assessment.DispatchPermitted)
-            throw new PhysicalPreflightRejectedException(assessment.BlockingReasons);
-        if (!StringComparer.Ordinal.Equals(assessment.Snapshot.AgvId, command.AgvId))
-            throw new AgvUnavailableException($"Preflight returned AGV {assessment.Snapshot.AgvId}, not {command.AgvId}.");
-        if (!StringComparer.Ordinal.Equals(assessment.Snapshot.CurrentStationId, command.SourceStationId))
-            throw new AgvUnavailableException(
-                $"Preflight location is {assessment.Snapshot.CurrentStationId ?? "unknown"}, not {command.SourceStationId}.");
+        var beforeControl = await preflight.GetBeforeControlForFieldNavigationAcceptanceAsync(cancellationToken);
+        ValidateFieldNavigationAssessment(beforeControl, command);
+
+        await _device.EnsureControlAsync(cancellationToken);
+
+        try
+        {
+            var afterControl = await preflight.GetForFieldNavigationAcceptanceAsync(cancellationToken);
+            ValidateFieldNavigationAssessment(afterControl, command);
+        }
+        catch (Exception)
+        {
+            try
+            {
+                await _device.ReleaseControlAsync(CancellationToken.None);
+            }
+            catch (Exception releaseException)
+            {
+                _logger.LogError(
+                    releaseException,
+                    "AGV control release failed after post-control physical preflight rejection.");
+            }
+
+            throw;
+        }
 
         return await DispatchCoreAsync(
             acceptanceId,
@@ -95,6 +121,19 @@ public sealed class AdapterService
             cancellationToken);
     }
 
+    private static void ValidateFieldNavigationAssessment(
+        PhysicalAgvPreflightResponse assessment,
+        FieldNavigationDispatchCommand command)
+    {
+        if (!assessment.DispatchPermitted)
+            throw new PhysicalPreflightRejectedException(assessment.BlockingReasons);
+        if (!StringComparer.Ordinal.Equals(assessment.Snapshot.AgvId, command.AgvId))
+            throw new AgvUnavailableException($"Preflight returned AGV {assessment.Snapshot.AgvId}, not {command.AgvId}.");
+        if (!StringComparer.Ordinal.Equals(assessment.Snapshot.CurrentStationId, command.SourceStationId))
+            throw new AgvUnavailableException(
+                $"Preflight location is {assessment.Snapshot.CurrentStationId ?? "unknown"}, not {command.SourceStationId}.");
+    }
+
     private async Task<AgvTaskResponse> DispatchCoreAsync(
         Guid taskId,
         string? sourceStationId,
@@ -104,6 +143,7 @@ public sealed class AdapterService
         DispatchPermission dispatchPermission,
         CancellationToken cancellationToken)
     {
+        EnsureMutationIsAllowed("task dispatch");
         var gate = AcquireDispatchGate(taskId);
         var acquired = false;
         var waited = false;
@@ -239,7 +279,7 @@ public sealed class AdapterService
             await _database.SaveChangesAsync(cancellationToken);
             ReleaseCompletedRoute(taskId, deviceTask.State);
         }
-        else if (task.State == "dispatching")
+        else if (task.State is "dispatching" or "accepted" or "moving" or "paused")
         {
             task.State = "unknown";
             task.LastError = "dispatch_not_confirmed_by_1110";
@@ -265,6 +305,7 @@ public sealed class AdapterService
         Guid? requestedTaskId,
         CancellationToken cancellationToken)
     {
+        EnsureMutationIsAllowed("AGV command");
         var snapshots = await GetFleetAsync(cancellationToken);
         var snapshot = snapshots.SingleOrDefault(item => StringComparer.Ordinal.Equals(item.AgvId, agvId))
             ?? throw new KeyNotFoundException($"AGV {agvId} is not configured.");
@@ -282,6 +323,7 @@ public sealed class AdapterService
 
     public async Task<AgvTaskResponse?> PauseAsync(Guid taskId, CancellationToken cancellationToken)
     {
+        EnsureMutationIsAllowed("pause");
         var task = await _database.Tasks.FindAsync([taskId], cancellationToken);
         if (task is null) return null;
         var path = DeserializePath(task.PathJson);
@@ -294,6 +336,7 @@ public sealed class AdapterService
 
     public async Task<AgvTaskResponse?> ResumeAsync(Guid taskId, CancellationToken cancellationToken)
     {
+        EnsureMutationIsAllowed("resume");
         var task = await _database.Tasks.FindAsync([taskId], cancellationToken);
         if (task is null) return null;
         var path = DeserializePath(task.PathJson);
@@ -306,6 +349,7 @@ public sealed class AdapterService
 
     public async Task<AgvTaskResponse?> CancelAsync(Guid taskId, CancellationToken cancellationToken)
     {
+        EnsureMutationIsAllowed("cancellation");
         await _device.EnsureControlAsync(cancellationToken);
         var task = await _database.Tasks.FindAsync([taskId], cancellationToken);
         if (task is null) return null;
@@ -350,6 +394,8 @@ public sealed class AdapterService
         await _database.SaveChangesAsync(cancellationToken);
         return ToResponse(task);
     }
+
+    private void EnsureMutationIsAllowed(string operation) => _runMode.ThrowIfMutationIsBlocked(operation);
 
     private async Task<(string AgvId, PlannedPath? Path)> SelectAgvAsync(
         Guid taskId,

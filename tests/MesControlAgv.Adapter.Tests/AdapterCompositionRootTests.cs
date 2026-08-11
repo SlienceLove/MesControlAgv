@@ -56,12 +56,93 @@ public sealed class AdapterCompositionRootTests
     }
 
     [Fact]
+    public void Read_only_preflight_mode_requires_explicitly_disabled_mutations()
+    {
+        var configuration = CreatePhysicalConfiguration();
+        configuration["Adapter:RunMode"] = AdapterRunMode.ReadOnlyPreflightValue;
+        configuration["Agv:Tcp:AcquireControl"] = "false";
+        configuration["Agv:Tcp:EnablePush"] = "false";
+        configuration["Profile:Features:EnableTaskCancellation"] = "false";
+
+        using var provider = AddServices(configuration).BuildServiceProvider();
+
+        Assert.Same(AdapterRunMode.ReadOnlyPreflight, provider.GetRequiredService<AdapterRunMode>());
+    }
+
+    [Theory]
+    [InlineData("Agv:Tcp:AcquireControl", "true", "AcquireControl=false")]
+    [InlineData("Agv:Tcp:EnablePush", "true", "EnablePush=false")]
+    [InlineData("Profile:Features:EnableTaskCancellation", "true", "task cancellation")]
+    public void Read_only_preflight_mode_rejects_mutating_options(
+        string key,
+        string value,
+        string expectedMessage)
+    {
+        var configuration = CreatePhysicalConfiguration();
+        configuration["Adapter:RunMode"] = AdapterRunMode.ReadOnlyPreflightValue;
+        configuration["Agv:Tcp:AcquireControl"] = "false";
+        configuration["Agv:Tcp:EnablePush"] = "false";
+        configuration["Profile:Features:EnableTaskCancellation"] = "false";
+        configuration[key] = value;
+
+        var exception = Assert.Throws<InvalidOperationException>(() => AddServices(configuration));
+
+        Assert.Contains(expectedMessage, exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Default_profile_remains_compatible_with_the_simulator_driver()
     {
         var configuration = new ConfigurationBuilder().Build();
         using var provider = AddServices(configuration).BuildServiceProvider();
 
         Assert.IsType<SimulatorDriver>(provider.GetRequiredService<IAgvDriver>());
+    }
+
+    [Fact]
+    public void Physical_environment_replaces_default_json_arrays_instead_of_merging_them()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"adapter-physical-config-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            File.WriteAllText(
+                Path.Combine(directory, PhysicalAcceptanceConfiguration.FileName),
+                """
+                {
+                  "Profile": {
+                    "stations": [
+                      { "stationId": "LM1" },
+                      { "stationId": "LM2" }
+                    ]
+                  }
+                }
+                """);
+            var configuration = new ConfigurationManager();
+            configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Profile:stations:0:stationId"] = "SIM1",
+                ["Profile:stations:1:stationId"] = "SIM2",
+                ["Profile:stations:2:stationId"] = "SIM3"
+            });
+
+            PhysicalAcceptanceConfiguration.ReplaceDefaultSources(
+                configuration,
+                directory,
+                ["--Adapter:RunMode=read-only-preflight"]);
+
+            var stations = configuration.GetSection("Profile:stations")
+                .GetChildren()
+                .Select(section => section["stationId"])
+                .ToArray();
+            Assert.Equal(["LM1", "LM2"], stations);
+            Assert.Null(configuration["Profile:stations:2:stationId"]);
+            Assert.Equal("read-only-preflight", configuration["Adapter:RunMode"]);
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
     }
 
     private static IServiceCollection AddServices(IConfiguration configuration) =>

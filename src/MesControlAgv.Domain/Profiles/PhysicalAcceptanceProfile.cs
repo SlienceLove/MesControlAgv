@@ -30,6 +30,12 @@ public sealed record DirectedMapEdgeProfile
     public string To { get; init; } = string.Empty;
 }
 
+public static class VehicleOperatingModePolicies
+{
+    public const string VendorFieldRequired = "vendor-field-required";
+    public const string NotExposedByApprovedModel = "not-exposed-by-approved-model";
+}
+
 /// <summary>
 /// Site-approved dispatch gates. Every gate is required for a physical profile.
 /// </summary>
@@ -42,4 +48,5 @@ public sealed record PhysicalAgvSafetyProfile
     public bool RequireNoBlocked { get; init; }
     public bool RequireNoFaults { get; init; }
     public bool RequireAutomaticMode { get; init; }
+    public string VehicleOperatingModePolicy { get; init; } = VehicleOperatingModePolicies.VendorFieldRequired;
 }

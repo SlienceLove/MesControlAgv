@@ -18,7 +18,13 @@ public sealed class PhysicalAcceptancePreflightServiceTests
     [InlineData("confidence", "localization_confidence_below_threshold")]
     [InlineData("automatic-mode", "vehicle_automatic_mode_unconfirmed")]
     [InlineData("offline", "agv_offline")]
+    [InlineData("active-task", "agv_has_active_task")]
     [InlineData("automatic-dispatch", "automatic_dispatch_disabled")]
+    [InlineData("map-version", "controller_map_version_mismatch")]
+    [InlineData("map-stations", "controller_map_station_catalog_mismatch")]
+    [InlineData("map-edges", "controller_map_directed_edges_mismatch")]
+    [InlineData("map-evidence-unavailable", "controller_map_evidence_unavailable")]
+    [InlineData("map-evidence-untrusted", "controller_map_evidence_not_authoritative")]
     public async Task Preflight_fails_closed_for_each_blocking_gate(
         string gate,
         string expectedReason)
@@ -61,8 +67,29 @@ public sealed class PhysicalAcceptancePreflightServiceTests
             case "offline":
                 device.Snapshot = device.Snapshot with { Online = false };
                 break;
+            case "active-task":
+                device.Snapshot = device.Snapshot with { CurrentTaskId = Guid.NewGuid() };
+                break;
             case "automatic-dispatch":
                 profile = CreateProfile(enableAutomaticDispatch: false);
+                break;
+            case "map-version":
+                device.MapEvidence = device.MapEvidence! with { Version = "other-version" };
+                break;
+            case "map-stations":
+                device.MapEvidence = device.MapEvidence! with { StationIds = ["LM1"] };
+                break;
+            case "map-edges":
+                device.MapEvidence = device.MapEvidence! with
+                {
+                    DirectedEdges = [new ControllerDirectedEdgeResponse("LM2", "LM1")]
+                };
+                break;
+            case "map-evidence-unavailable":
+                device.MapEvidence = null;
+                break;
+            case "map-evidence-untrusted":
+                device.MapEvidence = device.MapEvidence! with { IsControllerAuthoritative = false };
                 break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(gate), gate, null);
@@ -89,6 +116,25 @@ public sealed class PhysicalAcceptancePreflightServiceTests
     }
 
     [Fact]
+    public async Task Before_control_preflight_ignores_only_the_control_owner_gate()
+    {
+        var device = ReadyDevice();
+        device.Snapshot = device.Snapshot with { ControlOwner = "none" };
+        var profile = CreateProfile(enableAutomaticDispatch: false, enableFieldNavigationAcceptance: true);
+        var service = new PhysicalAcceptancePreflightService(device, profile);
+
+        var beforeControl = await service
+            .GetBeforeControlForFieldNavigationAcceptanceAsync(CancellationToken.None);
+        var afterControl = await service
+            .GetForFieldNavigationAcceptanceAsync(CancellationToken.None);
+
+        Assert.True(beforeControl.DispatchPermitted);
+        Assert.DoesNotContain("adapter_does_not_hold_control", beforeControl.BlockingReasons);
+        Assert.False(afterControl.DispatchPermitted);
+        Assert.Contains("adapter_does_not_hold_control", afterControl.BlockingReasons);
+    }
+
+    [Fact]
     public async Task Unknown_vehicle_automatic_mode_is_never_treated_as_ready()
     {
         var device = ReadyDevice();
@@ -110,6 +156,75 @@ public sealed class PhysicalAcceptancePreflightServiceTests
     }
 
     [Fact]
+    public async Task Approved_model_policy_allows_unknown_vehicle_mode_when_model_matches()
+    {
+        var device = ReadyDevice();
+        device.Readiness = device.Readiness with
+        {
+            VehicleOperatingMode = "unknown",
+            VehicleOperatingModeSource = null,
+            VehicleModel = "Vendor-AMR"
+        };
+
+        var result = await new PhysicalAcceptancePreflightService(
+                device,
+                CreateProfile(
+                    enableAutomaticDispatch: true,
+                    requireAutomaticMode: false,
+                    modePolicy: VehicleOperatingModePolicies.NotExposedByApprovedModel))
+            .GetAsync(CancellationToken.None);
+
+        Assert.True(result.DispatchPermitted);
+        Assert.Equal(VehicleOperatingModePolicies.NotExposedByApprovedModel, result.VehicleOperatingModePolicy);
+    }
+
+    [Fact]
+    public async Task Approved_model_policy_blocks_unknown_vehicle_mode_when_model_differs()
+    {
+        var device = ReadyDevice();
+        device.Readiness = device.Readiness with
+        {
+            VehicleOperatingMode = "unknown",
+            VehicleOperatingModeSource = null,
+            VehicleModel = "Other-AMR"
+        };
+
+        var result = await new PhysicalAcceptancePreflightService(
+                device,
+                CreateProfile(
+                    enableAutomaticDispatch: true,
+                    requireAutomaticMode: false,
+                    modePolicy: VehicleOperatingModePolicies.NotExposedByApprovedModel))
+            .GetAsync(CancellationToken.None);
+
+        Assert.False(result.DispatchPermitted);
+        Assert.Contains("vehicle_model_unconfirmed_for_mode_policy", result.BlockingReasons);
+    }
+
+    [Fact]
+    public async Task Approved_model_policy_still_blocks_explicit_manual_mode()
+    {
+        var device = ReadyDevice();
+        device.Readiness = device.Readiness with
+        {
+            VehicleOperatingMode = "manual",
+            VehicleOperatingModeSource = "vendor-1101-mode",
+            VehicleModel = "Vendor-AMR"
+        };
+
+        var result = await new PhysicalAcceptancePreflightService(
+                device,
+                CreateProfile(
+                    enableAutomaticDispatch: true,
+                    requireAutomaticMode: false,
+                    modePolicy: VehicleOperatingModePolicies.NotExposedByApprovedModel))
+            .GetAsync(CancellationToken.None);
+
+        Assert.False(result.DispatchPermitted);
+        Assert.Contains("vehicle_automatic_mode_unconfirmed", result.BlockingReasons);
+    }
+
+    [Fact]
     public async Task Preflight_only_reads_snapshot_and_readiness_without_control_or_motion_calls()
     {
         var device = ReadyDevice();
@@ -121,11 +236,29 @@ public sealed class PhysicalAcceptancePreflightServiceTests
         Assert.True(result.DispatchPermitted);
         Assert.Equal(1, device.SnapshotCalls);
         Assert.Equal(1, device.ReadinessCalls);
+        Assert.Equal(1, device.MapEvidenceCalls);
         Assert.Equal(0, device.EnsureControlCalls);
         Assert.Equal(0, device.NavigateCalls);
         Assert.Equal(0, device.PauseCalls);
         Assert.Equal(0, device.ResumeCalls);
         Assert.Equal(0, device.CancelCalls);
+    }
+
+    [Fact]
+    public async Task Authoritative_map_evidence_replaces_missing_realtime_map_fields()
+    {
+        var device = ReadyDevice();
+        device.Readiness = device.Readiness with { MapName = null, MapMd5 = null };
+
+        var result = await new PhysicalAcceptancePreflightService(
+                device,
+                CreateProfile(enableAutomaticDispatch: true))
+            .GetAsync(CancellationToken.None);
+
+        Assert.True(result.DispatchPermitted);
+        Assert.DoesNotContain("controller_map_name_mismatch", result.BlockingReasons);
+        Assert.DoesNotContain("controller_map_md5_mismatch", result.BlockingReasons);
+        Assert.Equal(result.BlockingReasons.Count, result.BlockingReasons.Distinct(StringComparer.Ordinal).Count());
     }
 
     private static PhysicalAcceptancePreflightDevice ReadyDevice() => new()
@@ -151,12 +284,25 @@ public sealed class PhysicalAcceptancePreflightServiceTests
             ErrorCount: 0,
             RelocationStatus: 1,
             LocalizationConfidence: 0.99,
+            ObservedAtUtc: DateTimeOffset.UtcNow,
+            VehicleModel: "Vendor-AMR",
+            ControllerVersion: "test-controller"),
+        MapEvidence = new ControllerMapEvidenceResponse(
+            IsControllerAuthoritative: true,
+            Source: "vendor-read-only-map-export",
+            MapName: "acceptance-map",
+            Version: "1.0",
+            Md5: "e1b8d6b2b24362c1d44f1884c0abd8fb",
+            StationIds: ["LM1", "LM2"],
+            DirectedEdges: [new ControllerDirectedEdgeResponse("LM1", "LM2")],
             ObservedAtUtc: DateTimeOffset.UtcNow)
     };
 
     private static ProfileConfiguration CreateProfile(
         bool enableAutomaticDispatch,
-        bool enableFieldNavigationAcceptance = false) => new()
+        bool enableFieldNavigationAcceptance = false,
+        bool requireAutomaticMode = true,
+        string modePolicy = VehicleOperatingModePolicies.VendorFieldRequired) => new()
     {
         Product = new ProductProfile { ProductId = "MES-AGV", DisplayName = "Tests", Version = "1.0" },
         Agvs =
@@ -200,7 +346,8 @@ public sealed class PhysicalAcceptancePreflightServiceTests
                 RequireNoEmergency = true,
                 RequireNoBlocked = true,
                 RequireNoFaults = true,
-                RequireAutomaticMode = true
+                RequireAutomaticMode = requireAutomaticMode,
+                VehicleOperatingModePolicy = modePolicy
             }
         },
         Features = new FeatureFlags
@@ -212,12 +359,14 @@ public sealed class PhysicalAcceptancePreflightServiceTests
         Timeouts = new TimeoutOptions()
     };
 
-    private sealed class PhysicalAcceptancePreflightDevice : IAgvDeviceClient, IPhysicalAgvDeviceClient
+    private sealed class PhysicalAcceptancePreflightDevice : IAgvDeviceClient, IPhysicalAgvDeviceClient, IControllerMapEvidenceDeviceClient
     {
         public AgvSnapshotResponse Snapshot { get; set; } = null!;
         public AgvSafetyReadinessResponse Readiness { get; set; } = null!;
+        public ControllerMapEvidenceResponse? MapEvidence { get; set; }
         public int SnapshotCalls { get; private set; }
         public int ReadinessCalls { get; private set; }
+        public int MapEvidenceCalls { get; private set; }
         public int EnsureControlCalls { get; private set; }
         public int NavigateCalls { get; private set; }
         public int PauseCalls { get; private set; }
@@ -240,6 +389,12 @@ public sealed class PhysicalAcceptancePreflightServiceTests
         {
             ReadinessCalls++;
             return Task.FromResult(Readiness);
+        }
+
+        public Task<ControllerMapEvidenceResponse?> GetControllerMapEvidenceAsync(CancellationToken cancellationToken)
+        {
+            MapEvidenceCalls++;
+            return Task.FromResult(MapEvidence);
         }
 
         public Task<AgvTaskResponse?> GetTaskAsync(Guid taskId, CancellationToken cancellationToken) =>

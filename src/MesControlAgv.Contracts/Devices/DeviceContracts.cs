@@ -47,7 +47,26 @@ public sealed record AgvSafetyReadinessResponse(
     int ErrorCount,
     int? RelocationStatus,
     double? LocalizationConfidence,
+    DateTimeOffset ObservedAtUtc,
+    string? VehicleModel = null,
+    string? ControllerVersion = null);
+
+/// <summary>
+/// A fresh, controller-authored map catalog observed through a read-only vendor
+/// API or a vendor-approved read-only export. A local .smap file is not
+/// controller evidence.
+/// </summary>
+public sealed record ControllerMapEvidenceResponse(
+    bool IsControllerAuthoritative,
+    string? Source,
+    string? MapName,
+    string? Version,
+    string? Md5,
+    IReadOnlyList<string>? StationIds,
+    IReadOnlyList<ControllerDirectedEdgeResponse>? DirectedEdges,
     DateTimeOffset ObservedAtUtc);
+
+public sealed record ControllerDirectedEdgeResponse(string From, string To);
 
 public sealed record AgvSnapshotResponse(
     bool Online,
@@ -89,7 +108,9 @@ public sealed record PhysicalAgvPreflightResponse(
     AgvSnapshotResponse Snapshot,
     AgvSafetyReadinessResponse? Readiness,
     bool DispatchPermitted,
-    IReadOnlyList<string> BlockingReasons);
+    IReadOnlyList<string> BlockingReasons,
+    ControllerMapEvidenceResponse? MapEvidence = null,
+    string? VehicleOperatingModePolicy = null);
 
 public sealed record AgvCommandRequest(
     string Command,

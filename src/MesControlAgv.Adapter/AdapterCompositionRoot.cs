@@ -24,11 +24,13 @@ public static class AdapterCompositionRoot
 
         var profile = BindProfile(configuration);
         var driverId = NormalizeDriverId(configuration["Agv:Driver"]);
+        var runMode = AdapterRunMode.Parse(configuration["Adapter:RunMode"]);
         var tcpOptions = configuration.GetSection("Agv:Tcp").Get<TcpAgvOptions>() ?? new TcpAgvOptions();
-        ValidatePhysicalAcceptanceOptions(profile, driverId, tcpOptions);
+        ValidatePhysicalAcceptanceOptions(profile, driverId, tcpOptions, runMode);
         var agv = profile.Agvs.FirstOrDefault(item => item.Enabled) ?? profile.Agvs[0];
 
         services.AddSingleton(profile);
+        services.AddSingleton(runMode);
         services.AddSingleton<IProfileConfigurationValidator, ProfileConfigurationValidator>();
         services.AddSingleton<IProfileConfigurationLoader, JsonProfileConfigurationLoader>();
         services.AddSingleton<WorkflowValidator>();
@@ -38,7 +40,15 @@ public static class AdapterCompositionRoot
         services.AddSingleton<PhysicalAcceptancePreflightService>();
         services.Configure<TcpAgvOptions>(configuration.GetSection("Agv:Tcp"));
         services.PostConfigure<TcpAgvOptions>(options =>
-            options.RequireCompleteSafetyStatus = profile.PhysicalAcceptance is not null);
+        {
+            var physical = profile.PhysicalAcceptance;
+            options.RequireCompleteSafetyStatus = physical is not null;
+            if (physical is null) return;
+
+            options.RequireAutomaticMode = physical.Safety.RequireAutomaticMode;
+            options.MaximumNavigationSpeedMetersPerSecond =
+                physical.Safety.MaximumDispatchSpeedMetersPerSecond;
+        });
 
         services.AddHttpClient("simulator", (serviceProvider, client) =>
         {
@@ -95,10 +105,19 @@ public static class AdapterCompositionRoot
     private static void ValidatePhysicalAcceptanceOptions(
         ProfileConfiguration profile,
         string driverId,
-        TcpAgvOptions tcpOptions)
+        TcpAgvOptions tcpOptions,
+        AdapterRunMode runMode)
     {
         var physical = profile.PhysicalAcceptance;
-        if (physical is null) return;
+        if (physical is null)
+        {
+            if (runMode.IsReadOnlyPreflight)
+            {
+                throw new InvalidOperationException(
+                    "Adapter:RunMode=read-only-preflight requires a physical acceptance profile.");
+            }
+            return;
+        }
 
         if (!string.Equals(driverId, VendorTcpDriver.DriverKind, StringComparison.OrdinalIgnoreCase))
         {
@@ -112,10 +131,30 @@ public static class AdapterCompositionRoot
                 "Agv:Tcp:NickName must match Profile:PhysicalAcceptance:ExpectedControlOwner.");
         }
 
-        if (!tcpOptions.AcquireControl)
+        if (runMode.IsReadOnlyPreflight)
+        {
+            if (tcpOptions.AcquireControl)
+            {
+                throw new InvalidOperationException(
+                    "Read-only preflight requires Agv:Tcp:AcquireControl=false.");
+            }
+            if (tcpOptions.EnablePush)
+            {
+                throw new InvalidOperationException(
+                    "Read-only preflight requires Agv:Tcp:EnablePush=false.");
+            }
+            if (profile.Features.EnableAutomaticDispatch
+                || profile.Features.EnableFieldNavigationAcceptance
+                || profile.Features.EnableTaskCancellation)
+            {
+                throw new InvalidOperationException(
+                    "Read-only preflight requires automatic dispatch, field navigation acceptance, and task cancellation to be disabled.");
+            }
+        }
+        else if (!tcpOptions.AcquireControl)
         {
             throw new InvalidOperationException(
-                "Physical acceptance profiles require Agv:Tcp:AcquireControl=true.");
+                "Physical acceptance profiles require Agv:Tcp:AcquireControl=true outside read-only preflight mode.");
         }
 
         if (profile.Features.EnableAutomaticDispatch)

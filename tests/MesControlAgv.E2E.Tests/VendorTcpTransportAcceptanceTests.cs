@@ -1,10 +1,12 @@
 extern alias AdapterApp;
 
 using System.Net.Http.Json;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using AdapterProgram = AdapterApp::Program;
+using AdapterRunMode = AdapterApp::MesControlAgv.Adapter.AdapterRunMode;
 using AdapterProtocol = AdapterApp::MesControlAgv.Adapter.Services.AgvTcpProtocol;
 using AdapterPacket = AdapterApp::MesControlAgv.Adapter.Services.AgvTcpPacket;
 using MesControlAgv.Contracts;
@@ -22,6 +24,47 @@ namespace MesControlAgv.E2E.Tests;
 
 public sealed class VendorTcpTransportAcceptanceTests
 {
+    [Fact]
+    public async Task Read_only_preflight_allows_reads_and_rejects_every_http_write()
+    {
+        await using var controller = new FakeVendorTcpController();
+        using var adapterFactory = new VendorTcpAdapterFactory(
+            controller,
+            CreatePhysicalAcceptanceProfile(),
+            AdapterRunMode.ReadOnlyPreflightValue,
+            acquireControl: false,
+            enablePush: false,
+            minimumConfidence: 0.98);
+        using var client = adapterFactory.CreateClient();
+
+        var health = await client.GetFromJsonAsync<JsonElement>("health");
+        Assert.Equal(AdapterRunMode.ReadOnlyPreflightValue, health.GetProperty("runMode").GetString());
+
+        using var preflight = await client.GetAsync("physical/preflight");
+        Assert.Equal(HttpStatusCode.OK, preflight.StatusCode);
+        var result = await preflight.Content.ReadFromJsonAsync<PhysicalAgvPreflightResponse>();
+        Assert.NotNull(result);
+        Assert.False(result.DispatchPermitted);
+        Assert.NotNull(result.MapEvidence);
+        Assert.True(result.MapEvidence.IsControllerAuthoritative);
+        Assert.DoesNotContain("controller_map_evidence_unavailable", result.BlockingReasons);
+
+        using var dispatch = await client.PostAsJsonAsync(
+            $"tasks/{Guid.NewGuid():D}/dispatch",
+            new { targetStationId = "LM2", sourceStationId = "LM1" });
+        using var command = await client.PostAsJsonAsync(
+            "agvs/AGV-01/command",
+            new { command = "pause" });
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, dispatch.StatusCode);
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, command.StatusCode);
+
+        Assert.Equal([1060, 1110, 1101, 1021, 1000, 1300, 1301, 1302, 4011], controller.ApiIds);
+        Assert.DoesNotContain((ushort)4005, controller.ApiIds);
+        Assert.DoesNotContain((ushort)9300, controller.ApiIds);
+        Assert.DoesNotContain((ushort)3066, controller.ApiIds);
+        Assert.DoesNotContain((ushort)3067, controller.ApiIds);
+    }
+
     [Fact]
     public async Task Mes_dispatches_through_adapter_and_vendor_tcp_until_both_operator_confirmations()
     {
@@ -95,64 +138,178 @@ public sealed class VendorTcpTransportAcceptanceTests
     }
 
     private static ProfileConfiguration CreateProfile() => ProfileConfiguration.Default;
+
+    private static ProfileConfiguration CreatePhysicalAcceptanceProfile()
+    {
+        // WebApplicationFactory overlays indexed configuration keys onto the
+        // default JSON profile. Keep every indexed collection the same length
+        // so no simulator stations or edges survive the overlay.
+        var defaults = ProfileConfiguration.Default;
+        var stationIds = Enumerable.Range(1, defaults.Stations.Count)
+            .Select(index => $"LM{index}")
+            .ToArray();
+        var stations = defaults.Stations
+            .Select((station, index) => station with
+            {
+                Code = index + 1,
+                StationId = stationIds[index],
+                AgvStationId = stationIds[index],
+                Name = stationIds[index],
+                Type = "PhysicalAcceptance"
+            })
+            .ToArray();
+        var edges = defaults.Map.Edges
+            .Select((_, index) => new MapEdgeProfile
+            {
+                From = stationIds[index],
+                To = stationIds[(index + 1) % stationIds.Length],
+                Cost = 1,
+                Bidirectional = false
+            })
+            .ToArray();
+
+        return defaults with
+        {
+            Product = new ProductProfile { ProductId = "MES-AGV", DisplayName = "Physical acceptance", Version = "1.0" },
+            Agvs =
+            [
+                defaults.Agvs[0] with
+                {
+                    Model = "Vendor-AMR",
+                    Driver = "vendor-tcp",
+                    Endpoint = "tcp://127.0.0.1",
+                    MaxSpeedMetersPerSecond = 0.3,
+                    HomeStationId = stationIds[0]
+                }
+            ],
+            Stations = stations,
+            Map = new MapProfile { StationIds = stationIds, Edges = edges },
+            PhysicalAcceptance = new PhysicalAcceptanceProfile
+            {
+                ExpectedControlOwner = "MesControlAgv.Adapter",
+                MapSnapshot = new ControllerMapSnapshot
+                {
+                    MapName = "acceptance-map",
+                    Version = "1.0",
+                    Md5 = "e1b8d6b2b24362c1d44f1884c0abd8fb",
+                    CapturedAtUtc = new DateTimeOffset(2026, 8, 5, 0, 0, 0, TimeSpan.Zero),
+                    StationIds = stationIds,
+                    DirectedEdges = edges
+                        .Select(edge => new DirectedMapEdgeProfile { From = edge.From, To = edge.To })
+                        .ToArray()
+                },
+                Safety = new PhysicalAgvSafetyProfile
+                {
+                    MinimumLocalizationConfidence = 0.98,
+                    MaximumDispatchSpeedMetersPerSecond = 0.3,
+                    RequireControlOwnership = true,
+                    RequireNoEmergency = true,
+                    RequireNoBlocked = true,
+                    RequireNoFaults = true,
+                    RequireAutomaticMode = true
+                }
+            },
+            Features = defaults.Features with
+            {
+                UseSimulator = false,
+                EnableAutomaticDispatch = false,
+                EnableFieldNavigationAcceptance = false,
+                EnableTaskCancellation = false
+            }
+        };
+    }
 }
 
 internal sealed class VendorTcpAdapterFactory : WebApplicationFactory<AdapterProgram>
 {
     private readonly FakeVendorTcpController _controller;
     private readonly ProfileConfiguration _profile;
+    private readonly string _runMode;
+    private readonly bool _acquireControl;
+    private readonly bool _enablePush;
+    private readonly double _minimumConfidence;
     private readonly string _databasePath = Path.Combine(Path.GetTempPath(), $"adapter-vendor-tcp-{Guid.NewGuid():N}.db");
 
-    public VendorTcpAdapterFactory(FakeVendorTcpController controller, ProfileConfiguration profile)
+    public VendorTcpAdapterFactory(
+        FakeVendorTcpController controller,
+        ProfileConfiguration profile,
+        string runMode = AdapterRunMode.StandardValue,
+        bool acquireControl = true,
+        bool enablePush = false,
+        double minimumConfidence = 0.0)
     {
         _controller = controller;
         _profile = profile;
+        _runMode = runMode;
+        _acquireControl = acquireControl;
+        _enablePush = enablePush;
+        _minimumConfidence = minimumConfidence;
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         builder.UseEnvironment("Testing");
-        builder.ConfigureAppConfiguration((_, configuration) =>
+        var settings = new
         {
-            configuration.Sources.Clear();
-            var settings = new
+            Profile = _profile,
+            Adapter = new { RunMode = _runMode },
+            ConnectionStrings = new { Adapter = $"Data Source={_databasePath}" },
+            Agv = new
             {
-                Profile = _profile,
-                ConnectionStrings = new { Adapter = $"Data Source={_databasePath}" },
-                Agv = new
+                Driver = "vendor-tcp",
+                Tcp = new
                 {
-                    Driver = "vendor-tcp",
-                    Tcp = new
-                    {
-                        Host = "127.0.0.1",
-                        StatusPort = _controller.StatusPort,
-                        CommandPort = _controller.CommandPort,
-                        ControlPort = _controller.ControlPort,
-                        PushPort = _controller.PushPort,
-                        NickName = "MesControlAgv.Adapter",
-                        AcquireControl = true,
-                        EnablePush = false,
-                        MinimumConfidence = 0.0,
-                        RequestTimeoutMs = 1000,
-                        ConnectTimeoutMs = 1000
-                    }
+                    Host = "127.0.0.1",
+                    StatusPort = _controller.StatusPort,
+                    CommandPort = _controller.CommandPort,
+                    ControlPort = _controller.ControlPort,
+                    PushPort = _controller.PushPort,
+                    NickName = "MesControlAgv.Adapter",
+                    AcquireControl = _acquireControl,
+                    EnablePush = _enablePush,
+                    MinimumConfidence = _minimumConfidence,
+                    RequestTimeoutMs = 1000,
+                    ConnectTimeoutMs = 1000
                 }
-            };
-            configuration.AddJsonStream(new MemoryStream(JsonSerializer.SerializeToUtf8Bytes(settings)));
-        });
-        builder.UseSetting("ConnectionStrings:Adapter", $"Data Source={_databasePath}");
-        builder.UseSetting("Agv:Driver", "vendor-tcp");
-        builder.UseSetting("Agv:Tcp:Host", "127.0.0.1");
-        builder.UseSetting("Agv:Tcp:StatusPort", _controller.StatusPort.ToString());
-        builder.UseSetting("Agv:Tcp:CommandPort", _controller.CommandPort.ToString());
-        builder.UseSetting("Agv:Tcp:ControlPort", _controller.ControlPort.ToString());
-        builder.UseSetting("Agv:Tcp:PushPort", _controller.PushPort.ToString());
-        builder.UseSetting("Agv:Tcp:NickName", "MesControlAgv.Adapter");
-        builder.UseSetting("Agv:Tcp:AcquireControl", "true");
-        builder.UseSetting("Agv:Tcp:EnablePush", "false");
-        builder.UseSetting("Agv:Tcp:MinimumConfidence", "0");
-        builder.UseSetting("Agv:Tcp:RequestTimeoutMs", "1000");
-        builder.UseSetting("Agv:Tcp:ConnectTimeoutMs", "1000");
+            }
+        };
+
+        foreach (var setting in FlattenConfiguration(JsonSerializer.SerializeToElement(settings)))
+        {
+            builder.UseSetting(setting.Key, setting.Value);
+        }
+    }
+
+    private static IEnumerable<KeyValuePair<string, string>> FlattenConfiguration(
+        JsonElement element,
+        string? prefix = null)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    var key = string.IsNullOrEmpty(prefix) ? property.Name : $"{prefix}:{property.Name}";
+                    foreach (var setting in FlattenConfiguration(property.Value, key)) yield return setting;
+                }
+                break;
+            case JsonValueKind.Array:
+                var index = 0;
+                foreach (var item in element.EnumerateArray())
+                {
+                    foreach (var setting in FlattenConfiguration(item, $"{prefix}:{index}")) yield return setting;
+                    index++;
+                }
+                break;
+            case JsonValueKind.String:
+                yield return new KeyValuePair<string, string>(prefix!, element.GetString()!);
+                break;
+            case JsonValueKind.Number:
+            case JsonValueKind.True:
+            case JsonValueKind.False:
+                yield return new KeyValuePair<string, string>(prefix!, element.GetRawText());
+                break;
+        }
     }
 
     protected override void Dispose(bool disposing)
@@ -196,8 +353,13 @@ internal sealed class FakeVendorTcpController : IAsyncDisposable
         return Task.FromResult(packet.ApiId switch
         {
             1060 => Json($"{{\"ret_code\":0,\"locked\":{(_locked ? "true" : "false")},\"nick_name\":{JsonSerializer.Serialize(_locked ? "MesControlAgv.Adapter" : null)}}}"),
-            1101 => Json("{\"ret_code\":0,\"reloc_status\":1,\"confidence\":1.0,\"emergency\":false,\"blocked\":false,\"fatals\":[],\"errors\":[],\"fork_auto_flag\":true}"),
+            1101 => Json("{\"ret_code\":0,\"mode\":1,\"reloc_status\":1,\"confidence\":1.0,\"emergency\":false,\"blocked\":false,\"fatals\":[],\"errors\":[],\"fork_auto_flag\":true}"),
+            1021 => Json("{\"ret_code\":0,\"reloc_status\":1}"),
+            1000 => Json("{\"ret_code\":0,\"model\":\"Vendor-AMR\",\"version\":\"test-controller\"}"),
             1110 => TaskStatusResponse(packet),
+            1300 => Json("{\"ret_code\":0,\"current_map\":\"acceptance-map\",\"maps\":[\"acceptance-map\"]}"),
+            1301 => MapStationCatalogResponse(),
+            1302 => Json("{\"ret_code\":0,\"map_info\":[{\"name\":\"acceptance-map.smap\",\"md5\":\"e1b8d6b2b24362c1d44f1884c0abd8fb\"}]}"),
             _ => throw new InvalidOperationException($"Unexpected status API {packet.ApiId}.")
         });
     }
@@ -205,6 +367,16 @@ internal sealed class FakeVendorTcpController : IAsyncDisposable
     private Task<byte[]> HandleControlAsync(AdapterPacket packet)
     {
         RecordApi(packet.ApiId);
+        if (packet.ApiId == 4011)
+        {
+            using var request = JsonDocument.Parse(packet.Payload);
+            if (request.RootElement.GetProperty("map_name").GetString() != "acceptance-map")
+            {
+                throw new InvalidOperationException("Unexpected map download request.");
+            }
+            return Task.FromResult(MapDownloadResponse());
+        }
+
         if (packet.ApiId == 4005)
         {
             lock (_gate) _locked = true;
@@ -284,6 +456,51 @@ internal sealed class FakeVendorTcpController : IAsyncDisposable
     }
 
     private static byte[] Json(string value) => Encoding.UTF8.GetBytes(value);
+
+    private static byte[] MapStationCatalogResponse() => JsonSerializer.SerializeToUtf8Bytes(new
+    {
+        ret_code = 0,
+        stations = Enumerable.Range(1, 7).Select(index => new
+        {
+            id = $"LM{index}",
+            type = "LocationMark"
+        })
+    });
+
+    private static byte[] MapDownloadResponse()
+    {
+        var stationIds = Enumerable.Range(1, 7).Select(index => $"LM{index}").ToArray();
+        return JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            header = new
+            {
+                mapType = "smap",
+                mapName = "acceptance-map",
+                minPos = new { x = 0, y = 0 },
+                maxPos = new { x = 10, y = 10 },
+                resolution = 0.05,
+                version = "1.0"
+            },
+            advancedPointList = stationIds.Select((stationId, index) => new
+            {
+                instanceName = stationId,
+                pos = new { x = index, y = index }
+            }),
+            advancedCurveList = stationIds.Select((stationId, index) => new
+            {
+                instanceName = $"edge-{index + 1}",
+                startPos = new { instanceName = stationId, pos = new { x = index, y = index } },
+                endPos = new
+                {
+                    instanceName = stationIds[(index + 1) % stationIds.Length],
+                    pos = new { x = (index + 1) % stationIds.Length, y = (index + 1) % stationIds.Length }
+                },
+                controlPos1 = new { x = index, y = index },
+                controlPos2 = new { x = (index + 1) % stationIds.Length, y = (index + 1) % stationIds.Length },
+                property = Array.Empty<object>()
+            })
+        });
+    }
 
     public async ValueTask DisposeAsync()
     {

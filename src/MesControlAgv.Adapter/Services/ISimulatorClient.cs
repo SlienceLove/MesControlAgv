@@ -5,6 +5,7 @@ namespace MesControlAgv.Adapter.Services;
 public interface IAgvDeviceClient
 {
     Task EnsureControlAsync(CancellationToken cancellationToken);
+    Task<bool> ReleaseControlAsync(CancellationToken cancellationToken) => Task.FromResult(false);
     Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken);
     Task<AgvTaskResponse?> GetTaskAsync(Guid taskId, CancellationToken cancellationToken);
     Task<AgvTaskResponse> NavigateAsync(Guid taskId, string? sourceStationId, string stationId, CancellationToken cancellationToken);
@@ -37,6 +38,15 @@ public interface IPhysicalAgvDeviceClient
     Task<AgvSafetyReadinessResponse> GetSafetyReadinessAsync(CancellationToken cancellationToken);
 }
 
+/// <summary>
+/// Optional physical-driver capability for obtaining a complete, fresh and
+/// controller-authoritative map catalog without sending a control command.
+/// </summary>
+public interface IControllerMapEvidenceDeviceClient
+{
+    Task<ControllerMapEvidenceResponse?> GetControllerMapEvidenceAsync(CancellationToken cancellationToken);
+}
+
 public interface IAgvFleetDeviceClient
 {
     Task<IReadOnlyList<AgvSnapshotResponse>> GetFleetSnapshotAsync(CancellationToken cancellationToken);
@@ -64,6 +74,9 @@ public interface IAgvFleetDeviceClient
 
 public sealed class ControlUnavailableException(string owner)
     : InvalidOperationException($"AGV control owner is {owner}.");
+
+public sealed class ControlReleaseUnconfirmedException()
+    : InvalidOperationException("AGV control release was not confirmed by API 1060.");
 
 public sealed class SingleAgvFleetDeviceClient(string agvId, IAgvDeviceClient device) : IAgvFleetDeviceClient
 {

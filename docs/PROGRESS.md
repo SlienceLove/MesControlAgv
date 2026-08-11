@@ -33,15 +33,17 @@ dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1
 dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
-The post-merge Release build passed on 2026-08-10 with 0 warnings and 0 errors,
-and the combined solution test run passed **312/312 tests**. Coverage includes
+The Release build passed on 2026-08-11 with 0 warnings and 0 errors, and the
+combined solution test run passed **338/338 tests**: Domain 35, MES 45, Adapter
+82, WPF 150, E2E 12, Simulator 5, and Workflow Contract 9. Coverage includes
 WPF station/task contracts,
 workflow draft/validate/publish/version/dry-run APIs and audit readback,
 read-only map/readiness aggregation, timeout recovery without duplicate
 operation IDs, restart-resume reconciliation, multi-AGV contention, supervised
 field-navigation acceptance state transitions, and existing failure/retry,
 cancellation, pause/resume and full transport flow. Physical preflight remains
-fail-closed and never opens a device connection during offline verification.
+fail-closed and never opens a real AGV connection during offline verification;
+the E2E contract uses only a local fake TCP controller.
 
 ## Live verification
 
@@ -164,17 +166,17 @@ The historical Code Integrity events 3077/3033 reference policy ID `0283ac0f-fff
 
 ## Remaining boundary
 
-The vendor protocol is now implemented behind the Adapter driver boundary, but no physical robot has been connected yet. Before enabling `Agv:Driver=tcp`, confirm the robot IP, firmware, map station IDs and direct route edges, then validate relocation, control ownership, safety gates and mechanism DI/DO. MES lifecycle, task state, audit events, WPF control flow, and the MES-to-Adapter API contract remain unchanged.
+The vendor protocol is now implemented behind the Adapter driver boundary. Before enabling the canonical `Agv:Driver=vendor-tcp`, start with `Adapter:RunMode=read-only-preflight`, then confirm the robot IP, firmware, map station IDs and direct route edges and validate relocation, control ownership, safety gates and mechanism DI/DO. MES lifecycle, task state, audit events, WPF control flow, and the MES-to-Adapter API contract remain unchanged.
 
 ## Next session handoff
 
 1. Start WPF in Debug + Simulator mode, select configured source/target stations, create and explicitly dispatch a task, then verify pause/resume, arrival, pickup confirmation, dropoff arrival, dropoff confirmation, and `COMPLETED`; also verify known failures and communication exceptions show their reasons.
 2. If a future restart produces new project-specific Code Integrity 3077/3033 events, ask the administrator to approve a supplemental WDAC policy or provide a signed development build.
-3. Confirm the full physical-robot acceptance boundary before enabling `Agv:Driver=tcp`.
+3. Confirm the full physical-robot acceptance boundary before enabling `Agv:Driver=vendor-tcp`.
 4. Confirm the AGV IP address, firmware version, map name, and actual station IDs.
 5. Confirm the direct relationship between `source_id` and the map `id` field.
 6. Confirm relocation parameters, control-ownership fields, safety fields, and forklift/lift/roller DI/DO mappings.
-7. In an isolated environment, set `Agv:Driver=tcp` and run staged TCP connectivity, read-only status, control-ownership, and movement acceptance checks.
+7. In an isolated environment, set `Agv:Driver=vendor-tcp` and first run the startup-only `read-only-preflight`; control ownership and movement acceptance remain separate authorized stages after an Adapter restart.
 8. Keep Simulator as the default until the vendor values and on-site safety acceptance are complete.
 
 ## 2026-08-04 extension: AGV communications and batch task import
@@ -233,7 +235,7 @@ safety authorization exist.
 
 On 2026-08-04, the serial Debug and Release solution builds passed with 0 warnings and 0 errors. All 71 tests passed: Domain 12, MES 17, Adapter 16, WPF 18, E2E 7, and Simulator 4. The WPF XAML was also compiled successfully. Batch import parser coverage includes CSV quoting, UTF-8 BOM, XLSX shared strings/numeric cells, Chinese headers, validation issues, and priority/planned-time sorting.
 
-The extension has been verified against the Simulator path. Physical AGV connection and vendor-specific on-site acceptance remain outstanding; before using `Agv:Driver=tcp`, validate the robot IP, firmware, map/station IDs, control ownership, safety gates, and movement behavior in an isolated acceptance environment.
+The extension has been verified against the Simulator path. Physical AGV connection and vendor-specific on-site acceptance remain outstanding; before using the canonical `Agv:Driver=vendor-tcp` (the legacy `tcp` alias is accepted only for compatibility), validate the robot IP, firmware, map/station IDs, control ownership, safety gates, and movement behavior in an isolated acceptance environment.
 
 ## 2026-08-04 extension: task monitor date filtering and timestamps
 
@@ -446,7 +448,7 @@ This entry records architecture preparation only. No production refactor has bee
 - Runtime 仍是 MVP admission/planning 边界，只产生第一条 `WorkflowNextStepRequest`；后续节点执行、AGV 调度、任务状态联动、分支选择、循环和完整恢复编排不在本轮范围内。
 - SQLite 兼容处理使用安全的启动建表 SQL，而非 EF migration history；若未来需要跨数据库部署或复杂 schema 演进，仍应引入正式迁移流程。
 - 当前 RequestId 幂等在持久化主键和指纹基础上实现；尚未扩展为分布式锁/队列或完整通用 Workflow 平台。
-- 未连接真实 AGV `192.168.200.151`，未使用地图 `20260805111440651.smap` 发起任何连接或控制；真实参数仍只记录在 `docs/AGV-TCP-ADAPTER.md`，Simulator 默认配置保持不变（`Agv:Driver=simulator`）。
+- 未连接真实 AGV `[已脱敏私网地址]`，未使用地图 `20260805111440651.smap` 发起任何连接或控制；真实参数仅保留在现场受控配置中，Simulator 默认配置保持不变（`Agv:Driver=simulator`）。
 
 本 checkpoint 仅更新本地进度文档，未执行 commit 或 push。
 ## 2026-08-05 physical AGV live integration checkpoint
@@ -455,11 +457,11 @@ This entry records architecture preparation only. No production refactor has bee
 
 ### 当前已确认
 
-- AGV 地址：`192.168.200.151`；RoboshopPro 进程 PID：`22872`。
+- AGV 地址：`[已脱敏私网地址]`；RoboshopPro 进程 PID：`22872`。
 - 控制器地图：`guangzhou606`，版本 `1.0.6`，MD5 `e1b8d6b2b24362c1d44f1884c0abd8fb`。
 - 控制器站点：`LM1`、`LM2`、`LM3`、`LM4`、`LM5`。
 - 已确认的有向路径：`LM1 -> LM2`、`LM2 -> LM3`、`LM1 -> LM4`、`LM4 -> LM1`、`LM4 -> LM5`、`LM5 -> LM4`、`LM1 -> LM5`。没有直接的 `LM5 -> LM1`。
-- 控制权由 `MesControlAgv.Adapter` 持有，控制器报告来源地址为 `192.168.200.142`。
+- 控制权由 `MesControlAgv.Adapter` 持有，控制器报告来源地址为 `[已脱敏私网地址]`。
 - 实时状态正常：定位成功，置信度约 `0.98`，无 `emergency`、`blocked`、`errors` 或 `fatals`。
 
 ### 已完成的实车通信和导航测试
@@ -541,7 +543,7 @@ No physical AGV was connected, commanded, or moved during this verification. Exi
 
 1. **物理验收配置和门禁**
    - 已新增 `docs/physical-acceptance/adapter.physical-acceptance.example.json`、README 和 `FIELD-ACCEPTANCE-RECORD.md`；示例不含真实控制器地址或凭据。
-   - Profile 已记录控制器地图快照、直接有向边和安全阈值；Adapter 组合根对 physical Profile 强制 `vendor-tcp`、匹配控制客户端昵称、`AcquireControl=true` 和最低定位置信度。
+   - Profile 已记录控制器地图快照、直接有向边和安全阈值；当时 standard 模式的组合根对 physical Profile 强制 `vendor-tcp`、匹配控制客户端昵称、`AcquireControl=true` 和最低定位置信度。2026-08-11 新增的 read-only 模式改为强制 `AcquireControl=false`。
    - 离线 JSON 解析通过；`ProfileConfigurationTests` 通过 7/7。
 
 2. **Driver/组合根离线合同覆盖**
@@ -651,3 +653,308 @@ This checkpoint records the work completed before the next development session w
 3. Connect the editor to remote draft/validate/publish/version APIs with explicit loading, validation-error, publish-success, and service-unavailable states.
 4. Run the full solution Build/Test and the isolated Simulator positive, failure-retry, and cancellation scenarios.
 5. Keep physical acceptance **NO-GO** until a new read-only preflight confirms the live map fingerprint, station catalog, directed edges, automatic mode, control ownership, and safety gates.
+
+## 2026-08-11 offline read-only preflight hardening (local only)
+
+This checkpoint completes the offline debugging sequence for the next physical
+AGV session. No physical AGV was connected, queried, controlled, dispatched,
+cancelled, or moved.
+
+### Completed steps 1-5
+
+1. **Boundary and mode contract**: added startup-only `Adapter:RunMode` values
+   `standard` and `read-only-preflight`. The mode is exposed by `/health`, is
+   not mutable from WPF or HTTP, and requires an Adapter restart to change.
+2. **HTTP fail-closed gate**: read-only preflight accepts only `GET`/`HEAD` and
+   returns `405` for every state-changing request.
+3. **TCP mutation guards**: control acquisition, push configuration,
+   navigation, pause/resume, cancellation and dispatch are rejected before any
+   mutation API can be opened in read-only mode.
+4. **Physical startup validation**: read-only mode requires `vendor-tcp`,
+   `AcquireControl=false`, `EnablePush=false`, and automatic dispatch, field
+   navigation and cancellation disabled. The physical template no longer stores
+   a private controller address; the approved host must be injected at deploy
+   time.
+5. **Controller-authoritative evidence contract**: preflight now compares map
+   name/version/MD5, station catalog and directed edges when a vendor read-only
+   evidence source exists, and fails closed with
+   `controller_map_evidence_unavailable` when it does not.
+
+The focused Adapter suite passed **82/82**, the E2E suite passed **12/12**, and
+the complete Release solution passed **338/338**: Domain 35, MES 45, Adapter 82,
+WPF 150, E2E 12, Simulator 5, and Workflow Contract 9. The Release solution
+build completed with 0 warnings and 0 errors from an external temporary output
+directory because existing local service processes locked their normal Release
+DLLs; those processes were not stopped. The external E2E repository-root test
+was rerun from the worktree Release output and passed. The physical acceptance
+boundary remains **NO-GO** until the next authorized session obtains fresh
+controller map evidence and safety-state confirmation.
+
+### Next authorized on-site order
+
+1. Isolate the work area, confirm emergency-stop/manual takeover coverage, and
+   power the vehicle only after the site owner authorizes the read-only session.
+2. Start the Adapter with `Adapter:RunMode=read-only-preflight` and inject the
+   approved controller host through protected deployment configuration. Confirm
+   `/health` reports the expected mode.
+3. Call only `/physical/preflight` and preserve the response, raw vendor
+   requests/responses, timestamps, controller ownership, active-task list,
+   automatic-mode signal, and safety status in the acceptance record.
+4. Obtain a controller-authoritative map export/query. Compare map name,
+   version, MD5, station catalog and every direct directed edge to the Profile;
+   any mismatch or missing evidence is investigation-only and blocks movement.
+5. Stop and review the evidence with the site owner. Do not switch to standard
+   mode, acquire control, or send a low-speed route in the same step unless a
+   separate written authorization and safety checklist explicitly releases it.
+
+The implementation of the vendor map-evidence read API and the later supervised
+single-route acceptance remain the next development tasks; this offline phase
+does not claim movement readiness.
+
+## 2026-08-11 physical read-only preflight result (status port only)
+
+This checkpoint is newer than the offline-only checkpoint above. A bounded
+read-only preflight reached the real controller through the redacted host's
+status port `19204`. The temporary Adapter ran with
+`Adapter:RunMode=read-only-preflight` and was stopped immediately after the
+evidence was captured. No controller address, temporary path, or process ID is
+recorded here.
+
+- The controller reported the AGV online at station `LM1`, with no active task
+  and control owner `none`.
+- Emergency and blocked state were both `false`; fatal and error counts were
+  `0/0`. Localization confidence was `0.9696`.
+- The response did not provide the map name, map MD5, or localization-complete
+  signal. Automatic operating mode remained `unknown`. The confidence value by
+  itself therefore did not satisfy the localization gate.
+- `DispatchPermitted` remained `false`. The complete blocking-reason set was
+  `adapter_does_not_hold_control`, `controller_map_name_mismatch`,
+  `controller_map_md5_mismatch`, `controller_map_evidence_unavailable`,
+  `localization_not_confirmed`, `vehicle_automatic_mode_unconfirmed`, and
+  `automatic_dispatch_disabled`.
+- Only the read-only status port was contacted. No control acquisition, push
+  configuration, navigation, pause/resume, cancellation, or task dispatch was
+  attempted, and the real AGV did not move.
+
+The result remains **NO-GO** for movement. Missing map fields must not be
+replaced from a local `.smap` or historical snapshot, `control=none` must not be
+worked around by acquiring control in the same read-only session, and
+`automatic=unknown` must not be inferred as automatic mode. The next decision
+requires controller-authoritative map evidence plus vendor-confirmed
+localization and automatic-mode semantics under a separately approved scope.
+
+## 2026-08-11 controller map reader and physical config isolation (local only)
+
+- The physical startup path now replaces the default JSON configuration with
+  `appsettings.PhysicalAcceptance.json` before applying environment variables
+  and command-line values. This fixes the discovered indexed-array merge that
+  retained trailing Simulator stations and edges in the physical Profile.
+- `TcpAgvClient` now implements controller-authoritative map evidence with the
+  documented read-only APIs `1300`, `1301`, `1302`, and `4011`. The response
+  combines the active map name, controller MD5, current-map station catalog,
+  downloaded-map version, and direct directed edges with a UTC observation
+  timestamp. The full-map payload is bounded to 16 MiB in the physical template.
+- Map API failures, malformed downloads, missing MD5, or inconsistent map and
+  station catalogs fail closed. Read-only mode still blocks control acquisition,
+  push configuration, navigation, pause/resume, cancellation, and every HTTP
+  state change.
+- Focused Adapter verification passed **49/49**. The complete Release solution
+  build passed with 0 warnings and 0 errors, and the final suite passed
+  **341/341**: Domain 35, MES 45, Adapter 85, WPF 150, E2E 12, Simulator 5,
+  and Workflow Contract 9. The read-only E2E fake controller observed exactly
+  `1060`, `1110`, `1101`, `1300`, `1301`, `1302`, and `4011`, with no mutation
+  API. The repository-root E2E check was run from an isolated output directory
+  inside the worktree because external temporary outputs cannot locate the
+  solution file by design.
+- A separate process smoke test started the built Adapter with the real
+  `PhysicalAcceptance` configuration path, an offline placeholder host, an
+  isolated local database, and `read-only-preflight`. `/health` passed; process
+  connection inspection showed only the local HTTP listener and health request,
+  with no outbound AGV TCP connection. The process was then stopped.
+- No new real-controller request was made during this implementation. The first
+  real preflight remains the status-port-only result above. Opening the real
+  controller's `19207` channel for documented API `4011` requires a new explicit
+  authorization; movement remains **NO-GO** regardless of the map result until
+  localization and automatic-mode semantics are also confirmed.
+
+## 2026-08-11 second physical read-only preflight (map evidence obtained)
+
+- After explicit authorization, an isolated `read-only-preflight` Adapter used
+  only the redacted controller's `19204` and `19207` ports. It called
+  `1060/1110/1101/1300/1301/1302/4011`; no command or Push connection was
+  opened, no control was acquired, and the AGV did not move. The process was
+  stopped immediately after evidence capture.
+- The first `1302` request used the active base map name and received vendor
+  error `40051 no this map file`. The client was corrected to prefer the exact
+  stored filename returned by `1300.maps` and to retry the `.smap` form only for
+  that documented not-found result. Offline base-name/filename/fail-closed tests
+  passed before the authorized request was repeated.
+- The repeated preflight obtained controller-authoritative evidence:
+  `guangzhou606`, version `1.0.6`, MD5
+  `816e68b9a367d9c8d5eaee9331a7ef58`, stations `LM1..LM5`, and nine direct
+  directed edges. The seven historical edges remain, plus `LM3 -> LM1` and
+  `LM1 -> LM3`.
+- The vehicle remained online at `LM1`, idle, control owner `none`, emergency
+  and blocked both false, Fatal/Error `0/0`, and localization confidence
+  `0.9639`. The committed historical Profile does not match the current MD5 or
+  directed-edge set, so movement remains **NO-GO**.
+- Vendor documentation review identified `1101.mode` as the authoritative
+  vehicle manual/automatic field and read-only API `1021` as the dedicated
+  localization status query. Offline parsing and test coverage were added;
+  another real `1021` request requires explicit scope approval before use.
+
+## 2026-08-11 third physical preflight and dispatch-order hardening
+
+- The separately authorized `1021` query returned `reloc_status=1`; the vehicle
+  remained online and idle at `LM1`, with confidence `0.9639`, no emergency or
+  block, and Fatal/Error `0/0`. Localization is therefore confirmed.
+- Raw controller evidence proved that API `1004` is a position query, not an
+  operating-mode query. A fresh `1101` response contained 2279 bytes and more
+  than 70 top-level status fields but no `mode`. A passive, unconfigured
+  `19301` frame also omitted `mode`. Read-only `1001`, deprecated `1003`, and
+  documented `1100` filtering with `keys:["mode"]` supplied no mode value.
+  No `9300` Push configuration was sent.
+- The vendor API reference documents `1101.mode` as the authoritative vehicle
+  manual/automatic value (`0=manual`, `1=automatic`). `dispatch_mode` and
+  `fork_auto_flag` retain their separate meanings and are not used as a
+  substitute. This controller firmware therefore cannot provide automatic-mode
+  proof through the observed status APIs, and the gate remains fail-closed.
+- The physical Profile now matches the authorized controller snapshot: map
+  `guangzhou606`, version `1.0.6`, MD5
+  `816e68b9a367d9c8d5eaee9331a7ef58`, stations `LM1..LM5`, and all nine direct
+  directed edges. The committed template still uses a placeholder host and
+  keeps read-only mode, control acquisition, field navigation, automatic
+  dispatch, and cancellation disabled.
+- Field-navigation dispatch now performs two safety assessments. It first
+  checks every read-only gate except ownership, requests control only if that
+  assessment passes, then repeats the complete assessment with ownership before
+  entering dispatch. An active task is now an explicit preflight blocker. Tests
+  prove that an automatic-mode or other pre-control failure causes zero control
+  acquisition and zero navigation calls.
+- Verification passed: complete Debug solution **347/347** (Domain 35, MES 45,
+  Adapter 91, WPF 150, E2E 12, Simulator 5, Workflow Contract 9), plus isolated
+  Release Adapter **91/91** with 0 warnings and 0 errors. The normal Release
+  output remains locked by the existing local services, which were not stopped.
+
+No `4005` control acquisition or `3066` navigation request was sent in this
+checkpoint. Movement remains **NO-GO** until the on-site operator explicitly
+confirms the vehicle itself is in automatic mode and that evidence is represented
+by an approved, auditable field-acceptance mechanism; permission alone does not
+replace a missing safety-state fact.
+
+### Power-cycle revalidation
+
+After the vehicle was powered off and restarted, a new isolated
+`read-only-preflight` session revalidated the complete live state. The vehicle
+was online and idle at `LM1`, control owner `none`, localization status `1`,
+confidence `0.9651`, emergency/blocked `false/false`, and Fatal/Error `0/0`.
+The controller-authoritative map still exactly matched the updated Profile:
+`guangzhou606`, version `1.0.6`, MD5
+`816e68b9a367d9c8d5eaee9331a7ef58`, five stations and nine direct directed
+edges. The only normalized blockers were
+`adapter_does_not_hold_control`, `vehicle_automatic_mode_unconfirmed`, and
+`automatic_dispatch_disabled`. The restarted firmware still omitted
+`1101.mode`. No mutation API was called; the temporary Adapter was stopped and
+its local port was released after evidence capture.
+
+## 2026-08-11 W500-SZ mode policy and live read-only recheck
+
+- The two supplied panel photos were recorded as textual field evidence only:
+  no task, correct localization, zero linear/angular velocity, confidence about
+  `0.97`, and no manual/automatic chassis-mode field or switch. The image files
+  are not stored in the repository.
+- The approved physical profile now identifies model `W500-SZ` and explicitly
+  uses `vehicleOperatingModePolicy=not-exposed-by-approved-model` with
+  `requireAutomaticMode=false`. The default for every other profile remains
+  `vendor-field-required`; an explicit `mode=0/manual` always blocks.
+- Read-only safety readiness now queries vendor API `1000` and records model and
+  controller version. Every physical `3066` segment now carries the approved
+  `max_speed=0.3` limit. Profile validation rejects an implicit or unknown mode
+  policy, and preflight records the selected policy for audit.
+- After the power-cycle, the isolated live Adapter returned model `W500-SZ`,
+  version `v3.4.8.0011`, map `guangzhou606` / `1.0.6` /
+  `816e68b9a367d9c8d5eaee9331a7ef58`, `LM1..LM5`, nine direct edges,
+  `reloc_status=1`, confidence `0.9651`, emergency/blocked `false/false`,
+  Fatal/Error `0/0`, and no active task. The normalized blockers were only
+  `adapter_does_not_hold_control` and `automatic_dispatch_disabled`.
+- Verification passed: Debug solution **352/352** (Domain 37, MES 45,
+  Adapter 94, WPF 150, E2E 12, Simulator 5, Workflow Contract 9). No
+  mutation API was called during this recheck. The next controlled step is a
+  separately restarted standard-mode session and one supervised `LM1 -> LM2`
+  route at `0.3 m/s`; automatic batch dispatch remains disabled.
+
+## 2026-08-11 supervised-route pause checkpoint
+
+- One standard-mode acceptance used ID
+  `9fea739a-6f1e-402d-b8c2-fd70f4977c5e` for `LM1 -> LM2` at the configured
+  `0.3 m/s` limit. Control acquisition succeeded, but the vehicle stayed at
+  `LM1`, no active task appeared, the requested task read as
+  `404 (NotFound)`, and the global `1110` list was empty. No cancellation or
+  repeat dispatch was issued.
+- The operator released control in the robot test software. A subsequent
+  read-only `1060` response confirmed `locked=false`; the last verified site
+  state is no control owner, no active task, and a stopped vehicle at `LM1`.
+- Offline diagnosis found that the client treated a non-empty pre-dispatch
+  `1110 status=404` item as an existing task and returned `unknown` before
+  writing `3066`. The old session did not retain raw mutation audit output, so
+  no historical `3066 ret_code` is inferred or claimed.
+- The repair now permits an all-`404` result only before the first command
+  attempt. Once a write is attempted, `404` or an empty result becomes
+  `unknown` with `dispatch_not_confirmed_by_1110`, and the same task ID is
+  never resent automatically. Persisted active Adapter tasks also become
+  `unknown` when device status disappears.
+- Allowlisted mutation audit logging now preserves the `3066` request summary
+  and response `ret_code`, `err_msg`, and `create_on`, without recording the
+  controller host or arbitrary response content.
+- The vendor PDF confirms `3066.move_task_list`, per-item optional
+  `max_speed` in `m/s`, and no-payload control release API `4006` on port
+  `19207`, which can release only the caller's own control.
+- Completed verification before pausing: TCP client tests `20/20`, all Adapter
+  tests `96/96`, and vendor TCP E2E tests `2/2`.
+- Work is paused with no live controller connection. Full Debug, isolated
+  Release Adapter verification, remaining acceptance-document updates, and a
+  new live preflight/authorization are still pending. No commit or push has
+  been made.
+
+Detailed continuation notes are in
+[`2026-08-11-route-attempt-pause-checkpoint.md`](physical-acceptance/2026-08-11-route-attempt-pause-checkpoint.md).
+
+## 2026-08-11 control-release implementation checkpoint
+
+- Implemented vendor API `4006` control release on the control channel
+  (`19207`) with an empty payload. `ReleaseControlAsync` is fail-closed,
+  checks mutation mode before opening a channel, releases only when the
+  Adapter owns control, records allowlisted request/response mutation audit,
+  and confirms release with API `1060`.
+- Added the unauthenticated local operator endpoint
+  `POST /agv/control/release`. Read-only-preflight middleware rejects it with
+  `405`; the client-side mutation guard provides a second fail-closed barrier.
+  The interface extension has a backward-compatible default no-op for existing
+  simulator/test clients.
+- Field-navigation acceptance now acquires control between two preflight
+  assessments. If any exception occurs after control acquisition and before
+  `DispatchCoreAsync` (including transport and cancellation exceptions), it
+  attempts one rollback with `CancellationToken.None`, logs a release failure,
+  and rethrows the original exception. No automatic release was added to
+  `DispatchCoreAsync`, timeout/unknown handling, reconciliation, or any path
+  after a possible `3066` write.
+- Added coverage for non-owner idempotency, one empty `4006` request and
+  `1060` confirmation, non-zero and unconfirmed release failures,
+  read-only-preflight rejection before opening a channel, post-control
+  preflight rejection, AGV/station mismatch, transport failure, cancellation,
+  and the no-release-after-dispatch boundary.
+- Verification passed: Adapter tests **106/106**, vendor TCP E2E tests
+  **2/2**, solution build **0 warnings / 0 errors**, and `git diff --check`.
+  All verification used loopback/fake controllers; no real controller was
+  contacted and no running process was stopped.
+- The automated Codex adversarial-review command was unavailable because the
+  switched provider returned `503 Service Unavailable` after all channels were
+  circuit-broken. Manual adversarial review found and the implementation fixed
+  the post-control transport/cancellation control-leak paths. A separate
+  concurrent duplicate-release/audit-ordering concern remains as follow-up;
+  it does not add a post-`3066` release path.
+- Physical acceptance remains **NO-GO**. The committed physical template is
+  still `read-only-preflight` with automatic dispatch disabled; a fresh
+  authorized site preflight, renewed movement authorization, and a new unique
+  acceptance ID are required before any supervised route attempt. No commit
+  or push has been made.

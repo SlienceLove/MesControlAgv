@@ -290,8 +290,29 @@ public sealed class ProfileConfigurationValidator : IProfileConfigurationValidat
             errors.Add(new("physicalAcceptance.safety.requireNoBlocked", "Blocked-clear gate is required."));
         if (!safety.RequireNoFaults)
             errors.Add(new("physicalAcceptance.safety.requireNoFaults", "Fault-clear gate is required."));
-        if (!safety.RequireAutomaticMode)
-            errors.Add(new("physicalAcceptance.safety.requireAutomaticMode", "Automatic-mode gate is required."));
+
+        var modePolicy = safety.VehicleOperatingModePolicy?.Trim();
+        if (safety.RequireAutomaticMode)
+        {
+            if (!string.Equals(
+                    modePolicy,
+                    VehicleOperatingModePolicies.VendorFieldRequired,
+                    StringComparison.Ordinal))
+            {
+                errors.Add(new(
+                    "physicalAcceptance.safety.vehicleOperatingModePolicy",
+                    $"Automatic-mode validation requires policy '{VehicleOperatingModePolicies.VendorFieldRequired}'."));
+            }
+        }
+        else if (!string.Equals(
+                     modePolicy,
+                     VehicleOperatingModePolicies.NotExposedByApprovedModel,
+                     StringComparison.Ordinal))
+        {
+            errors.Add(new(
+                "physicalAcceptance.safety.requireAutomaticMode",
+                $"Disabling the vendor automatic-mode field requires policy '{VehicleOperatingModePolicies.NotExposedByApprovedModel}'."));
+        }
     }
 
     private static bool IsMd5(string? value) =>

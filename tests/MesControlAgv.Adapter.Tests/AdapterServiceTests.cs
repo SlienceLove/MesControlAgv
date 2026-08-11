@@ -1,7 +1,9 @@
+using System.Net.Sockets;
 using MesControlAgv.Contracts;
 using MesControlAgv.Adapter.Data;
 using MesControlAgv.Adapter.Entities;
 using MesControlAgv.Adapter.Services;
+using MesControlAgv.Domain.Profiles;
 using Microsoft.EntityFrameworkCore;
 
 namespace MesControlAgv.Adapter.Tests;
@@ -157,6 +159,141 @@ public class AdapterServiceTests
     }
 
     [Fact]
+    public async Task Field_navigation_failure_before_control_does_not_acquire_control()
+    {
+        var simulator = CreateReadyPhysicalSimulator();
+        simulator.Snapshot = simulator.Snapshot with { ControlOwner = "none" };
+        simulator.Readiness = simulator.Readiness with
+        {
+            VehicleOperatingMode = "unknown",
+            VehicleOperatingModeSource = null
+        };
+        var service = CreatePhysicalAcceptanceService(simulator);
+        var command = new FieldNavigationDispatchCommand("AGV-01", "LM1", "LM2", ["LM1", "LM2"]);
+
+        var exception = await Assert.ThrowsAsync<PhysicalPreflightRejectedException>(() =>
+            service.DispatchFieldNavigationAcceptanceAsync(Guid.NewGuid(), command, CancellationToken.None));
+
+        Assert.Contains("vehicle_automatic_mode_unconfirmed", exception.Reasons);
+        Assert.Equal(0, simulator.EnsureControlCalls);
+        Assert.Equal(0, simulator.ReleaseControlCalls);
+        Assert.Equal(0, simulator.NavigateCalls);
+    }
+
+    [Fact]
+    public async Task Field_navigation_acquires_control_between_two_preflight_assessments()
+    {
+        var simulator = CreateReadyPhysicalSimulator();
+        simulator.Snapshot = simulator.Snapshot with { ControlOwner = "none" };
+        simulator.AcquireControlOnEnsure = true;
+        var service = CreatePhysicalAcceptanceService(simulator);
+        var command = new FieldNavigationDispatchCommand("AGV-01", "LM1", "LM2", ["LM1", "LM2"]);
+
+        var result = await service.DispatchFieldNavigationAcceptanceAsync(
+            Guid.NewGuid(),
+            command,
+            CancellationToken.None);
+
+        Assert.Equal("moving", result.State);
+        Assert.Equal(2, simulator.EnsureControlCalls);
+        Assert.Equal(2, simulator.ReadinessCalls);
+        Assert.Equal(2, simulator.MapEvidenceCalls);
+        Assert.Equal(1, simulator.NavigateCalls);
+        Assert.Equal(0, simulator.ReleaseControlCalls);
+    }
+
+    [Fact]
+    public async Task Field_navigation_post_control_rejection_releases_control_without_masking_original_reasons()
+    {
+        var simulator = CreateReadyPhysicalSimulator();
+        simulator.Snapshot = simulator.Snapshot with { ControlOwner = "none" };
+        simulator.AcquireControlOnEnsure = true;
+        simulator.RejectAfterFirstReadiness = true;
+        simulator.ReleaseControlException = new InvalidOperationException("release transport failed");
+        var service = CreatePhysicalAcceptanceService(simulator);
+        var command = new FieldNavigationDispatchCommand("AGV-01", "LM1", "LM2", ["LM1", "LM2"]);
+
+        var exception = await Assert.ThrowsAsync<PhysicalPreflightRejectedException>(() =>
+            service.DispatchFieldNavigationAcceptanceAsync(Guid.NewGuid(), command, CancellationToken.None));
+
+        Assert.Contains("vehicle_automatic_mode_unconfirmed", exception.Reasons);
+        Assert.Equal(1, simulator.EnsureControlCalls);
+        Assert.Equal(1, simulator.ReleaseControlCalls);
+        Assert.Equal(0, simulator.NavigateCalls);
+    }
+
+    [Fact]
+    public async Task Field_navigation_post_control_station_mismatch_releases_control_and_preserves_exception()
+    {
+        var simulator = CreateReadyPhysicalSimulator();
+        simulator.Snapshot = simulator.Snapshot with { ControlOwner = "none" };
+        simulator.AcquireControlOnEnsure = true;
+        simulator.SnapshotAfterControl = simulator.Snapshot with
+        {
+            ControlOwner = "adapter",
+            CurrentStationId = "LM2"
+        };
+        var service = CreatePhysicalAcceptanceService(simulator);
+        var command = new FieldNavigationDispatchCommand("AGV-01", "LM1", "LM2", ["LM1", "LM2"]);
+
+        var exception = await Assert.ThrowsAsync<AgvUnavailableException>(() =>
+            service.DispatchFieldNavigationAcceptanceAsync(Guid.NewGuid(), command, CancellationToken.None));
+
+        Assert.Contains("not LM1", exception.Message);
+        Assert.Equal(1, simulator.ReleaseControlCalls);
+        Assert.Equal(0, simulator.NavigateCalls);
+    }
+
+    [Fact]
+    public async Task Field_navigation_post_control_transport_failure_releases_control_and_preserves_exception()
+    {
+        var simulator = CreateReadyPhysicalSimulator();
+        simulator.Snapshot = simulator.Snapshot with { ControlOwner = "none" };
+        simulator.AcquireControlOnEnsure = true;
+        var transportException = new SocketException((int)SocketError.ConnectionReset);
+        simulator.PostControlPreflightException = transportException;
+        var service = CreatePhysicalAcceptanceService(simulator);
+        var command = new FieldNavigationDispatchCommand("AGV-01", "LM1", "LM2", ["LM1", "LM2"]);
+
+        var exception = await Assert.ThrowsAsync<SocketException>(() =>
+            service.DispatchFieldNavigationAcceptanceAsync(Guid.NewGuid(), command, CancellationToken.None));
+
+        Assert.Same(transportException, exception);
+        Assert.Equal(1, simulator.ReleaseControlCalls);
+        Assert.Equal(0, simulator.NavigateCalls);
+    }
+
+    [Fact]
+    public async Task Field_navigation_post_control_cancellation_releases_control_and_preserves_exception()
+    {
+        var simulator = CreateReadyPhysicalSimulator();
+        simulator.Snapshot = simulator.Snapshot with { ControlOwner = "none" };
+        simulator.AcquireControlOnEnsure = true;
+        var cancellationException = new OperationCanceledException("post-control preflight canceled");
+        simulator.PostControlPreflightException = cancellationException;
+        var service = CreatePhysicalAcceptanceService(simulator);
+        var command = new FieldNavigationDispatchCommand("AGV-01", "LM1", "LM2", ["LM1", "LM2"]);
+
+        var exception = await Assert.ThrowsAsync<OperationCanceledException>(() =>
+            service.DispatchFieldNavigationAcceptanceAsync(Guid.NewGuid(), command, CancellationToken.None));
+
+        Assert.Same(cancellationException, exception);
+        Assert.Equal(1, simulator.ReleaseControlCalls);
+        Assert.Equal(0, simulator.NavigateCalls);
+    }
+
+    [Fact]
+    public async Task Standard_simulator_dispatch_does_not_release_control()
+    {
+        var simulator = new FakeSimulatorClient();
+        var service = CreateService(simulator);
+
+        await service.DispatchAsync(Guid.NewGuid(), "SAMPLE_01", CancellationToken.None);
+
+        Assert.Equal(0, simulator.ReleaseControlCalls);
+    }
+
+    [Fact]
     public async Task Busy_agv_is_rejected_before_a_new_navigation_command()
     {
         var simulator = new FakeSimulatorClient
@@ -204,6 +341,23 @@ public class AdapterServiceTests
         Assert.NotNull(task);
         Assert.Equal("arrived", task.State);
         Assert.Equal(1, simulator.StatusCalls);
+    }
+
+    [Fact]
+    public async Task Get_task_marks_active_dispatch_unknown_when_device_status_is_absent()
+    {
+        var taskId = Guid.NewGuid();
+        var simulator = new FakeSimulatorClient();
+        var service = CreateService(simulator);
+        await service.DispatchAsync(taskId, "SAMPLE_01", CancellationToken.None);
+
+        var task = await service.GetAsync(taskId, CancellationToken.None);
+
+        Assert.NotNull(task);
+        Assert.Equal("unknown", task.State);
+        Assert.Equal("dispatch_not_confirmed_by_1110", task.LastError);
+        Assert.Equal(1, simulator.StatusCalls);
+        Assert.Equal(1, simulator.NavigateCalls);
     }
 
     [Fact]
@@ -314,6 +468,107 @@ public class AdapterServiceTests
         return (new AdapterService(database, simulator, profile: profile), database);
     }
 
+    private static AdapterService CreatePhysicalAcceptanceService(FakeSimulatorClient simulator)
+    {
+        var options = new DbContextOptionsBuilder<AdapterDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+        var database = new AdapterDbContext(options);
+        var profile = CreatePhysicalAcceptanceProfile();
+        var preflight = new PhysicalAcceptancePreflightService(simulator, profile);
+        return new AdapterService(
+            database,
+            simulator,
+            profile: profile,
+            physicalPreflight: preflight);
+    }
+
+    private static FakeSimulatorClient CreateReadyPhysicalSimulator() => new()
+    {
+        Snapshot = new AgvSnapshotResponse(true, "adapter", "LM1", null, "AGV-01"),
+        Readiness = new AgvSafetyReadinessResponse(
+            VehicleOperatingMode: "automatic",
+            VehicleOperatingModeSource: "vendor-1101-mode",
+            MapName: null,
+            MapMd5: null,
+            ForkAutomatic: null,
+            DispatchMode: null,
+            ManualBlock: false,
+            SrcRelease: null,
+            Emergency: false,
+            Blocked: false,
+            FatalCount: 0,
+            ErrorCount: 0,
+            RelocationStatus: 1,
+            LocalizationConfidence: 0.99,
+            ObservedAtUtc: DateTimeOffset.UtcNow),
+        MapEvidence = new ControllerMapEvidenceResponse(
+            IsControllerAuthoritative: true,
+            Source: "vendor-tcp:1300,1301,1302,4011",
+            MapName: "acceptance-map",
+            Version: "1.0",
+            Md5: "816e68b9a367d9c8d5eaee9331a7ef58",
+            StationIds: ["LM1", "LM2"],
+            DirectedEdges: [new ControllerDirectedEdgeResponse("LM1", "LM2")],
+            ObservedAtUtc: DateTimeOffset.UtcNow)
+    };
+
+    private static ProfileConfiguration CreatePhysicalAcceptanceProfile() => new()
+    {
+        Product = new ProductProfile { ProductId = "MES-AGV", DisplayName = "Tests", Version = "1.0" },
+        Agvs =
+        [
+            new AgvProfile
+            {
+                AgvId = "AGV-01",
+                Model = "Vendor-AMR",
+                Driver = "vendor-tcp",
+                MaxSpeedMetersPerSecond = 0.3,
+                HomeStationId = "LM1"
+            }
+        ],
+        Stations =
+        [
+            new StationProfile { Code = 1, StationId = "LM1", AgvStationId = "LM1", Name = "LM1", Type = "Station" },
+            new StationProfile { Code = 2, StationId = "LM2", AgvStationId = "LM2", Name = "LM2", Type = "Station" }
+        ],
+        Map = new MapProfile
+        {
+            StationIds = ["LM1", "LM2"],
+            Edges = [new MapEdgeProfile { From = "LM1", To = "LM2", Cost = 1, Bidirectional = false }]
+        },
+        PhysicalAcceptance = new PhysicalAcceptanceProfile
+        {
+            ExpectedControlOwner = "MesControlAgv.Adapter",
+            MapSnapshot = new ControllerMapSnapshot
+            {
+                MapName = "acceptance-map",
+                Version = "1.0",
+                Md5 = "816e68b9a367d9c8d5eaee9331a7ef58",
+                CapturedAtUtc = new DateTimeOffset(2026, 8, 11, 0, 0, 0, TimeSpan.Zero),
+                StationIds = ["LM1", "LM2"],
+                DirectedEdges = [new DirectedMapEdgeProfile { From = "LM1", To = "LM2" }]
+            },
+            Safety = new PhysicalAgvSafetyProfile
+            {
+                MinimumLocalizationConfidence = 0.95,
+                MaximumDispatchSpeedMetersPerSecond = 0.3,
+                RequireControlOwnership = true,
+                RequireNoEmergency = true,
+                RequireNoBlocked = true,
+                RequireNoFaults = true,
+                RequireAutomaticMode = true
+            }
+        },
+        Features = new FeatureFlags
+        {
+            UseSimulator = false,
+            EnableAutomaticDispatch = false,
+            EnableFieldNavigationAcceptance = true
+        },
+        Timeouts = new TimeoutOptions()
+    };
+
     private static (AdapterService Service, AdapterDbContext Database) CreateFleetService(
         FakeSimulatorClient simulator,
         FakeFleetClient fleet)
@@ -328,7 +583,7 @@ public class AdapterServiceTests
     }
 }
 
-internal sealed class FakeSimulatorClient : ISimulatorClient
+internal sealed class FakeSimulatorClient : ISimulatorClient, IPhysicalAgvDeviceClient, IControllerMapEvidenceDeviceClient
 {
     private int _navigateCalls;
     private int _statusCalls;
@@ -338,17 +593,27 @@ internal sealed class FakeSimulatorClient : ISimulatorClient
     public int StatusCalls => Volatile.Read(ref _statusCalls);
     public int CancelCalls => Volatile.Read(ref _cancelCalls);
     public int EnsureControlCalls { get; private set; }
+    public int ReleaseControlCalls { get; private set; }
+    public int ReadinessCalls { get; private set; }
+    public int MapEvidenceCalls { get; private set; }
     public string? SourceStationId { get; private set; }
     public IReadOnlyList<string>? NavigatePath { get; private set; }
     public IReadOnlyList<string>? StatusPath { get; private set; }
     public IReadOnlyList<string>? CancelPath { get; private set; }
     public bool ThrowTimeout { get; init; }
+    public bool AcquireControlOnEnsure { get; set; }
+    public bool RejectAfterFirstReadiness { get; set; }
+    public Exception? ReleaseControlException { get; set; }
+    public Exception? PostControlPreflightException { get; set; }
     public bool ReturnFailed { get; init; }
     public string? CancelState { get; init; } = "cancelled";
     public string? CancelError { get; init; }
     public string PauseState { get; init; } = "paused";
     public string ResumeState { get; init; } = "moving";
     public AgvSnapshotResponse Snapshot { get; set; } = new(true, "adapter", "CHARGE_01", null);
+    public AgvSnapshotResponse? SnapshotAfterControl { get; set; }
+    public AgvSafetyReadinessResponse Readiness { get; set; } = null!;
+    public ControllerMapEvidenceResponse? MapEvidence { get; set; }
     public AgvTaskResponse? ReconciledTask { get; init; }
     public TaskCompletionSource<bool>? NavigationStarted { get; init; }
     public TaskCompletionSource<bool>? AllowNavigation { get; init; }
@@ -356,10 +621,39 @@ internal sealed class FakeSimulatorClient : ISimulatorClient
     public Task EnsureControlAsync(CancellationToken cancellationToken)
     {
         EnsureControlCalls++;
+        if (AcquireControlOnEnsure) Snapshot = Snapshot with { ControlOwner = "adapter" };
         return Task.CompletedTask;
     }
 
-    public Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken) => Task.FromResult(Snapshot);
+    public Task<bool> ReleaseControlAsync(CancellationToken cancellationToken)
+    {
+        ReleaseControlCalls++;
+        if (ReleaseControlException is not null) return Task.FromException<bool>(ReleaseControlException);
+        return Task.FromResult(true);
+    }
+
+    public Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken)
+    {
+        if (EnsureControlCalls > 0 && PostControlPreflightException is not null)
+            return Task.FromException<AgvSnapshotResponse>(PostControlPreflightException);
+        return Task.FromResult(EnsureControlCalls > 0 && SnapshotAfterControl is not null
+            ? SnapshotAfterControl
+            : Snapshot);
+    }
+
+    public Task<AgvSafetyReadinessResponse> GetSafetyReadinessAsync(CancellationToken cancellationToken)
+    {
+        ReadinessCalls++;
+        return Task.FromResult(RejectAfterFirstReadiness && ReadinessCalls > 1
+            ? Readiness with { VehicleOperatingMode = "unknown", VehicleOperatingModeSource = null }
+            : Readiness);
+    }
+
+    public Task<ControllerMapEvidenceResponse?> GetControllerMapEvidenceAsync(CancellationToken cancellationToken)
+    {
+        MapEvidenceCalls++;
+        return Task.FromResult(MapEvidence);
+    }
 
     public Task<AgvTaskResponse?> GetTaskAsync(Guid taskId, CancellationToken cancellationToken)
     {

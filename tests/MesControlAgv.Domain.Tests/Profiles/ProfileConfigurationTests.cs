@@ -151,6 +151,45 @@ public sealed class ProfileConfigurationTests
     }
 
     [Fact]
+    public void Validator_accepts_explicit_not_exposed_mode_policy_for_an_approved_model()
+    {
+        var valid = CreatePhysicalAcceptanceConfiguration();
+        var configuration = valid with
+        {
+            PhysicalAcceptance = valid.PhysicalAcceptance! with
+            {
+                Safety = valid.PhysicalAcceptance.Safety with
+                {
+                    RequireAutomaticMode = false,
+                    VehicleOperatingModePolicy = VehicleOperatingModePolicies.NotExposedByApprovedModel
+                }
+            }
+        };
+
+        var result = new ProfileConfigurationValidator().Validate(configuration);
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void Validator_rejects_disabled_automatic_mode_without_explicit_policy()
+    {
+        var valid = CreatePhysicalAcceptanceConfiguration();
+        var configuration = valid with
+        {
+            PhysicalAcceptance = valid.PhysicalAcceptance! with
+            {
+                Safety = valid.PhysicalAcceptance.Safety with { RequireAutomaticMode = false }
+            }
+        };
+
+        var result = new ProfileConfigurationValidator().Validate(configuration);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, error => error.Path == "physicalAcceptance.safety.requireAutomaticMode");
+    }
+
+    [Fact]
     public void Default_profile_remains_simulator_compatible_without_physical_acceptance()
     {
         var configuration = ProfileConfiguration.Default;

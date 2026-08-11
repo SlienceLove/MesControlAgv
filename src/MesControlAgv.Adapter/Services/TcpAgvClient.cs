@@ -4,7 +4,10 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
+using MesControlAgv.Adapter;
 using MesControlAgv.Contracts;
+using MesControlAgv.Domain.Map;
 using Microsoft.Extensions.Options;
 
 namespace MesControlAgv.Adapter.Services;
@@ -26,6 +29,8 @@ public sealed class TcpAgvOptions
     public int MaxPayloadBytes { get; set; } = 1024 * 1024;
     public double MinimumConfidence { get; set; }
     public bool RequireCompleteSafetyStatus { get; set; }
+    public bool RequireAutomaticMode { get; set; } = true;
+    public double? MaximumNavigationSpeedMetersPerSecond { get; set; }
 }
 
 public sealed class AgvApiException(int apiId, int errorCode, string? errorMessage)
@@ -192,10 +197,21 @@ internal sealed class TcpApiChannel : IDisposable
     }
 }
 
-public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, IHostedService, IDisposable
+public sealed class TcpAgvClient :
+    IAgvDeviceClient,
+    IPhysicalAgvDeviceClient,
+    IControllerMapEvidenceDeviceClient,
+    IHostedService,
+    IDisposable
 {
+    private const ushort QueryDeviceInfoApi = 1000;
+    private const ushort QueryMapCatalogApi = 1300;
+    private const ushort QueryStationCatalogApi = 1301;
+    private const ushort QueryMapMd5Api = 1302;
+    private const ushort QueryLocalizationApi = 1021;
     private const ushort QueryControlApi = 1060;
     private const ushort AcquireControlApi = 4005;
+    private const ushort ReleaseControlApi = 4006;
     private const ushort NavigateApi = 3066;
     private const ushort QueryTaskApi = 1110;
     private const ushort PauseApi = 3001;
@@ -203,6 +219,7 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
     private const ushort CancelApi = 3067;
     private const ushort RealtimeStatusApi = 1101;
     private const ushort ConfigurePushApi = 9300;
+    private const ushort DownloadMapApi = 4011;
     private const ushort PushApi = 19301;
 
     private static readonly string[] PushFields =
@@ -214,6 +231,7 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
     ];
 
     private readonly TcpAgvOptions _options;
+    private readonly AdapterRunMode _runMode;
     private readonly ILogger<TcpAgvClient> _logger;
     private readonly TcpApiChannel _statusChannel;
     private readonly TcpApiChannel _commandChannel;
@@ -221,6 +239,7 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
     private readonly object _snapshotLock = new();
     private readonly ConcurrentDictionary<Guid, RoutePlan> _routes = new();
     private readonly ConcurrentDictionary<Guid, Guid> _parentTaskIds = new();
+    private readonly ConcurrentDictionary<Guid, byte> _navigationAttempts = new();
     private AgvSnapshotResponse? _pushSnapshot;
     private DeviceReadiness? _pushReadiness;
     private DateTimeOffset _pushReceivedAt;
@@ -228,9 +247,13 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
     private CancellationTokenSource? _lifetime;
     private Task? _pushLoop;
 
-    public TcpAgvClient(IOptions<TcpAgvOptions> options, ILogger<TcpAgvClient> logger)
+    public TcpAgvClient(
+        IOptions<TcpAgvOptions> options,
+        ILogger<TcpAgvClient> logger,
+        AdapterRunMode? runMode = null)
     {
         _options = options.Value;
+        _runMode = runMode ?? AdapterRunMode.Standard;
         _logger = logger;
         _statusChannel = new TcpApiChannel(_options.Host, _options.StatusPort, _options);
         _commandChannel = new TcpApiChannel(_options.Host, _options.CommandPort, _options);
@@ -239,6 +262,7 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
 
     public async Task EnsureControlAsync(CancellationToken cancellationToken)
     {
+        ThrowIfMutationIsBlocked("control acquisition");
         var current = await QueryControlAsync(cancellationToken);
         if (current.Owner == "adapter") return;
         if (!_options.AcquireControl)
@@ -248,7 +272,10 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
 
         try
         {
-            using var response = await _controlChannel.RequestAsync(AcquireControlApi, new { nick_name = _options.NickName }, cancellationToken);
+            var request = new { nick_name = _options.NickName };
+            LogMutationRequest(AcquireControlApi, request);
+            using var response = await _controlChannel.RequestAsync(AcquireControlApi, request, cancellationToken);
+            LogMutationResponse(AcquireControlApi, response.RootElement);
             EnsureSuccess(response, AcquireControlApi);
         }
         catch (AgvApiException exception) when (exception.ErrorCode is 40012 or 40020)
@@ -258,6 +285,22 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
 
         var acquired = await QueryControlAsync(cancellationToken);
         if (acquired.Owner != "adapter") throw new ControlUnavailableException(acquired.Owner);
+    }
+
+    public async Task<bool> ReleaseControlAsync(CancellationToken cancellationToken)
+    {
+        ThrowIfMutationIsBlocked("control release");
+        var current = await QueryControlAsync(cancellationToken);
+        if (current.Owner != "adapter") return false;
+
+        LogMutationRequest(ReleaseControlApi, new { });
+        using var response = await _controlChannel.RequestAsync(ReleaseControlApi, null, cancellationToken);
+        LogMutationResponse(ReleaseControlApi, response.RootElement);
+        EnsureSuccess(response, ReleaseControlApi);
+
+        var released = await QueryControlAsync(cancellationToken);
+        if (released.Owner == "adapter") throw new ControlReleaseUnconfirmedException();
+        return true;
     }
 
     public async Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken)
@@ -292,7 +335,130 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
             new { return_laser = false },
             cancellationToken);
         EnsureSuccess(response, RealtimeStatusApi);
-        return ReadReadiness(response.RootElement).ToResponse(DateTimeOffset.UtcNow);
+        var readiness = ReadReadiness(response.RootElement);
+
+        using var localizationResponse = await _statusChannel.RequestAsync(
+            QueryLocalizationApi,
+            null,
+            cancellationToken);
+        EnsureSuccess(localizationResponse, QueryLocalizationApi);
+        readiness = readiness with
+        {
+            RelocStatus = ReadInt(localizationResponse.RootElement, "reloc_status")
+                ?? readiness.RelocStatus
+        };
+
+        using var deviceInfoResponse = await _statusChannel.RequestAsync(
+            QueryDeviceInfoApi,
+            null,
+            cancellationToken);
+        EnsureSuccess(deviceInfoResponse, QueryDeviceInfoApi);
+
+        return readiness.ToResponse(
+            DateTimeOffset.UtcNow,
+            ReadString(deviceInfoResponse.RootElement, "model")?.Trim(),
+            ReadString(deviceInfoResponse.RootElement, "version")?.Trim());
+    }
+
+    public async Task<ControllerMapEvidenceResponse?> GetControllerMapEvidenceAsync(
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await ReadControllerMapEvidenceAsync(cancellationToken);
+        }
+        catch (Exception exception) when (exception is
+            AgvApiException or IOException or SocketException or TimeoutException or SmapParseException)
+        {
+            _logger.LogWarning(exception, "Unable to obtain controller map evidence at {Host}.", _options.Host);
+            return null;
+        }
+    }
+
+    private async Task<ControllerMapEvidenceResponse?> ReadControllerMapEvidenceAsync(
+        CancellationToken cancellationToken)
+    {
+        using var mapCatalogResponse = await _statusChannel.RequestAsync(
+            QueryMapCatalogApi,
+            null,
+            cancellationToken);
+        EnsureSuccess(mapCatalogResponse, QueryMapCatalogApi);
+        var currentMap = ReadString(mapCatalogResponse.RootElement, "current_map")?.Trim();
+        if (string.IsNullOrWhiteSpace(currentMap)) return null;
+        var storedMapNames = ReadStringArray(mapCatalogResponse.RootElement, "maps");
+
+        using var stationCatalogResponse = await _statusChannel.RequestAsync(
+            QueryStationCatalogApi,
+            null,
+            cancellationToken);
+        EnsureSuccess(stationCatalogResponse, QueryStationCatalogApi);
+        var stationIds = ReadStationCatalog(stationCatalogResponse.RootElement);
+
+        var mapMd5 = await QueryMapMd5Async(currentMap, storedMapNames, cancellationToken);
+
+        using var mapResponse = await _controlChannel.RequestAsync(
+            DownloadMapApi,
+            new { map_name = currentMap },
+            cancellationToken);
+        EnsureSuccess(mapResponse, DownloadMapApi);
+        var mapBytes = JsonSerializer.SerializeToUtf8Bytes(mapResponse.RootElement);
+        using var mapStream = new MemoryStream(mapBytes, writable: false);
+        var mapDocument = SmapParser.Parse(mapStream);
+        var mapIdentity = SmapMapIdentity.FromDocument(mapDocument, mapMd5 ?? "unavailable");
+
+        var catalogMatchesMap = !string.IsNullOrWhiteSpace(mapMd5)
+            && MapNamesEqual(currentMap, mapIdentity.MapName)
+            && stationIds.ToHashSet(StringComparer.Ordinal)
+                .SetEquals(mapIdentity.StationMarks);
+
+        return new ControllerMapEvidenceResponse(
+            catalogMatchesMap,
+            "vendor-tcp:1300,1301,1302,4011",
+            NormalizeMapName(currentMap),
+            mapIdentity.MapVersion,
+            mapMd5,
+            stationIds,
+            mapIdentity.DirectedEdges
+                .Select(edge => new ControllerDirectedEdgeResponse(edge.FromMark, edge.ToMark))
+                .ToArray(),
+            DateTimeOffset.UtcNow);
+    }
+
+    private async Task<string?> QueryMapMd5Async(
+        string currentMap,
+        IReadOnlyList<string> storedMapNames,
+        CancellationToken cancellationToken)
+    {
+        var candidates = storedMapNames
+            .Where(mapName => MapNamesEqual(mapName, currentMap))
+            .Append(currentMap)
+            .Append(EnsureSmapExtension(currentMap))
+            .Where(mapName => !string.IsNullOrWhiteSpace(mapName))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        AgvApiException? notFound = null;
+
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                using var response = await _statusChannel.RequestAsync(
+                    QueryMapMd5Api,
+                    new { map_names = new[] { candidate } },
+                    cancellationToken);
+                EnsureSuccess(response, QueryMapMd5Api);
+                var md5 = ReadMapMd5(response.RootElement, candidate)
+                    ?? ReadMapMd5(response.RootElement, currentMap);
+                if (!string.IsNullOrWhiteSpace(md5)) return md5;
+            }
+            catch (AgvApiException exception) when (exception.ErrorCode == 40051)
+            {
+                notFound = exception;
+            }
+        }
+
+        if (notFound is not null) throw notFound;
+        return null;
     }
 
     public async Task<AgvTaskResponse> NavigateAsync(
@@ -309,6 +475,7 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
         IReadOnlyList<string>? path,
         CancellationToken cancellationToken)
     {
+        ThrowIfMutationIsBlocked("navigation");
         if (string.IsNullOrWhiteSpace(stationId)) throw new ArgumentException("Target station is required.", nameof(stationId));
         var normalizedTargetStationId = stationId.Trim();
         var route = BuildNavigationRoute(taskId, sourceStationId, normalizedTargetStationId, path);
@@ -316,9 +483,13 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
         foreach (var segment in route.Segments) _parentTaskIds[segment.TaskId] = taskId;
 
         var existingStatuses = await QueryRouteStatusesAsync(route, cancellationToken);
-        if (existingStatuses.Count > 0)
+        if (existingStatuses.Any(status => status.Status != 404))
         {
             return CreateRouteResponse(taskId, route, existingStatuses);
+        }
+        if (_navigationAttempts.ContainsKey(taskId))
+        {
+            return CreateDispatchUnconfirmedResponse(taskId, route);
         }
 
         await EnsureReadyAsync(cancellationToken);
@@ -328,29 +499,49 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
         var request = new
         {
             move_task_list = route.Segments
-                .Select(segment => new
-                {
-                    task_id = segment.DeviceTaskId,
-                    source_id = segment.SourceStationId,
-                    id = segment.TargetStationId
-                })
+                .Select(segment => new MoveTaskRequest(
+                    segment.DeviceTaskId,
+                    segment.SourceStationId,
+                    segment.TargetStationId,
+                    _options.MaximumNavigationSpeedMetersPerSecond))
                 .ToArray()
         };
+        _navigationAttempts.TryAdd(taskId, 0);
+        LogMutationRequest(NavigateApi, request);
         try
         {
             using var response = await _commandChannel.RequestAsync(NavigateApi, request, cancellationToken);
+            LogMutationResponse(NavigateApi, response.RootElement);
             EnsureSuccess(response, NavigateApi);
+
+            var confirmedStatuses = await QueryRouteStatusesAsync(route, cancellationToken);
+            return confirmedStatuses.Count == 0
+                ? CreateDispatchUnconfirmedResponse(taskId, route)
+                : CreateRouteResponse(taskId, route, confirmedStatuses);
         }
         catch (TimeoutException)
         {
-            var reconciledStatuses = await QueryRouteStatusesAsync(route, cancellationToken);
-            if (reconciledStatuses.Count > 0)
+            _logger.LogWarning(
+                "AGV mutation response was not confirmed: api_id={ApiId}, operation_id={OperationId}.",
+                NavigateApi,
+                taskId.ToString("N"));
+            try
             {
-                return CreateRouteResponse(taskId, route, reconciledStatuses);
+                var reconciledStatuses = await QueryRouteStatusesAsync(route, cancellationToken);
+                return reconciledStatuses.Count == 0
+                    ? CreateDispatchUnconfirmedResponse(taskId, route)
+                    : CreateRouteResponse(taskId, route, reconciledStatuses);
             }
-            throw;
+            catch (Exception exception) when (exception is IOException or SocketException or TimeoutException)
+            {
+                _logger.LogWarning(
+                    exception,
+                    "AGV dispatch reconciliation was unavailable: api_id={ApiId}, operation_id={OperationId}.",
+                    QueryTaskApi,
+                    taskId.ToString("N"));
+                return CreateDispatchUnconfirmedResponse(taskId, route);
+            }
         }
-        return new AgvTaskResponse(taskId, route.DeviceTaskId, normalizedTargetStationId, "moving", null, Path: route.Path);
     }
 
     public Task<AgvTaskResponse?> GetTaskAsync(Guid taskId, CancellationToken cancellationToken) =>
@@ -368,14 +559,20 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
 
     public async Task<AgvTaskResponse?> PauseAsync(Guid taskId, CancellationToken cancellationToken)
     {
+        ThrowIfMutationIsBlocked("pause");
+        LogMutationRequest(PauseApi, new { });
         using var response = await _commandChannel.RequestAsync(PauseApi, null, cancellationToken);
+        LogMutationResponse(PauseApi, response.RootElement);
         EnsureSuccess(response, PauseApi);
         return new AgvTaskResponse(taskId, taskId.ToString("N"), string.Empty, "paused", null);
     }
 
     public async Task<AgvTaskResponse?> ResumeAsync(Guid taskId, CancellationToken cancellationToken)
     {
+        ThrowIfMutationIsBlocked("resume");
+        LogMutationRequest(ResumeApi, new { });
         using var response = await _commandChannel.RequestAsync(ResumeApi, null, cancellationToken);
+        LogMutationResponse(ResumeApi, response.RootElement);
         EnsureSuccess(response, ResumeApi);
         return new AgvTaskResponse(taskId, taskId.ToString("N"), string.Empty, "moving", null);
     }
@@ -388,6 +585,7 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
         IReadOnlyList<string>? path,
         CancellationToken cancellationToken)
     {
+        ThrowIfMutationIsBlocked("cancellation");
         var route = ResolveRoute(taskId, path);
         var activeStatuses = await QueryRouteStatusesAsync(route, cancellationToken);
         if (!activeStatuses.Any(status => status.Status is 1 or 2 or 3))
@@ -395,7 +593,9 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
             return CreateCancellationResponse(taskId, route, activeStatuses);
         }
 
+        LogMutationRequest(CancelApi, new { });
         using var response = await _commandChannel.RequestAsync(CancelApi, null, cancellationToken);
+        LogMutationResponse(CancelApi, response.RootElement);
         EnsureSuccess(response, CancelApi);
 
         // Command acknowledgement alone does not prove that the AGV cancelled the task.
@@ -422,6 +622,7 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
+        if (_runMode.IsReadOnlyPreflight) return Task.CompletedTask;
         if (_options.EnablePush)
         {
             _lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -480,7 +681,13 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
         if (readiness.FatalCount > 0) throw new InvalidOperationException("AGV has active fatal alarms.");
         if (readiness.ErrorCount > 0) throw new InvalidOperationException("AGV has active errors.");
         if (readiness.ForkAutomatic == false) throw new InvalidOperationException("AGV fork is not in automatic mode.");
-        if (_options.RequireCompleteSafetyStatus && readiness.VehicleOperatingMode != "automatic")
+        if (readiness.VehicleOperatingMode == "manual")
+        {
+            throw new InvalidOperationException("AGV vehicle is explicitly in manual mode; dispatch is blocked.");
+        }
+        if (_options.RequireCompleteSafetyStatus
+            && _options.RequireAutomaticMode
+            && readiness.VehicleOperatingMode != "automatic")
         {
             throw new InvalidOperationException(
                 "AGV vehicle automatic-mode signal is unavailable or unconfirmed; dispatch is blocked.");
@@ -513,12 +720,19 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
 
     private async Task ConfigurePushAsync(CancellationToken cancellationToken)
     {
+        ThrowIfMutationIsBlocked("push configuration");
         var request = new
         {
             interval = _options.PushIntervalMs,
             included_fields = PushFields
         };
+        LogMutationRequest(ConfigurePushApi, new
+        {
+            request.interval,
+            included_field_count = PushFields.Length
+        });
         using var response = await _controlChannel.RequestAsync(ConfigurePushApi, request, cancellationToken);
+        LogMutationResponse(ConfigurePushApi, response.RootElement);
         EnsureSuccess(response, ConfigurePushApi);
     }
 
@@ -599,6 +813,24 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
         var code = ReadInt(root, "ret_code") ?? 0;
         if (code != 0) throw new AgvApiException(apiId, code, ReadString(root, "err_msg"));
     }
+
+    private void ThrowIfMutationIsBlocked(string operation) => _runMode.ThrowIfMutationIsBlocked(operation);
+
+    private void LogMutationRequest(ushort apiId, object request) =>
+        _logger.LogInformation(
+            "AGV mutation request audit: {MutationAudit}",
+            JsonSerializer.Serialize(new { api_id = apiId, request }));
+
+    private void LogMutationResponse(ushort apiId, JsonElement response) =>
+        _logger.LogInformation(
+            "AGV mutation response audit: {MutationAudit}",
+            JsonSerializer.Serialize(new
+            {
+                api_id = apiId,
+                ret_code = ReadInt(response, "ret_code"),
+                err_msg = ReadString(response, "err_msg"),
+                create_on = ReadString(response, "create_on")
+            }));
 
     private static IReadOnlyList<DeviceTaskStatus> ParseTaskStatuses(JsonElement root)
     {
@@ -726,13 +958,31 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
     private static AgvTaskResponse CreateRouteResponse(
         Guid taskId,
         RoutePlan route,
-        IReadOnlyList<DeviceTaskStatus> statuses) =>
-        new(
+        IReadOnlyList<DeviceTaskStatus> statuses)
+    {
+        var state = AggregateTaskState(route, statuses);
+        var error = state switch
+        {
+            "failed" => "device_task_failed",
+            "unknown" => "dispatch_not_confirmed_by_1110",
+            _ => null
+        };
+        return new AgvTaskResponse(
             taskId,
             route.DeviceTaskId,
             ResolveTargetStationId(route, statuses),
-            AggregateTaskState(route, statuses),
-            statuses.Any(status => status.Status == 5) ? "device_task_failed" : null,
+            state,
+            error,
+            Path: route.Path);
+    }
+
+    private static AgvTaskResponse CreateDispatchUnconfirmedResponse(Guid taskId, RoutePlan route) =>
+        new(
+            taskId,
+            route.DeviceTaskId,
+            route.TargetStationId,
+            "unknown",
+            "dispatch_not_confirmed_by_1110",
             Path: route.Path);
 
     private static AgvTaskResponse CreateCancellationResponse(
@@ -823,6 +1073,7 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
     }
 
     private static DeviceReadiness ReadReadiness(JsonElement root) => new(
+        ReadInt(root, "mode"),
         ReadNullableBool(root, "emergency"),
         ReadNullableBool(root, "blocked"),
         ReadArrayCount(root, "fatals"),
@@ -892,6 +1143,71 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
         return value.ValueKind == JsonValueKind.String ? value.GetString() : value.ToString();
     }
 
+    private static IReadOnlyList<string> ReadStationCatalog(JsonElement root)
+    {
+        if (!root.TryGetProperty("stations", out var stations)
+            || stations.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        return stations.EnumerateArray()
+            .Select(station => ReadString(station, "id")?.Trim())
+            .Where(stationId => !string.IsNullOrWhiteSpace(stationId))
+            .Cast<string>()
+            .ToArray();
+    }
+
+    private static IReadOnlyList<string> ReadStringArray(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var values)
+            || values.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        return values.EnumerateArray()
+            .Where(value => value.ValueKind == JsonValueKind.String)
+            .Select(value => value.GetString()?.Trim())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Cast<string>()
+            .ToArray();
+    }
+
+    private static string? ReadMapMd5(JsonElement root, string mapName)
+    {
+        if (!root.TryGetProperty("map_info", out var mapInfo)
+            || mapInfo.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        foreach (var item in mapInfo.EnumerateArray())
+        {
+            var candidateName = ReadString(item, "name");
+            if (!MapNamesEqual(candidateName, mapName)) continue;
+            return ReadString(item, "md5")?.Trim().ToLowerInvariant();
+        }
+
+        return null;
+    }
+
+    private static bool MapNamesEqual(string? left, string? right) =>
+        string.Equals(NormalizeMapName(left), NormalizeMapName(right), StringComparison.Ordinal);
+
+    private static string? NormalizeMapName(string? mapName)
+    {
+        var normalized = mapName?.Trim();
+        return normalized?.EndsWith(".smap", StringComparison.OrdinalIgnoreCase) == true
+            ? normalized[..^5]
+            : normalized;
+    }
+
+    private static string EnsureSmapExtension(string mapName) =>
+        mapName.EndsWith(".smap", StringComparison.OrdinalIgnoreCase)
+            ? mapName
+            : $"{mapName}.smap";
+
     private static Guid? TryParseGuid(string? value) => Guid.TryParse(value, out var id) ? id : null;
 
     private static void EnsureAscii(string value, string parameterName)
@@ -904,6 +1220,14 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
 
     private sealed record ControlInfo(string Owner);
     private sealed record DeviceTaskStatus(string TaskId, int Status, string? TargetStationId);
+    private sealed record MoveTaskRequest(
+        [property: JsonPropertyName("task_id")] string TaskId,
+        [property: JsonPropertyName("source_id")] string SourceStationId,
+        [property: JsonPropertyName("id")] string TargetStationId,
+        [property: JsonPropertyName("max_speed")]
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        double? MaximumSpeedMetersPerSecond);
+
     private sealed record RouteSegment(Guid TaskId, string SourceStationId, string TargetStationId)
     {
         public string DeviceTaskId => TaskId.ToString("N");
@@ -920,6 +1244,7 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
     }
 
     private sealed record DeviceReadiness(
+        int? OperatingMode,
         bool? Emergency,
         bool? Blocked,
         int FatalCount,
@@ -937,10 +1262,16 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
         bool HasFatalList,
         bool HasErrorList)
     {
-        // The current vendor protocol does not document a vehicle-level automatic
-        // navigation field. Never infer it from dispatch_mode, SRC ownership, or
-        // the fork mechanism flag.
-        public string VehicleOperatingMode => "unknown";
+        public string VehicleOperatingMode => OperatingMode switch
+        {
+            0 => "manual",
+            1 => "automatic",
+            _ => "unknown"
+        };
+
+        public string? VehicleOperatingModeSource => OperatingMode is 0 or 1
+            ? "vendor-1101-mode"
+            : null;
 
         public bool HasCompleteBaseSafetyStatus => HasEmergency
             && HasBlocked
@@ -949,9 +1280,12 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
             && RelocStatus is not null
             && Confidence is not null;
 
-        public AgvSafetyReadinessResponse ToResponse(DateTimeOffset observedAtUtc) => new(
+        public AgvSafetyReadinessResponse ToResponse(
+            DateTimeOffset observedAtUtc,
+            string? vehicleModel = null,
+            string? controllerVersion = null) => new(
             VehicleOperatingMode,
-            VehicleOperatingModeSource: null,
+            VehicleOperatingModeSource,
             MapName,
             MapMd5,
             ForkAutomatic,
@@ -964,6 +1298,8 @@ public sealed class TcpAgvClient : IAgvDeviceClient, IPhysicalAgvDeviceClient, I
             ErrorCount,
             RelocStatus,
             Confidence,
-            observedAtUtc);
+            observedAtUtc,
+            vehicleModel,
+            controllerVersion);
     }
 }

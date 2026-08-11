@@ -13,12 +13,39 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 var builder = WebApplication.CreateBuilder(args);
+if (builder.Environment.IsEnvironment(PhysicalAcceptanceConfiguration.EnvironmentName))
+{
+    PhysicalAcceptanceConfiguration.ReplaceDefaultSources(
+        builder.Configuration,
+        builder.Environment.ContentRootPath,
+        args);
+}
 var configuredConnectionString = builder.Configuration.GetConnectionString("Adapter") ?? "Data Source=data/adapter.db";
 var connectionString = ResolveSqliteConnectionString(configuredConnectionString);
 var simulatorBaseUrl = builder.Configuration["Simulator:BaseUrl"] ?? "http://localhost:5183/";
 builder.Services.AddServices(builder.Configuration, connectionString, simulatorBaseUrl);
 
 var app = builder.Build();
+var runMode = app.Services.GetRequiredService<AdapterRunMode>();
+
+app.Use(async (context, next) =>
+{
+    if (runMode.IsReadOnlyPreflight
+        && !HttpMethods.IsGet(context.Request.Method)
+        && !HttpMethods.IsHead(context.Request.Method))
+    {
+        context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
+        context.Response.Headers["Allow"] = "GET, HEAD";
+        await context.Response.WriteAsJsonAsync(new
+        {
+            detail = "Adapter read-only preflight mode rejects all state-changing HTTP requests."
+        });
+        return;
+    }
+
+    await next();
+});
+
 using (var scope = app.Services.CreateScope())
 {
     var database = scope.ServiceProvider.GetRequiredService<AdapterDbContext>();
@@ -27,7 +54,7 @@ using (var scope = app.Services.CreateScope())
     await AddColumnIfMissingAsync(database, "PathJson");
 }
 
-app.MapGet("/health", () => Results.Ok(new { service = "adapter", status = "ok" }));
+app.MapGet("/health", () => Results.Ok(new { service = "adapter", status = "ok", runMode = runMode.Value }));
 
 app.MapPost("/tasks/{taskId:guid}/dispatch", async (Guid taskId, DispatchRequest request, AdapterService service, CancellationToken cancellationToken) =>
 {
@@ -98,6 +125,23 @@ app.MapGet("/agv/snapshot", async (IAgvDeviceClient device, CancellationToken ca
 {
     var snapshot = await device.GetSnapshotAsync(cancellationToken);
     return Results.Ok(snapshot with { Capabilities = snapshot.Capabilities ?? AgvCapabilitiesResponse.Standard });
+});
+app.MapPost("/agv/control/release", async (IAgvDeviceClient device, CancellationToken cancellationToken) =>
+{
+    try
+    {
+        return await device.ReleaseControlAsync(cancellationToken)
+            ? Results.Ok(new { released = true })
+            : Results.Conflict(new { detail = "AGV control is not owned by the Adapter." });
+    }
+    catch (ControlReleaseUnconfirmedException exception)
+    {
+        return Results.Conflict(new { detail = exception.Message });
+    }
+    catch (InvalidOperationException exception)
+    {
+        return Results.UnprocessableEntity(new { detail = exception.Message });
+    }
 });
 app.MapGet("/physical/preflight", async (PhysicalAcceptancePreflightService service, CancellationToken cancellationToken) =>
     Results.Ok(await service.GetAsync(cancellationToken)));
