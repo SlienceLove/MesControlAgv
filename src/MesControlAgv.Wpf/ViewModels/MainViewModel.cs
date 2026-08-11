@@ -21,17 +21,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private readonly SemaphoreSlim _actionGate = new(1, 1);
     private CancellationTokenSource? _detailRefresh;
     private Task? _refreshLoop;
-    private TaskRowViewModel? _selectedTask;
-    private AgvRowViewModel? _selectedAgv;
     private bool _suppressDetailRefresh;
-    private string _connectionStatus = "\u6B63\u5728\u8FDE\u63A5 MES";
-    private string _agvStatus = "\u672A\u77E5";
-    private string _agvStation = "-";
-    private string _agvExecutionStatus = "\u65E0\u6D3B\u52A8\u8FD0\u8F93\u4EFB\u52A1";
     private string _message = string.Empty;
     private string _actionStatus = "\u8BF7\u521B\u5EFA\u4EFB\u52A1\uFF0C\u7136\u540E\u4ECE\u4EFB\u52A1\u5217\u8868\u4E2D\u663E\u5F0F\u6D3E\u53D1\u3002";
-    private string _batchStatus = "\u8BF7\u9009\u62E9 CSV \u6216 XLSX \u6587\u4EF6\u5BFC\u5165\u4EFB\u52A1";
-    private DateTime? _taskFilterDate = DateTime.UtcNow.Date;
     private DashboardStation? _newTaskSourceStation;
     private DashboardStation? _newTaskTargetStation;
     private int _newTaskPriority;
@@ -80,7 +72,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         PauseAgvCommand = CreateActionCommand("\u6682\u505C AGV", () => ExecuteAgvCommandAsync("pause"), () => CanControlSelectedAgv("pause"));
         ResumeAgvCommand = CreateActionCommand("\u6062\u590D AGV", () => ExecuteAgvCommandAsync("resume"), () => CanControlSelectedAgv("resume"));
         CancelAgvCommand = CreateActionCommand("\u53D6\u6D88 AGV \u4EFB\u52A1", () => ExecuteAgvCommandAsync("cancel"), () => CanControlSelectedAgv("cancel"));
-        SortBatchCommand = CreateActionCommand("\u6392\u5E8F\u6279\u91CF\u4EFB\u52A1", () => { SortBatchTasks(); return Task.CompletedTask; }, () => BatchTasks.Count > 1);
+        SortBatchCommand = CreateActionCommand("\u6392\u5E8F\u6279\u91CF\u4EFB\u52A1", () => { _modules.BatchImport.Sort(); RefreshBatchCommandState(); return Task.CompletedTask; }, () => BatchTasks.Count > 1);
         SubmitBatchCommand = CreateActionCommand("\u63D0\u4EA4\u6279\u91CF\u4EFB\u52A1", SubmitBatchAsync, () => BatchTasks.Any(task => task.Status == "\u5F85\u63D0\u4EA4"));
         ClearBatchCommand = CreateActionCommand("\u6E05\u7A7A\u6279\u91CF\u4EFB\u52A1", () =>
         {
@@ -108,11 +100,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public TaskRowViewModel? SelectedTask
     {
-        get => _selectedTask;
+        get => _modules.TaskMonitor.SelectedTask;
         set
         {
-            if (!SetField(ref _selectedTask, value)) return;
+            if (ReferenceEquals(_modules.TaskMonitor.SelectedTask, value)) return;
             _modules.TaskMonitor.SelectedTask = value;
+            OnPropertyChanged(nameof(SelectedTask));
             RefreshCommandState();
             if (!_suppressDetailRefresh) RequestTaskDetailRefresh();
         }
@@ -120,40 +113,44 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public AgvRowViewModel? SelectedAgv
     {
-        get => _selectedAgv;
+        get => _modules.AgvCommunication.SelectedAgv;
         set
         {
-            if (!SetField(ref _selectedAgv, value)) return;
+            if (ReferenceEquals(_modules.AgvCommunication.SelectedAgv, value)) return;
             _modules.AgvCommunication.SelectedAgv = value;
+            OnPropertyChanged(nameof(SelectedAgv));
             RefreshAgvCommandState();
         }
     }
 
     public string ConnectionStatus
     {
-        get => _connectionStatus;
+        get => _modules.TaskMonitor.ConnectionStatus;
         private set
         {
-            if (!SetField(ref _connectionStatus, value)) return;
+            if (string.Equals(_modules.TaskMonitor.ConnectionStatus, value, StringComparison.Ordinal)) return;
             _modules.TaskMonitor.ConnectionStatus = value;
+            OnPropertyChanged(nameof(ConnectionStatus));
         }
     }
     public string AgvStatus
     {
-        get => _agvStatus;
+        get => _modules.AgvCommunication.AgvStatus;
         private set
         {
-            if (!SetField(ref _agvStatus, value)) return;
+            if (string.Equals(_modules.AgvCommunication.AgvStatus, value, StringComparison.Ordinal)) return;
             _modules.AgvCommunication.AgvStatus = value;
+            OnPropertyChanged(nameof(AgvStatus));
         }
     }
     public string AgvStation
     {
-        get => _agvStation;
+        get => _modules.AgvCommunication.AgvStation;
         private set
         {
-            if (!SetField(ref _agvStation, value)) return;
+            if (string.Equals(_modules.AgvCommunication.AgvStation, value, StringComparison.Ordinal)) return;
             _modules.AgvCommunication.AgvStation = value;
+            OnPropertyChanged(nameof(AgvStation));
         }
     }
     public string Message { get => _message; private set => SetField(ref _message, value); }
@@ -217,8 +214,13 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             : $"数据已更新：{LastRefreshAt?.LocalDateTime:HH:mm:ss}";
     public string AgvExecutionStatus
     {
-        get => _agvExecutionStatus;
-        private set => SetField(ref _agvExecutionStatus, value);
+        get => _modules.AgvCommunication.AgvExecutionStatus;
+        private set
+        {
+            if (string.Equals(_modules.AgvCommunication.AgvExecutionStatus, value, StringComparison.Ordinal)) return;
+            _modules.AgvCommunication.AgvExecutionStatus = value;
+            OnPropertyChanged(nameof(AgvExecutionStatus));
+        }
     }
     public DashboardStation? NewTaskTargetStation
     {
@@ -276,21 +278,24 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public string TaskFormStatus => GetTaskFormStatus();
     public string BatchStatus
     {
-        get => _batchStatus;
+        get => _modules.BatchImport.BatchStatus;
         private set
         {
-            if (!SetField(ref _batchStatus, value)) return;
+            if (string.Equals(_modules.BatchImport.BatchStatus, value, StringComparison.Ordinal)) return;
             _modules.BatchImport.BatchStatus = value;
+            OnPropertyChanged(nameof(BatchStatus));
         }
     }
 
     public DateTime? TaskFilterDate
     {
-        get => _taskFilterDate;
+        get => _modules.TaskMonitor.TaskFilterDate;
         set
         {
             if (value is not { } date) return;
-            if (SetField(ref _taskFilterDate, date.Date)) _modules.TaskMonitor.TaskFilterDate = date.Date;
+            if (DateOnly.FromDateTime(_modules.TaskMonitor.TaskFilterDate ?? DateTime.MinValue) == DateOnly.FromDateTime(date.Date)) return;
+            _modules.TaskMonitor.TaskFilterDate = date.Date;
+            OnPropertyChanged(nameof(TaskFilterDate));
         }
     }
 
@@ -497,29 +502,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         return station is not null;
     }
 
-    private void SortBatchTasks()
-    {
-        var sorted = BatchTasks
-            .OrderByDescending(task => task.Priority)
-            .ThenBy(task => task.PlannedTime ?? DateTime.MaxValue)
-            .ThenBy(task => task.SourceRowNumber)
-            .ToList();
-        BatchTasks.Clear();
-        foreach (var task in sorted) BatchTasks.Add(task);
-        RefreshBatchCommandState();
-    }
-
     private void UpdateAgvs(IReadOnlyList<AgvFleetDashboardStatus> statuses)
     {
-        var selectedId = SelectedAgv?.AgvId;
-        var byId = Agvs.ToDictionary(row => row.AgvId, StringComparer.Ordinal);
-        foreach (var status in statuses)
-        {
-            if (byId.TryGetValue(status.Snapshot.AgvId, out var row)) row.Update(status);
-            else Agvs.Add(new AgvRowViewModel(status));
-        }
-        foreach (var row in Agvs.Where(row => statuses.All(status => status.Snapshot.AgvId != row.AgvId)).ToList()) Agvs.Remove(row);
-        SelectedAgv = Agvs.FirstOrDefault(row => row.AgvId == selectedId) ?? Agvs.FirstOrDefault();
+        _modules.AgvCommunication.UpdateFleet(statuses);
+        SelectedAgv = _modules.AgvCommunication.SelectedAgv;
         RefreshAgvCommandState();
     }
 

@@ -16,6 +16,15 @@ public interface IWorkflowVersionReader
 }
 
 /// <summary>
+/// Applies deployment-specific admission rules to an immutable workflow version.
+/// Policies must be side-effect free because they run before an execution is accepted.
+/// </summary>
+public interface IWorkflowRuntimeAdmissionPolicy
+{
+    IReadOnlyList<WorkflowValidationIssue> Validate(WorkflowVersion version);
+}
+
+/// <summary>
 /// Application port for turning a pinned workflow version into an auditable
 /// execution request. Implementations do not execute device operations.
 /// </summary>

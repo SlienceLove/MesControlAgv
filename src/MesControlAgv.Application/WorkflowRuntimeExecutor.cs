@@ -18,6 +18,7 @@ public static class WorkflowExecutionRejectionCodes
     public const string NextStepUnavailable = "WORKFLOW_NEXT_STEP_UNAVAILABLE";
     public const string BranchUnsupported = "WORKFLOW_BRANCH_UNSUPPORTED";
     public const string CycleDetected = "WORKFLOW_CYCLE_DETECTED";
+    public const string ProfileMismatch = "WORKFLOW_PROFILE_MISMATCH";
 }
 
 /// <summary>
@@ -30,17 +31,20 @@ public sealed class WorkflowRuntimeExecutor : IWorkflowRuntimeExecutor
     private readonly IWorkflowVersionReader _versionReader;
     private readonly WorkflowValidator _validator;
     private readonly TimeProvider _timeProvider;
+    private readonly IReadOnlyList<IWorkflowRuntimeAdmissionPolicy> _admissionPolicies;
     private readonly object _sync = new();
     private readonly Dictionary<Guid, CachedExecution> _executions = new();
 
     public WorkflowRuntimeExecutor(
         IWorkflowVersionReader versionReader,
         WorkflowValidator? validator = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IEnumerable<IWorkflowRuntimeAdmissionPolicy>? admissionPolicies = null)
     {
         _versionReader = versionReader ?? throw new ArgumentNullException(nameof(versionReader));
         _validator = validator ?? new WorkflowValidator();
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _admissionPolicies = admissionPolicies?.ToArray() ?? [];
     }
 
     public async Task<WorkflowExecutionResult> ExecuteAsync(
@@ -145,6 +149,20 @@ public sealed class WorkflowRuntimeExecutor : IWorkflowRuntimeExecutor
                 currentValidation.Issues);
         }
 
+        var admissionIssues = _admissionPolicies
+            .SelectMany(policy => policy.Validate(version) ?? Array.Empty<WorkflowValidationIssue>())
+            .ToArray();
+        if (admissionIssues.Any(issue => issue.Severity == WorkflowValidationSeverity.Error))
+        {
+            return Reject(
+                request,
+                WorkflowExecutionRejectionCodes.ProfileMismatch,
+                "The published workflow is incompatible with the active deployment profile.",
+                admissionIssues);
+        }
+
+        var runtimeIssues = currentValidation.Issues.Concat(admissionIssues).ToArray();
+
         var executionId = Guid.NewGuid();
         var resolution = ResolveNextStep(request, version, executionId);
         if (resolution.ErrorCode is not null)
@@ -185,7 +203,7 @@ public sealed class WorkflowRuntimeExecutor : IWorkflowRuntimeExecutor
             Version = request.Version,
             RequestedAt = request.RequestedAt,
             DryRun = request.DryRun,
-            ValidationIssues = currentValidation.Issues,
+            ValidationIssues = runtimeIssues,
             NextStepRequest = resolution.NextStep,
             Audit = audit
         };

@@ -199,6 +199,21 @@ public sealed class WorkflowContractTests
     }
 
     [Fact]
+    public async Task Runtime_rejects_a_published_version_that_fails_deployment_admission()
+    {
+        var workflowId = Guid.NewGuid();
+        var definition = CreateValidWorkflow() with { Id = workflowId };
+        var result = await new WorkflowRuntimeExecutor(
+                new InMemoryVersionReader(CreatePublishedVersion(workflowId, definition)),
+                admissionPolicies: [new RejectingAdmissionPolicy()])
+            .ExecuteAsync(CreateRequest(workflowId), CancellationToken.None);
+
+        Assert.Equal(WorkflowExecutionRejectionCodes.ProfileMismatch, result.RejectionCode);
+        Assert.Contains(result.ValidationIssues, issue => issue.Code == "WF-PROFILE-TEST");
+        Assert.Null(result.NextStep);
+    }
+
+    [Fact]
     public async Task Runtime_is_idempotent_for_same_request_and_rejects_request_id_reuse()
     {
         var workflowId = Guid.NewGuid();
@@ -280,5 +295,18 @@ public sealed class WorkflowContractTests
             return Task.FromResult<WorkflowVersion?>(
                 Version.WorkflowId == workflowId && Version.Version == version ? Version : null);
         }
+    }
+
+    private sealed class RejectingAdmissionPolicy : IWorkflowRuntimeAdmissionPolicy
+    {
+        public IReadOnlyList<WorkflowValidationIssue> Validate(WorkflowVersion version) =>
+        [
+            new WorkflowValidationIssue
+            {
+                Code = "WF-PROFILE-TEST",
+                Message = "The workflow does not match the active profile.",
+                Severity = WorkflowValidationSeverity.Error
+            }
+        ];
     }
 }

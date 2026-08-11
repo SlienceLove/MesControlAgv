@@ -1,5 +1,6 @@
 ﻿using MesControlAgv.Application;
 using MesControlAgv.Contracts.Workflows;
+using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Domain.Workflows;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Services;
@@ -113,14 +114,58 @@ public sealed class WorkflowRuntimePersistenceTests
         Assert.Contains("validated", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static WorkflowApplicationService CreateService(MesDbContext database)
+    [Fact]
+    public async Task Runtime_persists_profile_mismatch_rejection_for_a_disabled_station()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<MesDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var database = new MesDbContext(options);
+        await database.Database.EnsureCreatedAsync();
+        var profile = ProfileConfiguration.Default;
+        var disabledProfile = profile with
+        {
+            Stations = profile.Stations
+                .Select(station => station.StationId == "SAMPLE_01" ? station with { Enabled = false } : station)
+                .ToArray()
+        };
+        var service = CreateService(database, disabledProfile);
+        var workflowId = Guid.NewGuid();
+        var draft = await service.CreateDraftAsync(CreateValidWorkflow(workflowId), "planner-1", CancellationToken.None);
+        await service.ValidateVersionAsync(workflowId, draft.Version, CancellationToken.None);
+        await service.PublishAsync(workflowId, draft.Version, "planner-1", CancellationToken.None);
+
+        var result = await service.ExecuteAsync(new WorkflowExecutionRequest
+        {
+            WorkflowId = workflowId,
+            Version = draft.Version,
+            RequestId = Guid.NewGuid(),
+            RequestedBy = "operator-1",
+            DryRun = true
+        }, CancellationToken.None);
+
+        Assert.Equal(WorkflowExecutionRejectionCodes.ProfileMismatch, result.RejectionCode);
+        Assert.Null(result.NextStep);
+        Assert.Single(database.WorkflowExecutions);
+        Assert.Contains(database.WorkflowAudits, audit => audit.Code == WorkflowExecutionRejectionCodes.ProfileMismatch);
+    }
+
+    private static WorkflowApplicationService CreateService(
+        MesDbContext database,
+        ProfileConfiguration? profile = null)
     {
         var validator = new WorkflowValidator();
         var reader = new MesWorkflowVersionReader(database);
+        var activeProfile = profile ?? ProfileConfiguration.Default;
         return new WorkflowApplicationService(
             database,
             reader,
-            new WorkflowRuntimeExecutor(reader, validator),
+            new WorkflowRuntimeExecutor(
+                reader,
+                validator,
+                admissionPolicies: [new ActiveProfileWorkflowAdmissionPolicy(activeProfile)]),
             validator);
     }
 

@@ -22,6 +22,7 @@ builder.Services.AddSingleton(map);
 builder.Services.AddSingleton(new PathPlanner(map));
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<WorkflowValidator>();
+builder.Services.AddSingleton<IWorkflowRuntimeAdmissionPolicy, ActiveProfileWorkflowAdmissionPolicy>();
 builder.Services.AddScoped<MesWorkflowVersionReader>();
 builder.Services.AddScoped<IWorkflowVersionReader>(services => services.GetRequiredService<MesWorkflowVersionReader>());
 builder.Services.AddScoped<WorkflowRuntimeExecutor>();

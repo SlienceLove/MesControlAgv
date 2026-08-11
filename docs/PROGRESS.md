@@ -968,3 +968,38 @@ Detailed continuation notes are in
   authorized site preflight, renewed movement authorization, and a new unique
   acceptance ID are required before any supervised route attempt. No real
   controller was contacted by this follow-up.
+
+## 2026-08-11 powered-off offline development continuation
+
+- The physical AGV is powered off. All controller connection, read-only
+  preflight, control, dispatch, cancellation, and movement work is blocked
+  until a later explicitly authorized powered-on session. This continuation
+  used only the local Simulator driver.
+- The complete isolated process matrix passed with fresh per-scenario SQLite
+  stores and ports `6411-6473`: `positive`, `failure-retry`,
+  `timeout-recover`, `cancel`, `workflow-publish-rollback`, `multi-agv`, and
+  `restart-resume`. Every owned Simulator, Adapter, and MES process was stopped
+  through its run-state file. Evidence databases are under
+  `artifacts/offline-matrix-20260811-r2/`.
+- Workflow runtime admission now supports side-effect-free deployment policies.
+  MES registers an active-Profile policy that rejects a published workflow when
+  any Move, Pickup, or Dropoff node targets a station that is missing or
+  disabled in the current Profile. The stable rejection code is
+  `WORKFLOW_PROFILE_MISMATCH`; no next-step request is produced, and MES
+  persists the rejection and audit like other admission outcomes.
+- Added contract, Profile-policy, and SQLite persistence coverage. Workflow
+  contract tests passed **10/10**, MES tests passed **48/48**, the updated
+  workflow publish/rollback process scenario passed again on isolated ports
+  `6481-6483`, and the final full Debug solution passed **371/371**.
+- Continued the offline P0 WPF split: `MainViewModel` now delegates task
+  monitor connection status and task-filter date state to
+  `TaskMonitorViewModel` while retaining the existing XAML-compatible facade
+  properties. WPF tests passed **150/150**, and the full Debug solution was
+  rerun successfully at **371/371** after the change.
+- Continued the same split without changing command behavior: selected task
+  and AGV state, AGV execution status, batch status, batch sorting, and fleet
+  collection replacement now live in their respective module view models;
+  `MainViewModel` retains compatibility properties and cross-module action
+  orchestration. WPF tests remained **150/150**. Further extraction would
+  require a larger command/use-case boundary redesign and is intentionally
+  paused at that boundary.
