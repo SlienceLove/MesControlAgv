@@ -100,7 +100,7 @@ dotnet run --project src/MesControlAgv.Wpf -c Debug
 
 无需先运行 PowerShell 启动脚本。WPF 会显示启动状态，按 `Simulator -> Adapter -> MES` 的顺序拉起本机服务，并等待每个 `/health` 就绪后再进行首次刷新；这比固定等待几秒更可靠。关闭 WPF 时，它只会停止由自己启动的服务，已存在且健康的本地服务会被复用且不会被停止。
 
-如需加载本地 RoboshopPro 地图，可在启动前设置 `MAP_SMAP_PATH`；可选的 `MAP_STATION_MAPPING_PATH` 用于把 LM 标记映射到 MES 站点。地图身份与 MES Profile 不一致或无法验证时，界面仍显示静态 `.smap` 几何，但会关闭画布上的 AGV 与活动路径叠加。地图页可独立开关墙线、路线、站点标签、运行叠加和默认关闭的栅格背景；栅格使用单一有界 Gray8 位图而非逐点 WPF 元素。点击站点只显示 `.smap` 标记、MES 映射、坐标、启用状态和关联路线，不提供控制操作。远程桌面截图环境可设置 `WPF_SOFTWARE_RENDERING=true` 使用软件渲染。
+如需加载本地 RoboshopPro 地图，可在启动前设置 `MAP_SMAP_PATH`；可选的 `MAP_STATION_MAPPING_PATH` 用于把 LM 标记映射到 MES 站点。地图身份与 MES Profile 不一致或无法验证时，界面仍显示静态 `.smap` 几何，但会关闭画布上的 AGV 与活动路径叠加。地图页可独立开关特征墙线、路线、站点标签、运行叠加和默认显示的障碍扫描；障碍扫描把 `normalPosList` 渲染为单一、有界、透明底的 Indexed8 深色位图，而非逐点 WPF 元素。工具栏提供“导出当前 PNG”和“导出完整 PNG”：前者保留当前缩放、平移及图层状态，后者从未变换画布导出完整地图；输出尺寸受 `8192` 单边和 `32,000,000` 总像素上限约束。点击站点只显示 `.smap` 标记、MES 映射、坐标、启用状态和关联路线，不提供控制操作。远程桌面截图环境可设置 `WPF_SOFTWARE_RENDERING=true` 使用软件渲染。
 
 从 Visual Studio 启动 WPF 项目，或首次构建后直接打开 WPF 输出目录中的 `MesControlAgv.Wpf.exe`，行为相同。WPF 自行管理的 Simulator 数据库存放在 `%LOCALAPPDATA%\MesControlAgv\local-simulator`。
 

@@ -10,6 +10,9 @@ namespace MesControlAgv.Wpf.ViewModels;
 /// <summary>配置 AGV 地图的只读几何信息和状态叠加层。</summary>
 public sealed class MapViewModel : INotifyPropertyChanged
 {
+    public const double DefaultCanvasWidth = 1140;
+    public const double DefaultCanvasHeight = 780;
+
     private const double NodeWidth = 112;
     private const double NodeHeight = 60;
     private const double NodeCenterX = NodeWidth / 2;
@@ -33,9 +36,9 @@ public sealed class MapViewModel : INotifyPropertyChanged
     public MapRasterLayerViewModel Raster { get; } = new();
     public MapStationSelectionViewModel StationSelection { get; } = new();
 
-    public double CanvasWidth { get; private set; } = 760;
-    public double CanvasHeight { get; private set; } = 520;
-    public MapViewportBounds NavigationBounds { get; private set; } = new(0, 0, 760, 520);
+    public double CanvasWidth { get; private set; } = DefaultCanvasWidth;
+    public double CanvasHeight { get; private set; } = DefaultCanvasHeight;
+    public MapViewportBounds NavigationBounds { get; private set; } = new(0, 0, DefaultCanvasWidth, DefaultCanvasHeight);
 
     public string Fingerprint { get => _fingerprint; private set => SetField(ref _fingerprint, value); }
     public string LiveFingerprint { get => _liveFingerprint; private set => SetField(ref _liveFingerprint, value); }
@@ -50,6 +53,7 @@ public sealed class MapViewModel : INotifyPropertyChanged
     public MapViewModel()
     {
         Layers.PropertyChanged += Layers_PropertyChanged;
+        Raster.SetVisible(Layers.ShowRasterBackground);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -72,6 +76,7 @@ public sealed class MapViewModel : INotifyPropertyChanged
         CanvasWidth = canvasWidth;
         CanvasHeight = canvasHeight;
         Raster.ApplyLayout(layout, canvasWidth, canvasHeight, SmapPadding);
+        Raster.SetVisible(Layers.ShowRasterBackground);
         StationSelection.ApplyLayout(layout, mapping);
 
         var coordinates = new MapCoordinateSystem(layout.Header, canvasWidth, canvasHeight, SmapPadding);

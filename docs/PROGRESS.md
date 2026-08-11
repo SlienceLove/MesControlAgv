@@ -1,6 +1,6 @@
 # AGV MES MVP Progress
 
-Last updated: 2026-08-10
+Last updated: 2026-08-11
 
 ## Current status
 
@@ -99,10 +99,41 @@ dispatched, cancelled, or moved.
   raster toggle, disabled runtime layer under mismatch, and `LM1` station
   detail; visual evidence is `artifacts/wpf-map-observability-final-20260810.png`.
 
-Only map export remains in this visual backlog. A
-real AGV remains **NO-GO** until a new authorized, isolated read-only preflight
+Map export was completed on 2026-08-11. A real AGV remains **NO-GO** until a new authorized, isolated read-only preflight
 proves the live map fingerprint, station catalog, directed edges, automatic
 mode, control ownership, and safety gates.
+
+## 2026-08-11 WPF map export and obstacle scan completion
+
+This follow-up remained Simulator-only and local. No physical AGV was
+connected, queried, controlled, dispatched, cancelled, or moved.
+
+- The map now renders both static `.smap` sources by default: `normalPosList`
+  becomes one bounded Indexed8 image with a transparent background and dark
+  occupied pixels, while `advancedLineList` remains a thinner gray-blue feature
+  outline. The checked `障碍扫描` control can still hide the scan layer.
+- The local `guangzhou606.smap` contains 36,559 scan points and 151 feature
+  lines. The larger `1140 x 780` default map canvas, darker obstacle outline,
+  `1.6` route stroke, and smaller arrows improve close-station readability
+  without altering source geometry or map identity gates.
+- `导出当前 PNG` captures the visible map viewport; `导出完整 PNG` uses the
+  untransformed `MapCanvas`. Both capture the existing visual tree so all layer
+  switches apply naturally, and an identity mismatch continues to exclude AGV
+  and active-path overlays fail-closed.
+- `MapExportPlanner` validates finite source bounds, creates safe PNG names,
+  and caps output at `8192` pixels per dimension and `32,000,000` pixels total.
+  `MapPngExportService` renders through `VisualBrush`, `RenderTargetBitmap`,
+  and `PngBitmapEncoder` on the WPF dispatcher thread.
+- Manual Simulator acceptance with the real local `.smap` produced a current
+  viewport PNG of `918 x 506` and a complete-map PNG of `1140 x 780`; both had
+  the PNG signature `89 50 4E 47 0D 0A 1A 0A`. The final complete-map export and
+  obstacle-scan window evidence are saved as
+  `artifacts/wpf-map-export-current-viewport-final-20260811.png`,
+  `artifacts/wpf-map-export-final-20260811.png`, and
+  `artifacts/wpf-map-export-obstacle-scan-final-20260811.png`.
+- Release build passed with 0 warnings and 0 errors. The Release solution test
+  run passed **327/327**: Domain 35, MES 45, Adapter 72, WPF 150, E2E 11,
+  Simulator 5, and Workflow Contract 9.
 
 ## 2026-08-10 concurrent continuation
 

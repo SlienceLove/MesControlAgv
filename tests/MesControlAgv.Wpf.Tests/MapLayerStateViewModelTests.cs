@@ -5,7 +5,7 @@ namespace MesControlAgv.Wpf.Tests;
 public sealed class MapLayerStateViewModelTests
 {
     [Fact]
-    public void Defaults_show_static_layers_and_hide_raster()
+    public void Defaults_show_static_layers_and_obstacle_scan()
     {
         var layers = new MapLayerStateViewModel();
 
@@ -13,7 +13,7 @@ public sealed class MapLayerStateViewModelTests
         Assert.True(layers.ShowRoutes);
         Assert.True(layers.ShowStationLabels);
         Assert.True(layers.ShowRuntimeOverlays);
-        Assert.False(layers.ShowRasterBackground);
+        Assert.True(layers.ShowRasterBackground);
         Assert.True(layers.RuntimeOverlayAllowed);
     }
 

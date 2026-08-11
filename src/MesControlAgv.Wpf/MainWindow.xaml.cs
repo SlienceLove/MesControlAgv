@@ -9,6 +9,7 @@ using System.Windows.Media;
 using System.Windows.Shapes;
 using System.Windows.Threading;
 using MesControlAgv.Domain.Map;
+using MesControlAgv.Wpf.Services;
 using MesControlAgv.Wpf.ViewModels;
 using MesControlAgv.Wpf.Workflows;
 
@@ -215,6 +216,87 @@ public partial class MainWindow : Window
         {
             viewModel.Readiness.Viewport.Reset();
             _mapAutoFitted = true;
+        }
+    }
+
+    private void MapExportCurrent_Click(object sender, RoutedEventArgs e) =>
+        ExportMap(MapExportMode.CurrentViewport);
+
+    private void MapExportFull_Click(object sender, RoutedEventArgs e) =>
+        ExportMap(MapExportMode.FullMap);
+
+    private void ExportMap(MapExportMode mode)
+    {
+        if (DataContext is not MainViewModel viewModel) return;
+
+        FrameworkElement source;
+        double sourceWidth;
+        double sourceHeight;
+        if (mode == MapExportMode.CurrentViewport)
+        {
+            source = MapScrollViewer;
+            sourceWidth = MapScrollViewer.ActualWidth;
+            sourceHeight = MapScrollViewer.ActualHeight;
+        }
+        else
+        {
+            source = MapCanvas;
+            sourceWidth = MapCanvas.ActualWidth;
+            sourceHeight = MapCanvas.ActualHeight;
+        }
+
+        MapExportPlan plan;
+        try
+        {
+            plan = MapExportPlanner.Create(mode, sourceWidth, sourceHeight);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            MessageBox.Show(
+                this,
+                "地图尚未完成布局，无法导出 PNG。",
+                "导出地图",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        var mapName = viewModel.Readiness.MapSnapshot?.ProfileMapName;
+        var dialog = new SaveFileDialog
+        {
+            Filter = "PNG 图像 (*.png)|*.png",
+            DefaultExt = ".png",
+            AddExtension = true,
+            OverwritePrompt = true,
+            FileName = MapExportPlanner.CreatePngFileName(mapName, mode)
+        };
+        if (dialog.ShowDialog(this) != true) return;
+
+        try
+        {
+            source.UpdateLayout();
+            new MapPngExportService().Export(
+                source,
+                new Rect(0, 0, plan.SourceWidth, plan.SourceHeight),
+                dialog.FileName,
+                plan.PixelWidth,
+                plan.PixelHeight);
+            var scope = mode == MapExportMode.CurrentViewport ? "当前视口" : "完整地图";
+            MessageBox.Show(
+                this,
+                $"已导出{scope} PNG：{plan.PixelWidth} x {plan.PixelHeight}\n{dialog.FileName}",
+                "导出地图",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(
+                this,
+                $"导出 PNG 失败：{exception.Message}",
+                "导出地图",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
         }
     }
 

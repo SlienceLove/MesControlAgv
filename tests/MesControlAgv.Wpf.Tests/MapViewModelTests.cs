@@ -8,6 +8,24 @@ namespace MesControlAgv.Wpf.Tests;
 public sealed class MapViewModelTests
 {
     [Fact]
+    public void Defaults_to_a_larger_three_by_two_smap_canvas_without_distorting_geometry()
+    {
+        var viewModel = new MapViewModel();
+
+        Assert.Equal(1140, MapViewModel.DefaultCanvasWidth);
+        Assert.Equal(780, MapViewModel.DefaultCanvasHeight);
+        Assert.Equal((1140d, 780d), (viewModel.CanvasWidth, viewModel.CanvasHeight));
+        Assert.Equal(new MapViewportBounds(0, 0, 1140, 780), viewModel.NavigationBounds);
+
+        viewModel.ApplyLayout(Layout(), StationMappingConfig.Empty, viewModel.CanvasWidth, viewModel.CanvasHeight);
+
+        var edge = Assert.Single(viewModel.Edges);
+        Assert.Equal(1140, viewModel.CanvasWidth);
+        Assert.Equal(780, viewModel.CanvasHeight);
+        Assert.Equal(edge.X2 - edge.X1, edge.Y1 - edge.Y2, 6);
+    }
+
+    [Fact]
     public void ApplyLayout_uses_station_coordinates_as_node_centers()
     {
         var viewModel = new MapViewModel();
@@ -15,6 +33,7 @@ public sealed class MapViewModelTests
         viewModel.ApplyLayout(Layout(), StationMappingConfig.Empty, 200, 200);
 
         Assert.True(viewModel.UsingSmapLayout);
+        Assert.Equal((200d, 200d), (viewModel.CanvasWidth, viewModel.CanvasHeight));
         Assert.Equal(2, viewModel.Nodes.Count);
         Assert.Equal(0, viewModel.Nodes[0].X);
         Assert.Equal(114, viewModel.Nodes[0].Y);
@@ -112,7 +131,7 @@ public sealed class MapViewModelTests
     }
 
     [Fact]
-    public void ApplyLayout_builds_hidden_raster_and_station_inspector_data()
+    public void ApplyLayout_builds_visible_obstacle_scan_and_station_inspector_data()
     {
         var viewModel = new MapViewModel();
         var layout = Layout() with
@@ -123,10 +142,14 @@ public sealed class MapViewModelTests
         viewModel.ApplyLayout(layout, StationMappingConfig.Empty, 200, 200);
 
         Assert.True(viewModel.Raster.HasData);
-        Assert.False(viewModel.Raster.IsVisible);
+        Assert.True(viewModel.Raster.IsVisible);
         Assert.Equal(2, viewModel.StationSelection.Stations.Count);
         Assert.True(viewModel.SelectStation("LM1"));
         Assert.Equal("LM1", viewModel.StationSelection.SelectedDetail!.SmapStationId);
+
+        viewModel.Layers.ShowRasterBackground = false;
+
+        Assert.False(viewModel.Raster.IsVisible);
 
         viewModel.Layers.ShowRasterBackground = true;
 

@@ -21,7 +21,7 @@ public sealed class MapLayerStateViewModel : INotifyPropertyChanged
     private bool _showRoutes = true;
     private bool _showStationLabels = true;
     private bool _showRuntimeOverlays = true;
-    private bool _showRasterBackground;
+    private bool _showRasterBackground = true;
     private bool _runtimeOverlayAllowed = true;
 
     public event PropertyChangedEventHandler? PropertyChanged;

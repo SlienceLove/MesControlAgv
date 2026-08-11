@@ -725,6 +725,8 @@
                             <Button Height="28" Margin="6,0,0,0" Padding="10,0" Content="路线区域" Click="MapFitRoute_Click" ToolTip="聚焦站点和可行驶路线" />
                             <Button Height="28" Margin="6,0,0,0" Padding="10,0" Content="完整地图" Click="MapFit_Click" ToolTip="显示完整 .smap 边界" />
                             <Button Width="32" Height="28" Margin="6,0,0,0" Content="↺" Click="MapReset_Click" ToolTip="重置视图" />
+                            <Button Height="28" Margin="6,0,0,0" Padding="10,0" Content="导出当前 PNG" Click="MapExportCurrent_Click" ToolTip="导出当前地图视口" AutomationProperties.Name="导出当前地图视口 PNG" />
+                            <Button Height="28" Margin="6,0,0,0" Padding="10,0" Content="导出完整 PNG" Click="MapExportFull_Click" ToolTip="导出未变换的完整地图" AutomationProperties.Name="导出完整地图 PNG" />
                         </StackPanel>
                         <WrapPanel Margin="0,8,0,0">
                             <CheckBox Margin="0,0,12,0" VerticalAlignment="Center" Content="墙线" IsChecked="{Binding Readiness.Map.Layers.ShowWalls, Mode=TwoWay}" />
@@ -733,7 +735,7 @@
                             <CheckBox Margin="0,0,12,0" VerticalAlignment="Center" Content="运行叠加"
                                       IsEnabled="{Binding Readiness.Map.Layers.RuntimeOverlayAllowed}"
                                       IsChecked="{Binding Readiness.Map.Layers.ShowRuntimeOverlays, Mode=TwoWay}" />
-                            <CheckBox VerticalAlignment="Center" Content="栅格"
+                            <CheckBox VerticalAlignment="Center" Content="障碍扫描" ToolTip="显示 .smap 的障碍扫描点"
                                       IsEnabled="{Binding Readiness.Map.Raster.HasData}"
                                       IsChecked="{Binding Readiness.Map.Layers.ShowRasterBackground, Mode=TwoWay}" />
                         </WrapPanel>
@@ -755,21 +757,23 @@
                             PreviewMouseLeftButtonDown="MapCanvas_MouseLeftButtonDown"
                             PreviewMouseMove="MapCanvas_MouseMove"
                             PreviewMouseLeftButtonUp="MapCanvas_MouseLeftButtonUp">
-                        <ScrollViewer x:Name="MapScrollViewer" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Disabled">
-                            <Canvas x:Name="MapCanvas"
+                        <ScrollViewer x:Name="MapScrollViewer" Background="#FBFCFE" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Disabled">
+                            <Canvas x:Name="MapTransformHost"
                                     Width="{Binding Readiness.Map.CanvasWidth}"
-                                    Height="{Binding Readiness.Map.CanvasHeight}"
-                                    Background="#FBFCFE">
+                                    Height="{Binding Readiness.Map.CanvasHeight}">
                                 <Canvas.RenderTransform>
                                     <TransformGroup>
                                         <ScaleTransform ScaleX="{Binding Readiness.Viewport.Scale}" ScaleY="{Binding Readiness.Viewport.Scale}" />
                                         <TranslateTransform X="{Binding Readiness.Viewport.OffsetX}" Y="{Binding Readiness.Viewport.OffsetY}" />
                                     </TransformGroup>
                                 </Canvas.RenderTransform>
+                                <Canvas x:Name="MapCanvas"
+                                        Width="{Binding Readiness.Map.CanvasWidth}"
+                                        Height="{Binding Readiness.Map.CanvasHeight}"
+                                        Background="#FBFCFE">
                                 <Image Width="{Binding Readiness.Map.CanvasWidth}"
                                        Height="{Binding Readiness.Map.CanvasHeight}"
                                        Stretch="Fill"
-                                       Opacity="0.32"
                                        IsHitTestVisible="False"
                                        Visibility="{Binding DataContext.Readiness.Map.Layers.ShowRasterBackground, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BooleanToVisibilityConverter}}"
                                        Source="{Binding Readiness.Map.Raster, Converter={StaticResource MapRasterImageSourceConverter}}" />
@@ -781,7 +785,7 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <Path Data="{Binding Converter={StaticResource MapBezierGeometryConverter}}"
-                                                  Stroke="#C9D2DE" StrokeThickness="0.7" Opacity="0.42"
+                                                  Stroke="#64748B" StrokeThickness="0.85" Opacity="0.72"
                                                   StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
@@ -794,7 +798,7 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <Path Data="{Binding Converter={StaticResource MapBezierGeometryConverter}}"
-                                                  Stroke="#315B87" StrokeThickness="3.25"
+                                                  Stroke="#315B87" StrokeThickness="1.6"
                                                   StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
@@ -812,7 +816,7 @@
                                     </ItemsControl.ItemContainerStyle>
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Polygon Points="0,0 -10,-5 -10,5" Fill="#315B87">
+                                            <Polygon Points="0,0 -6,-3 -6,3" Fill="#315B87">
                                                 <Polygon.RenderTransform>
                                                     <RotateTransform Angle="{Binding ArrowAngle}" />
                                                 </Polygon.RenderTransform>
@@ -828,7 +832,7 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <Path Data="{Binding Converter={StaticResource MapBezierGeometryConverter}}"
-                                                  Stroke="#D97706" StrokeThickness="4" Opacity="0.65" />
+                                                  Stroke="#D97706" StrokeThickness="2.2" Opacity="0.65" />
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
@@ -874,7 +878,7 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <Canvas Width="1" Height="1">
-                                                <Polygon Points="0,0 -10,-5 -10,5" Fill="#D97706">
+                                                <Polygon Points="0,0 -7,-3.5 -7,3.5" Fill="#D97706">
                                                     <Polygon.RenderTransform>
                                                         <RotateTransform Angle="{Binding HeadingDegrees}" />
                                                     </Polygon.RenderTransform>
@@ -889,6 +893,7 @@
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
+                                </Canvas>
                             </Canvas>
                         </ScrollViewer>
                     </Border>
@@ -925,7 +930,8 @@
                             <TextBlock Foreground="#B42318" TextWrapping="Wrap" Text="{Binding Readiness.MapLayoutVerificationDetails}" />
                             <TextBlock Margin="0,12,0,4" FontWeight="SemiBold" Text="图例" />
                             <TextBlock Foreground="#315B87" Text="蓝色：有向路线" />
-                            <TextBlock Foreground="#C9D2DE" Text="浅灰：.smap 特征墙线" />
+                            <TextBlock Foreground="#1E293B" Text="深色：.smap 障碍扫描点" />
+                            <TextBlock Foreground="#64748B" Text="灰蓝：.smap 特征勾勒线" />
                             <TextBlock Foreground="#D97706" Text="橙色：报告的活动路径" />
                             <TextBlock Margin="0,12,0,4" FontWeight="SemiBold" Text="安全" />
                             <TextBlock Foreground="#B42318" TextWrapping="Wrap" Text="此视图不提供派发或 AGV 控制操作。" />
