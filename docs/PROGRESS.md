@@ -1065,3 +1065,23 @@ Detailed continuation notes are in
   idempotent transport-operation ownership, crash recovery, state correlation,
   and audit linkage across Application, MES, and Adapter; it is a deliberate
   larger design boundary.
+
+## 2026-08-12 physical acceptance stage 0 preparation
+
+- Frozen field-test source is commit `3d20cad445ef958d68bc497e781a7f16b70bdc07`.
+  The physical example remains redacted, read-only, and automatic-dispatch
+  disabled. A candidate offline session ID was generated for evidence only;
+  the field acceptance ID must be regenerated after site authorization.
+- A clean isolated Release worktree built the complete solution with **0
+  warnings / 0 errors**. The full Release suite passed **381/381**: Domain 37,
+  MES 49, Adapter 109, WPF 159, E2E 12, Simulator 5, Workflow Contract 10.
+- The WPF test project now has explicit project-level `System.IO` and
+  `System.Net.Http` global usings, removing a clean-worktree-only compile gate.
+- Runtime and configuration SHA-256 evidence is recorded in
+  `artifacts/physical-acceptance-20260812-stage0.md`. No controller connection,
+  control acquisition, task write, cancellation, pause, resume, or movement
+  occurred.
+- Stage 1 remains blocked until the vehicle is powered, the work area is
+  isolated, safety personnel are present, and written movement authorization is
+  recorded. The branch is still one commit ahead of its remote because the
+  current environment cannot connect to GitHub.
