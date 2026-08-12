@@ -73,8 +73,9 @@ public sealed class PhysicalAcceptancePreflightService(
                 reasons.Add("controller_faults_active");
             if (readiness.RelocationStatus != 1)
                 reasons.Add("localization_not_confirmed");
-            if (readiness.LocalizationConfidence is null
-                || readiness.LocalizationConfidence < physical.Safety.MinimumLocalizationConfidence)
+            if (readiness.LocalizationConfidence is not { } localizationConfidence
+                || !double.IsFinite(localizationConfidence)
+                || localizationConfidence < physical.Safety.MinimumLocalizationConfidence)
                 reasons.Add("localization_confidence_below_threshold");
             AddVehicleOperatingModeBlockingReasons(profile, physical.Safety, readiness, reasons);
         }

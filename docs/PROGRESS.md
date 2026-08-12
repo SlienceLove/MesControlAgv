@@ -1085,3 +1085,82 @@ Detailed continuation notes are in
   isolated, safety personnel are present, and written movement authorization is
   recorded. The branch is still one commit ahead of its remote because the
   current environment cannot connect to GitHub.
+
+## 2026-08-12 physical acceptance stage 1 site gates
+
+- The operator confirmed the Stage 1 gates: the AGV is powered and idle at
+  `LM1`; the route is isolated; a safety observer, emergency stop, and manual
+  takeover are available; written movement authorization exists; fresh unique
+  acceptance, permit, and task identifiers exist; and the frozen version,
+  configuration, route, and `0.3 m/s` limit were confirmed.
+- The identifiers remain in the controlled site record and are intentionally
+  not copied into repository evidence. Stage 2 is authorized only as a fresh
+  `read-only-preflight` session; no control acquisition, task write,
+  cancellation, pause, resume, dispatch, or movement is allowed.
+- Stage 2 is waiting for protected runtime configuration injection. The current
+  shell has no `ASPNETCORE_ENVIRONMENT`, approved AGV host, or isolated Adapter
+  database setting, and the repository example host is a placeholder. No
+  controller connection was attempted.
+
+## 2026-08-12 physical acceptance stage 2 read-only preflight
+
+- A fresh isolated Release Adapter was started with the site-injected host,
+  temporary SQLite store, and `Adapter:RunMode=read-only-preflight`; the host
+  and temporary path are intentionally omitted. The newly owned process was
+  stopped after evidence capture.
+- `/health` returned `200` with `read-only-preflight`. Dispatch, control
+  release, field-navigation dispatch, and AGV command HTTP probes all returned
+  `405`; no controller mutation API was called.
+- `/physical/preflight` returned `200` and `DispatchPermitted=false`. The AGV
+  was online and idle at `LM1`, control owner `none`, with no active task.
+  Model `W500-SZ`, controller version, localization status `1`, emergency and
+  blocked states, and Fatal/Error `0/0` were read successfully.
+- Controller-authoritative map evidence matched the Profile: `guangzhou606`,
+  version `1.0.6`, expected MD5, five stations, and nine directed edges.
+- The hard blocker was `localization_confidence_below_threshold` because the
+  observed confidence was `0.9482`, below the configured `0.95` minimum.
+  `adapter_does_not_hold_control` and `automatic_dispatch_disabled` also
+  remain expected blockers. Physical acceptance remains **NO-GO**; no control
+  acquisition, task write, cancellation, pause, resume, dispatch, or movement
+  occurred.
+
+## 2026-08-12 physical acceptance stage 3 gate
+
+- Stage 3 was authorized for evaluation, but its mandatory fresh read-only gate
+  was rechecked before any standard-mode startup. The isolated Adapter again
+  reported `read-only-preflight` and was stopped after capture.
+- The live snapshot remained online and idle at `LM1`, control owner `none`,
+  no active task, localization status `1`, emergency/blocked clear, and
+  Fatal/Error `0/0`. Model `W500-SZ`, controller version, and
+  controller-authoritative map evidence remained available and matched the
+  Profile.
+- Localization confidence remained `0.9482`, below the mandatory `0.95`
+  threshold. `DispatchPermitted=false` with blockers
+  `adapter_does_not_hold_control`, `localization_confidence_below_threshold`,
+  and `automatic_dispatch_disabled`.
+- Stage 3 is **BLOCKED / NO-GO**. No standard-mode Adapter was started; no
+  `4005`, `3066`, `3001`, `3002`, `3067`, or `9300` was sent; no control was
+  acquired and the AGV did not move. A new authorized read-only preflight is
+  required after the site restores confidence to at least `0.95`.
+
+## 2026-08-12 physical acceptance stage 3 offline hardening
+
+- Physical lifecycle writes now share one session gate with field-navigation
+  and standard physical dispatch. Manual `4006`, cancellation, and dispatch
+  cannot cross one another; rollback only releases ownership proven to have
+  been acquired by the same attempt and only before a possible `3066` write.
+- Physical pause/resume remains disabled pending an explicit lifecycle
+  authorization. Direct and aggregate command endpoints fail closed before
+  control acquisition or device writes; the aggregate endpoint now rejects
+  before even performing a fleet snapshot query. Disabled and unknown-task
+  cancellation paths also perform no controller mutation.
+- The E2E local-port contract test now resolves the repository from isolated
+  output directories as well as the normal test directory.
+- Final offline Release verification passed: Adapter `148/148`, E2E `12/12`,
+  and the full solution `420/420`; the solution build completed with
+  **0 warnings / 0 errors**, and `git diff --check` passed.
+- No controller was contacted and no `4005`, `4006`, `3066`, `3001`, `3002`,
+  `3067`, or `9300` was sent. Physical acceptance remains **NO-GO** because
+  the latest controller value is still `0.9482 < 0.95`. The next live step
+  requires a fresh authorized read-only preflight and explicit authorization
+  immediately before any possible control command.

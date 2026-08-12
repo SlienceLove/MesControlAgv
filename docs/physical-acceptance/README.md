@@ -89,6 +89,28 @@ This is not a movement failure to work around. A future standard-mode release
 may only consider dispatch after fresh authoritative evidence and every safety
 gate are approved.
 
+Use `scripts/start-physical-acceptance-adapter.ps1` for an approved physical
+session instead of an inline startup probe. The script starts only the Adapter,
+waits first for its exact PID to own the local listening port, then polls
+`/health` and verifies the expected run mode. Starting the process and checking
+`/health` do not open a controller channel; controller reads or mutations occur
+only when a corresponding Adapter endpoint is called. The controller host and
+isolated database path are runtime-only parameters and are not written into the
+repository:
+
+```powershell
+.\scripts\start-physical-acceptance-adapter.ps1 `
+  -ExpectedRunMode read-only-preflight `
+  -ControllerHost 'controller-host-from-approved-site-config' `
+  -AdapterDatabasePath 'C:\approved-session\adapter.db' `
+  -AdapterUrl 'http://127.0.0.1:5141'
+```
+
+For a separately authorized supervised movement session, restart with
+`-ExpectedRunMode standard -EnableFieldNavigationAcceptance`. Keep normal
+automatic dispatch, push status, and task cancellation disabled. Stop only the
+owned process by using the exact state-file command printed by the script.
+
 ## Preparing a future authorized deployment
 
 Only after the vehicle is powered, the work area is isolated, and the site owner
@@ -205,3 +227,11 @@ later read-only `1060` confirmed `locked=false`. The committed template stays
 read-only and dispatch-disabled, and the boundary remains **NO-GO**. A second
 attempt requires a fresh authorized read-only preflight, a stop of that process,
 renewed explicit movement authorization, and a new unique acceptance/task ID.
+
+The subsequent Stage 3 offline hardening is recorded in
+[`../../artifacts/physical-acceptance-20260812-stage3-offline-hardening.md`](../../artifacts/physical-acceptance-20260812-stage3-offline-hardening.md).
+It adds shared physical lifecycle serialization, fail-closed pause/resume and
+cancellation boundaries, transport-aware ownership rollback, and isolated
+output test support. The full Release gate passed `420/420` with `0 warnings /
+0 errors`. This is offline evidence only and does not authorize a controller
+connection or movement.

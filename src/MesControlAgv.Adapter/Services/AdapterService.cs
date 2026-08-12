@@ -14,8 +14,7 @@ public sealed class AdapterService
 {
     private static readonly object DispatchGatesLock = new();
     private static readonly Dictionary<Guid, DispatchGate> DispatchGates = new();
-    private static readonly SemaphoreSlim FieldNavigationSessionGate = new(1, 1);
-
+    private static readonly PhysicalAgvSessionGate DefaultPhysicalSessionGate = new();
     private readonly AdapterDbContext _database;
     private readonly IAgvDeviceClient _device;
     private readonly IAgvFleetDeviceClient? _fleet;
@@ -24,6 +23,7 @@ public sealed class AdapterService
     private readonly ProfileConfiguration _profile;
     private readonly PhysicalAcceptancePreflightService? _physicalPreflight;
     private readonly AdapterRunMode _runMode;
+    private readonly PhysicalAgvSessionGate _physicalSessionGate;
     private readonly ILogger<AdapterService> _logger;
 
     public AdapterService(
@@ -35,6 +35,7 @@ public sealed class AdapterService
         ProfileConfiguration? profile = null,
         PhysicalAcceptancePreflightService? physicalPreflight = null,
         AdapterRunMode? runMode = null,
+        PhysicalAgvSessionGate? physicalSessionGate = null,
         ILogger<AdapterService>? logger = null)
     {
         _database = database;
@@ -45,18 +46,21 @@ public sealed class AdapterService
         _planner = planner ?? new PathPlanner(AgvMap.FromProfile(_profile.Map));
         _physicalPreflight = physicalPreflight;
         _runMode = runMode ?? AdapterRunMode.Standard;
+        _physicalSessionGate = physicalSessionGate ?? DefaultPhysicalSessionGate;
         _logger = logger ?? NullLogger<AdapterService>.Instance;
     }
 
     public Task<AgvTaskResponse> DispatchAsync(Guid taskId, string targetStationId, CancellationToken cancellationToken) =>
-        DispatchCoreAsync(taskId, null, targetStationId, null, null, DispatchPermission.Standard, cancellationToken);
+        DispatchWithPhysicalSessionGateAsync(
+            taskId, null, targetStationId, null, null, DispatchPermission.Standard, cancellationToken);
 
     public Task<AgvTaskResponse> DispatchAsync(
         Guid taskId,
         string? sourceStationId,
         string targetStationId,
         CancellationToken cancellationToken) =>
-        DispatchCoreAsync(taskId, sourceStationId, targetStationId, null, null, DispatchPermission.Standard, cancellationToken);
+        DispatchWithPhysicalSessionGateAsync(
+            taskId, sourceStationId, targetStationId, null, null, DispatchPermission.Standard, cancellationToken);
 
     public Task<AgvTaskResponse> DispatchAsync(
         Guid taskId,
@@ -65,22 +69,62 @@ public sealed class AdapterService
         string? requestedAgvId,
         IReadOnlyList<string>? requestedPath,
         CancellationToken cancellationToken) =>
-        DispatchCoreAsync(taskId, sourceStationId, targetStationId, requestedAgvId, requestedPath, DispatchPermission.Standard, cancellationToken);
+        DispatchWithPhysicalSessionGateAsync(
+            taskId, sourceStationId, targetStationId, requestedAgvId, requestedPath, DispatchPermission.Standard, cancellationToken);
 
     public async Task<AgvTaskResponse> DispatchFieldNavigationAcceptanceAsync(
         Guid acceptanceId,
         FieldNavigationDispatchCommand command,
         CancellationToken cancellationToken)
+        => await _physicalSessionGate.RunAsync(
+            () => DispatchFieldNavigationAcceptanceCoreAsync(acceptanceId, command, cancellationToken),
+            cancellationToken);
+
+    /// <summary>
+    /// Serializes an operator-requested release with physical dispatches so a
+    /// 4006 cannot land between the final 1060 ownership check and 3066.
+    /// </summary>
+    public async Task<bool> ReleaseControlAsync(CancellationToken cancellationToken)
     {
-        await FieldNavigationSessionGate.WaitAsync(cancellationToken);
-        try
+        EnsureMutationIsAllowed("control release");
+        return await _physicalSessionGate.RunAsync(
+            // Once admitted, finish the ownership transaction with the device's
+            // own bounded request timeout even if the HTTP caller disconnects.
+            () => _device.ReleaseControlAsync(CancellationToken.None),
+            cancellationToken);
+    }
+
+    private async Task<AgvTaskResponse> DispatchWithPhysicalSessionGateAsync(
+        Guid taskId,
+        string? sourceStationId,
+        string targetStationId,
+        string? requestedAgvId,
+        IReadOnlyList<string>? requestedPath,
+        DispatchPermission dispatchPermission,
+        CancellationToken cancellationToken)
+    {
+        if (_profile.PhysicalAcceptance is null)
         {
-            return await DispatchFieldNavigationAcceptanceCoreAsync(acceptanceId, command, cancellationToken);
+            return await DispatchCoreAsync(
+                taskId,
+                sourceStationId,
+                targetStationId,
+                requestedAgvId,
+                requestedPath,
+                dispatchPermission,
+                cancellationToken);
         }
-        finally
-        {
-            FieldNavigationSessionGate.Release();
-        }
+
+        return await _physicalSessionGate.RunAsync(
+            () => DispatchCoreAsync(
+                taskId,
+                sourceStationId,
+                targetStationId,
+                requestedAgvId,
+                requestedPath,
+                dispatchPermission,
+                cancellationToken),
+            cancellationToken);
     }
 
     private async Task<AgvTaskResponse> DispatchFieldNavigationAcceptanceCoreAsync(
@@ -105,7 +149,7 @@ public sealed class AdapterService
         var beforeControl = await preflight.GetBeforeControlForFieldNavigationAcceptanceAsync(cancellationToken);
         ValidateFieldNavigationAssessment(beforeControl, command);
 
-        await _device.EnsureControlAsync(cancellationToken);
+        var controlAcquiredByThisSession = await EnsureControlForPhysicalSessionAsync(cancellationToken);
 
         try
         {
@@ -114,28 +158,65 @@ public sealed class AdapterService
         }
         catch (Exception)
         {
-            try
-            {
-                await _device.ReleaseControlAsync(CancellationToken.None);
-            }
-            catch (Exception releaseException)
-            {
-                _logger.LogError(
-                    releaseException,
-                    "AGV control release failed after post-control physical preflight rejection.");
-            }
+            await ReleaseControlAcquiredBySessionAsync(
+                controlAcquiredByThisSession,
+                "AGV control release failed after post-control physical preflight rejection.");
 
             throw;
         }
 
-        return await DispatchCoreAsync(
-            acceptanceId,
-            command.SourceStationId,
-            command.TargetStationId,
-            command.AgvId,
-            command.PlannedPath,
-            DispatchPermission.FieldNavigationAcceptance,
-            cancellationToken);
+        try
+        {
+            return await DispatchCoreAsync(
+                acceptanceId,
+                command.SourceStationId,
+                command.TargetStationId,
+                command.AgvId,
+                command.PlannedPath,
+                DispatchPermission.FieldNavigationAcceptance,
+                cancellationToken);
+        }
+        catch (Exception)
+        {
+            if (controlAcquiredByThisSession
+                && _device is INavigationAttemptState attemptState
+                && !attemptState.MayHaveWrittenNavigation(acceptanceId))
+            {
+                await ReleaseControlAcquiredBySessionAsync(
+                    true,
+                    "AGV control release failed after field navigation stopped before a navigation write.");
+            }
+
+            throw;
+        }
+    }
+
+    private async Task<bool> EnsureControlForPhysicalSessionAsync(CancellationToken cancellationToken)
+    {
+        if (_device is IControlAcquisitionEvidence evidence)
+        {
+            var result = await evidence.EnsureControlWithResultAsync(cancellationToken);
+            return result.AcquiredByThisCall;
+        }
+
+        // A legacy physical client cannot demonstrate whether it inherited
+        // ownership. It may dispatch, but this session must never auto-release.
+        await _device.EnsureControlAsync(cancellationToken);
+        return false;
+    }
+
+    private async Task ReleaseControlAcquiredBySessionAsync(bool controlAcquiredByThisSession, string failureMessage)
+    {
+        if (!controlAcquiredByThisSession) return;
+
+        try
+        {
+            await _device.ReleaseControlAsync(CancellationToken.None);
+        }
+        catch (Exception releaseException)
+        {
+            _logger.LogError(releaseException, failureMessage);
+        }
     }
 
     private static void ValidateFieldNavigationAssessment(
@@ -164,6 +245,7 @@ public sealed class AdapterService
         var gate = AcquireDispatchGate(taskId);
         var acquired = false;
         var waited = false;
+        var controlAcquiredByThisSession = false;
         try
         {
             if (gate.Semaphore.Wait(0))
@@ -219,7 +301,17 @@ public sealed class AdapterService
             var validatedRequestedPath = requestedPath is null
                 ? null
                 : ValidateRequestedPath(sourceStationId, targetStationId, requestedPath).Stations;
-            await _device.EnsureControlAsync(cancellationToken);
+            if (dispatchPermission != DispatchPermission.FieldNavigationAcceptance)
+            {
+                if (_profile.PhysicalAcceptance is null)
+                {
+                    await _device.EnsureControlAsync(cancellationToken);
+                }
+                else
+                {
+                    controlAcquiredByThisSession = await EnsureControlForPhysicalSessionAsync(cancellationToken);
+                }
+            }
             var assignment = await SelectAgvAsync(taskId, sourceStationId, targetStationId, requestedAgvId, cancellationToken);
             var snapshot = await GetSnapshotAsync(assignment.AgvId, cancellationToken);
             if (!snapshot.Online || snapshot.ControlOwner != "adapter") throw new ControlUnavailableException(snapshot.ControlOwner);
@@ -262,7 +354,10 @@ public sealed class AdapterService
                     : await _device.NavigateAsync(taskId, navigationSourceStationId, targetStationId, path, cancellationToken);
                 response = response with { AgvId = assignment.AgvId, Path = path };
             }
-            catch (TimeoutException)
+            catch (TimeoutException) when (
+                _profile.PhysicalAcceptance is null
+                || _device is not INavigationAttemptState navigationAttempt
+                || navigationAttempt.MayHaveWrittenNavigation(taskId))
             {
                 response = await GetTaskFromDeviceAsync(assignment.AgvId, taskId, path, cancellationToken)
                     ?? new AgvTaskResponse(taskId, taskId.ToString("N"), targetStationId, "unknown", "timeout", assignment.AgvId, path);
@@ -273,6 +368,20 @@ public sealed class AdapterService
             task.LastError = response.LastError;
             await _database.SaveChangesAsync(cancellationToken);
             return ToResponse(task);
+        }
+        catch (Exception)
+        {
+            if (controlAcquiredByThisSession
+                && _fleet is null
+                && _device is INavigationAttemptState attemptState
+                && !attemptState.MayHaveWrittenNavigation(taskId))
+            {
+                await ReleaseControlAcquiredBySessionAsync(
+                    true,
+                    "AGV control release failed after physical dispatch stopped before a navigation write.");
+            }
+
+            throw;
         }
         finally
         {
@@ -323,26 +432,92 @@ public sealed class AdapterService
         CancellationToken cancellationToken)
     {
         EnsureMutationIsAllowed("AGV command");
+        ArgumentException.ThrowIfNullOrWhiteSpace(command);
+        var normalizedCommand = command.Trim().ToLowerInvariant();
+        if (normalizedCommand is not ("pause" or "stop" or "resume" or "continue" or "cancel"))
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(command),
+                command,
+                "Supported commands: pause, resume, cancel.");
+        }
+        if (normalizedCommand == "cancel" && !_profile.Features.EnableTaskCancellation)
+        {
+            throw new DispatchDisabledException("Task cancellation is disabled by the active profile.");
+        }
+        if (normalizedCommand is "pause" or "stop")
+        {
+            EnsurePhysicalLifecycleAllowed("pause");
+        }
+        else if (normalizedCommand is "resume" or "continue")
+        {
+            EnsurePhysicalLifecycleAllowed("resume");
+        }
+
+        if (requestedTaskId is { } requestedId)
+        {
+            return await RunPhysicalWriteSessionAsync(
+                () => normalizedCommand switch
+                {
+                    "pause" or "stop" => PauseCoreAsync(requestedId, cancellationToken, agvId),
+                    "resume" or "continue" => ResumeCoreAsync(requestedId, cancellationToken, agvId),
+                    "cancel" => CancelCoreAsync(requestedId, cancellationToken, agvId),
+                    _ => throw new InvalidOperationException("The AGV command was not normalized to a supported operation.")
+                },
+                cancellationToken);
+        }
+
+        if (normalizedCommand == "cancel")
+        {
+            return await RunPhysicalWriteSessionAsync(
+                () => ExecuteCancelCommandCoreAsync(agvId, cancellationToken),
+                cancellationToken);
+        }
+
         var snapshots = await GetFleetAsync(cancellationToken);
         var snapshot = snapshots.SingleOrDefault(item => StringComparer.Ordinal.Equals(item.AgvId, agvId))
             ?? throw new KeyNotFoundException($"AGV {agvId} is not configured.");
-        var taskId = requestedTaskId ?? snapshot.CurrentTaskId
+        var taskId = snapshot.CurrentTaskId
             ?? throw new InvalidOperationException($"AGV {agvId} has no active task.");
 
-        return command.Trim().ToLowerInvariant() switch
+        return normalizedCommand switch
         {
-            "pause" or "stop" => await PauseAsync(taskId, cancellationToken),
-            "resume" or "continue" => await ResumeAsync(taskId, cancellationToken),
-            "cancel" => await CancelAsync(taskId, cancellationToken),
-            _ => throw new ArgumentOutOfRangeException(nameof(command), command, "Supported commands: pause, resume, cancel.")
+            "pause" or "stop" => await PauseCoreAsync(taskId, cancellationToken, agvId),
+            "resume" or "continue" => await ResumeCoreAsync(taskId, cancellationToken, agvId),
+            _ => throw new InvalidOperationException("The AGV command was not normalized to a supported operation.")
         };
+    }
+
+    private async Task<AgvTaskResponse?> ExecuteCancelCommandCoreAsync(
+        string agvId,
+        CancellationToken cancellationToken)
+    {
+        var snapshots = await GetFleetAsync(cancellationToken);
+        var snapshot = snapshots.SingleOrDefault(item => StringComparer.Ordinal.Equals(item.AgvId, agvId))
+            ?? throw new KeyNotFoundException($"AGV {agvId} is not configured.");
+        var taskId = snapshot.CurrentTaskId
+            ?? throw new InvalidOperationException($"AGV {agvId} has no active task.");
+        return await CancelCoreAsync(taskId, cancellationToken, agvId);
     }
 
     public async Task<AgvTaskResponse?> PauseAsync(Guid taskId, CancellationToken cancellationToken)
     {
         EnsureMutationIsAllowed("pause");
+        EnsurePhysicalLifecycleAllowed("pause");
+        return await RunPhysicalWriteSessionAsync(
+            () => PauseCoreAsync(taskId, cancellationToken),
+            cancellationToken);
+    }
+
+    private async Task<AgvTaskResponse?> PauseCoreAsync(
+        Guid taskId,
+        CancellationToken cancellationToken,
+        string? expectedAgvId = null)
+    {
+        EnsureMutationIsAllowed("pause");
         var task = await _database.Tasks.FindAsync([taskId], cancellationToken);
         if (task is null) return null;
+        EnsureTaskBelongsToAgv(task, expectedAgvId);
         var path = DeserializePath(task.PathJson);
         await _device.EnsureControlAsync(cancellationToken);
         var deviceTask = _fleet is not null
@@ -354,8 +529,21 @@ public sealed class AdapterService
     public async Task<AgvTaskResponse?> ResumeAsync(Guid taskId, CancellationToken cancellationToken)
     {
         EnsureMutationIsAllowed("resume");
+        EnsurePhysicalLifecycleAllowed("resume");
+        return await RunPhysicalWriteSessionAsync(
+            () => ResumeCoreAsync(taskId, cancellationToken),
+            cancellationToken);
+    }
+
+    private async Task<AgvTaskResponse?> ResumeCoreAsync(
+        Guid taskId,
+        CancellationToken cancellationToken,
+        string? expectedAgvId = null)
+    {
+        EnsureMutationIsAllowed("resume");
         var task = await _database.Tasks.FindAsync([taskId], cancellationToken);
         if (task is null) return null;
+        EnsureTaskBelongsToAgv(task, expectedAgvId);
         var path = DeserializePath(task.PathJson);
         await _device.EnsureControlAsync(cancellationToken);
         var deviceTask = _fleet is not null
@@ -367,34 +555,77 @@ public sealed class AdapterService
     public async Task<AgvTaskResponse?> CancelAsync(Guid taskId, CancellationToken cancellationToken)
     {
         EnsureMutationIsAllowed("cancellation");
-        await _device.EnsureControlAsync(cancellationToken);
+        if (!_profile.Features.EnableTaskCancellation)
+        {
+            throw new DispatchDisabledException("Task cancellation is disabled by the active profile.");
+        }
+
+        return await RunPhysicalWriteSessionAsync(
+            () => CancelCoreAsync(taskId, cancellationToken),
+            cancellationToken);
+    }
+
+    private async Task<AgvTaskResponse?> CancelCoreAsync(
+        Guid taskId,
+        CancellationToken cancellationToken,
+        string? expectedAgvId = null)
+    {
+        EnsureMutationIsAllowed("cancellation");
         var task = await _database.Tasks.FindAsync([taskId], cancellationToken);
         if (task is null) return null;
+        EnsureTaskBelongsToAgv(task, expectedAgvId);
 
-        var snapshot = await GetSnapshotAsync(task.AgvId, cancellationToken);
-        if (!snapshot.Online || snapshot.ControlOwner != "adapter") throw new ControlUnavailableException(snapshot.ControlOwner);
-
-        var path = DeserializePath(task.PathJson);
-        var deviceTask = _fleet is not null
-            ? await _fleet.CancelAsync(task.AgvId, taskId, path, cancellationToken)
-            : await _device.CancelAsync(taskId, path, cancellationToken);
-        if (deviceTask is { State: "unknown" })
+        var controlAcquiredByThisSession = false;
+        try
         {
+            if (_profile.PhysicalAcceptance is null)
+            {
+                await _device.EnsureControlAsync(cancellationToken);
+            }
+            else
+            {
+                controlAcquiredByThisSession = await EnsureControlForPhysicalSessionAsync(cancellationToken);
+            }
+
+            var snapshot = await GetSnapshotAsync(task.AgvId, cancellationToken);
+            if (!snapshot.Online || snapshot.ControlOwner != "adapter") throw new ControlUnavailableException(snapshot.ControlOwner);
+
+            var path = DeserializePath(task.PathJson);
+            var deviceTask = _fleet is not null
+                ? await _fleet.CancelAsync(task.AgvId, taskId, path, cancellationToken)
+                : await _device.CancelAsync(taskId, path, cancellationToken);
+            if (deviceTask is { State: "unknown" })
+            {
+                task.State = deviceTask.State;
+                task.DeviceTaskId = deviceTask.DeviceTaskId;
+                task.LastError = deviceTask.LastError ?? "cancel_not_confirmed_by_1110";
+                await _database.SaveChangesAsync(cancellationToken);
+                return ToResponse(task);
+            }
+            if (deviceTask is not { State: "cancelled" })
+                throw new InvalidOperationException("Device did not confirm cancellation.");
+
             task.State = deviceTask.State;
             task.DeviceTaskId = deviceTask.DeviceTaskId;
-            task.LastError = deviceTask.LastError ?? "cancel_not_confirmed_by_1110";
+            task.LastError = deviceTask.LastError;
             await _database.SaveChangesAsync(cancellationToken);
+            _scheduler.Release(taskId);
             return ToResponse(task);
         }
-        if (deviceTask is not { State: "cancelled" })
-            throw new InvalidOperationException("Device did not confirm cancellation.");
+        catch (Exception)
+        {
+            if (controlAcquiredByThisSession
+                && _fleet is null
+                && _device is ICancellationAttemptState attemptState
+                && !attemptState.MayHaveWrittenCancellation(taskId))
+            {
+                await ReleaseControlAcquiredBySessionAsync(
+                    true,
+                    "AGV control release failed after physical cancellation stopped before a cancellation write.");
+            }
 
-        task.State = deviceTask.State;
-        task.DeviceTaskId = deviceTask.DeviceTaskId;
-        task.LastError = deviceTask.LastError;
-        await _database.SaveChangesAsync(cancellationToken);
-        _scheduler.Release(taskId);
-        return ToResponse(task);
+            throw;
+        }
     }
 
     private async Task<AgvTaskResponse?> PersistDeviceStateAsync(
@@ -413,6 +644,32 @@ public sealed class AdapterService
     }
 
     private void EnsureMutationIsAllowed(string operation) => _runMode.ThrowIfMutationIsBlocked(operation);
+
+    private static void EnsureTaskBelongsToAgv(AdapterTask task, string? expectedAgvId)
+    {
+        if (expectedAgvId is not null && !StringComparer.Ordinal.Equals(task.AgvId, expectedAgvId))
+        {
+            throw new AgvUnavailableException(
+                $"Task {task.TaskId:N} belongs to AGV {task.AgvId}, not {expectedAgvId}.");
+        }
+    }
+
+    private void EnsurePhysicalLifecycleAllowed(string operation)
+    {
+        if (_profile.PhysicalAcceptance is not null)
+        {
+            throw new DispatchDisabledException(
+                $"Physical acceptance mode rejects {operation} until an explicit lifecycle authorization is configured.");
+        }
+    }
+
+    private Task<T> RunPhysicalWriteSessionAsync<T>(Func<Task<T>> operation, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(operation);
+        return _profile.PhysicalAcceptance is null
+            ? operation()
+            : _physicalSessionGate.RunAsync(operation, cancellationToken);
+    }
 
     private async Task<(string AgvId, PlannedPath? Path)> SelectAgvAsync(
         Guid taskId,

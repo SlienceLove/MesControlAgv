@@ -115,6 +115,10 @@ app.MapPost("/tasks/{taskId:guid}/{action}", async (Guid taskId, string action, 
         };
         return task is null ? Results.NotFound() : Results.Ok(task);
     }
+    catch (DispatchDisabledException exception)
+    {
+        return Results.Conflict(new { detail = exception.Message });
+    }
     catch (ControlUnavailableException exception)
     {
         return Results.Conflict(new { detail = exception.Message });
@@ -126,11 +130,11 @@ app.MapGet("/agv/snapshot", async (IAgvDeviceClient device, CancellationToken ca
     var snapshot = await device.GetSnapshotAsync(cancellationToken);
     return Results.Ok(snapshot with { Capabilities = snapshot.Capabilities ?? AgvCapabilitiesResponse.Standard });
 });
-app.MapPost("/agv/control/release", async (IAgvDeviceClient device, CancellationToken cancellationToken) =>
+app.MapPost("/agv/control/release", async (AdapterService service, CancellationToken cancellationToken) =>
 {
     try
     {
-        return await device.ReleaseControlAsync(cancellationToken)
+        return await service.ReleaseControlAsync(cancellationToken)
             ? Results.Ok(new { released = true })
             : Results.Conflict(new { detail = "AGV control is not owned by the Adapter." });
     }
@@ -157,6 +161,7 @@ app.MapPost("/agvs/{agvId}/command", async (
     {
         return Results.Ok(await service.ExecuteCommandAsync(agvId, request.Command, request.TaskId, cancellationToken));
     }
+    catch (DispatchDisabledException exception) { return Results.Conflict(new { detail = exception.Message }); }
     catch (ControlUnavailableException exception) { return Results.Conflict(new { detail = exception.Message }); }
     catch (AgvUnavailableException exception) { return Results.Conflict(new { detail = exception.Message }); }
     catch (KeyNotFoundException exception) { return Results.NotFound(new { detail = exception.Message }); }

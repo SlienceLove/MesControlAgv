@@ -116,6 +116,199 @@ public sealed class TcpAgvClientTests
         await Task.WhenAll(statusServer.Completion, controlServer.Completion);
     }
 
+    [Theory]
+    [InlineData("{\"ret_code\":0}")]
+    [InlineData("{\"ret_code\":0,\"locked\":null}")]
+    [InlineData("{\"ret_code\":0,\"locked\":\"unknown\"}")]
+    public async Task Acquire_control_fails_closed_when_1060_locked_state_is_invalid(string payload)
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var statusServer = new TcpApiTestServer(1, packet =>
+        {
+            Assert.Equal((ushort)1060, packet.ApiId);
+            return Task.FromResult(Encoding.UTF8.GetBytes(payload));
+        });
+        await using var controlServer = new TcpApiTestServer(0, _ =>
+            throw new InvalidOperationException("4005 must not be sent."));
+        using var client = new TcpAgvClient(
+            Options.Create(new TcpAgvOptions
+            {
+                Host = "127.0.0.1",
+                StatusPort = statusServer.Port,
+                CommandPort = statusServer.Port,
+                ControlPort = controlServer.Port,
+                EnablePush = false,
+                RequestTimeoutMs = 1000,
+                ConnectTimeoutMs = 1000
+            }),
+            NullLogger<TcpAgvClient>.Instance);
+
+        await Assert.ThrowsAsync<AgvProtocolException>(() =>
+            client.EnsureControlWithResultAsync(cancellation.Token));
+
+        Assert.Empty(controlServer.ApiIds);
+        await statusServer.Completion;
+    }
+
+    [Fact]
+    public async Task Ensure_control_reports_existing_adapter_ownership_without_sending_4005()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var statusServer = new TcpApiTestServer(1, packet =>
+        {
+            Assert.Equal((ushort)1060, packet.ApiId);
+            return Task.FromResult(Encoding.UTF8.GetBytes(
+                "{\"ret_code\":0,\"locked\":true,\"nick_name\":\"MesControlAgv.Adapter\"}"));
+        });
+        await using var controlServer = new TcpApiTestServer(0, _ =>
+            throw new InvalidOperationException("4005 must not be sent for existing ownership."));
+        using var client = new TcpAgvClient(
+            CreateControlOptions(statusServer.Port, controlServer.Port),
+            NullLogger<TcpAgvClient>.Instance);
+
+        var result = await client.EnsureControlWithResultAsync(cancellation.Token);
+
+        Assert.False(result.AcquiredByThisCall);
+        Assert.Equal([1060], statusServer.ApiIds);
+        Assert.Empty(controlServer.ApiIds);
+        await Task.WhenAll(statusServer.Completion, controlServer.Completion);
+    }
+
+    [Fact]
+    public async Task Ensure_control_reports_new_ownership_after_4005_and_1060_confirmation()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var ownershipQuery = 0;
+        await using var statusServer = new TcpApiTestServer(2, packet =>
+        {
+            Assert.Equal((ushort)1060, packet.ApiId);
+            var payload = Interlocked.Increment(ref ownershipQuery) == 1
+                ? "{\"ret_code\":0,\"locked\":false}"
+                : "{\"ret_code\":0,\"locked\":true,\"nick_name\":\"MesControlAgv.Adapter\"}";
+            return Task.FromResult(Encoding.UTF8.GetBytes(payload));
+        });
+        await using var controlServer = new TcpApiTestServer(1, packet =>
+        {
+            Assert.Equal((ushort)4005, packet.ApiId);
+            using var request = JsonDocument.Parse(packet.Payload);
+            Assert.Equal(
+                "MesControlAgv.Adapter",
+                request.RootElement.GetProperty("nick_name").GetString());
+            return Task.FromResult(Encoding.UTF8.GetBytes("{\"ret_code\":0}"));
+        });
+        using var client = new TcpAgvClient(
+            CreateControlOptions(statusServer.Port, controlServer.Port),
+            NullLogger<TcpAgvClient>.Instance);
+
+        var result = await client.EnsureControlWithResultAsync(cancellation.Token);
+
+        Assert.True(result.AcquiredByThisCall);
+        Assert.Equal([1060, 1060], statusServer.ApiIds);
+        Assert.Equal([4005], controlServer.ApiIds);
+        await Task.WhenAll(statusServer.Completion, controlServer.Completion);
+    }
+
+    [Fact]
+    public async Task Ensure_control_does_not_guess_release_when_4005_result_is_unknown_even_if_1060_confirms_adapter()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var ownershipQuery = 0;
+        await using var statusServer = new TcpApiTestServer(2, packet =>
+        {
+            Assert.Equal((ushort)1060, packet.ApiId);
+            var payload = Interlocked.Increment(ref ownershipQuery) switch
+            {
+                1 => "{\"ret_code\":0,\"locked\":false}",
+                2 => "{\"ret_code\":0,\"locked\":true,\"nick_name\":\"MesControlAgv.Adapter\"}",
+                _ => throw new InvalidOperationException("Unexpected ownership query.")
+            };
+            return Task.FromResult(Encoding.UTF8.GetBytes(payload));
+        });
+        await using var controlServer = new TcpApiTestServer(
+            1,
+            packet => packet.ApiId switch
+            {
+                4005 => Task.FromResult(Array.Empty<byte>()),
+                _ => throw new InvalidOperationException($"Unexpected control API {packet.ApiId}.")
+            },
+            (packet, _) => packet.ApiId == 4005);
+        using var client = new TcpAgvClient(
+            CreateControlOptions(statusServer.Port, controlServer.Port),
+            NullLogger<TcpAgvClient>.Instance);
+
+        var exception = await Assert.ThrowsAsync<EndOfStreamException>(
+            () => client.EnsureControlWithResultAsync(cancellation.Token));
+
+        Assert.Equal("AGV closed the TCP connection.", exception.Message);
+        Assert.Equal([1060, 1060], statusServer.ApiIds);
+        Assert.Equal([4005], controlServer.ApiIds);
+        await Task.WhenAll(statusServer.Completion, controlServer.Completion);
+    }
+
+    [Fact]
+    public async Task Release_control_does_not_treat_case_variant_owner_as_adapter()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var statusServer = new TcpApiTestServer(1, packet =>
+        {
+            Assert.Equal((ushort)1060, packet.ApiId);
+            return Task.FromResult(Encoding.UTF8.GetBytes(
+                "{\"ret_code\":0,\"locked\":true,\"nick_name\":\"mescontrolagv.adapter\"}"));
+        });
+        await using var controlServer = new TcpApiTestServer(0, _ =>
+            throw new InvalidOperationException("4006 must not be sent for a case-variant owner."));
+        using var client = new TcpAgvClient(
+            CreateControlOptions(statusServer.Port, controlServer.Port),
+            NullLogger<TcpAgvClient>.Instance);
+
+        var released = await client.ReleaseControlAsync(cancellation.Token);
+
+        Assert.False(released);
+        Assert.Equal([1060], statusServer.ApiIds);
+        Assert.Empty(controlServer.ApiIds);
+        await statusServer.Completion;
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Ensure_control_does_not_release_when_4005_outcome_cannot_be_confirmed_as_adapter(
+        bool reconciliationFails)
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var ownershipQuery = 0;
+        await using var statusServer = new TcpApiTestServer(
+            2,
+            packet =>
+            {
+                Assert.Equal((ushort)1060, packet.ApiId);
+                var payload = Interlocked.Increment(ref ownershipQuery) == 1
+                    ? "{\"ret_code\":0,\"locked\":false}"
+                    : "{\"ret_code\":0,\"locked\":true,\"nick_name\":\"robot-test-software\"}";
+                return Task.FromResult(Encoding.UTF8.GetBytes(payload));
+            },
+            (_, requestIndex) => reconciliationFails && requestIndex == 1);
+        await using var controlServer = new TcpApiTestServer(
+            1,
+            packet =>
+            {
+                Assert.Equal((ushort)4005, packet.ApiId);
+                return Task.FromResult(Array.Empty<byte>());
+            },
+            (_, _) => true);
+        using var client = new TcpAgvClient(
+            CreateControlOptions(statusServer.Port, controlServer.Port),
+            NullLogger<TcpAgvClient>.Instance);
+
+        var exception = await Assert.ThrowsAsync<EndOfStreamException>(
+            () => client.EnsureControlWithResultAsync(cancellation.Token));
+
+        Assert.Equal("AGV closed the TCP connection.", exception.Message);
+        Assert.Equal([1060, 1060], statusServer.ApiIds);
+        Assert.Equal([4005], controlServer.ApiIds);
+        await Task.WhenAll(statusServer.Completion, controlServer.Completion);
+    }
+
     [Fact]
     public async Task Release_control_sends_one_empty_4006_on_control_port_and_confirms_with_1060()
     {
@@ -764,10 +957,11 @@ public sealed class TcpAgvClientTests
     public async Task Physical_mode_blocks_3066_when_realtime_safety_status_is_incomplete()
     {
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await using var statusServer = new TcpApiTestServer(2, packet => packet.ApiId switch
+        await using var statusServer = new TcpApiTestServer(3, packet => packet.ApiId switch
         {
             1110 => Task.FromResult(EmptyTaskStatusResponse()),
             1101 => Task.FromResult(Encoding.UTF8.GetBytes("{\"emergency\":false}")),
+            1021 => Task.FromResult(Encoding.UTF8.GetBytes("{\"ret_code\":0}")),
             _ => throw new InvalidOperationException($"Unexpected status API {packet.ApiId}.")
         });
         await using var commandServer = new TcpApiTestServer(0, HandleCommandAsync);
@@ -789,6 +983,176 @@ public sealed class TcpAgvClientTests
             Guid.NewGuid(), "SAMPLE_01", "ST_PREP_01", cancellation.Token));
 
         await statusServer.Completion;
+    }
+
+    [Fact]
+    public async Task Physical_mode_uses_1021_localization_for_the_final_pre_3066_safety_gate()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var taskId = Guid.NewGuid();
+        await using var statusServer = new TcpApiTestServer(5, packet =>
+        {
+            var payload = packet.ApiId switch
+            {
+                1110 => JsonSerializer.Serialize(new
+                {
+                    ret_code = 0,
+                    task_status_list = ReadRequestedTaskIds(packet)
+                        .Select(id => new { task_id = id, status = 404 })
+                }),
+                1101 => "{\"ret_code\":0,\"emergency\":false,\"blocked\":false,\"fatals\":[],\"errors\":[],\"confidence\":0.9582}",
+                1021 => "{\"ret_code\":0,\"reloc_status\":1}",
+                1060 => "{\"ret_code\":0,\"locked\":true,\"nick_name\":\"MesControlAgv.Adapter\"}",
+                _ => throw new InvalidOperationException($"Unexpected status API {packet.ApiId}.")
+            };
+            return Task.FromResult(Encoding.UTF8.GetBytes(payload));
+        });
+        await using var commandServer = new TcpApiTestServer(1, HandleCommandAsync);
+        using var client = new TcpAgvClient(
+            Options.Create(new TcpAgvOptions
+            {
+                Host = "127.0.0.1",
+                StatusPort = statusServer.Port,
+                CommandPort = commandServer.Port,
+                ControlPort = statusServer.Port,
+                EnablePush = false,
+                RequireCompleteSafetyStatus = true,
+                RequireAutomaticMode = false,
+                MinimumConfidence = 0.95,
+                MaximumNavigationSpeedMetersPerSecond = 0.3,
+                RequestTimeoutMs = 1000,
+                ConnectTimeoutMs = 1000
+            }),
+            NullLogger<TcpAgvClient>.Instance);
+
+        var result = await client.NavigateAsync(taskId, "LM1", "LM2", cancellation.Token);
+
+        Assert.True(client.MayHaveWrittenNavigation(taskId));
+        Assert.Equal("unknown", result.State);
+        Assert.Equal([1110, 1101, 1021, 1060, 1110], statusServer.ApiIds);
+        Assert.Equal([3066], commandServer.ApiIds);
+        await Task.WhenAll(statusServer.Completion, commandServer.Completion);
+    }
+
+    [Fact]
+    public async Task Navigation_connection_failure_does_not_mark_3066_as_possibly_written()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var taskId = Guid.NewGuid();
+        await using var statusServer = new TcpApiTestServer(3, packet => packet.ApiId switch
+        {
+            1110 => Task.FromResult(EmptyTaskStatusResponse()),
+            1101 => HandleStatusAsync(packet),
+            1060 => Task.FromResult(Encoding.UTF8.GetBytes(
+                "{\"ret_code\":0,\"locked\":true,\"nick_name\":\"MesControlAgv.Adapter\"}")),
+            _ => throw new InvalidOperationException($"Unexpected status API {packet.ApiId}.")
+        });
+        var closedCommandPort = ReserveClosedLoopbackPort();
+        using var client = new TcpAgvClient(
+            CreateOptions(statusServer.Port, closedCommandPort),
+            NullLogger<TcpAgvClient>.Instance);
+
+        var exception = await Record.ExceptionAsync(() =>
+            client.NavigateAsync(taskId, "LM1", "LM2", cancellation.Token));
+
+        Assert.True(exception is SocketException or TimeoutException);
+
+        Assert.False(client.MayHaveWrittenNavigation(taskId));
+        Assert.Equal([1110, 1101, 1060], statusServer.ApiIds);
+        await statusServer.Completion;
+    }
+
+    [Fact]
+    public async Task Navigation_response_failure_marks_3066_as_possibly_written()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var taskId = Guid.NewGuid();
+        await using var statusServer = new TcpApiTestServer(3, packet => packet.ApiId switch
+        {
+            1110 => Task.FromResult(EmptyTaskStatusResponse()),
+            1101 => HandleStatusAsync(packet),
+            1060 => Task.FromResult(Encoding.UTF8.GetBytes(
+                "{\"ret_code\":0,\"locked\":true,\"nick_name\":\"MesControlAgv.Adapter\"}")),
+            _ => throw new InvalidOperationException($"Unexpected status API {packet.ApiId}.")
+        });
+        await using var commandServer = new TcpApiTestServer(
+            1,
+            packet =>
+            {
+                Assert.Equal((ushort)3066, packet.ApiId);
+                return Task.FromResult(Array.Empty<byte>());
+            },
+            (_, _) => true);
+        using var client = new TcpAgvClient(
+            CreateOptions(statusServer.Port, commandServer.Port),
+            NullLogger<TcpAgvClient>.Instance);
+
+        await Assert.ThrowsAsync<EndOfStreamException>(() => client.NavigateAsync(
+            taskId, "LM1", "LM2", cancellation.Token));
+
+        Assert.True(client.MayHaveWrittenNavigation(taskId));
+        Assert.Equal([3066], commandServer.ApiIds);
+        await Task.WhenAll(statusServer.Completion, commandServer.Completion);
+    }
+
+    [Theory]
+    [InlineData("{\"ret_code\":0,\"reloc_status\":0}")]
+    [InlineData("{\"ret_code\":32001,\"reloc_status\":1}")]
+    [InlineData("{\"ret_code\":0}")]
+    public async Task Physical_mode_blocks_3066_when_authoritative_1021_is_not_successful(
+        string localizationPayload)
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var statusServer = new TcpApiTestServer(3, packet => packet.ApiId switch
+        {
+            1110 => Task.FromResult(EmptyTaskStatusResponse()),
+            1101 => Task.FromResult(Encoding.UTF8.GetBytes(
+                "{\"ret_code\":0,\"reloc_status\":1,\"confidence\":0.9582,\"emergency\":false,\"blocked\":false,\"fatals\":[],\"errors\":[]}")),
+            1021 => Task.FromResult(Encoding.UTF8.GetBytes(localizationPayload)),
+            _ => throw new InvalidOperationException($"Unexpected status API {packet.ApiId}.")
+        });
+        await using var commandServer = new TcpApiTestServer(0, _ =>
+            throw new InvalidOperationException("3066 must not be sent."));
+        using var client = new TcpAgvClient(
+            CreatePhysicalOptions(statusServer.Port, commandServer.Port),
+            NullLogger<TcpAgvClient>.Instance);
+
+        await Assert.ThrowsAnyAsync<InvalidOperationException>(() => client.NavigateAsync(
+            Guid.NewGuid(), "LM1", "LM2", cancellation.Token));
+
+        Assert.Equal([1110, 1101, 1021], statusServer.ApiIds);
+        Assert.Empty(commandServer.ApiIds);
+        await Task.WhenAll(statusServer.Completion, commandServer.Completion);
+    }
+
+    [Theory]
+    [InlineData("NaN")]
+    [InlineData("Infinity")]
+    [InlineData("-Infinity")]
+    public async Task Physical_mode_blocks_3066_for_non_finite_string_confidence(string confidence)
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var statusServer = new TcpApiTestServer(3, packet => packet.ApiId switch
+        {
+            1110 => Task.FromResult(EmptyTaskStatusResponse()),
+            1101 => Task.FromResult(Encoding.UTF8.GetBytes(
+                $"{{\"ret_code\":0,\"confidence\":\"{confidence}\",\"emergency\":false,\"blocked\":false,\"fatals\":[],\"errors\":[]}}")),
+            1021 => Task.FromResult(Encoding.UTF8.GetBytes("{\"ret_code\":0,\"reloc_status\":1}")),
+            _ => throw new InvalidOperationException($"Unexpected status API {packet.ApiId}.")
+        });
+        await using var commandServer = new TcpApiTestServer(0, _ =>
+            throw new InvalidOperationException("3066 must not be sent."));
+        using var client = new TcpAgvClient(
+            CreatePhysicalOptions(statusServer.Port, commandServer.Port),
+            NullLogger<TcpAgvClient>.Instance);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => client.NavigateAsync(
+            Guid.NewGuid(), "LM1", "LM2", cancellation.Token));
+
+        Assert.Contains("safety status is incomplete", exception.Message, StringComparison.Ordinal);
+        Assert.Equal([1110, 1101, 1021], statusServer.ApiIds);
+        Assert.Empty(commandServer.ApiIds);
+        await Task.WhenAll(statusServer.Completion, commandServer.Completion);
     }
 
     [Theory]
@@ -836,6 +1200,7 @@ public sealed class TcpAgvClientTests
         Assert.Equal("cancelled", result.State);
         Assert.Equal("ST_PREP_01", result.TargetStationId);
         Assert.Null(result.LastError);
+        Assert.False(client.MayHaveWrittenCancellation(taskId));
         await statusServer.Completion;
     }
 
@@ -863,6 +1228,56 @@ public sealed class TcpAgvClientTests
         Assert.NotNull(result);
         Assert.Equal("unknown", result.State);
         Assert.Equal("cancel_not_confirmed_by_1110", result.LastError);
+        Assert.True(client.MayHaveWrittenCancellation(taskId));
+        await Task.WhenAll(statusServer.Completion, commandServer.Completion);
+    }
+
+    [Fact]
+    public async Task Client_does_not_mark_cancellation_written_when_3067_connection_fails_before_write()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var taskId = Guid.NewGuid();
+        await using var statusServer = new TcpApiTestServer(1, packet =>
+        {
+            Assert.Equal((ushort)1110, packet.ApiId);
+            return Task.FromResult(TaskStatusResponse(taskId, 2));
+        });
+        var closedCommandPort = ReserveClosedLoopbackPort();
+        using var client = new TcpAgvClient(
+            CreateOptions(statusServer.Port, closedCommandPort),
+            NullLogger<TcpAgvClient>.Instance);
+
+        await Assert.ThrowsAnyAsync<SocketException>(() => client.CancelAsync(taskId, cancellation.Token));
+
+        Assert.False(client.MayHaveWrittenCancellation(taskId));
+        await statusServer.Completion;
+    }
+
+    [Fact]
+    public async Task Client_marks_cancellation_written_when_3067_response_transport_fails()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var taskId = Guid.NewGuid();
+        await using var statusServer = new TcpApiTestServer(1, packet =>
+        {
+            Assert.Equal((ushort)1110, packet.ApiId);
+            return Task.FromResult(TaskStatusResponse(taskId, 2));
+        });
+        await using var commandServer = new TcpApiTestServer(
+            1,
+            packet =>
+            {
+                Assert.Equal((ushort)3067, packet.ApiId);
+                return Task.FromResult(Encoding.UTF8.GetBytes("{\"ret_code\":0}"));
+            },
+            closeWithoutResponse: (_, _) => true);
+        using var client = new TcpAgvClient(
+            CreateOptions(statusServer.Port, commandServer.Port),
+            NullLogger<TcpAgvClient>.Instance);
+
+        await Assert.ThrowsAnyAsync<IOException>(() => client.CancelAsync(taskId, cancellation.Token));
+
+        Assert.True(client.MayHaveWrittenCancellation(taskId));
         await Task.WhenAll(statusServer.Completion, commandServer.Completion);
     }
 
@@ -899,6 +1314,44 @@ public sealed class TcpAgvClientTests
         RequestTimeoutMs = 1000,
         ConnectTimeoutMs = 1000
     });
+
+    private static IOptions<TcpAgvOptions> CreateControlOptions(int statusPort, int controlPort) =>
+        Options.Create(new TcpAgvOptions
+        {
+            Host = "127.0.0.1",
+            StatusPort = statusPort,
+            CommandPort = statusPort,
+            ControlPort = controlPort,
+            EnablePush = false,
+            AcquireControl = true,
+            RequestTimeoutMs = 500,
+            ConnectTimeoutMs = 500
+        });
+
+    private static IOptions<TcpAgvOptions> CreatePhysicalOptions(int statusPort, int commandPort) =>
+        Options.Create(new TcpAgvOptions
+        {
+            Host = "127.0.0.1",
+            StatusPort = statusPort,
+            CommandPort = commandPort,
+            ControlPort = statusPort,
+            EnablePush = false,
+            RequireCompleteSafetyStatus = true,
+            RequireAutomaticMode = false,
+            MinimumConfidence = 0.95,
+            MaximumNavigationSpeedMetersPerSecond = 0.3,
+            RequestTimeoutMs = 1000,
+            ConnectTimeoutMs = 1000
+        });
+
+    private static int ReserveClosedLoopbackPort()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
+    }
 
     private static byte[] TaskStatusResponse(Guid taskId, int status) =>
         JsonSerializer.SerializeToUtf8Bytes(new
@@ -977,14 +1430,19 @@ internal sealed class TcpApiTestServer : IAsyncDisposable
     private readonly TcpListener _listener;
     private readonly int _expectedRequests;
     private readonly Func<AgvTcpPacket, Task<byte[]>> _handler;
+    private readonly Func<AgvTcpPacket, int, bool> _closeWithoutResponse;
     private readonly List<RouteRequest> _requests = [];
     private readonly List<IReadOnlyList<RouteRequest>> _batches = [];
     private readonly List<ushort> _apiIds = [];
 
-    public TcpApiTestServer(int expectedRequests, Func<AgvTcpPacket, Task<byte[]>> handler)
+    public TcpApiTestServer(
+        int expectedRequests,
+        Func<AgvTcpPacket, Task<byte[]>> handler,
+        Func<AgvTcpPacket, int, bool>? closeWithoutResponse = null)
     {
         _expectedRequests = expectedRequests;
         _handler = handler;
+        _closeWithoutResponse = closeWithoutResponse ?? ((_, _) => false);
         _listener = new TcpListener(IPAddress.Loopback, 0);
         _listener.Start();
         Completion = expectedRequests == 0 ? Task.CompletedTask : RunAsync();
@@ -1001,48 +1459,57 @@ internal sealed class TcpApiTestServer : IAsyncDisposable
     {
         try
         {
-            using var client = await _listener.AcceptTcpClientAsync();
-            await using var stream = client.GetStream();
-            for (var index = 0; index < _expectedRequests; index++)
+            var requestIndex = 0;
+            while (requestIndex < _expectedRequests)
             {
-                var packet = await AgvTcpProtocol.ReadPacketAsync(stream, 1024 * 1024, CancellationToken.None);
-                _apiIds.Add(packet.ApiId);
-                if (packet.ApiId == 3066)
+                using var client = await _listener.AcceptTcpClientAsync();
+                await using var stream = client.GetStream();
+                while (requestIndex < _expectedRequests)
                 {
-                    using var document = JsonDocument.Parse(packet.Payload);
-                    Assert.Equal(JsonValueKind.Object, document.RootElement.ValueKind);
-                    var rootProperty = Assert.Single(document.RootElement.EnumerateObject());
-                    Assert.Equal("move_task_list", rootProperty.Name);
-                    Assert.Equal(JsonValueKind.Array, rootProperty.Value.ValueKind);
-                    var batch = rootProperty.Value.EnumerateArray()
-                        .Select(item =>
-                        {
-                            var propertyCount = item.EnumerateObject().Count();
-                            Assert.Contains(propertyCount, new[] { 3, 4 });
-                            return new RouteRequest(
-                                item.GetProperty("task_id").GetString()!,
-                                item.GetProperty("source_id").GetString()!,
-                                item.GetProperty("id").GetString()!,
-                                item.TryGetProperty("max_speed", out var maxSpeed)
-                                    ? maxSpeed.GetDouble()
-                                    : null);
-                        })
-                        .ToArray();
-                    Assert.NotEmpty(batch);
-                    _batches.Add(batch);
-                    _requests.AddRange(batch);
-                }
+                    var packet = await AgvTcpProtocol.ReadPacketAsync(stream, 1024 * 1024, CancellationToken.None);
+                    _apiIds.Add(packet.ApiId);
+                    if (packet.ApiId == 3066) RecordNavigationRequest(packet);
 
-                var response = await _handler(packet);
-                var responsePacket = AgvTcpProtocol.CreatePacket((ushort)(packet.ApiId + 10000), response);
-                await stream.WriteAsync(responsePacket);
-                await stream.FlushAsync();
+                    var currentRequestIndex = requestIndex++;
+                    var response = await _handler(packet);
+                    if (_closeWithoutResponse(packet, currentRequestIndex)) break;
+
+                    var responsePacket = AgvTcpProtocol.CreatePacket((ushort)(packet.ApiId + 10000), response);
+                    await stream.WriteAsync(responsePacket);
+                    await stream.FlushAsync();
+                }
             }
         }
         finally
         {
             _listener.Stop();
         }
+    }
+
+    private void RecordNavigationRequest(AgvTcpPacket packet)
+    {
+        using var document = JsonDocument.Parse(packet.Payload);
+        Assert.Equal(JsonValueKind.Object, document.RootElement.ValueKind);
+        var rootProperty = Assert.Single(document.RootElement.EnumerateObject());
+        Assert.Equal("move_task_list", rootProperty.Name);
+        Assert.Equal(JsonValueKind.Array, rootProperty.Value.ValueKind);
+        var batch = rootProperty.Value.EnumerateArray()
+            .Select(item =>
+            {
+                var propertyCount = item.EnumerateObject().Count();
+                Assert.Contains(propertyCount, new[] { 3, 4 });
+                return new RouteRequest(
+                    item.GetProperty("task_id").GetString()!,
+                    item.GetProperty("source_id").GetString()!,
+                    item.GetProperty("id").GetString()!,
+                    item.TryGetProperty("max_speed", out var maxSpeed)
+                        ? maxSpeed.GetDouble()
+                        : null);
+            })
+            .ToArray();
+        Assert.NotEmpty(batch);
+        _batches.Add(batch);
+        _requests.AddRange(batch);
     }
 
     public async ValueTask DisposeAsync()

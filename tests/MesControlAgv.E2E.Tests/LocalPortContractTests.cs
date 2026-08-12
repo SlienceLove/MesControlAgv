@@ -27,6 +27,7 @@ public sealed class LocalPortContractTests
         Assert.Contains("http://localhost:5183/", File.ReadAllText(Path.Combine(root, "src", "MesControlAgv.Adapter", "Program.cs")));
         Assert.Contains("http://localhost:5045/", File.ReadAllText(Path.Combine(root, "src", "MesControlAgv.Wpf", "App.xaml.cs")));
         var launcher = File.ReadAllText(Path.Combine(root, "scripts", "run-local.ps1"));
+        var physicalLauncher = File.ReadAllText(Path.Combine(root, "scripts", "start-physical-acceptance-adapter.ps1"));
         var stopper = File.ReadAllText(Path.Combine(root, "scripts", "stop-local.ps1"));
         var verifier = File.ReadAllText(Path.Combine(root, "scripts", "verify-local.ps1"));
         var wpfStartup = File.ReadAllText(Path.Combine(root, "src", "MesControlAgv.Wpf", "App.xaml.cs"));
@@ -43,6 +44,26 @@ public sealed class LocalPortContractTests
         Assert.Contains("Wait-Health", launcher);
         Assert.Contains("ConnectionStrings__Mes", launcher);
         Assert.Contains("ConnectionStrings__Adapter", launcher);
+
+        Assert.Contains("Wait-Listening", physicalLauncher);
+        Assert.Contains("Wait-Health", physicalLauncher);
+        Assert.Contains("$health.runMode", physicalLauncher);
+        Assert.Contains("ExpectedRunMode", physicalLauncher);
+        Assert.Contains("PhysicalAcceptance", physicalLauncher);
+        Assert.Contains("Agv__Tcp__Host", physicalLauncher);
+        Assert.Contains("Profile__features__enableFieldNavigationAcceptance", physicalLauncher);
+        Assert.Contains("RedirectStandardOutput", physicalLauncher);
+        Assert.Contains("AllowExistingDatabase", physicalLauncher);
+        Assert.Contains("physical-acceptance", physicalLauncher);
+        Assert.Contains("Existing Adapter database", physicalLauncher);
+        Assert.Contains("Test-ExistingAcceptanceDatabase", physicalLauncher);
+        Assert.Contains("SQLite format 3", physicalLauncher);
+        Assert.Contains("Get-PortOwnerDescriptions", physicalLauncher);
+        Assert.Contains("could not bind port", physicalLauncher);
+        Assert.Contains("the port is now owned by", physicalLauncher);
+        Assert.Contains("StandardOutputPath", physicalLauncher);
+        Assert.DoesNotContain("MesControlAgv.Simulator", physicalLauncher);
+        Assert.DoesNotContain("Simulator__BaseUrl", physicalLauncher);
 
         Assert.Contains("LocalSimulatorRuntime", wpfStartup);
         Assert.Contains("WPF_MANAGE_LOCAL_SERVICES", wpfStartup);
@@ -91,14 +112,28 @@ public sealed class LocalPortContractTests
         Assert.DoesNotContain("Live AGV transport verification", verifier);
     }
 
-    private static string FindRepositoryRoot()
+    private static string FindRepositoryRoot(
+        [System.Runtime.CompilerServices.CallerFilePath] string sourceFilePath = "")
     {
-        DirectoryInfo? directory = new(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "MesControlAgv.sln")))
+        var candidates = new[]
         {
-            directory = directory.Parent;
+            AppContext.BaseDirectory,
+            Directory.GetCurrentDirectory(),
+            Path.GetDirectoryName(sourceFilePath) ?? string.Empty
+        };
+
+        foreach (var candidate in candidates.Where(candidate => !string.IsNullOrWhiteSpace(candidate)))
+        {
+            DirectoryInfo? directory = new(candidate);
+            while (directory is not null)
+            {
+                if (File.Exists(Path.Combine(directory.FullName, "MesControlAgv.sln")))
+                    return directory.FullName;
+
+                directory = directory.Parent;
+            }
         }
 
-        return directory?.FullName ?? throw new InvalidOperationException("MesControlAgv.sln was not found.");
+        throw new InvalidOperationException("MesControlAgv.sln was not found from the test or working directory.");
     }
 }

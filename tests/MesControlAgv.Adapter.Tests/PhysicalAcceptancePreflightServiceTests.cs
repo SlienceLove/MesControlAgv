@@ -102,6 +102,22 @@ public sealed class PhysicalAcceptancePreflightServiceTests
         Assert.Contains(expectedReason, result.BlockingReasons);
     }
 
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    public async Task Preflight_rejects_non_finite_localization_confidence(double confidence)
+    {
+        var device = ReadyDevice();
+        device.Readiness = device.Readiness with { LocalizationConfidence = confidence };
+
+        var result = await new PhysicalAcceptancePreflightService(device, CreateProfile(enableAutomaticDispatch: true))
+            .GetAsync(CancellationToken.None);
+
+        Assert.False(result.DispatchPermitted);
+        Assert.Contains("localization_confidence_below_threshold", result.BlockingReasons);
+    }
+
     [Fact]
     public async Task Field_navigation_preflight_requires_its_explicit_feature_gate()
     {

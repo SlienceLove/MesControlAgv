@@ -44,6 +44,20 @@ public sealed class AdapterCompositionRootTests
         Assert.Contains("MinimumConfidence", exception.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("NaN")]
+    [InlineData("Infinity")]
+    [InlineData("-Infinity")]
+    public void Physical_profile_rejects_a_non_finite_tcp_confidence_threshold(string value)
+    {
+        var configuration = CreatePhysicalConfiguration();
+        configuration["Agv:Tcp:MinimumConfidence"] = value;
+
+        var exception = Assert.Throws<InvalidOperationException>(() => AddServices(configuration));
+
+        Assert.Contains("MinimumConfidence", exception.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Physical_profile_rejects_automatic_dispatch_without_live_map_verification()
     {

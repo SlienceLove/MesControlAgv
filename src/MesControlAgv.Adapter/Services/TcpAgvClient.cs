@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
@@ -120,7 +121,11 @@ internal sealed class TcpApiChannel : IDisposable
         _options = options;
     }
 
-    public async Task<JsonDocument> RequestAsync(ushort apiId, object? payload, CancellationToken cancellationToken)
+    public async Task<JsonDocument> RequestAsync(
+        ushort apiId,
+        object? payload,
+        CancellationToken cancellationToken,
+        Action? onBeforeWrite = null)
     {
         await _gate.WaitAsync(cancellationToken);
         try
@@ -132,6 +137,7 @@ internal sealed class TcpApiChannel : IDisposable
             {
                 await EnsureConnectedAsync(timeout.Token);
                 var packet = AgvTcpProtocol.CreatePacket(apiId, bytes);
+                onBeforeWrite?.Invoke();
                 await _stream!.WriteAsync(packet, timeout.Token);
                 await _stream.FlushAsync(timeout.Token);
                 var response = await AgvTcpProtocol.ReadPacketAsync(_stream, _options.MaxPayloadBytes, timeout.Token);
@@ -149,6 +155,11 @@ internal sealed class TcpApiChannel : IDisposable
             {
                 ResetConnection();
                 throw new TimeoutException($"AGV API {apiId} timed out on port {_port}.");
+            }
+            catch (OperationCanceledException)
+            {
+                ResetConnection();
+                throw;
             }
             catch (Exception exception) when (exception is IOException or SocketException)
             {
@@ -201,6 +212,9 @@ public sealed class TcpAgvClient :
     IAgvDeviceClient,
     IPhysicalAgvDeviceClient,
     IControllerMapEvidenceDeviceClient,
+    IControlAcquisitionEvidence,
+    INavigationAttemptState,
+    ICancellationAttemptState,
     IHostedService,
     IDisposable
 {
@@ -236,11 +250,14 @@ public sealed class TcpAgvClient :
     private readonly TcpApiChannel _statusChannel;
     private readonly TcpApiChannel _commandChannel;
     private readonly TcpApiChannel _controlChannel;
-    private readonly SemaphoreSlim _releaseControlGate = new(1, 1);
+    // Serialize ownership read/acquire/reconcile and release transactions.
+    private readonly SemaphoreSlim _controlTransactionGate = new(1, 1);
     private readonly object _snapshotLock = new();
     private readonly ConcurrentDictionary<Guid, RoutePlan> _routes = new();
     private readonly ConcurrentDictionary<Guid, Guid> _parentTaskIds = new();
     private readonly ConcurrentDictionary<Guid, byte> _navigationAttempts = new();
+    private readonly ConcurrentDictionary<Guid, byte> _navigationWrites = new();
+    private readonly ConcurrentDictionary<Guid, byte> _cancellationWrites = new();
     private AgvSnapshotResponse? _pushSnapshot;
     private DeviceReadiness? _pushReadiness;
     private DateTimeOffset _pushReceivedAt;
@@ -261,56 +278,85 @@ public sealed class TcpAgvClient :
         _controlChannel = new TcpApiChannel(_options.Host, _options.ControlPort, _options);
     }
 
-    public async Task EnsureControlAsync(CancellationToken cancellationToken)
+    public async Task EnsureControlAsync(CancellationToken cancellationToken) =>
+        _ = await EnsureControlWithResultAsync(cancellationToken);
+
+    public async Task<ControlAcquisitionResult> EnsureControlWithResultAsync(
+        CancellationToken cancellationToken)
     {
         ThrowIfMutationIsBlocked("control acquisition");
-        var current = await QueryControlAsync(cancellationToken);
-        if (current.Owner == "adapter") return;
-        if (!_options.AcquireControl)
-        {
-            throw new ControlUnavailableException(current.Owner);
-        }
-
+        await _controlTransactionGate.WaitAsync(cancellationToken);
         try
         {
-            var request = new { nick_name = _options.NickName };
-            LogMutationRequest(AcquireControlApi, request);
-            using var response = await _controlChannel.RequestAsync(AcquireControlApi, request, cancellationToken);
-            LogMutationResponse(AcquireControlApi, response.RootElement);
-            EnsureSuccess(response, AcquireControlApi);
-        }
-        catch (AgvApiException exception) when (exception.ErrorCode is 40012 or 40020)
-        {
-            throw new ControlUnavailableException(current.Owner);
-        }
+            var current = await QueryControlAsync(cancellationToken);
+            if (current.Owner == "adapter") return new ControlAcquisitionResult(false);
+            if (!_options.AcquireControl)
+            {
+                throw new ControlUnavailableException(current.Owner);
+            }
 
-        var acquired = await QueryControlAsync(cancellationToken);
-        if (acquired.Owner != "adapter") throw new ControlUnavailableException(acquired.Owner);
+            var mayHaveWrittenRequest = false;
+            try
+            {
+                var request = new { nick_name = _options.NickName };
+                LogMutationRequest(AcquireControlApi, request);
+                using var response = await _controlChannel.RequestAsync(
+                    AcquireControlApi,
+                    request,
+                    cancellationToken,
+                    () => mayHaveWrittenRequest = true);
+                LogMutationResponse(AcquireControlApi, response.RootElement);
+                EnsureSuccess(response, AcquireControlApi);
+
+                var acquired = await QueryControlAsync(cancellationToken);
+                if (acquired.Owner != "adapter") throw new ControlUnavailableException(acquired.Owner);
+                return new ControlAcquisitionResult(true);
+            }
+            catch (AgvApiException exception) when (exception.ErrorCode is 40012 or 40020)
+            {
+                throw new ControlUnavailableException(current.Owner);
+            }
+            catch (Exception exception) when (
+                mayHaveWrittenRequest && IsControlAcquisitionOutcomeUnknown(exception))
+            {
+                await ReconcileAndRollbackUnknownControlAcquisitionAsync(exception);
+                throw;
+            }
+        }
+        finally
+        {
+            _controlTransactionGate.Release();
+        }
     }
 
     public async Task<bool> ReleaseControlAsync(CancellationToken cancellationToken)
     {
         ThrowIfMutationIsBlocked("control release");
-        await _releaseControlGate.WaitAsync(cancellationToken);
+        await _controlTransactionGate.WaitAsync(cancellationToken);
         try
         {
-            // Keep ownership read, mutation audit, 4006 write, and confirmation as one transaction.
-            var current = await QueryControlAsync(cancellationToken);
-            if (current.Owner != "adapter") return false;
-
-            LogMutationRequest(ReleaseControlApi, new { });
-            using var response = await _controlChannel.RequestAsync(ReleaseControlApi, null, cancellationToken);
-            LogMutationResponse(ReleaseControlApi, response.RootElement);
-            EnsureSuccess(response, ReleaseControlApi);
-
-            var released = await QueryControlAsync(cancellationToken);
-            if (released.Owner == "adapter") throw new ControlReleaseUnconfirmedException();
-            return true;
+            return await ReleaseControlCoreAsync(cancellationToken);
         }
         finally
         {
-            _releaseControlGate.Release();
+            _controlTransactionGate.Release();
         }
+    }
+
+    private async Task<bool> ReleaseControlCoreAsync(CancellationToken cancellationToken)
+    {
+        // Keep ownership read, mutation audit, 4006 write, and confirmation as one transaction.
+        var current = await QueryControlAsync(cancellationToken);
+        if (current.Owner != "adapter") return false;
+
+        LogMutationRequest(ReleaseControlApi, new { });
+        using var response = await _controlChannel.RequestAsync(ReleaseControlApi, null, cancellationToken);
+        LogMutationResponse(ReleaseControlApi, response.RootElement);
+        EnsureSuccess(response, ReleaseControlApi);
+
+        var released = await QueryControlAsync(cancellationToken);
+        if (released.Owner == "adapter") throw new ControlReleaseUnconfirmedException();
+        return true;
     }
 
     public async Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken)
@@ -355,7 +401,6 @@ public sealed class TcpAgvClient :
         readiness = readiness with
         {
             RelocStatus = ReadInt(localizationResponse.RootElement, "reloc_status")
-                ?? readiness.RelocStatus
         };
 
         using var deviceInfoResponse = await _statusChannel.RequestAsync(
@@ -503,8 +548,9 @@ public sealed class TcpAgvClient :
         }
 
         await EnsureReadyAsync(cancellationToken);
-        // Recheck ownership after the live safety read and immediately before 3066.
-        await EnsureControlAsync(cancellationToken);
+        // This is deliberately read-only: losing ownership in this window must
+        // block dispatch instead of silently issuing another 4005.
+        await EnsureControlIsHeldAsync(cancellationToken);
 
         var request = new
         {
@@ -520,7 +566,11 @@ public sealed class TcpAgvClient :
         LogMutationRequest(NavigateApi, request);
         try
         {
-            using var response = await _commandChannel.RequestAsync(NavigateApi, request, cancellationToken);
+            using var response = await _commandChannel.RequestAsync(
+                NavigateApi,
+                request,
+                cancellationToken,
+                () => _navigationWrites.TryAdd(taskId, 0));
             LogMutationResponse(NavigateApi, response.RootElement);
             EnsureSuccess(response, NavigateApi);
 
@@ -529,7 +579,7 @@ public sealed class TcpAgvClient :
                 ? CreateDispatchUnconfirmedResponse(taskId, route)
                 : CreateRouteResponse(taskId, route, confirmedStatuses);
         }
-        catch (TimeoutException)
+        catch (TimeoutException) when (MayHaveWrittenNavigation(taskId))
         {
             _logger.LogWarning(
                 "AGV mutation response was not confirmed: api_id={ApiId}, operation_id={OperationId}.",
@@ -604,7 +654,11 @@ public sealed class TcpAgvClient :
         }
 
         LogMutationRequest(CancelApi, new { });
-        using var response = await _commandChannel.RequestAsync(CancelApi, null, cancellationToken);
+        using var response = await _commandChannel.RequestAsync(
+            CancelApi,
+            null,
+            cancellationToken,
+            () => _cancellationWrites.TryAdd(taskId, 0));
         LogMutationResponse(CancelApi, response.RootElement);
         EnsureSuccess(response, CancelApi);
 
@@ -657,9 +711,13 @@ public sealed class TcpAgvClient :
         _statusChannel.Dispose();
         _commandChannel.Dispose();
         _controlChannel.Dispose();
-        _releaseControlGate.Dispose();
+        _controlTransactionGate.Dispose();
         _lifetime?.Dispose();
     }
+
+    public bool MayHaveWrittenNavigation(Guid taskId) => _navigationWrites.ContainsKey(taskId);
+
+    public bool MayHaveWrittenCancellation(Guid taskId) => _cancellationWrites.ContainsKey(taskId);
 
     private async Task<JsonDocument> QueryTaskStatusAsync(string[]? taskIds, CancellationToken cancellationToken)
     {
@@ -680,6 +738,19 @@ public sealed class TcpAgvClient :
                 cancellationToken);
             EnsureSuccess(response, RealtimeStatusApi);
             readiness = ReadReadiness(response.RootElement);
+
+            if (_options.RequireCompleteSafetyStatus)
+            {
+                using var localizationResponse = await _statusChannel.RequestAsync(
+                    QueryLocalizationApi,
+                    null,
+                    cancellationToken);
+                EnsureSuccess(localizationResponse, QueryLocalizationApi);
+                readiness = readiness with
+                {
+                    RelocStatus = ReadInt(localizationResponse.RootElement, "reloc_status")
+                };
+            }
         }
 
         if (_options.RequireCompleteSafetyStatus && !readiness.HasCompleteBaseSafetyStatus)
@@ -707,10 +778,62 @@ public sealed class TcpAgvClient :
         {
             throw new InvalidOperationException($"AGV relocation status is {relocStatus}, expected SUCCESS (1).");
         }
-        if (readiness.Confidence is { } confidence && confidence < _options.MinimumConfidence)
+        if (readiness.Confidence is { } confidence
+            && (!double.IsFinite(confidence) || confidence < _options.MinimumConfidence))
         {
             throw new InvalidOperationException($"AGV localization confidence {confidence} is below {_options.MinimumConfidence}.");
         }
+    }
+
+    private async Task EnsureControlIsHeldAsync(CancellationToken cancellationToken)
+    {
+        var current = await QueryControlAsync(cancellationToken);
+        if (current.Owner != "adapter") throw new ControlUnavailableException(current.Owner);
+    }
+
+    private static bool IsControlAcquisitionOutcomeUnknown(Exception exception) =>
+        exception is IOException
+            or SocketException
+            or TimeoutException
+            or OperationCanceledException
+            or JsonException
+        || exception is AgvApiException { ApiId: QueryControlApi };
+
+    private async Task ReconcileAndRollbackUnknownControlAcquisitionAsync(Exception acquisitionException)
+    {
+        _logger.LogWarning(
+            acquisitionException,
+            "AGV control acquisition result is unknown after a possible 4005 write; rechecking ownership with 1060.");
+
+        using var cleanupTimeout = new CancellationTokenSource(GetCleanupTimeout());
+        ControlInfo reconciled;
+        try
+        {
+            reconciled = await QueryControlAsync(cleanupTimeout.Token);
+        }
+        catch (Exception reconciliationException)
+        {
+            _logger.LogError(
+                reconciliationException,
+                "AGV control acquisition could not be reconciled after a possible 4005 write; no 4006 was sent.");
+            return;
+        }
+
+        // An uncertain 4005 result cannot prove that this invocation acquired
+        // the ownership now observed. A concurrent process may own the same
+        // nickname, so fail closed and never guess by issuing 4006 here.
+        if (reconciled.Owner == "adapter")
+        {
+            _logger.LogError(
+                "AGV control remains owned by the Adapter after an uncertain 4005 attempt; no 4006 was sent because acquisition ownership could not be attributed to this call.");
+        }
+    }
+
+    private TimeSpan GetCleanupTimeout()
+    {
+        var requestTimeoutMs = Math.Max(1, _options.RequestTimeoutMs);
+        var connectTimeoutMs = Math.Max(1, _options.ConnectTimeoutMs);
+        return TimeSpan.FromMilliseconds((long)requestTimeoutMs * 4 + connectTimeoutMs * 2L);
     }
 
     private async Task<ControlInfo> QueryControlAsync(CancellationToken cancellationToken)
@@ -718,11 +841,12 @@ public sealed class TcpAgvClient :
         using var response = await _statusChannel.RequestAsync(QueryControlApi, null, cancellationToken);
         EnsureSuccess(response, QueryControlApi);
         var root = response.RootElement;
-        var locked = ReadBool(root, "locked");
+        var locked = ReadNullableBool(root, "locked")
+            ?? throw new AgvProtocolException("AGV API 1060 did not provide a valid locked state.");
         var nickname = ReadString(root, "nick_name");
         var owner = !locked
             ? "none"
-            : string.Equals(nickname, _options.NickName, StringComparison.OrdinalIgnoreCase)
+            : string.Equals(nickname, _options.NickName, StringComparison.Ordinal)
                 ? "adapter"
                 : nickname ?? ReadString(root, "ip") ?? "unknown";
         _lastControlOwner = owner;
@@ -1143,8 +1267,14 @@ public sealed class TcpAgvClient :
     private static double? ReadDouble(JsonElement root, string name)
     {
         if (!root.TryGetProperty(name, out var value)) return null;
-        if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number)) return number;
-        if (value.ValueKind == JsonValueKind.String && double.TryParse(value.GetString(), out number)) return number;
+        if (value.ValueKind == JsonValueKind.Number
+            && value.TryGetDouble(out var number)
+            && double.IsFinite(number))
+            return number;
+        if (value.ValueKind == JsonValueKind.String
+            && double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out number)
+            && double.IsFinite(number))
+            return number;
         return null;
     }
 

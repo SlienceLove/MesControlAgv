@@ -25,6 +25,35 @@ public interface IAgvDeviceClient
         CancelAsync(taskId, cancellationToken);
 }
 
+/// <summary>
+/// Optional physical-driver evidence that distinguishes a failure before any
+/// navigation write from a write whose result may be unknown.
+/// </summary>
+public interface INavigationAttemptState
+{
+    bool MayHaveWrittenNavigation(Guid taskId);
+}
+
+/// <summary>
+/// Optional physical-driver evidence that distinguishes a failure before any
+/// cancellation write from a write whose result may be unknown.
+/// </summary>
+public interface ICancellationAttemptState
+{
+    bool MayHaveWrittenCancellation(Guid taskId);
+}
+
+/// <summary>
+/// Optional evidence used by a physical dispatch session to release only the
+/// control ownership that the same session acquired.
+/// </summary>
+public interface IControlAcquisitionEvidence
+{
+    Task<ControlAcquisitionResult> EnsureControlWithResultAsync(CancellationToken cancellationToken);
+}
+
+public readonly record struct ControlAcquisitionResult(bool AcquiredByThisCall);
+
 public interface ISimulatorClient : IAgvDeviceClient
 {
 }

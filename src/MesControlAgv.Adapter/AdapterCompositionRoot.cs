@@ -37,6 +37,7 @@ public static class AdapterCompositionRoot
         services.AddDbContext<AdapterDbContext>(options => options.UseSqlite(connectionString));
         services.AddSingleton(new PathPlanner(AgvMap.FromProfile(profile.Map)));
         services.AddSingleton<MultiAgvScheduler>();
+        services.AddSingleton<PhysicalAgvSessionGate>();
         services.AddSingleton<PhysicalAcceptancePreflightService>();
         services.Configure<TcpAgvOptions>(configuration.GetSection("Agv:Tcp"));
         services.PostConfigure<TcpAgvOptions>(options =>
@@ -163,7 +164,8 @@ public static class AdapterCompositionRoot
                 "Physical acceptance profiles must keep automatic dispatch disabled until live controller map verification is available.");
         }
 
-        if (tcpOptions.MinimumConfidence < physical.Safety.MinimumLocalizationConfidence)
+        if (!double.IsFinite(tcpOptions.MinimumConfidence)
+            || tcpOptions.MinimumConfidence < physical.Safety.MinimumLocalizationConfidence)
         {
             throw new InvalidOperationException(
                 "Agv:Tcp:MinimumConfidence cannot be below the approved physical acceptance threshold.");
