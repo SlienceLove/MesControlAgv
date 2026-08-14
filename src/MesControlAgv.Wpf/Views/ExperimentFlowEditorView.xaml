@@ -1,0 +1,483 @@
+<UserControl x:Class="MesControlAgv.Wpf.Views.ExperimentFlowEditorView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:nodify="https://miroiu.github.io/nodify"
+             xmlns:local="clr-namespace:MesControlAgv.Wpf.Views"
+             xmlns:vm="clr-namespace:MesControlAgv.Wpf.ViewModels"
+             xmlns:converters="clr-namespace:MesControlAgv.Wpf.Converters"
+             Background="#F6F8FA">
+    <UserControl.Resources>
+        <converters:NullToVisibilityConverter x:Key="NullToVisibilityConverter" />
+        <converters:InverseNullToVisibilityConverter x:Key="InverseNullToVisibilityConverter" />
+        <converters:StringToVisibilityConverter x:Key="StringToVisibilityConverter" />
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="220" />
+            <ColumnDefinition Width="*" />
+            <ColumnDefinition Width="280" />
+        </Grid.ColumnDefinitions>
+
+        <!-- 左侧工具箱 -->
+        <Border Grid.Column="0" Background="White" BorderBrush="#D0D7DE" BorderThickness="0,0,1,0" Padding="16">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Text="节点工具箱" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,16" />
+                    <TextBlock Text="点击按钮添加节点到画布" FontSize="11" Foreground="Gray" TextWrapping="Wrap" Margin="0,0,0,12" />
+
+                    <!-- 工具按钮区 -->
+                    <StackPanel Margin="0,0,0,16">
+                        <!-- 自动布局按钮 -->
+                        <Button Command="{Binding AutoLayoutCommand}"
+                                Background="#34A853"
+                                Foreground="White"
+                                Padding="12,8"
+                                Margin="0,0,0,8"
+                                BorderThickness="0"
+                                Cursor="Hand">
+                            <StackPanel>
+                                <TextBlock Text="🔄 自动布局" FontWeight="SemiBold" FontSize="13" HorizontalAlignment="Center" />
+                                <TextBlock Text="整理节点位置" FontSize="10" HorizontalAlignment="Center" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </Button>
+
+                        <!-- 导出配置按钮 -->
+                        <Button Command="{Binding ExportConfigCommand}"
+                                Background="#4285F4"
+                                Foreground="White"
+                                Padding="12,8"
+                                Margin="0,0,0,8"
+                                BorderThickness="0"
+                                Cursor="Hand">
+                            <StackPanel>
+                                <TextBlock Text="💾 导出配置" FontWeight="SemiBold" FontSize="13" HorizontalAlignment="Center" />
+                                <TextBlock Text="保存为 JSON" FontSize="10" HorizontalAlignment="Center" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </Button>
+
+                        <!-- 导入配置按钮 -->
+                        <Button Command="{Binding ImportConfigCommand}"
+                                Background="#FBBC04"
+                                Foreground="White"
+                                Padding="12,8"
+                                Margin="0,0,0,0"
+                                BorderThickness="0"
+                                Cursor="Hand">
+                            <StackPanel>
+                                <TextBlock Text="📂 导入配置" FontWeight="SemiBold" FontSize="13" HorizontalAlignment="Center" />
+                                <TextBlock Text="加载 JSON 文件" FontSize="10" HorizontalAlignment="Center" Margin="0,2,0,0" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+
+                    <ItemsControl ItemsSource="{Binding NodeTypeOptions}">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Button Margin="0,0,0,8" Padding="12,10"
+                                        HorizontalContentAlignment="Left"
+                                        Command="{Binding DataContext.CreateNodeCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                        CommandParameter="{Binding Type}"
+                                        Background="#F6F8FA"
+                                        BorderBrush="#D0D7DE"
+                                        BorderThickness="1">
+                                    <Button.Style>
+                                        <Style TargetType="Button">
+                                            <Setter Property="Template">
+                                                <Setter.Value>
+                                                    <ControlTemplate TargetType="Button">
+                                                        <Border Background="{TemplateBinding Background}"
+                                                                BorderBrush="{TemplateBinding BorderBrush}"
+                                                                BorderThickness="{TemplateBinding BorderThickness}"
+                                                                CornerRadius="4"
+                                                                Padding="{TemplateBinding Padding}">
+                                                            <ContentPresenter />
+                                                        </Border>
+                                                        <ControlTemplate.Triggers>
+                                                            <Trigger Property="IsMouseOver" Value="True">
+                                                                <Setter Property="Background" Value="#E8F0FE" />
+                                                                <Setter Property="BorderBrush" Value="#4285F4" />
+                                                            </Trigger>
+                                                        </ControlTemplate.Triggers>
+                                                    </ControlTemplate>
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Style>
+                                    </Button.Style>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" FontSize="12" />
+                                        <TextBlock Text="{Binding Description}" FontSize="10" Foreground="#666" TextWrapping="Wrap" Margin="0,2,0,0" />
+                                    </StackPanel>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+
+        <!-- 中央画布 -->
+        <Border Grid.Column="1" Background="#FBFCFE">
+            <Grid>
+                <nodify:NodifyEditor ItemsSource="{Binding Nodes}"
+                                    Connections="{Binding Connections}"
+                                    SelectedItem="{Binding SelectedNode, Mode=TwoWay}"
+                                    PendingConnection="{Binding PendingConnection}"
+                                    DisconnectConnectorCommand="{Binding DisconnectConnectorCommand}"
+                                    GridCellSize="20"
+                                    DisplayConnectionsOnTop="False">
+                    <nodify:NodifyEditor.ConnectionCompletedCommand>
+                        <Binding Path="ConnectionCompletedCommand" />
+                    </nodify:NodifyEditor.ConnectionCompletedCommand>
+
+                    <!-- 待连接线模板 -->
+                    <nodify:NodifyEditor.PendingConnectionTemplate>
+                        <DataTemplate>
+                            <nodify:PendingConnection StartedCommand="{Binding DataContext.ConnectionStartCommand, RelativeSource={RelativeSource AncestorType=nodify:NodifyEditor}}"
+                                                     CompletedCommand="{Binding DataContext.ConnectionCompletedCommand, RelativeSource={RelativeSource AncestorType=nodify:NodifyEditor}}"
+                                                     Stroke="#4285F4"
+                                                     StrokeThickness="2"
+                                                     AllowOnlyConnectors="True" />
+                        </DataTemplate>
+                    </nodify:NodifyEditor.PendingConnectionTemplate>
+
+                    <nodify:NodifyEditor.ItemContainerStyle>
+                        <Style TargetType="nodify:ItemContainer">
+                            <Setter Property="Location" Value="{Binding Location, Mode=TwoWay}" />
+                        </Style>
+                    </nodify:NodifyEditor.ItemContainerStyle>
+
+                    <!-- 连接线模板 -->
+                    <nodify:NodifyEditor.ConnectionTemplate>
+                        <DataTemplate>
+                            <Canvas>
+                                <!-- 连接线 -->
+                                <nodify:Connection Source="{Binding SourcePoint}"
+                                                  Target="{Binding TargetPoint}"
+                                                  SourceOffsetMode="None"
+                                                  TargetOffsetMode="None"
+                                                  Stroke="{Binding Color}"
+                                                  StrokeThickness="2.5"
+                                                  ArrowSize="10,8" />
+
+                                <!-- 条件标签 - 显示在连接线中点 -->
+                                <Border Background="{Binding Color}"
+                                       BorderBrush="{Binding Color}"
+                                       BorderThickness="1"
+                                       CornerRadius="3"
+                                       Padding="6,2"
+                                       Canvas.Left="{Binding MidPoint.X}"
+                                       Canvas.Top="{Binding MidPoint.Y}"
+                                       Visibility="{Binding Condition, Converter={StaticResource StringToVisibilityConverter}}">
+                                    <TextBlock Text="{Binding Condition}"
+                                              FontSize="9"
+                                              Foreground="White"
+                                              FontWeight="SemiBold" />
+                                </Border>
+                            </Canvas>
+                        </DataTemplate>
+                    </nodify:NodifyEditor.ConnectionTemplate>
+
+                    <nodify:NodifyEditor.ItemTemplate>
+                        <DataTemplate>
+                            <Grid>
+                                <!-- 节点主体 -->
+                                <Border Background="White" BorderBrush="#D0D7DE" BorderThickness="2" CornerRadius="8" MinWidth="200" MinHeight="120">
+                                    <Grid>
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="*" />
+                                        </Grid.RowDefinitions>
+
+                                        <!-- 节点头部 -->
+                                        <Border Grid.Row="0" Background="#4285F4" CornerRadius="6,6,0,0" Padding="12,10">
+                                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" Foreground="White" FontSize="13" />
+                                        </Border>
+
+                                        <!-- 节点内容 -->
+                                        <StackPanel Grid.Row="1" Margin="12,10">
+                                            <TextBlock Text="{Binding Type}" Foreground="#666" FontSize="11" />
+                                            <TextBlock Margin="0,4,0,0" Foreground="#999" FontSize="9">
+                                                <Run Text="ID: " />
+                                                <Run Text="{Binding Id, Mode=OneWay}" />
+                                            </TextBlock>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+
+                                <!-- 输入连接器（左侧中间） -->
+                                <ItemsControl ItemsSource="{Binding Input}"
+                                             HorizontalAlignment="Left"
+                                             VerticalAlignment="Center">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <StackPanel Orientation="Vertical" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <nodify:Connector Anchor="{Binding Anchor, Mode=OneWayToSource}"
+                                                             Background="#34A853"
+                                                             BorderBrush="#1E8E3E"
+                                                             BorderThickness="2"
+                                                             Width="16"
+                                                             Height="16"
+                                                             Margin="-8,0,0,0"
+                                                             ToolTip="{Binding Title}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <!-- 输出连接器（右侧中间） -->
+                                <ItemsControl ItemsSource="{Binding Output}"
+                                             HorizontalAlignment="Right"
+                                             VerticalAlignment="Center">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <StackPanel Orientation="Vertical" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <nodify:Connector Anchor="{Binding Anchor, Mode=OneWayToSource}"
+                                                             Background="#EA4335"
+                                                             BorderBrush="#C5221F"
+                                                             BorderThickness="2"
+                                                             Width="16"
+                                                             Height="16"
+                                                             Margin="0,0,-8,0"
+                                                             ToolTip="{Binding Title}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Grid>
+                        </DataTemplate>
+                    </nodify:NodifyEditor.ItemTemplate>
+                </nodify:NodifyEditor>
+
+                <!-- 提示文字 -->
+                <TextBlock Text="从左侧工具箱选择节点类型开始设计实验流程"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Foreground="#999"
+                           FontSize="14"
+                           Margin="20"
+                           Visibility="{Binding Nodes.Count, Converter={StaticResource InverseNullToVisibilityConverter}}" />
+            </Grid>
+        </Border>
+
+        <!-- 右侧属性面板 -->
+        <Border Grid.Column="2" Background="White" BorderBrush="#D0D7DE" BorderThickness="1,0,0,0" Padding="16">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Text="节点属性" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,16" />
+
+                    <!-- 选中节点时显示 -->
+                    <StackPanel Visibility="{Binding SelectedNode, Converter={StaticResource NullToVisibilityConverter}}">
+                        <TextBlock Text="节点标题" Foreground="#666" Margin="0,0,0,6" FontSize="11" />
+                        <TextBox Text="{Binding SelectedNode.Title, UpdateSourceTrigger=PropertyChanged}"
+                                 Padding="8"
+                                 Margin="0,0,0,16"
+                                 BorderBrush="#D0D7DE" />
+
+                        <TextBlock Text="节点描述" Foreground="#666" Margin="0,0,0,6" FontSize="11" />
+                        <TextBox Text="{Binding SelectedNode.Description, UpdateSourceTrigger=PropertyChanged}"
+                                 Padding="8"
+                                 Height="80"
+                                 Margin="0,0,0,16"
+                                 TextWrapping="Wrap"
+                                 AcceptsReturn="True"
+                                 VerticalScrollBarVisibility="Auto"
+                                 BorderBrush="#D0D7DE" />
+
+                        <TextBlock Text="节点类型" Foreground="#666" Margin="0,0,0,6" FontSize="11" />
+                        <TextBlock Text="{Binding SelectedNode.Type}" FontWeight="SemiBold" Margin="0,0,0,16" FontSize="12" />
+
+                        <TextBlock Text="节点 ID" Foreground="#666" Margin="0,0,0,6" FontSize="11" />
+                        <TextBlock Text="{Binding SelectedNode.Id}" FontFamily="Consolas" FontSize="10" Foreground="#666" Margin="0,0,0,16" />
+
+                        <TextBlock Text="位置" Foreground="#666" Margin="0,0,0,6" FontSize="11" />
+                        <TextBlock Margin="0,0,0,16" FontSize="11">
+                            <Run Text="X: " />
+                            <Run Text="{Binding SelectedNode.Location.X, StringFormat={}{0:F0}}" FontWeight="SemiBold" />
+                            <Run Text=", Y: " />
+                            <Run Text="{Binding SelectedNode.Location.Y, StringFormat={}{0:F0}}" FontWeight="SemiBold" />
+                        </TextBlock>
+
+                        <!-- 连接管理 -->
+                        <Border Background="#F6F8FA" Padding="12" CornerRadius="6" Margin="0,0,0,16">
+                            <StackPanel>
+                                <TextBlock Text="📎 连接管理" FontWeight="SemiBold" Margin="0,0,0,12" FontSize="13" />
+
+                                <!-- 输入连接 -->
+                                <TextBlock Text="输入连接（前置节点）" Foreground="#666" Margin="0,0,0,6" FontSize="11" />
+                                <ItemsControl ItemsSource="{Binding IncomingConnections}" Margin="0,0,0,12">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Background="White" BorderBrush="#D0D7DE" BorderThickness="1"
+                                                   CornerRadius="4" Padding="8" Margin="0,0,0,4">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                    </Grid.RowDefinitions>
+
+                                                    <TextBlock Grid.Row="0" Grid.Column="0"
+                                                              Text="{Binding Source.Node.Title}"
+                                                              FontWeight="SemiBold" FontSize="11" />
+
+                                                    <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,4,0,0">
+                                                        <TextBlock Text="条件标签：" Foreground="#666" FontSize="10" Margin="0,0,0,2" />
+                                                        <TextBox Text="{Binding Condition, UpdateSourceTrigger=PropertyChanged}"
+                                                                Padding="4,2" FontSize="10"
+                                                                BorderBrush="#D0D7DE" Background="White"
+                                                                MaxLength="50"
+                                                                VerticalContentAlignment="Center" />
+                                                    </StackPanel>
+
+                                                    <!-- 修改按钮 -->
+                                                    <Button Grid.Row="0" Grid.Column="1"
+                                                           Content="✎"
+                                                           Command="{Binding DataContext.EditConnectionSourceCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                           CommandParameter="{Binding}"
+                                                           Background="#4285F4" Foreground="White"
+                                                           Width="24" Height="24" FontSize="12"
+                                                           BorderThickness="0" Cursor="Hand"
+                                                           ToolTip="修改前置节点"
+                                                           Margin="4,0,0,0" />
+
+                                                    <!-- 删除按钮 -->
+                                                    <Button Grid.Row="0" Grid.Column="2"
+                                                           Content="✕"
+                                                           Command="{Binding DataContext.RemoveConnectionCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                           CommandParameter="{Binding}"
+                                                           Background="#EA4335" Foreground="White"
+                                                           Width="24" Height="24" FontSize="12"
+                                                           BorderThickness="0" Cursor="Hand"
+                                                           ToolTip="删除连接"
+                                                           Margin="4,0,0,0" />
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <!-- 输出连接 -->
+                                <TextBlock Text="输出连接（后续节点）" Foreground="#666" Margin="0,0,0,6" FontSize="11" />
+                                <ItemsControl ItemsSource="{Binding OutgoingConnections}" Margin="0,0,0,12">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Background="White" BorderBrush="#D0D7DE" BorderThickness="1"
+                                                   CornerRadius="4" Padding="8" Margin="0,0,0,4">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="Auto" />
+                                                    </Grid.RowDefinitions>
+
+                                                    <TextBlock Grid.Row="0" Grid.Column="0"
+                                                              Text="{Binding Target.Node.Title}"
+                                                              FontWeight="SemiBold" FontSize="11" />
+
+                                                    <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="3" Margin="0,4,0,0">
+                                                        <TextBlock Text="条件标签：" Foreground="#666" FontSize="10" Margin="0,0,0,2" />
+                                                        <TextBox Text="{Binding Condition, UpdateSourceTrigger=PropertyChanged}"
+                                                                Padding="4,2" FontSize="10"
+                                                                BorderBrush="#D0D7DE" Background="White"
+                                                                MaxLength="50"
+                                                                VerticalContentAlignment="Center" />
+                                                    </StackPanel>
+
+                                                    <!-- 修改按钮 -->
+                                                    <Button Grid.Row="0" Grid.Column="1"
+                                                           Content="✎"
+                                                           Command="{Binding DataContext.EditConnectionTargetCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                           CommandParameter="{Binding}"
+                                                           Background="#4285F4" Foreground="White"
+                                                           Width="24" Height="24" FontSize="12"
+                                                           BorderThickness="0" Cursor="Hand"
+                                                           ToolTip="修改后续节点"
+                                                           Margin="4,0,0,0" />
+
+                                                    <!-- 删除按钮 -->
+                                                    <Button Grid.Row="0" Grid.Column="2"
+                                                           Content="✕"
+                                                           Command="{Binding DataContext.RemoveConnectionCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                           CommandParameter="{Binding}"
+                                                           Background="#EA4335" Foreground="White"
+                                                           Width="24" Height="24" FontSize="12"
+                                                           BorderThickness="0" Cursor="Hand"
+                                                           ToolTip="删除连接"
+                                                           Margin="4,0,0,0" />
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <!-- 添加新连接 -->
+                                <Button Command="{Binding AddConnectionCommand}"
+                                       Background="#34A853" Foreground="White"
+                                       Padding="8,6" BorderThickness="0" Cursor="Hand">
+                                    <TextBlock Text="➕ 添加连接" FontSize="11" FontWeight="SemiBold" />
+                                </Button>
+                            </StackPanel>
+                        </Border>
+
+                        <Button Content="删除节点"
+                                Command="{Binding DeleteSelectedCommand}"
+                                Background="#EA4335"
+                                Foreground="White"
+                                Padding="12,10"
+                                BorderThickness="0"
+                                FontWeight="SemiBold">
+                            <Button.Style>
+                                <Style TargetType="Button">
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border Background="{TemplateBinding Background}"
+                                                        CornerRadius="4"
+                                                        Padding="{TemplateBinding Padding}">
+                                                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter Property="Background" Value="#C5221F" />
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </Button.Style>
+                        </Button>
+                    </StackPanel>
+
+                    <!-- 未选中时显示提示 -->
+                    <StackPanel Visibility="{Binding SelectedNode, Converter={StaticResource InverseNullToVisibilityConverter}}">
+                        <TextBlock Text="选择一个节点以查看和编辑其属性"
+                                   Foreground="#999"
+                                   FontSize="12"
+                                   TextWrapping="Wrap" />
+                        <TextBlock Text="💡 提示：拖动节点可以调整布局"
+                                   Foreground="#666"
+                                   FontSize="11"
+                                   Margin="0,16,0,0"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+    </Grid>
+</UserControl>

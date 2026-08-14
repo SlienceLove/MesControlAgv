@@ -1,0 +1,199 @@
+<Window x:Class="MesControlAgv.Wpf.Views.NodeConfigDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="配置节点"
+        Width="500"
+        Height="620"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResize"
+        MinHeight="580"
+        MinWidth="450"
+        Background="#F6F8FA">
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- 标题 -->
+        <TextBlock Grid.Row="0"
+                   Text="节点配置"
+                   FontSize="18"
+                   FontWeight="SemiBold"
+                   Margin="0,0,0,20" />
+
+        <!-- 节点名称 -->
+        <StackPanel Grid.Row="1" Margin="0,0,0,16">
+            <TextBlock Text="节点名称 *"
+                       Foreground="#666"
+                       FontSize="13"
+                       Margin="0,0,0,6" />
+            <TextBox x:Name="TitleTextBox"
+                     FontSize="13"
+                     Padding="10,8"
+                     BorderBrush="#D0D7DE"
+                     BorderThickness="1" />
+        </StackPanel>
+
+        <!-- 节点描述 -->
+        <StackPanel Grid.Row="2" Margin="0,0,0,16">
+            <TextBlock Text="节点描述（可选）"
+                       Foreground="#666"
+                       FontSize="13"
+                       Margin="0,0,0,6" />
+            <TextBox x:Name="DescriptionTextBox"
+                     FontSize="13"
+                     Padding="10,8"
+                     Height="80"
+                     TextWrapping="Wrap"
+                     AcceptsReturn="True"
+                     VerticalScrollBarVisibility="Auto"
+                     BorderBrush="#D0D7DE"
+                     BorderThickness="1" />
+            <TextBlock Text="用于添加节点说明、注释或备注信息"
+                       Foreground="#999"
+                       FontSize="11"
+                       Margin="0,4,0,0" />
+        </StackPanel>
+
+        <!-- 上一个节点 -->
+        <StackPanel Grid.Row="3" Margin="0,0,0,16">
+            <TextBlock Text="连接到上一个节点（可选）"
+                       Foreground="#666"
+                       FontSize="13"
+                       Margin="0,0,0,6" />
+            <ComboBox x:Name="PreviousNodeComboBox"
+                      FontSize="13"
+                      Padding="10,8"
+                      BorderBrush="#D0D7DE"
+                      BorderThickness="1">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                            <TextBlock Text=" - " Foreground="#999" Margin="4,0" />
+                            <TextBlock Text="{Binding Type}" Foreground="#666" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBlock Text="从此节点接收输入流"
+                       Foreground="#999"
+                       FontSize="11"
+                       Margin="0,4,0,0" />
+        </StackPanel>
+
+        <!-- 下一个节点 -->
+        <StackPanel Grid.Row="4" Margin="0,0,0,16">
+            <TextBlock Text="连接到下一个节点（可选）"
+                       Foreground="#666"
+                       FontSize="13"
+                       Margin="0,0,0,6" />
+            <ComboBox x:Name="NextNodeComboBox"
+                      FontSize="13"
+                      Padding="10,8"
+                      BorderBrush="#D0D7DE"
+                      BorderThickness="1">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                            <TextBlock Text=" - " Foreground="#999" Margin="4,0" />
+                            <TextBlock Text="{Binding Type}" Foreground="#666" />
+                        </StackPanel>
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBlock Text="将输出流传递到此节点"
+                       Foreground="#999"
+                       FontSize="11"
+                       Margin="0,4,0,0" />
+        </StackPanel>
+
+        <!-- 按钮 -->
+        <StackPanel Grid.Row="6"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,20,0,0">
+            <Button x:Name="OkButton"
+                    Content="确定"
+                    Width="100"
+                    Height="36"
+                    Margin="0,0,12,0"
+                    Background="#4285F4"
+                    Foreground="White"
+                    BorderThickness="0"
+                    FontSize="13"
+                    FontWeight="SemiBold"
+                    Click="OkButton_Click"
+                    IsDefault="True">
+                <Button.Style>
+                    <Style TargetType="Button">
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="{TemplateBinding Background}"
+                                            CornerRadius="4"
+                                            Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter HorizontalAlignment="Center"
+                                                         VerticalAlignment="Center" />
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="Background" Value="#3367D6" />
+                                        </Trigger>
+                                        <Trigger Property="IsPressed" Value="True">
+                                            <Setter Property="Background" Value="#2C5BB8" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </Button.Style>
+            </Button>
+
+            <Button x:Name="CancelButton"
+                    Content="取消"
+                    Width="100"
+                    Height="36"
+                    Background="White"
+                    Foreground="#666"
+                    BorderBrush="#D0D7DE"
+                    BorderThickness="1"
+                    FontSize="13"
+                    Click="CancelButton_Click"
+                    IsCancel="True">
+                <Button.Style>
+                    <Style TargetType="Button">
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="Button">
+                                    <Border Background="{TemplateBinding Background}"
+                                            BorderBrush="{TemplateBinding BorderBrush}"
+                                            BorderThickness="{TemplateBinding BorderThickness}"
+                                            CornerRadius="4"
+                                            Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter HorizontalAlignment="Center"
+                                                         VerticalAlignment="Center" />
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="Background" Value="#F6F8FA" />
+                                            <Setter Property="BorderBrush" Value="#4285F4" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </Button.Style>
+            </Button>
+        </StackPanel>
+    </Grid>
+</Window>

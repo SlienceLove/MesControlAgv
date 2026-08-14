@@ -52,6 +52,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _commands = new ControlCenterCommandCoordinator(mes, simulator);
         ModuleRegistry = moduleRegistry ?? ControlCenterModuleRegistry.CreateStandard();
         WorkflowEditor = new WorkflowEditorViewModel(new WorkflowStore(), _mes, () => OperatorName);
+        ExperimentFlowEditor = new ExperimentFlowEditorViewModel();
         Readiness = new ReadinessViewModel(_mes, mapLayoutSource);
         _modules = new ControlCenterViewModel(WorkflowEditor, ModuleRegistry);
         Kpi = _modules.KpiDashboard;
@@ -93,6 +94,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ObservableCollection<string> BatchImportIssues => _modules.BatchImport.BatchImportIssues;
     public ObservableCollection<DashboardStation> AvailableStations { get; } = [];
     public WorkflowEditorViewModel WorkflowEditor { get; }
+    public ExperimentFlowEditorViewModel ExperimentFlowEditor { get; }
     public ReadinessViewModel Readiness { get; }
     public KpiDashboardViewModel Kpi { get; }
     public ControlCenterModuleRegistry ModuleRegistry { get; }

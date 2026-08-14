@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:MesControlAgv.Wpf.Controls"
         xmlns:local="clr-namespace:MesControlAgv.Wpf"
+        xmlns:views="clr-namespace:MesControlAgv.Wpf.Views"
         Title="AGV MES 中控"
         WindowState="Maximized"
         Width="1420"
@@ -942,6 +943,9 @@
                     </ScrollViewer>
                 </Grid>
             </Grid>
+        </TabItem>
+        <TabItem Header="实验流程设计" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+            <views:ExperimentFlowEditorView DataContext="{Binding ExperimentFlowEditor}" />
         </TabItem>
     </TabControl>
 </Window>
