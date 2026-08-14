@@ -36,23 +36,23 @@ public sealed class MapViewModelTests
         Assert.Equal((200d, 200d), (viewModel.CanvasWidth, viewModel.CanvasHeight));
         Assert.Equal(2, viewModel.Nodes.Count);
         Assert.Equal(0, viewModel.Nodes[0].X);
-        Assert.Equal(114, viewModel.Nodes[0].Y);
-        Assert.Equal(88, viewModel.Nodes[1].X);
-        Assert.Equal(26, viewModel.Nodes[1].Y);
+        Assert.Equal(140, viewModel.Nodes[0].Y);
+        Assert.Equal(120, viewModel.Nodes[1].X);
+        Assert.Equal(20, viewModel.Nodes[1].Y);
         var edge = Assert.Single(viewModel.Edges);
         Assert.Equal("LM1", edge.From);
         Assert.Equal("LM2", edge.To);
-        Assert.Equal(viewModel.Nodes[0].X + 56, edge.X1);
-        Assert.Equal(viewModel.Nodes[0].Y + 30, edge.Y1);
-        Assert.Equal(viewModel.Nodes[1].X + 56, edge.X2);
-        Assert.Equal(viewModel.Nodes[1].Y + 30, edge.Y2);
-        Assert.Equal(73.6, edge.Control1X, 6);
-        Assert.Equal(126.4, edge.Control1Y, 6);
-        Assert.InRange(viewModel.Nodes.Min(node => node.X), 0, viewModel.CanvasWidth - 112);
-        Assert.InRange(viewModel.Nodes.Max(node => node.X + 112), 112, viewModel.CanvasWidth);
-        Assert.InRange(viewModel.Nodes.Min(node => node.Y), 0, viewModel.CanvasHeight - 60);
-        Assert.InRange(viewModel.Nodes.Max(node => node.Y + 60), 60, viewModel.CanvasHeight);
-        Assert.Equal(new MapViewportBounds(0, 26, 200, 148), viewModel.NavigationBounds);
+        Assert.Equal(viewModel.Nodes[0].X + 40, edge.X1);
+        Assert.Equal(viewModel.Nodes[0].Y + 20, edge.Y1);
+        Assert.Equal(viewModel.Nodes[1].X + 40, edge.X2);
+        Assert.Equal(viewModel.Nodes[1].Y + 20, edge.Y2);
+        Assert.Equal(64, edge.Control1X, 6);
+        Assert.Equal(136, edge.Control1Y, 6);
+        Assert.InRange(viewModel.Nodes.Min(node => node.X), 0, viewModel.CanvasWidth - 80);
+        Assert.InRange(viewModel.Nodes.Max(node => node.X + 80), 80, viewModel.CanvasWidth);
+        Assert.InRange(viewModel.Nodes.Min(node => node.Y), 0, viewModel.CanvasHeight - 40);
+        Assert.InRange(viewModel.Nodes.Max(node => node.Y + 40), 40, viewModel.CanvasHeight);
+        Assert.Equal(new MapViewportBounds(0, 20, 200, 160), viewModel.NavigationBounds);
     }
 
     [Fact]
@@ -191,8 +191,8 @@ public sealed class MapViewModelTests
         Assert.Equal(before.Y, after.Y);
         Assert.Single(viewModel.Agvs);
         Assert.Equal("LM1", viewModel.Agvs[0].CurrentStation);
-        Assert.Equal(viewModel.Nodes[0].X + 56, viewModel.Agvs[0].X);
-        Assert.Equal(viewModel.Nodes[0].Y + 30, viewModel.Agvs[0].Y);
+        Assert.Equal(viewModel.Nodes[0].X + 40, viewModel.Agvs[0].X);
+        Assert.Equal(viewModel.Nodes[0].Y + 20, viewModel.Agvs[0].Y);
         var path = Assert.Single(viewModel.AgvPathSegments);
         var edge = Assert.Single(viewModel.Edges);
         Assert.Equal((edge.X1, edge.Y1), (path.X1, path.Y1));

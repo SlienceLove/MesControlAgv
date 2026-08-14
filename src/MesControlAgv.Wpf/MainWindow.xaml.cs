@@ -30,7 +30,7 @@ public partial class MainWindow : Window
     private MapViewModel? _observedMap;
     private bool _mapAutoFitted;
 
-    private const double MapRouteFocusMaxScale = 2.1;
+    private const double MapRouteFocusMaxScale = 0.8;
 
     public MainWindow()
     {
@@ -50,6 +50,65 @@ public partial class MainWindow : Window
             Multiselect = false
         };
         if (dialog.ShowDialog(this) == true) await viewModel.ImportBatchFileAsync(dialog.FileName);
+    }
+
+    private async void ImportMap_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel viewModel) return;
+
+        var dialog = new OpenFileDialog
+        {
+            Filter = "SMAP 地图文件 (*.smap)|*.smap|所有文件 (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false,
+            Title = "选择 SMAP 地图文件"
+        };
+
+        if (dialog.ShowDialog(this) != true) return;
+
+        var smapPath = dialog.FileName;
+
+        // 询问是否选择站点映射文件（可选）
+        var mappingDialog = new OpenFileDialog
+        {
+            Filter = "JSON 映射文件 (*.json)|*.json|所有文件 (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false,
+            Title = "选择站点映射文件（可选，点击取消跳过）"
+        };
+
+        var mappingPath = mappingDialog.ShowDialog(this) == true ? mappingDialog.FileName : null;
+
+        try
+        {
+            await viewModel.Readiness.LoadMapFromFileAsync(smapPath, mappingPath);
+
+            // 自动调整视图以适应新加载的地图
+            _ = Dispatcher.BeginInvoke(() =>
+            {
+                if (viewModel.Readiness.Map.UsingSmapLayout)
+                {
+                    FitMapToNavigationBounds(viewModel);
+                    _mapAutoFitted = true;
+                }
+            }, DispatcherPriority.Loaded);
+
+            MessageBox.Show(
+                this,
+                $"地图已成功加载！\n文件：{System.IO.Path.GetFileName(smapPath)}\n布局验证：{viewModel.Readiness.MapLayoutVerificationStatus}",
+                "导入 SMAP 地图",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception exception)
+        {
+            MessageBox.Show(
+                this,
+                $"地图加载失败：{exception.Message}",
+                "导入 SMAP 地图",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
     }
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
@@ -568,4 +627,22 @@ public sealed class MapBezierGeometryConverter : IValueConverter
 
         return new PathGeometry([figure]);
     }
+}
+
+public sealed class MapRouteColorConverter : IValueConverter
+{
+    private static readonly SolidColorBrush BidirectionalBrush = new(Color.FromRgb(0x31, 0x5B, 0x87)); // 蓝色 - 双向
+    private static readonly SolidColorBrush UnidirectionalBrush = new(Color.FromRgb(0xDC, 0x26, 0x26)); // 红色 - 单向
+
+    public object Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is bool bidirectional)
+        {
+            return bidirectional ? BidirectionalBrush : UnidirectionalBrush;
+        }
+        return BidirectionalBrush;
+    }
+
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture) =>
+        throw new NotSupportedException();
 }

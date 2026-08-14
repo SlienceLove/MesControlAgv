@@ -13,8 +13,8 @@ public sealed class MapViewModel : INotifyPropertyChanged
     public const double DefaultCanvasWidth = 1140;
     public const double DefaultCanvasHeight = 780;
 
-    private const double NodeWidth = 112;
-    private const double NodeHeight = 60;
+    private const double NodeWidth = 80;
+    private const double NodeHeight = 40;
     private const double NodeCenterX = NodeWidth / 2;
     private const double NodeCenterY = NodeHeight / 2;
     private const double SmapPadding = NodeCenterX;

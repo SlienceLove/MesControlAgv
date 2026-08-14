@@ -28,11 +28,13 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
         _mes = mes ?? throw new ArgumentNullException(nameof(mes));
         _mapLayoutSource = mapLayoutSource ?? EmptyMapLayoutSource.Instance;
         RefreshCommand = new AsyncCommand(() => RefreshAsync(), () => !IsRefreshing);
+        LoadMapCommand = new AsyncCommand(() => Task.CompletedTask, () => !IsRefreshing);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public ICommand RefreshCommand { get; }
+    public ICommand LoadMapCommand { get; }
 
     public MapViewModel Map { get; } = new();
     public MapViewportViewModel Viewport { get; } = new();
@@ -222,6 +224,57 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
     }
 
     public void UpdateFleet(IReadOnlyList<AgvFleetDashboardStatus> statuses) => FleetStatus = statuses ?? [];
+
+    public async Task LoadMapFromFileAsync(string smapFilePath, string? mappingFilePath = null, CancellationToken cancellationToken = default)
+    {
+        if (IsRefreshing) return;
+        IsRefreshing = true;
+        Status = "正在加载 SMAP 地图文件...";
+        _mapLayoutAttempted = false;
+        _mapLayoutError = null;
+        _mapLayoutResult = null;
+        _mapIdentityVerification = null;
+
+        try
+        {
+            var source = new SmapMapLayoutSource(
+                () => smapFilePath,
+                () => mappingFilePath);
+            var result = await source.LoadAsync(cancellationToken);
+            _mapLayoutResult = result;
+            _mapLayoutAttempted = true;
+            MapLayoutError = result.Error;
+
+            if (result.Loaded && result.Layout is not null)
+            {
+                Map.ApplyLayout(result.Layout, result.Mapping, Map.CanvasWidth, Map.CanvasHeight);
+                VerifyMapLayoutIdentity();
+                Status = $"SMAP 地图已加载：{System.IO.Path.GetFileName(smapFilePath)}";
+            }
+            else
+            {
+                Status = $"SMAP 地图加载失败：{result.Error ?? "未知错误"}";
+            }
+
+            OnPropertyChanged(nameof(MapLayoutVerificationStatus));
+            OnPropertyChanged(nameof(MapLayoutVerificationDetails));
+            OnPropertyChanged(nameof(IsMapLayoutVerified));
+            RefreshMap();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            Status = "地图加载已取消。";
+        }
+        catch (Exception exception)
+        {
+            Status = $"地图加载失败：{exception.Message}";
+            MapLayoutError = exception.Message;
+        }
+        finally
+        {
+            IsRefreshing = false;
+        }
+    }
 
     private void RefreshMap() => Map.Update(MapSnapshot, Preflight, FleetStatus);
 

@@ -13,6 +13,7 @@
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
         <local:MapBezierGeometryConverter x:Key="MapBezierGeometryConverter" />
         <local:MapRasterImageSourceConverter x:Key="MapRasterImageSourceConverter" />
+        <local:MapRouteColorConverter x:Key="MapRouteColorConverter" />
     </Window.Resources>
         <TabControl x:Name="MainTabs" Margin="20" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"
                     SelectionChanged="MainTabs_SelectionChanged">
@@ -720,6 +721,8 @@
                         <TextBlock FontSize="22" FontWeight="SemiBold" Text="只读地图视图" />
                         <TextBlock Margin="0,4,0,0" Foreground="Gray" Text="配置地图几何、实时 AGV 状态和路径叠加" />
                         <StackPanel Margin="0,8,0,0" Orientation="Horizontal">
+                            <Button Height="28" Padding="10,0" Background="#1769AA" Foreground="White" Content="导入 SMAP 地图" Click="ImportMap_Click" ToolTip="选择 .smap 文件加载地图" AutomationProperties.Name="导入 SMAP 地图文件" />
+                            <Separator Margin="8,0" Width="1" Background="#D0D7DE" />
                             <Button Width="32" Height="28" Content="−" Click="MapZoomOut_Click" ToolTip="缩小地图" />
                             <Button Width="32" Height="28" Margin="6,0,0,0" Content="+" Click="MapZoomIn_Click" ToolTip="放大地图" />
                             <Button Height="28" Margin="6,0,0,0" Padding="10,0" Content="路线区域" Click="MapFitRoute_Click" ToolTip="聚焦站点和可行驶路线" />
@@ -785,7 +788,7 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <Path Data="{Binding Converter={StaticResource MapBezierGeometryConverter}}"
-                                                  Stroke="#64748B" StrokeThickness="0.85" Opacity="0.72"
+                                                  Stroke="#64748B" StrokeThickness="0.6" Opacity="0.72"
                                                   StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
@@ -798,7 +801,7 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <Path Data="{Binding Converter={StaticResource MapBezierGeometryConverter}}"
-                                                  Stroke="#315B87" StrokeThickness="1.6"
+                                                  Stroke="{Binding Bidirectional, Converter={StaticResource MapRouteColorConverter}}" StrokeThickness="1.0"
                                                   StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
@@ -832,7 +835,7 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
                                             <Path Data="{Binding Converter={StaticResource MapBezierGeometryConverter}}"
-                                                  Stroke="#D97706" StrokeThickness="2.2" Opacity="0.65" />
+                                                  Stroke="#D97706" StrokeThickness="1.5" Opacity="0.65" />
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
@@ -848,15 +851,15 @@
                                     </ItemsControl.ItemContainerStyle>
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Button Width="112" Height="60" Padding="0" Background="Transparent" BorderThickness="0"
+                                            <Button Width="80" Height="40" Padding="0" Background="Transparent" BorderThickness="0"
                                                     ToolTip="{Binding Enabled, StringFormat=启用：{0}}"
                                                     AutomationProperties.Name="{Binding StationId}"
                                                     Click="MapStation_Click">
-                                                <Canvas Width="112" Height="60" Background="Transparent">
-                                                <Ellipse Width="16" Height="16" Canvas.Left="48" Canvas.Top="22"
-                                                         Fill="#E8F1FF" Stroke="#4285C5" StrokeThickness="2" />
-                                                <TextBlock Canvas.Left="10" Canvas.Top="-8" Padding="2,0"
-                                                           Background="#FBFCFE" FontWeight="SemiBold"
+                                                <Canvas Width="80" Height="40" Background="Transparent">
+                                                <Ellipse Width="12" Height="12" Canvas.Left="34" Canvas.Top="14"
+                                                         Fill="#E8F1FF" Stroke="#4285C5" StrokeThickness="1.5" />
+                                                <TextBlock Canvas.Left="6" Canvas.Top="-6" Padding="2,0"
+                                                           Background="#FBFCFE" FontWeight="SemiBold" FontSize="9"
                                                            Visibility="{Binding DataContext.Readiness.Map.Layers.ShowStationLabels, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BooleanToVisibilityConverter}}"
                                                            Text="{Binding DisplayText}" />
                                                 </Canvas>
