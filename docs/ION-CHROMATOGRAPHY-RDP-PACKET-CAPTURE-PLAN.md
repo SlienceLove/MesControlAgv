@@ -4,6 +4,8 @@
 
 本计划的第一目标是获取真实协议证据，不是现场替换控制软件。第一轮不得从中控向仪器注入报文。
 
+> **CIC-D160+ 适用性更正**：取得设备手册和 ShineLab 日志后，已确认样例中的 CIC-D160+ 使用“DB 接头数据线 → USB 虚拟串口”，协议为带 CRC 的 Modbus RTU。它的底层报文不会出现在局域网 Wireshark 抓包中。对于该型号，应优先执行 [ShineLab 与 CIC-D160+ 通讯分析](ION-CHROMATOGRAPHY-SHINELAB-ANALYSIS.md) 中的串口监控方案。本文件后续 Wireshark/pktmon 步骤仅适用于确认走 Ethernet TCP/UDP 的其他型号或上层 LIMS 接口。
+
 ## 1. 执行范围和停止条件
 
 ### 1.1 第一轮允许执行

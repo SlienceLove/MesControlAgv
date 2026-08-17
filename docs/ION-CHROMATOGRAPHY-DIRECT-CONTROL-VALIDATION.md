@@ -4,6 +4,8 @@
 
 远程桌面进入原控制电脑执行现场抓包时，使用配套文档：[离子色谱控制电脑远程抓包执行计划](ION-CHROMATOGRAPHY-RDP-PACKET-CAPTURE-PLAN.md)。
 
+取得 ShineLab 程序和 CIC-D160+ 手册后的静态分析结论见：[ShineLab 与 CIC-D160+ 通讯分析](ION-CHROMATOGRAPHY-SHINELAB-ANALYSIS.md)。该分析已经确认样例设备使用 USB 虚拟串口和 Modbus RTU，不是局域网 TCP。
+
 ## 结论先行
 
 当前仓库没有离子色谱仪的厂商协议、设备型号、IP/端口、串口参数、命令表或响应码。已有的 `InstrumentOperation` 只是工作流节点名称，不能证明中控可以直接控制仪器；之前“文件协议”描述的是“控制软件与仪器之间”的交互，也不能直接假定中控可以复用。
