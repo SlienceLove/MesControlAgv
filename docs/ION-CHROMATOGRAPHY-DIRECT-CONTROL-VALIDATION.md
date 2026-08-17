@@ -2,6 +2,8 @@
 
 分支：`feat/ion-chromatography-direct-control-validation`
 
+远程桌面进入原控制电脑执行现场抓包时，使用配套文档：[离子色谱控制电脑远程抓包执行计划](ION-CHROMATOGRAPHY-RDP-PACKET-CAPTURE-PLAN.md)。
+
 ## 结论先行
 
 当前仓库没有离子色谱仪的厂商协议、设备型号、IP/端口、串口参数、命令表或响应码。已有的 `InstrumentOperation` 只是工作流节点名称，不能证明中控可以直接控制仪器；之前“文件协议”描述的是“控制软件与仪器之间”的交互，也不能直接假定中控可以复用。
