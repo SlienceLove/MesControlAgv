@@ -37,6 +37,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MesControlAgv.WorkflowContr
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MesControlAgv.Launcher", "src\MesControlAgv.Launcher\MesControlAgv.Launcher.csproj", "{6DA15FBA-C220-4408-A2DB-8AB04A83DFF1}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MesControlAgv.DeviceProtocolTester", "src\MesControlAgv.DeviceProtocolTester\MesControlAgv.DeviceProtocolTester.csproj", "{28F23A28-4FC1-417B-BFB1-9640CF06395A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -106,6 +108,10 @@ Global
 		{6DA15FBA-C220-4408-A2DB-8AB04A83DFF1}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{6DA15FBA-C220-4408-A2DB-8AB04A83DFF1}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{6DA15FBA-C220-4408-A2DB-8AB04A83DFF1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{28F23A28-4FC1-417B-BFB1-9640CF06395A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{28F23A28-4FC1-417B-BFB1-9640CF06395A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{28F23A28-4FC1-417B-BFB1-9640CF06395A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{28F23A28-4FC1-417B-BFB1-9640CF06395A}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{E0F229AF-BA57-4295-AFB6-103CDCB989FD} = {142BDF93-A26F-433F-A124-2B7CA35EDC08}
@@ -123,5 +129,6 @@ Global
 		{C3F628E8-E915-4592-81CB-2544BFE5D9DF} = {142BDF93-A26F-433F-A124-2B7CA35EDC08}
 		{6EAC05A5-9C01-4494-9751-987231F76B52} = {9FF26AA0-A553-422E-B721-FBA880F0D11E}
 		{6DA15FBA-C220-4408-A2DB-8AB04A83DFF1} = {142BDF93-A26F-433F-A124-2B7CA35EDC08}
+		{28F23A28-4FC1-417B-BFB1-9640CF06395A} = {142BDF93-A26F-433F-A124-2B7CA35EDC08}
 	EndGlobalSection
 EndGlobal
