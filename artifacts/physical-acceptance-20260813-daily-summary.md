@@ -283,9 +283,9 @@ LM1 → LM3
 3. `physical-acceptance/stage6-return-lm2-lm1-20260813.db`
 
 ### Logs (Temporary)
-1. `C:\Users\33206\AppData\Local\Temp\MesControlAgv-physical-stage4-recheck3-bccc491b-logs\`
-2. `C:\Users\33206\AppData\Local\Temp\MesControlAgv-physical-stage5-field-nav-logs\`
-3. `C:\Users\33206\AppData\Local\Temp\MesControlAgv-physical-stage6-e6854322-v2-logs\`
+1. `<redacted-local-temp-log-directory>`
+2. `<redacted-local-temp-log-directory>`
+3. `<redacted-local-temp-log-directory>`
 
 ### Configuration
 - Modified: `src/MesControlAgv.Adapter/bin/Debug/net8.0/appsettings.PhysicalAcceptance.json`
@@ -416,7 +416,7 @@ LM1 → LM3
 ### Hardware
 - AGV Model: W500-SZ
 - Controller: Vendor TCP (v3.4.8.0011)
-- Controller IP: 192.168.200.151
+- Controller host: `<redacted-controller-host>`
 - Ports: Status 19204, Command 19206, Control 19207, Push 19301
 
 ### Software

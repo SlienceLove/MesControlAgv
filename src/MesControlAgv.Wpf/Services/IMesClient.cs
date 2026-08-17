@@ -100,6 +100,10 @@ public interface IMesClient
         Task.FromResult<IReadOnlyList<DashboardStation>>([]);
     Task<DashboardRuntimeSettings> GetRuntimeSettingsAsync(CancellationToken cancellationToken) =>
         Task.FromResult(DashboardRuntimeSettings.Default);
+    Task<IonChromatographyControlCenterStatusResponse?> GetIonChromatographyStatusAsync(
+        string instrumentId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IonChromatographyControlCenterStatusResponse?>(null);
     Task<DashboardPlannedPath> PlanPathAsync(
         string fromStationId,
         string toStationId,
@@ -157,4 +161,17 @@ public interface IMesClient
 
     Task<WorkflowExecutionResult> ExecuteWorkflowAsync(WorkflowExecutionRequest request, CancellationToken cancellationToken) =>
         Task.FromException<WorkflowExecutionResult>(new NotSupportedException("Workflow APIs are not supported by this MES client."));
+
+    Task<WorkflowExecutionSnapshot?> GetWorkflowExecutionAsync(Guid executionId, CancellationToken cancellationToken) =>
+        Task.FromResult<WorkflowExecutionSnapshot?>(null);
+
+    Task<WorkflowExecutionSnapshot?> GetWorkflowExecutionByRequestAsync(Guid requestId, CancellationToken cancellationToken) =>
+        Task.FromResult<WorkflowExecutionSnapshot?>(null);
+
+    Task<IReadOnlyList<WorkflowAuditResponse>> GetWorkflowAuditsAsync(
+        Guid workflowId,
+        int? version,
+        int limit,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<WorkflowAuditResponse>>([]);
 }

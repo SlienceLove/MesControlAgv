@@ -20,7 +20,7 @@ Stage 4 successfully verified localization confidence after multiple relocation 
 
 **Time**: 2026-08-13 00:36:21 UTC  
 **Session ID**: stage4-20260813-04cc9fbf  
-**Database**: `D:\Project\Github\Mes\artifacts\physical-acceptance\stage4-preflight-20260813-082702.db`
+**Database**: `artifacts/physical-acceptance/stage4-preflight-20260813-082702.db`
 
 **Result**: ❌ Confidence below threshold
 
@@ -36,7 +36,7 @@ Stage 4 successfully verified localization confidence after multiple relocation 
 
 **Time**: 2026-08-13 00:39:52 UTC  
 **Session ID**: stage4-recheck-f22e8bf5  
-**Database**: `D:\Project\Github\Mes\artifacts\physical-acceptance\stage4-recheck-20260813-083929.db`
+**Database**: `artifacts/physical-acceptance/stage4-recheck-20260813-083929.db`
 
 **Result**: ❌ Confidence improved but still below threshold
 
@@ -53,7 +53,7 @@ Stage 4 successfully verified localization confidence after multiple relocation 
 
 **Time**: 2026-08-13 00:42:11 UTC  
 **Session ID**: stage4-recheck3-bccc491b  
-**Database**: `D:\Project\Github\Mes\artifacts\physical-acceptance\stage4-recheck3-20260813-084150.db`
+**Database**: `artifacts/physical-acceptance/stage4-recheck3-20260813-084150.db`
 
 **Result**: ✅ **PASS - Confidence verified**
 
@@ -128,7 +128,7 @@ All three sessions returned consistent map evidence from the live controller.
 ## Configuration
 
 **Controller**:
-- Host: `192.168.200.151`
+- Host: `<redacted-controller-host>`
 - Status port: `19204`
 - Command port: `19206`
 - Control port: `19207`
@@ -147,7 +147,7 @@ All three sessions returned consistent map evidence from the live controller.
 
 **Executable**:
 - Build: Debug
-- DLL path: `D:\Project\Github\Mes\src\MesControlAgv.Adapter\bin\Debug\net8.0\MesControlAgv.Adapter.dll`
+- Adapter build: `MesControlAgv.Adapter.dll` (local Debug build)
 - Config: `appsettings.PhysicalAcceptance.json`
 
 ---

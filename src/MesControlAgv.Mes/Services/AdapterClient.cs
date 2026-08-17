@@ -18,7 +18,7 @@ public sealed class AdapterHttpException(HttpStatusCode responseStatusCode, stri
             : $"Adapter returned HTTP {(int)statusCode} ({statusCode}): {detail}";
 }
 
-public sealed class AdapterClient(HttpClient client) : IAgvGateway, IPathAwareAgvGateway, IFleetAwareAgvGateway, IPhysicalPreflightAgvGateway, IFieldNavigationAcceptanceGateway
+public sealed class AdapterClient(HttpClient client) : IAgvGateway, IPathAwareAgvGateway, IFleetAwareAgvGateway, IAdapterRuntimeIdentityGateway, IPhysicalPreflightAgvGateway, IFieldNavigationAcceptanceGateway
 {
     public async Task<AgvTaskResponse> DispatchAsync(Guid operationId, string targetStationId, CancellationToken cancellationToken)
         => await DispatchAsync(operationId, null, targetStationId, cancellationToken);
@@ -92,6 +92,10 @@ public sealed class AdapterClient(HttpClient client) : IAgvGateway, IPathAwareAg
     public async Task<IReadOnlyList<AgvSnapshotResponse>> GetFleetSnapshotAsync(CancellationToken cancellationToken) =>
         await client.GetFromJsonAsync<IReadOnlyList<AgvSnapshotResponse>>("agvs", cancellationToken)
         ?? throw new InvalidOperationException("Adapter returned no AGV fleet.");
+
+    public async Task<AdapterRuntimeIdentityResponse> GetRuntimeIdentityAsync(CancellationToken cancellationToken) =>
+        await client.GetFromJsonAsync<AdapterRuntimeIdentityResponse>("health", cancellationToken)
+        ?? throw new InvalidOperationException("Adapter returned no runtime identity.");
 
     public async Task<PhysicalAgvPreflightResponse> GetPhysicalPreflightAsync(CancellationToken cancellationToken) =>
         await client.GetFromJsonAsync<PhysicalAgvPreflightResponse>("physical/preflight", cancellationToken)

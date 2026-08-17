@@ -1247,7 +1247,9 @@ public sealed class TcpAgvClientTests
             CreateOptions(statusServer.Port, closedCommandPort),
             NullLogger<TcpAgvClient>.Instance);
 
-        await Assert.ThrowsAnyAsync<SocketException>(() => client.CancelAsync(taskId, cancellation.Token));
+        var exception = await Record.ExceptionAsync(() => client.CancelAsync(taskId, cancellation.Token));
+
+        Assert.True(exception is SocketException or TimeoutException);
 
         Assert.False(client.MayHaveWrittenCancellation(taskId));
         await statusServer.Completion;

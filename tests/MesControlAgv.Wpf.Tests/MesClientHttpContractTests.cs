@@ -504,6 +504,44 @@ public sealed class MesClientHttpContractTests
         Assert.Equal(HttpStatusCode.ServiceUnavailable, exception.StatusCode);
     }
 
+    [Fact]
+    public async Task Ion_chromatography_status_uses_read_only_mes_route_and_maps_policy()
+    {
+        var response = new IonChromatographyControlCenterStatusResponse(
+            new IonChromatographyStatusResponse(
+                "CIC-D160-01",
+                "CIC-D160+",
+                "YA7261078",
+                true,
+                "ReadOnlyObserved",
+                false,
+                DateTimeOffset.Parse("2026-08-17T07:40:59Z"),
+                ColumnTemperature: 31.23,
+                Conductivity: 261.885712,
+                TotalConductivity: 261.885712,
+                Flow: 0.3,
+                MappingConfidence: "CaptureCorrelatedCandidate"),
+            false,
+            ["Identify", "ReadStatus"],
+            "ReadOnlyCaptureCorrelated");
+        var handler = new RecordingHandler(_ => JsonResponse(response));
+        using var httpClient = CreateClient(handler);
+        var client = new MesClient(httpClient);
+
+        var actual = await client.GetIonChromatographyStatusAsync(
+            "CIC-D160-01",
+            CancellationToken.None);
+
+        Assert.NotNull(actual);
+        Assert.Equal("YA7261078", actual.Status.SerialNumber);
+        Assert.False(actual.TaskAdmissionEnabled);
+        Assert.Equal(["Identify", "ReadStatus"], actual.EnabledOperations);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Equal("/api/instruments/CIC-D160-01/status", request.Uri.AbsolutePath);
+        Assert.Null(request.Body);
+    }
+
     private static HttpClient CreateClient(RecordingHandler handler) => new(handler)
     {
         BaseAddress = new Uri("http://mes.local/")

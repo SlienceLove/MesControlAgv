@@ -14,6 +14,22 @@ obj/
 
 # Local configuration
 appsettings.Local.json
+/appsettings.PhysicalAcceptance.json
+
+# Physical acceptance runtime state and logs (retain curated Markdown evidence only)
+/artifacts/physical-acceptance/**/*.db
+/artifacts/physical-acceptance/**/*.db-*
+/artifacts/physical-acceptance/**/*.log
+/artifacts/physical-*-logs/
 
 # Original requirements documents remain local
 *.docx
+
+# Local instrument software, captures, deployment outputs, and runtime logs
+/res/
+/artifacts/ion-chromatography/capture-analysis/
+/artifacts/ion-chromatography/protocol-tester/
+/artifacts/ion-chromatography/local-gateway-smoke/
+/artifacts/ion-chromatography/*.zip
+/artifacts/ion-chromatography/*.log
+/artifacts/ion-chromatography/d160-capture-kit/*.exe

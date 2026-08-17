@@ -54,7 +54,11 @@ using (var scope = app.Services.CreateScope())
     await AddColumnIfMissingAsync(database, "PathJson");
 }
 
-app.MapGet("/health", () => Results.Ok(new { service = "adapter", status = "ok", runMode = runMode.Value }));
+app.MapGet("/health", (IAgvDriver driver) => Results.Ok(new AdapterRuntimeIdentityResponse(
+    Service: "adapter",
+    Status: "ok",
+    RunMode: runMode.Value,
+    Driver: driver.DriverId)));
 
 app.MapPost("/tasks/{taskId:guid}/dispatch", async (Guid taskId, DispatchRequest request, AdapterService service, CancellationToken cancellationToken) =>
 {

@@ -321,6 +321,111 @@
             </Grid>
         </ScrollViewer>
     </TabItem>
+    <TabItem Header="离子色谱" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <Grid Margin="0,12,0,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <DockPanel Margin="0,0,0,18">
+                <StackPanel DockPanel.Dock="Left">
+                    <TextBlock FontSize="22" FontWeight="SemiBold" Text="CIC-D160+" />
+                    <TextBlock Margin="0,4,0,0" Foreground="Gray" Text="离子色谱仪状态" />
+                </StackPanel>
+                <Button DockPanel.Dock="Right" Width="38" Height="34" FontSize="20" Command="{Binding IonChromatography.RefreshCommand}" Content="↻" ToolTip="刷新仪器状态" />
+            </DockPanel>
+
+            <Grid Grid.Row="1" Margin="0,0,0,18">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Margin="0,0,16,0">
+                    <TextBlock Foreground="Gray" Text="连接" />
+                    <TextBlock Margin="0,5,0,0" FontSize="18" FontWeight="SemiBold" Text="{Binding IonChromatography.ConnectionStatus}" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Margin="0,0,16,0">
+                    <TextBlock Foreground="Gray" Text="设备状态" />
+                    <TextBlock Margin="0,5,0,0" FontSize="18" FontWeight="SemiBold" Text="{Binding IonChromatography.DeviceState}" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" Margin="0,0,16,0">
+                    <TextBlock Foreground="Gray" Text="任务准入" />
+                    <TextBlock Margin="0,5,0,0" FontSize="18" FontWeight="SemiBold" Foreground="#A63A2B" Text="{Binding IonChromatography.TaskAdmissionStatus}" />
+                </StackPanel>
+                <StackPanel Grid.Column="3">
+                    <TextBlock Foreground="Gray" Text="串口占用" />
+                    <TextBlock Margin="0,5,0,0" FontSize="18" FontWeight="SemiBold" Text="{Binding IonChromatography.PortStatus}" />
+                </StackPanel>
+            </Grid>
+
+            <Border Grid.Row="2" Padding="16" Background="#F6F8FA" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Foreground="Gray" Text="电导率" />
+                        <TextBlock Margin="0,6,0,0" FontSize="20" Text="{Binding IonChromatography.Conductivity}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1">
+                        <TextBlock Foreground="Gray" Text="总电导率" />
+                        <TextBlock Margin="0,6,0,0" FontSize="20" Text="{Binding IonChromatography.TotalConductivity}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Foreground="Gray" Text="柱温" />
+                        <TextBlock Margin="0,6,0,0" FontSize="20" Text="{Binding IonChromatography.ColumnTemperature}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="3">
+                        <TextBlock Foreground="Gray" Text="流量" />
+                        <TextBlock Margin="0,6,0,0" FontSize="20" Text="{Binding IonChromatography.Flow}" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Row="3" Margin="0,20,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="24" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock FontSize="17" FontWeight="SemiBold" Text="设备识别" />
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="90" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <TextBlock Foreground="Gray" Text="仪器 ID" /><TextBlock Grid.Column="1" Text="{Binding IonChromatography.InstrumentId}" />
+                    </Grid>
+                    <Grid Margin="0,8,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="90" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <TextBlock Foreground="Gray" Text="型号" /><TextBlock Grid.Column="1" Text="{Binding IonChromatography.Model}" />
+                    </Grid>
+                    <Grid Margin="0,8,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="90" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <TextBlock Foreground="Gray" Text="观测标识" /><TextBlock Grid.Column="1" Text="{Binding IonChromatography.SerialNumber}" />
+                    </Grid>
+                    <Grid Margin="0,8,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="90" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <TextBlock Foreground="Gray" Text="观测时间" /><TextBlock Grid.Column="1" Text="{Binding IonChromatography.ObservedAt}" />
+                    </Grid>
+                </StackPanel>
+                <StackPanel Grid.Column="2">
+                    <TextBlock FontSize="17" FontWeight="SemiBold" Text="执行策略" />
+                    <TextBlock Margin="0,12,0,0" Foreground="Gray" Text="已开放操作" />
+                    <TextBlock Margin="0,4,0,0" Text="{Binding IonChromatography.EnabledOperations}" TextWrapping="Wrap" />
+                    <TextBlock Margin="0,12,0,0" Foreground="Gray" Text="映射置信度" />
+                    <TextBlock Margin="0,4,0,0" Text="{Binding IonChromatography.MappingConfidence}" TextWrapping="Wrap" />
+                    <TextBlock Margin="0,12,0,0" Foreground="Gray" Text="状态" />
+                    <TextBlock Margin="0,4,0,0" Text="{Binding IonChromatography.StatusMessage}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Grid>
+        </Grid>
+    </TabItem>
     <TabItem Header="AGV 通讯与调度" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <Grid Margin="0,12,0,0">
             <Grid.RowDefinitions>
@@ -560,6 +665,8 @@
                  <TextBlock Foreground="Gray" Text="修改后点击保存，流程会持久化到本地 JSON 文件。" />
                  <TextBlock Margin="18,0,0,0" Foreground="#315B87" Text="{Binding WorkflowEditor.RemoteStatus}" />
                  <TextBlock Margin="18,0,0,0" Foreground="#7A3E00" Text="{Binding WorkflowEditor.ValidationSummary}" />
+                 <TextBlock Margin="18,0,0,0" Foreground="#315B87" Text="{Binding WorkflowEditor.ExecutionRuntimeSummary}" />
+                 <TextBlock Margin="18,0,0,0" Foreground="#7A3E00" Text="{Binding WorkflowEditor.ExecutionAuditSummary}" />
              </StackPanel>
         </Grid>
     </TabItem>

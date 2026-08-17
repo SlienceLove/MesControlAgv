@@ -43,7 +43,7 @@ Key findings:
 | 01:01:28 | Task 1 arrived | AGV at LM3, task state: arrived |
 | **01:03:07** | **Task 2 dispatched** | **LM3 → LM1, state: moving** |
 | 01:03:10 | Task 2 started | AGV began moving from LM3 |
-| **01:03:13** | **Control takeover** | **External PC took control: Slience996-PC[192.168.200.147]** |
+| **01:03:13** | **Control takeover** | **External PC took control: `<redacted-external-controller>`** |
 | 01:03:13 | Task 2 paused | State changed to paused |
 | **01:03:39** | **Task 2 cancelled** | **Control released, task cancelled** |
 | 01:03:42+ | Final state | AGV at LM3, control: none, no active task |
@@ -147,7 +147,7 @@ LM1 → LM3
 
 1. **01:03:10** - Task dispatched, state: `moving`, control: `adapter`
 2. **01:03:13** - Control takeover detected
-   - Control owner changed to: `Slience996-PC[192.168.200.147]`
+   - Control owner changed to: `<redacted-external-controller>`
    - Task state changed to: `paused`
 3. **01:03:13 - 01:03:39** - Task remained paused (26 seconds)
 4. **01:03:39** - Task cancelled
@@ -158,7 +158,7 @@ LM1 → LM3
 ### Outcome
 - Dispatched successfully
 - AGV began moving
-- External operator took control via PC at 192.168.200.147
+- External operator took control via a separate PC.
 - Task paused by external control
 - Task subsequently cancelled
 - AGV stopped at LM3, did not reach LM1
@@ -215,7 +215,7 @@ This approach successfully dispatched both segments, though the second was manua
 
 ### External Control Takeover
 
-**External Controller**: `Slience996-PC[192.168.200.147]`  
+**External Controller**: `<redacted-external-controller>`
 **Time**: 01:03:13 UTC  
 **Method**: Unknown (likely vendor-provided PC client or controller UI)
 

@@ -46,6 +46,38 @@ public interface IWorkflowApplicationService : IWorkflowVersionReader, IWorkflow
     Task<WorkflowDefinition?> GetAsync(Guid workflowId, CancellationToken cancellationToken);
     Task<IReadOnlyList<WorkflowVersion>> ListVersionsAsync(Guid workflowId, CancellationToken cancellationToken);
 
+    /// <summary>Reloads a persisted workflow execution after a MES restart.</summary>
+    Task<WorkflowExecutionSnapshot?> GetExecutionAsync(
+        Guid executionId,
+        CancellationToken cancellationToken);
+
+    /// <summary>Reloads a persisted admission, including rejected requests.</summary>
+    Task<WorkflowExecutionSnapshot?> GetExecutionByRequestAsync(
+        Guid requestId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Atomically reserves the pending step's stable Adapter operation id.
+    /// It never writes to an Adapter or device.
+    /// </summary>
+    Task<WorkflowExecutionSnapshot> ClaimNextStepAsync(
+        Guid executionId,
+        CancellationToken cancellationToken);
+
+    /// <summary>Persists reconciled outcome evidence for a previously claimed step.</summary>
+    Task<WorkflowExecutionSnapshot> CompleteClaimedStepAsync(
+        Guid executionId,
+        WorkflowStepCompletionRequest completion,
+        CancellationToken cancellationToken);
+
+    /// <summary>Returns non-dry-run Move steps that the Simulator worker may claim.</summary>
+    Task<IReadOnlyList<WorkflowExecutionSnapshot>> ListSimulatorDispatchableExecutionsAsync(
+        CancellationToken cancellationToken);
+
+    /// <summary>Returns claimed executions that need read-only reconciliation after restart.</summary>
+    Task<IReadOnlyList<WorkflowExecutionSnapshot>> ListRecoverableExecutionsAsync(
+        CancellationToken cancellationToken);
+
     /// <summary>Returns persisted lifecycle and execution audits, newest first.</summary>
     Task<IReadOnlyList<WorkflowAuditResponse>> ListAuditsAsync(
         Guid workflowId,

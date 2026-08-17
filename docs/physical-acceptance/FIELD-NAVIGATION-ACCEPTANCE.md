@@ -1,5 +1,7 @@
 # Supervised field-navigation acceptance
 
+Last updated: 2026-08-17
+
 This is a software boundary for one approved, low-speed physical navigation
 check. It is separate from normal MES transport tasks and is disabled by
 default. It does not authorize a controller connection, a movement command, or
@@ -62,26 +64,28 @@ acceptance record.
 
 ## Current boundary
 
-The post-power-cycle read-only comparison against the live W500-SZ controller
-passed. API `1000` returned model `W500-SZ`/version `v3.4.8.0011`; the approved
-`not-exposed-by-approved-model` policy permits a missing `1101.mode`, while an
-explicit manual value remains a hard blocker. The live map, localization,
-alarm, and idle checks also passed.
+The 2026-08-13 evidence supersedes the earlier no-movement attempt as the latest
+completed field record:
 
-The first supervised standard-mode attempt used acceptance ID
-`9fea739a-6f1e-402d-b8c2-fd70f4977c5e` and route `LM1 -> LM2`. Control was
-acquired, but the vehicle did not move, the requested task read as
-`404 (NotFound)`, and the global task list stayed empty. The operator released
-control in the robot test software and `1060` then confirmed `locked=false`.
+- Stage 4 **PASS**: localization confidence reached `0.9708` and the session's
+  map, model, localization, alarm, and idle gates passed.
+- Stage 5 **PASS**: the separately authorized `LM1 -> LM2` segment completed at
+  the configured `0.3 m/s` maximum, and control was released.
+- Stage 6 **PARTIAL SUCCESS**: because there is no direct `LM2 -> LM1` edge, the
+  return was split into sequential segments. `LM2 -> LM3` completed. During
+  `LM3 -> LM1`, an obstacle event and external control takeover were recorded;
+  the task paused and was then cancelled. `LM3 -> LM1` did not complete.
 
-Offline reproduction found that the Adapter's pre-dispatch idempotency check
-mistook the non-empty `404` record for an existing task and returned `unknown`
-before writing `3066`. Because that session predated mutation audit logging, it
-does not provide a raw `3066` response and none is inferred. This condition is
-now covered by a regression test: all-`404` permits exactly one first write;
-after a write attempt, `404` or an empty result remains
-`dispatch_not_confirmed_by_1110` and can never trigger an automatic resend.
+The temporary `0.92` confidence override used during Stage 6 is not a production
+policy. A reviewed threshold decision and explicit risk acceptance are pending.
+Normal automatic/batch dispatch and Push remain disabled. A multi-edge route
+must be orchestrated as sequential single-segment tasks, with confirmed arrival
+before dispatching the next segment.
 
-The flow is still not field-accepted. A new live attempt requires the repaired
-build, a fresh read-only preflight, a new unique permit/task ID, renewed site
-authorization, and the same supervised low-speed boundary.
+The flow is still not production field-accepted. The last recorded `LM3`/idle
+state is historical evidence only. Any new live connection or movement requires
+a fresh isolated `read-only-preflight`, proof that control owner is `none` and
+all map/model/localization/alarm/idle gates pass, shutdown of that read-only
+process, a new unique permit/task ID, renewed site authorization, and the same
+supervised low-speed boundary. It must not be treated as production **GO** or as
+authorization for unattended or automatic dispatch.

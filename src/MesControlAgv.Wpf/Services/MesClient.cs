@@ -85,6 +85,18 @@ public sealed class MesClient(HttpClient client) : IMesClient
         }
     }
 
+    public async Task<IonChromatographyControlCenterStatusResponse?> GetIonChromatographyStatusAsync(
+        string instrumentId,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync(
+            $"api/instruments/{Uri.EscapeDataString(instrumentId)}/status",
+            cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<IonChromatographyControlCenterStatusResponse>(cancellationToken);
+    }
+
     public async Task<DashboardPlannedPath> PlanPathAsync(
         string fromStationId,
         string toStationId,
@@ -316,6 +328,34 @@ public sealed class MesClient(HttpClient client) : IMesClient
         throw new InvalidOperationException("MES returned no workflow execution result.");
     }
 
+    public Task<WorkflowExecutionSnapshot?> GetWorkflowExecutionAsync(
+        Guid executionId,
+        CancellationToken cancellationToken) =>
+        GetWorkflowExecutionSnapshotAsync(
+            $"api/workflow-executions/{executionId}",
+            cancellationToken);
+
+    public Task<WorkflowExecutionSnapshot?> GetWorkflowExecutionByRequestAsync(
+        Guid requestId,
+        CancellationToken cancellationToken) =>
+        GetWorkflowExecutionSnapshotAsync(
+            $"api/workflow-executions/by-request/{requestId}",
+            cancellationToken);
+
+    public async Task<IReadOnlyList<WorkflowAuditResponse>> GetWorkflowAuditsAsync(
+        Guid workflowId,
+        int? version,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var query = $"?limit={Math.Clamp(limit, 1, 500)}";
+        if (version is not null) query = $"?version={version.Value}&limit={Math.Clamp(limit, 1, 500)}";
+        return await client.GetFromJsonAsync<IReadOnlyList<WorkflowAuditResponse>>(
+                   $"api/workflows/{workflowId}/audits{query}",
+                   cancellationToken)
+               ?? [];
+    }
+
     private async Task<DashboardTask> PostAsync(string path, object? body, CancellationToken cancellationToken)
     {
         using var response = await client.PostAsJsonAsync(path, body, cancellationToken);
@@ -323,6 +363,17 @@ public sealed class MesClient(HttpClient client) : IMesClient
         var task = await response.Content.ReadFromJsonAsync<ContractTaskResponse>(cancellationToken)
             ?? throw new InvalidOperationException("MES returned no task.");
         return ToDashboardTask(task);
+    }
+
+    private async Task<WorkflowExecutionSnapshot?> GetWorkflowExecutionSnapshotAsync(
+        string path,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync(path, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<WorkflowExecutionSnapshot>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no workflow execution snapshot.");
     }
 
     private async Task<WorkflowVersion> SendWorkflowAsync(

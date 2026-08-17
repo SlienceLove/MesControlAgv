@@ -39,6 +39,15 @@ public interface IFleetAwareAgvGateway
 }
 
 /// <summary>
+/// Optional, read-only identity proof returned by an Adapter before a
+/// Simulator-only worker is allowed to issue a dispatch request.
+/// </summary>
+public interface IAdapterRuntimeIdentityGateway
+{
+    Task<AdapterRuntimeIdentityResponse> GetRuntimeIdentityAsync(CancellationToken cancellationToken);
+}
+
+/// <summary>
 /// Optional port implemented only by drivers that can produce a read-only
 /// physical acceptance assessment.
 /// </summary>

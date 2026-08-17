@@ -7,8 +7,11 @@ using MesControlAgv.Wpf.Workflows;
 using ContractWorkflowDefinition = MesControlAgv.Contracts.Workflows.WorkflowDefinition;
 using ContractWorkflowExecutionRequest = MesControlAgv.Contracts.Workflows.WorkflowExecutionRequest;
 using ContractWorkflowExecutionResult = MesControlAgv.Contracts.Workflows.WorkflowExecutionResult;
+using ContractWorkflowExecutionSnapshot = MesControlAgv.Contracts.Workflows.WorkflowExecutionSnapshot;
 using ContractWorkflowExecutionStatus = MesControlAgv.Contracts.Workflows.WorkflowExecutionStatus;
 using ContractWorkflowVersion = MesControlAgv.Contracts.Workflows.WorkflowVersion;
+using ContractWorkflowRuntimeStatus = MesControlAgv.Contracts.Workflows.WorkflowRuntimeStatus;
+using ContractWorkflowAuditResponse = MesControlAgv.Contracts.Workflows.WorkflowAuditResponse;
 using ContractWorkflowVersionStatus = MesControlAgv.Contracts.Workflows.WorkflowVersionStatus;
 using ContractWorkflowPublishStatus = MesControlAgv.Contracts.Workflows.WorkflowPublishStatus;
 using ContractWorkflowValidationResult = MesControlAgv.Contracts.Workflows.WorkflowValidationResult;
@@ -86,7 +89,15 @@ public sealed class WorkflowRemoteIntegrationTests
                 new WorkflowNode { Type = WorkflowNodeType.End, Name = "End", Order = 2 }
             ]
         };
-        var client = new FakeWorkflowMesClient(workflow);
+        var client = new FakeWorkflowMesClient(workflow)
+        {
+            ExecutionSnapshot = new ContractWorkflowExecutionSnapshot
+            {
+                RuntimeStatus = ContractWorkflowRuntimeStatus.DryRunCompleted,
+                Attempt = 0
+            },
+            WorkflowAudits = [new ContractWorkflowAuditResponse { EventType = "WorkflowExecutionAccepted" }]
+        };
         var viewModel = new WorkflowEditorViewModel(new WorkflowStore(fixture.Path), client, "test-operator");
 
         await viewModel.LoadRemoteAsync();
@@ -122,6 +133,10 @@ public sealed class WorkflowRemoteIntegrationTests
         Assert.Equal(2, client.ValidateVersionCallCount);
         Assert.Equal(1, client.PublishCallCount);
         Assert.Equal(1, client.ExecuteCallCount);
+        Assert.Equal(1, client.ExecutionSnapshotCallCount);
+        Assert.Equal(ContractWorkflowRuntimeStatus.DryRunCompleted, viewModel.ExecutionSnapshot!.RuntimeStatus);
+        Assert.Contains("模拟运行完成", viewModel.ExecutionRuntimeSummary, StringComparison.Ordinal);
+        Assert.Contains("WorkflowExecutionAccepted", viewModel.ExecutionAuditSummary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -179,6 +194,9 @@ internal sealed class FakeWorkflowMesClient : IMesClient
     public int ValidateVersionCallCount { get; private set; }
     public int PublishCallCount { get; private set; }
     public int ExecuteCallCount { get; private set; }
+    public int ExecutionSnapshotCallCount { get; private set; }
+    public ContractWorkflowExecutionSnapshot? ExecutionSnapshot { get; init; }
+    public IReadOnlyList<ContractWorkflowAuditResponse> WorkflowAudits { get; init; } = [];
 
     public Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<DashboardTask>>([]);
@@ -299,6 +317,20 @@ internal sealed class FakeWorkflowMesClient : IMesClient
             DryRun = request.DryRun
         });
     }
+
+    public Task<ContractWorkflowExecutionSnapshot?> GetWorkflowExecutionAsync(
+        Guid executionId,
+        CancellationToken cancellationToken)
+    {
+        ExecutionSnapshotCallCount++;
+        return Task.FromResult(ExecutionSnapshot);
+    }
+
+    public Task<IReadOnlyList<ContractWorkflowAuditResponse>> GetWorkflowAuditsAsync(
+        Guid workflowId,
+        int? version,
+        int limit,
+        CancellationToken cancellationToken) => Task.FromResult(WorkflowAudits);
 
     private static ContractWorkflowVersion CreateDraftVersion(ContractWorkflowDefinition workflow) => new()
     {

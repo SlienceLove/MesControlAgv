@@ -11,7 +11,10 @@ using ContractWorkflowDefinition = MesControlAgv.Contracts.Workflows.WorkflowDef
 using ContractWorkflowNode = MesControlAgv.Contracts.Workflows.WorkflowNode;
 using ContractWorkflowExecutionRequest = MesControlAgv.Contracts.Workflows.WorkflowExecutionRequest;
 using ContractWorkflowExecutionResult = MesControlAgv.Contracts.Workflows.WorkflowExecutionResult;
+using ContractWorkflowExecutionSnapshot = MesControlAgv.Contracts.Workflows.WorkflowExecutionSnapshot;
 using ContractWorkflowExecutionStatus = MesControlAgv.Contracts.Workflows.WorkflowExecutionStatus;
+using ContractWorkflowRuntimeStatus = MesControlAgv.Contracts.Workflows.WorkflowRuntimeStatus;
+using ContractWorkflowAuditResponse = MesControlAgv.Contracts.Workflows.WorkflowAuditResponse;
 using ContractWorkflowVersion = MesControlAgv.Contracts.Workflows.WorkflowVersion;
 using ContractWorkflowParameter = MesControlAgv.Contracts.Workflows.WorkflowParameter;
 using ContractWorkflowPublishStatus = MesControlAgv.Contracts.Workflows.WorkflowPublishStatus;
@@ -51,6 +54,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     private bool _isRemoteBusy;
     private ContractWorkflowValidationResult? _lastValidation;
     private ContractWorkflowExecutionResult? _lastExecution;
+    private ContractWorkflowExecutionSnapshot? _lastExecutionSnapshot;
+    private IReadOnlyList<ContractWorkflowAuditResponse> _lastExecutionAudits = [];
     private bool _profileDefaultsApplied;
 
     public WorkflowEditorViewModel(
@@ -254,11 +259,26 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 
     public ContractWorkflowExecutionResult? DryRunResult => LastExecution;
 
+    /// <summary>Last read-only runtime snapshot returned by MES, if available.</summary>
+    public ContractWorkflowExecutionSnapshot? ExecutionSnapshot => _lastExecutionSnapshot;
+
+    public IReadOnlyList<ContractWorkflowAuditResponse> ExecutionAudits => _lastExecutionAudits;
+
     public string DryRunSummary => DryRunResult is null
         ? "尚未执行模拟运行"
         : DryRunResult.IsAccepted
             ? $"已受理：{DryRunResult.NextStep?.NodeName ?? "无下一步"}"
             : $"已拒绝：{DryRunResult.RejectionCode ?? "未知原因"}";
+
+    public string ExecutionRuntimeSummary => ExecutionSnapshot is null
+        ? "运行快照：尚未读取"
+        : $"运行快照：{DescribeRuntimeStatus(ExecutionSnapshot.RuntimeStatus)}" +
+          $"；当前节点：{ExecutionSnapshot.PendingStepRequest?.NodeName ?? "无"}" +
+          $"；尝试：{ExecutionSnapshot.Attempt}";
+
+    public string ExecutionAuditSummary => ExecutionAudits.Count == 0
+        ? "运行审计：尚无记录"
+        : $"运行审计：{ExecutionAudits.Count} 条；最新：{ExecutionAudits[^1].EventType}";
     public bool IsRemoteAvailable => _mes is not null;
 
     public bool IsRemoteBusy
@@ -583,9 +603,15 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
                 RejectionReason = "模拟运行需要已确认发布的 MES 工作流版本。",
                 DryRun = true
             };
+            _lastExecutionSnapshot = null;
+            _lastExecutionAudits = [];
             RemoteState = WorkflowRemoteState.DryRunRejected;
             OnPropertyChanged(nameof(LastExecution));
             OnPropertyChanged(nameof(DryRunResult));
+            OnPropertyChanged(nameof(ExecutionSnapshot));
+            OnPropertyChanged(nameof(ExecutionRuntimeSummary));
+            OnPropertyChanged(nameof(ExecutionAudits));
+            OnPropertyChanged(nameof(ExecutionAuditSummary));
             Message = "模拟运行被拒绝：WORKFLOW_VERSION_NOT_PUBLISHED。";
             RemoteStatus = Message;
             return;
@@ -602,8 +628,14 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             },
             cancellationToken);
         _lastExecution = result;
+        _lastExecutionSnapshot = await ReadExecutionSnapshotAsync(result, cancellationToken);
+        _lastExecutionAudits = await ReadExecutionAuditsAsync(result, cancellationToken);
         RemoteState = result.IsAccepted ? WorkflowRemoteState.DryRunAccepted : WorkflowRemoteState.DryRunRejected;
         OnPropertyChanged(nameof(LastExecution));
+        OnPropertyChanged(nameof(ExecutionSnapshot));
+        OnPropertyChanged(nameof(ExecutionRuntimeSummary));
+        OnPropertyChanged(nameof(ExecutionAudits));
+        OnPropertyChanged(nameof(ExecutionAuditSummary));
         Message = result.IsAccepted
             ? result.NextStep is null
                 ? "模拟运行已受理，工作流已到达终点。"
@@ -611,6 +643,68 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             : $"模拟运行被拒绝：{result.RejectionCode ?? result.RejectionReason ?? "未知原因"}。";
         RemoteStatus = Message;
     }
+
+    private async Task<ContractWorkflowExecutionSnapshot?> ReadExecutionSnapshotAsync(
+        ContractWorkflowExecutionResult result,
+        CancellationToken cancellationToken)
+    {
+        if (_mes is null || !result.IsAccepted || result.ExecutionId == Guid.Empty)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await _mes.GetWorkflowExecutionAsync(result.ExecutionId, cancellationToken);
+        }
+        catch (HttpRequestException)
+        {
+            // A successful admission must remain visible when connected to an
+            // older MES that does not yet expose the read-only snapshot route.
+            return null;
+        }
+        catch (NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    private async Task<IReadOnlyList<ContractWorkflowAuditResponse>> ReadExecutionAuditsAsync(
+        ContractWorkflowExecutionResult result,
+        CancellationToken cancellationToken)
+    {
+        if (_mes is null || result.WorkflowId == Guid.Empty)
+        {
+            return [];
+        }
+
+        try
+        {
+            return await _mes.GetWorkflowAuditsAsync(result.WorkflowId, result.Version, 20, cancellationToken);
+        }
+        catch (HttpRequestException)
+        {
+            return [];
+        }
+        catch (NotSupportedException)
+        {
+            return [];
+        }
+    }
+
+    private static string DescribeRuntimeStatus(ContractWorkflowRuntimeStatus status) => status switch
+    {
+        ContractWorkflowRuntimeStatus.Rejected => "已拒绝",
+        ContractWorkflowRuntimeStatus.DryRunCompleted => "模拟运行完成",
+        ContractWorkflowRuntimeStatus.Prepared => "等待编排",
+        ContractWorkflowRuntimeStatus.Running => "运行中",
+        ContractWorkflowRuntimeStatus.Paused => "已暂停",
+        ContractWorkflowRuntimeStatus.Completed => "已完成",
+        ContractWorkflowRuntimeStatus.Failed => "失败",
+        ContractWorkflowRuntimeStatus.Unknown => "待对账",
+        ContractWorkflowRuntimeStatus.Cancelled => "已取消",
+        _ => "未知"
+    };
 
     private string Actor
     {

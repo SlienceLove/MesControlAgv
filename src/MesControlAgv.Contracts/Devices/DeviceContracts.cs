@@ -9,6 +9,13 @@ public sealed record AgvTaskResponse(
     string AgvId = "AGV-01",
     IReadOnlyList<string>? Path = null);
 
+/// <summary>Read-only Adapter process identity; it contains no controller state.</summary>
+public sealed record AdapterRuntimeIdentityResponse(
+    string Service,
+    string Status,
+    string RunMode,
+    string Driver);
+
 public sealed record AgvCapabilitiesResponse(
     bool SupportsPause,
     bool SupportsResume,
@@ -115,3 +122,35 @@ public sealed record PhysicalAgvPreflightResponse(
 public sealed record AgvCommandRequest(
     string Command,
     Guid? TaskId = null);
+
+/// <summary>
+/// Normalized read-only CIC-D160+ observation returned through MES. Candidate
+/// fields remain nullable and carry their mapping confidence explicitly.
+/// </summary>
+public sealed record IonChromatographyStatusResponse(
+    string InstrumentId,
+    string Model,
+    string SerialNumber,
+    bool Online,
+    string DeviceState,
+    bool PortOwned,
+    DateTimeOffset ObservedAtUtc,
+    double? Pressure = null,
+    double? ColumnTemperature = null,
+    double? DetectorTemperature = null,
+    string? Alarm = null,
+    double? Conductivity = null,
+    double? TotalConductivity = null,
+    double? Flow = null,
+    string? MappingConfidence = null);
+
+/// <summary>
+/// Control-center projection of instrument status and the currently enforced
+/// operation policy. Task admission stays false until write commands are
+/// independently evidenced and authorized.
+/// </summary>
+public sealed record IonChromatographyControlCenterStatusResponse(
+    IonChromatographyStatusResponse Status,
+    bool TaskAdmissionEnabled,
+    IReadOnlyList<string> EnabledOperations,
+    string ControlPolicy);

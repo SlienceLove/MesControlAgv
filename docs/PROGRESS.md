@@ -1,6 +1,101 @@
 # AGV MES MVP Progress
 
-Last updated: 2026-08-11
+Last updated: 2026-08-17
+
+## Current priority and branch
+
+Development focus has moved to branch
+`feat/ion-chromatography-direct-control-validation`. The current delivery
+sequence is:
+
+1. **P0 - ion chromatography communication:** establish a safe, evidence-based
+   direct communication path to the CIC-D160+ before integrating instrument
+   control into MES.
+2. **P1 - robot arm and vision communication:** obtain the vendor protocols,
+   calibration data, and safety contracts, then implement and verify the two
+   device drivers independently.
+3. **P2 - control-center end-to-end integration:** orchestrate the verified
+   instrument, robot arm, vision, and existing AGV capabilities through one
+   auditable workflow, starting with dry-run and supervised execution.
+
+The AGV MVP is now in a **frozen maintenance state**. Its Simulator workflow,
+vendor TCP boundary, offline verification, and physical-acceptance evidence are
+retained, but no new AGV feature work or physical movement is planned during
+P0-P2. Real-AGV production, unattended dispatch, automatic/batch dispatch, and
+Push remain **NO-GO**. Any future AGV field work still requires the fresh,
+authorized preflight and movement-authorization gates recorded below.
+
+### P0 status: CIC-D160+ direct communication
+
+- Static analysis confirms that the sample CIC-D160+ uses USB virtual serial
+  communication and Modbus RTU, not LAN TCP. The current sample settings are
+  `115200 8N1`; the observed read request
+  `01 04 19 00 00 14 F7 59` has a valid Modbus CRC.
+- The repository now contains `MesControlAgv.DeviceProtocolTester`, a
+  default-read-only probe with serial support, CRC validation, session
+  archiving, timeout evidence, and explicit write protection.
+- The control-computer acceptance identified the CIC-D160+ as `COM4` at
+  `115200 8N1`. The known `0x1900/20-register` read passed 30 consecutive
+  attempts with valid CRC responses. `COM3` and the SHA-18i remain outside the
+  current scope, and ShineLab must be closed before any process opens `COM4`.
+- A 60-second USBPcap observation on 2026-08-17 successfully reconstructed
+  ShineLab traffic for the CIC-D160+. The capture contains 666 Modbus `0x04`
+  reads and 665 CRC-valid read responses, including the confirmed
+  `0x1900/20-register` exchange. It also shows ShineLab automatically issuing
+  and the device acknowledging function `0x06`, register `0x13E4`, value
+  `0x5AA5`. The write meaning is unknown and the frame must not be replayed.
+  Detailed evidence is in
+  `artifacts/ion-chromatography/d160-capture-analysis-20260817-154030.md`.
+- A dedicated local `MesControlAgv.InstrumentGateway` now implements only the
+  evidenced reads `0x1900/20`, `0x1770/12`, and `0x17D4/18`. It exposes
+  read-only health, identity, and status HTTP routes; rejects state-changing
+  HTTP methods; has no raw-frame or register-write API; and defaults to
+  `Enabled=false`. Candidate conductivity, total-conductivity, column-
+  temperature, and flow mappings are explicitly labelled as capture-correlated
+  rather than vendor-confirmed.
+- Gateway verification passed 15/15 focused tests, including the real captured
+  identity frame, CRC and function rejection, the captured write-frame
+  rejection, exact register allowlisting, candidate field decoding, and
+  disabled API behavior. A disabled local process returned `200` from
+  `/health` without opening a serial port.
+- MES now proxies the gateway through a GET-only normalized status route, and
+  WPF has a dedicated CIC-D160+ status page for identity, connectivity,
+  conductivity, total conductivity, column temperature, flow, observation
+  time, mapping confidence, and enforced operation policy. It reads once at
+  startup and supports explicit refresh; it does not attach the three serial
+  exchanges to the existing two-second AGV refresh loop.
+- The instrument task transition graph and read-only policy are implemented
+  fail-closed. Only `Identify` and `ReadStatus` are enabled, task admission is
+  false, and the state machine cannot advance from `Preflight` to
+  `Equilibrating` unless a future caller supplies a separately enabled control
+  policy. MES exposes no instrument task creation or operation POST endpoint,
+  and WPF exposes no method-load, injection, start, stop, or reset controls.
+- Final offline verification passed `478` tests with `5` existing skips and no
+  failures. The complete Release solution build finished with 0 warnings and
+  0 errors, and `git diff --check` passed. No development or test process
+  opened `COM4` or sent a device frame during this implementation stage.
+- The next field stage is intentionally gated. Vendor register/command
+  semantics, firmware applicability, failure responses, and explicit empty-
+  load authorization are required before method loading, parameter changes,
+  autosampler movement, injection, start, stop, or reset can be implemented or
+  observed as an active validation step. The captured `0x13E4 = 0x5AA5` write
+  remains prohibited from replay.
+- The implementation and evidence requirements are in
+  `docs/ION-CHROMATOGRAPHY-DIRECT-CONTROL-IMPLEMENTATION-PLAN.md`,
+  `docs/ION-CHROMATOGRAPHY-DIRECT-CONTROL-VALIDATION.md`, and
+  `docs/ION-CHROMATOGRAPHY-SHINELAB-ANALYSIS.md`.
+
+### P1 status: robot arm and vision communication
+
+- Integration architecture and a vendor-information checklist exist, but the
+  concrete Aobot robot-arm and VisionGroup2 protocol contracts, endpoint
+  details, command samples, coordinate transforms, and safety interlocks have
+  not been confirmed.
+- Do not implement or send device-control commands from the proposed examples
+  until the vendor documents and a controlled, read-only connectivity check
+  establish the actual interface. The required evidence is tracked in
+  `docs/ROBOT-ARM-VISION-INTEGRATION.md` and
+  `docs/ROBOT-ARM-VISION-CHECKLIST.md`.
 
 ## Current status
 
@@ -18,6 +113,15 @@ The WPF application now includes experiment workflow management. Workflows can b
 
 The WPF startup window now uses the mode-independent Chinese title `正在启动中控`; startup failures are reported as `中控启动失败` so physical mode does not incorrectly refer to a local service. Operator-facing menus, comments, and status messages remain in simplified Chinese; product/protocol names and configured station or custom workflow names are retained.
 
+Physical acceptance has advanced beyond the earlier read-only checkpoints, but
+it is not production-approved. On 2026-08-13, Stage 4 localization confidence
+passed at `0.9708`, Stage 5 completed the supervised `LM1 -> LM2` movement, and
+Stage 6 completed `LM2 -> LM3`. The remaining `LM3 -> LM1` segment was paused
+after an obstacle event and external control takeover, then cancelled; it was
+not completed. Normal automatic/batch dispatch remains disabled. The last
+recorded vehicle state is historical evidence only and must not be used to
+authorize another connection or movement.
+
 ## Vendor TCP implementation
 
 The vendor driver follows the supplied integration guide and API reference. It implements the 16-byte TCP frame, channels `19204`, `19206`, `19207`, and `19301`, control ownership (`1060`/`4005`), navigation (`3066`), status query (`1110`), active status push (`19301`/`9300`), pause/resume (`3001`/`3002`), cancellation (`3067`), and emergency-stop handling. The current controller reference documents `3067` as the cancellation API; `3068` was experimentally rejected as a task-specific cleanup mechanism because it returned success without changing the legacy record.
@@ -33,11 +137,15 @@ dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1
 dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 ```
 
-The Release build passed on 2026-08-11 with 0 warnings and 0 errors, and the
-combined solution test run passed **338/338 tests**: Domain 35, MES 45, Adapter
-82, WPF 150, E2E 12, Simulator 5, and Workflow Contract 9. Coverage includes
+The latest clean offline Release gate passed on 2026-08-17 with **0 warnings /
+0 errors** and **452 passed / 5 skipped / 457 total tests**: Domain 37, MES 57,
+Adapter 163, WPF 161, E2E 19 passed plus 5 intentionally skipped, Simulator 5,
+and Workflow Contract 10. The earlier 2026-08-11 combined solution run passed
+**338/338 tests**: Domain 35, MES 45, Adapter 82, WPF 150, E2E 12, Simulator 5,
+and Workflow Contract 9. Coverage includes
 WPF station/task contracts,
-workflow draft/validate/publish/version/dry-run APIs and audit readback,
+workflow draft/validate/publish/version/dry-run APIs, persisted read-only
+execution-snapshot recovery, and audit readback,
 read-only map/readiness aggregation, timeout recovery without duplicate
 operation IDs, restart-resume reconciliation, multi-AGV contention, supervised
 field-navigation acceptance state transitions, and existing failure/retry,
@@ -47,7 +155,7 @@ the E2E contract uses only a local fake TCP controller.
 
 ## Live verification
 
-The three service processes were started from the Release output on isolated local ports with fresh temporary MES/Adapter stores for process-level validation. Existing positive and `failure-retry` runs passed, including pause/resume, arrival confirmations, audit evidence, and fleet cleanup. New isolated runs on `5511/5512/5513` passed `timeout-recover` (Simulator `timeout-unknown` -> MES `Unknown` -> same operation recreated -> `ReconciledMoving` -> completed), `5551/5552/5553` passed `multi-agv` (three distinct AGV assignments, fourth task failed closed with `DeviceFailed`, all three tasks completed), `5571/5572/5573` passed `restart-resume` (Simulator kept alive while Adapter/MES restarted and reconciled persisted work), and `5641/5642/5643` passed `workflow-publish-rollback` (three immutable versions, published pointer rollback, and lifecycle audits). The physical-robot run has not been completed.
+The three service processes were started from the Release output on isolated local ports with fresh temporary MES/Adapter stores for process-level validation. Existing positive and `failure-retry` runs passed, including pause/resume, arrival confirmations, audit evidence, and fleet cleanup. New isolated runs on `5511/5512/5513` passed `timeout-recover` (Simulator `timeout-unknown` -> MES `Unknown` -> same operation recreated -> `ReconciledMoving` -> completed), `5551/5552/5553` passed `multi-agv` (three distinct AGV assignments, fourth task failed closed with `DeviceFailed`, all three tasks completed), `5571/5572/5573` passed `restart-resume` (Simulator kept alive while Adapter/MES restarted and reconciled persisted work), and `5641/5642/5643` passed `workflow-publish-rollback` (three immutable versions, published pointer rollback, and lifecycle audits). Physical-robot acceptance is partially executed as recorded above and remains **NO-GO** for production or automatic dispatch.
 
 The full isolated process matrix was rerun from the Release output on 2026-08-10 with separate temporary stores and ports: `positive` (6101-6103), `failure-retry` (6111-6113), `timeout-recover` (6121-6123), `cancel` (6131-6133), `workflow-publish-rollback` (6141-6143), `multi-agv` (6151-6153), and `restart-resume` (6161-6163) all passed. All owned processes, listening ports, and state files were cleaned up afterward; no physical AGV was connected.
 
@@ -170,14 +278,27 @@ The vendor protocol is now implemented behind the Adapter driver boundary. Befor
 
 ## Next session handoff
 
-1. Start WPF in Debug + Simulator mode, select configured source/target stations, create and explicitly dispatch a task, then verify pause/resume, arrival, pickup confirmation, dropoff arrival, dropoff confirmation, and `COMPLETED`; also verify known failures and communication exceptions show their reasons.
-2. If a future restart produces new project-specific Code Integrity 3077/3033 events, ask the administrator to approve a supplemental WDAC policy or provide a signed development build.
-3. Confirm the full physical-robot acceptance boundary before enabling `Agv:Driver=vendor-tcp`.
-4. Confirm the AGV IP address, firmware version, map name, and actual station IDs.
-5. Confirm the direct relationship between `source_id` and the map `id` field.
-6. Confirm relocation parameters, control-ownership fields, safety fields, and forklift/lift/roller DI/DO mappings.
-7. In an isolated environment, set `Agv:Driver=vendor-tcp` and first run the startup-only `read-only-preflight`; control ownership and movement acceptance remain separate authorized stages after an Adapter restart.
-8. Keep Simulator as the default until the vendor values and on-site safety acceptance are complete.
+1. **P0 — baseline governance (complete):** reconcile progress, field evidence, and Profile
+   policy; decide whether the production localization threshold remains `0.95`
+   or follows a separately approved policy; keep site addresses in protected
+   deployment injection only; run a clean isolated Release build/test and
+   sensitive-data/diff checks.
+2. **P1 — workflow runtime reliability (complete):** persist the workflow instance,
+   version snapshot, current node, transport correlation IDs, attempts, and
+   audit linkage; reconcile after MES/Adapter restart without duplicating a
+   device write; orchestrate multi-segment routes one segment at a time after
+   confirmed arrival.
+3. **P1 — WPF runtime visibility (complete):** expose remote draft/publication state,
+   dry-run admission, current workflow node, correlated device task, and audit
+   timeline while clearly distinguishing an offline local draft.
+4. **P2 — conditional physical continuation:** only after a fresh authorized
+   `read-only-preflight`, stop of that read-only process, renewed movement
+   authorization, and a new unique acceptance/task ID may another supervised
+   low-speed segment be considered. Normal automatic/batch dispatch and Push
+   remain disabled.
+5. **P3 — real robot-arm and vision drivers:** proceed on a separate integration
+   track after vendor protocols and calibration inputs are available; do not
+   block or weaken the AGV safety boundary.
 
 ## 2026-08-04 extension: AGV communications and batch task import
 
@@ -1164,3 +1285,110 @@ Detailed continuation notes are in
   the latest controller value is still `0.9482 < 0.95`. The next live step
   requires a fresh authorized read-only preflight and explicit authorization
   immediately before any possible control command.
+
+## 2026-08-13 physical acceptance stages 4-6
+
+- **Stage 4 — PASS:** three read-only checks recorded confidence values
+  `0.9241`, `0.9330`, and finally `0.9708`. The final value passed the configured
+  `0.95` threshold; localization, controller-authoritative map identity, idle
+  state, and safety checks passed for that session.
+- **Stage 5 — PASS:** the separately authorized, supervised, low-speed
+  `LM1 -> LM2` route completed. Control was acquired before movement, the
+  configured maximum speed was `0.3 m/s`, the task reached `arrived`, and
+  control was released. Automatic/batch dispatch and Push remained disabled.
+- **Stage 6 — PARTIAL SUCCESS:** direct `LM2 -> LM1` is not an available edge,
+  so the return was split into sequential segments. `LM2 -> LM3` completed.
+  During `LM3 -> LM1`, an obstacle event was recorded, an external PC took
+  control, the task paused, and the task was subsequently cancelled with
+  control released. `LM3 -> LM1` did **not** complete.
+- Stage 6 used a temporary environment override reducing the confidence
+  threshold from `0.95` to `0.92` after `0.928` was observed at `LM2`; the
+  evidence records verbal confirmation. This does not establish a production
+  threshold. A reviewed Profile policy and risk acceptance are still required.
+- The last recorded post-session state was the vehicle at `LM3`, no control
+  owner, no active task, and no active alarm. This is a historical snapshot,
+  not current readiness evidence.
+- Overall physical acceptance remains **NO-GO** for production, unattended, or
+  automatic/batch dispatch. Another connection or movement requires a fresh
+  site check, a new isolated `read-only-preflight` proving control owner `none`,
+  map/model/localization/alarm/idle gates, shutdown of that read-only process,
+  renewed explicit movement authorization, and a new unique acceptance/task ID.
+  Any route with multiple directed edges must be dispatched one segment at a
+  time and only after confirmed arrival at the preceding segment.
+- Detailed evidence is retained in
+  `artifacts/physical-acceptance-20260813-stage4-confidence-verification.md`,
+  `artifacts/physical-acceptance-20260813-stage5-first-route-lm1-lm2.md`,
+  `artifacts/physical-acceptance-20260813-stage6-return-route-lm2-lm1.md`, and
+  `artifacts/physical-acceptance-20260813-daily-summary.md`.
+
+## 2026-08-17 P0 and P1 closure
+
+- P0 governance is closed for this iteration: repository physical-acceptance
+  templates are redacted and read-only, field evidence is consistent with the
+  Stage 4--6 record above, and production remains **NO-GO**. Deployment hosts
+  and any future authorization data must be injected outside the repository.
+- MES can now rehydrate a persisted workflow admission as a strictly read-only
+  `WorkflowExecutionSnapshot`, by execution ID or request ID. Each new record
+  durably pins its serialized definition, runtime status, current node, pending
+  step, attempt count, reserved transport-operation correlation, last error,
+  and update time. Existing records without those fields retain a safe fallback
+  to their prior persisted admission result. The MES endpoints are
+  `GET /api/workflow-executions/{executionId}` and
+  `GET /api/workflow-executions/by-request/{requestId}`.
+- WPF's MES client consumes both snapshot routes and maps `404` to no snapshot;
+  existing test doubles remain compatible through default interface methods.
+  After a Simulator-safe dry-run admission, the workflow editor displays the
+  read-only runtime status, pending node, and attempt count. A missing or older
+  MES snapshot endpoint does not convert a successful admission into a failure.
+- The connection-failure cancellation test now permits either a refused socket
+  or the equivalent bounded transport timeout, while retaining the critical
+  assertion that cancellation is never marked written before a possible write.
+- P1 runtime orchestration is complete for the offline MES boundary. A durable
+  `claim` reserves one workflow node at a time and derives a stable transport
+  operation ID from the execution, node, and attempt; retrying the same claim
+  returns that same ID. A successful completion is the only event that advances
+  the immutable definition snapshot to its next unambiguous node. Failure,
+  cancellation, and unresolved outcomes are persisted fail-closed with runtime
+  audit events.
+- `WorkflowRecoveryService` performs startup reconciliation only for a running
+  record that already has a reserved operation ID. It makes the read-only task
+  lookup, persists confirmed terminal results, and retains timeout, HTTP, or
+  absent-task results as `Unknown`. It neither dispatches, retries, nor creates
+  an operation ID, so restart recovery cannot duplicate a device write.
+- WPF now shows the post-admission runtime snapshot together with the recent
+  workflow audit timeline, including the correlated transport operation. Claim
+  and completion remain internal application operations; the unauthenticated
+  mutation routes were removed so an external caller cannot forge a successful
+  step completion.
+- The controlled Simulator integration is now complete. An explicitly disabled
+  by-default worker claims only non-dry-run `Move` steps, requires both the
+  Simulator profile and an Adapter health identity of `driver=simulator`, then
+  dispatches once with the durable operation ID. It waits for
+  `arrived`/`completed` before advancing, converts ambiguous dispatch/read
+  failures to `Unknown` without retry, and leaves `Wait`, `Pickup`, `Dropoff`,
+  and custom nodes prepared without device I/O.
+- Focused offline tests passed: Adapter `163/163`, MES `57/57`, and WPF
+  `161/161`. The full serial Release gate passed with 0 warnings / 0 errors and
+  `452 passed / 5 skipped / 457 total`; no controller or physical AGV was
+  connected, controlled, dispatched, cancelled, or moved.
+
+### Confirmed next implementation order
+
+1. **P0 ion chromatography:** perform the authorized, read-only CIC-D160+
+   serial/Modbus acceptance and collect protocol evidence. Build the dedicated
+   instrument gateway only after the read path, device identity, and register
+   mapping are verified. Keep all instrument writes and automatic execution
+   disabled until separately authorized empty-load validation.
+2. **P1 robot arm and vision:** collect the Aobot and VisionGroup2 protocol,
+   endpoint, state-machine, coordinate-calibration, and safety-interlock
+   evidence. Then verify each driver independently with read-only status and
+   controlled vendor-authorized commands.
+3. **P2 complete control-center flow:** define an auditable compound workflow
+   across instrument, robot arm, vision, and the existing AGV boundary. Start
+   with dry-run and supervised single-step execution; only consider automatic
+   operation after device-level evidence, failure recovery, result traceability,
+   and safety acceptance are complete.
+4. **AGV hold:** keep AGV work at maintenance-only status. Do not resume
+   physical navigation, production dispatch, automatic/batch dispatch, or Push
+   unless the separate preflight, field authorization, and NO-GO gates are
+   explicitly reopened.

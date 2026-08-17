@@ -1,4 +1,6 @@
 ﻿using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json.Serialization;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts.Workflows;
@@ -124,6 +126,154 @@ public sealed class WorkflowApplicationService : IWorkflowApplicationService
         return records
             .Select(item => WorkflowPersistence.ToContract(item, publishedVersion))
             .ToArray();
+    }
+
+    public async Task<WorkflowExecutionSnapshot?> GetExecutionAsync(
+        Guid executionId,
+        CancellationToken cancellationToken)
+    {
+        if (executionId == Guid.Empty)
+        {
+            return null;
+        }
+
+        var record = await _database.WorkflowExecutions
+            .AsNoTracking()
+            .SingleOrDefaultAsync(item => item.ExecutionId == executionId, cancellationToken);
+        return record is null ? null : WorkflowPersistence.ToExecutionSnapshot(record);
+    }
+
+    public async Task<WorkflowExecutionSnapshot?> GetExecutionByRequestAsync(
+        Guid requestId,
+        CancellationToken cancellationToken)
+    {
+        if (requestId == Guid.Empty)
+        {
+            return null;
+        }
+
+        var record = await _database.WorkflowExecutions
+            .AsNoTracking()
+            .SingleOrDefaultAsync(item => item.RequestId == requestId, cancellationToken);
+        return record is null ? null : WorkflowPersistence.ToExecutionSnapshot(record);
+    }
+
+    public async Task<IReadOnlyList<WorkflowExecutionSnapshot>> ListRecoverableExecutionsAsync(
+        CancellationToken cancellationToken)
+    {
+        var records = await _database.WorkflowExecutions
+            .AsNoTracking()
+            .Where(item => item.RuntimeStatus == WorkflowRuntimeStatus.Running.ToString() ||
+                           item.RuntimeStatus == WorkflowRuntimeStatus.Unknown.ToString())
+            .OrderBy(item => item.UpdatedAtUtc)
+            .ToListAsync(cancellationToken);
+        return records.Select(WorkflowPersistence.ToExecutionSnapshot).ToArray();
+    }
+
+    public async Task<IReadOnlyList<WorkflowExecutionSnapshot>> ListSimulatorDispatchableExecutionsAsync(
+        CancellationToken cancellationToken)
+    {
+        var records = await _database.WorkflowExecutions
+            .AsNoTracking()
+            .Where(item => item.RuntimeStatus == WorkflowRuntimeStatus.Prepared.ToString())
+            .OrderBy(item => item.UpdatedAtUtc)
+            .ToListAsync(cancellationToken);
+        return records
+            .Select(WorkflowPersistence.ToExecutionSnapshot)
+            .Where(snapshot => !snapshot.DryRun &&
+                               snapshot.PendingStepRequest?.NodeType == WorkflowNodeType.Move &&
+                               !string.IsNullOrWhiteSpace(snapshot.PendingStepRequest.TargetStation))
+            .ToArray();
+    }
+
+    public async Task<WorkflowExecutionSnapshot> ClaimNextStepAsync(
+        Guid executionId,
+        CancellationToken cancellationToken)
+    {
+        var record = await FindExecutionAsync(executionId, cancellationToken);
+        var snapshot = WorkflowPersistence.ToExecutionSnapshot(record);
+        if (snapshot.RuntimeStatus == WorkflowRuntimeStatus.Running)
+        {
+            return snapshot;
+        }
+
+        if (snapshot.RuntimeStatus != WorkflowRuntimeStatus.Prepared || snapshot.PendingStepRequest is null)
+        {
+            throw new InvalidOperationException("Only a prepared workflow execution with a pending step can be claimed.");
+        }
+
+        var attempt = record.Attempt + 1;
+        record.TransportOperationId = WorkflowPersistence.CreateStableOperationId(
+            record.ExecutionId,
+            snapshot.PendingStepRequest.NodeId,
+            attempt);
+        record.Attempt = attempt;
+        record.RuntimeStatus = WorkflowRuntimeStatus.Running.ToString();
+        record.LastError = null;
+        record.UpdatedAtUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        AddRuntimeAudit(record, "WorkflowStepClaimed", "Running", null, new Dictionary<string, string?>
+        {
+            ["nodeId"] = snapshot.PendingStepRequest.NodeId.ToString(),
+            ["transportOperationId"] = record.TransportOperationId.Value.ToString(),
+            ["attempt"] = attempt.ToString()
+        });
+        await _database.SaveChangesAsync(cancellationToken);
+        return WorkflowPersistence.ToExecutionSnapshot(record);
+    }
+
+    public async Task<WorkflowExecutionSnapshot> CompleteClaimedStepAsync(
+        Guid executionId,
+        WorkflowStepCompletionRequest completion,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(completion);
+        var record = await FindExecutionAsync(executionId, cancellationToken);
+        var snapshot = WorkflowPersistence.ToExecutionSnapshot(record);
+        if (snapshot.RuntimeStatus != WorkflowRuntimeStatus.Running ||
+            record.TransportOperationId is null ||
+            completion.TransportOperationId == Guid.Empty ||
+            record.TransportOperationId != completion.TransportOperationId)
+        {
+            throw new InvalidOperationException("The completion does not match a claimed workflow step.");
+        }
+
+        var error = string.IsNullOrWhiteSpace(completion.Error) ? null : completion.Error.Trim();
+        if (completion.Outcome == WorkflowStepCompletionOutcome.Succeeded)
+        {
+            var nextStep = WorkflowPersistence.ResolveFollowingStep(record, snapshot.PendingStepRequest!);
+            record.CurrentNodeId = nextStep?.NodeId ?? snapshot.PendingStepRequest!.NodeId;
+            record.PendingStepJson = nextStep is null ? null : WorkflowPersistence.Serialize(nextStep);
+            record.TransportOperationId = null;
+            record.Attempt = 0;
+            record.LastError = null;
+            record.RuntimeStatus = (nextStep is null
+                ? WorkflowRuntimeStatus.Completed
+                : WorkflowRuntimeStatus.Prepared).ToString();
+            AddRuntimeAudit(record, "WorkflowStepCompleted", record.RuntimeStatus, null, new Dictionary<string, string?>
+            {
+                ["transportOperationId"] = completion.TransportOperationId.ToString(),
+                ["nextNodeId"] = nextStep?.NodeId.ToString()
+            });
+        }
+        else
+        {
+            record.RuntimeStatus = completion.Outcome switch
+            {
+                WorkflowStepCompletionOutcome.Failed => WorkflowRuntimeStatus.Failed.ToString(),
+                WorkflowStepCompletionOutcome.Unknown => WorkflowRuntimeStatus.Unknown.ToString(),
+                WorkflowStepCompletionOutcome.Cancelled => WorkflowRuntimeStatus.Cancelled.ToString(),
+                _ => throw new ArgumentOutOfRangeException(nameof(completion))
+            };
+            record.LastError = error ?? completion.Outcome.ToString();
+            AddRuntimeAudit(record, "WorkflowStepReconciled", record.RuntimeStatus, record.LastError, new Dictionary<string, string?>
+            {
+                ["transportOperationId"] = completion.TransportOperationId.ToString()
+            });
+        }
+
+        record.UpdatedAtUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        await _database.SaveChangesAsync(cancellationToken);
+        return WorkflowPersistence.ToExecutionSnapshot(record);
     }
 
     public async Task<IReadOnlyList<WorkflowAuditResponse>> ListAuditsAsync(
@@ -336,19 +486,11 @@ public sealed class WorkflowApplicationService : IWorkflowApplicationService
             }
 
             var result = await _runtimeExecutor.ExecuteAsync(request, cancellationToken);
-            _database.WorkflowExecutions.Add(new WorkflowExecutionRecord
-            {
-                RequestId = request.RequestId,
-                Fingerprint = fingerprint,
-                WorkflowId = request.WorkflowId,
-                Version = request.Version,
-                ExecutionId = result.ExecutionId,
-                Outcome = result.Status.ToString(),
-                RejectionCode = result.RejectionCode,
-                RequestJson = WorkflowPersistence.Serialize(request),
-                ResultJson = WorkflowPersistence.Serialize(result),
-                CreatedAtUtc = _timeProvider.GetUtcNow().UtcDateTime
-            });
+            _database.WorkflowExecutions.Add(await CreateExecutionRecordAsync(
+                request,
+                fingerprint,
+                result,
+                cancellationToken));
             AddExecutionAudit(result.Audit);
             try
             {
@@ -391,6 +533,85 @@ public sealed class WorkflowApplicationService : IWorkflowApplicationService
         AddExecutionAudit(invalidRequest.Audit);
         await _database.SaveChangesAsync(cancellationToken);
         return invalidRequest;
+    }
+
+    private async Task<WorkflowExecutionRecord> CreateExecutionRecordAsync(
+        WorkflowExecutionRequest request,
+        string fingerprint,
+        WorkflowExecutionResult result,
+        CancellationToken cancellationToken)
+    {
+        string? definitionSnapshotJson = null;
+        if (result.IsAccepted)
+        {
+            definitionSnapshotJson = await _database.WorkflowVersions
+                .AsNoTracking()
+                .Where(item => item.WorkflowId == request.WorkflowId && item.Version == request.Version)
+                .Select(item => item.DefinitionJson)
+                .SingleOrDefaultAsync(cancellationToken);
+        }
+
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        return new WorkflowExecutionRecord
+        {
+            RequestId = request.RequestId,
+            Fingerprint = fingerprint,
+            WorkflowId = request.WorkflowId,
+            Version = request.Version,
+            ExecutionId = result.ExecutionId,
+            Outcome = result.Status.ToString(),
+            RejectionCode = result.RejectionCode,
+            RequestJson = WorkflowPersistence.Serialize(request),
+            ResultJson = WorkflowPersistence.Serialize(result),
+            DefinitionSnapshotJson = definitionSnapshotJson,
+            RuntimeStatus = WorkflowPersistence.GetAdmissionRuntimeStatus(result).ToString(),
+            CurrentNodeId = result.NextStepRequest?.NodeId,
+            PendingStepJson = result.NextStepRequest is null
+                ? null
+                : WorkflowPersistence.Serialize(result.NextStepRequest),
+            Attempt = 0,
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        };
+    }
+
+    private async Task<WorkflowExecutionRecord> FindExecutionAsync(
+        Guid executionId,
+        CancellationToken cancellationToken)
+    {
+        if (executionId == Guid.Empty)
+        {
+            throw new ArgumentException("A workflow execution id is required.", nameof(executionId));
+        }
+
+        var record = await _database.WorkflowExecutions
+            .SingleOrDefaultAsync(item => item.ExecutionId == executionId, cancellationToken);
+        return record ?? throw new KeyNotFoundException($"Workflow execution '{executionId}' was not found.");
+    }
+
+    private void AddRuntimeAudit(
+        WorkflowExecutionRecord record,
+        string eventType,
+        string outcome,
+        string? reason,
+        IReadOnlyDictionary<string, string?> details)
+    {
+        var request = WorkflowPersistence.DeserializeRequest(record.RequestJson);
+        _database.WorkflowAudits.Add(new WorkflowAuditRecord
+        {
+            Id = Guid.NewGuid(),
+            EventType = eventType,
+            Outcome = outcome,
+            Reason = reason,
+            WorkflowId = record.WorkflowId,
+            Version = record.Version,
+            RequestId = record.RequestId,
+            ExecutionId = record.ExecutionId == Guid.Empty ? null : record.ExecutionId,
+            Actor = request.RequestedBy,
+            CorrelationId = request.CorrelationId,
+            DetailsJson = WorkflowPersistence.Serialize(details),
+            OccurredAtUtc = _timeProvider.GetUtcNow().UtcDateTime
+        });
     }
 
     private async Task<WorkflowVersionRecord> FindVersionAsync(
@@ -535,6 +756,172 @@ internal static class WorkflowPersistence
     public static WorkflowExecutionResult DeserializeResult(string value) =>
         JsonSerializer.Deserialize<WorkflowExecutionResult>(value, SerializerOptions)
         ?? throw new InvalidOperationException("The persisted workflow execution result is invalid.");
+
+    public static WorkflowExecutionRequest DeserializeRequest(string value) =>
+        JsonSerializer.Deserialize<WorkflowExecutionRequest>(value, SerializerOptions)
+        ?? throw new InvalidOperationException("The persisted workflow execution request is invalid.");
+
+    public static WorkflowRuntimeStatus GetAdmissionRuntimeStatus(WorkflowExecutionResult result) =>
+        result.IsRejected
+            ? WorkflowRuntimeStatus.Rejected
+            : result.DryRun
+                ? WorkflowRuntimeStatus.DryRunCompleted
+                : result.NextStepRequest is null
+                    ? WorkflowRuntimeStatus.Completed
+                    : WorkflowRuntimeStatus.Prepared;
+
+    private static WorkflowRuntimeStatus GetRuntimeStatus(
+        WorkflowExecutionRecord record,
+        WorkflowExecutionResult result) =>
+        Enum.TryParse<WorkflowRuntimeStatus>(record.RuntimeStatus, ignoreCase: true, out var runtimeStatus)
+            ? runtimeStatus
+            : GetAdmissionRuntimeStatus(result);
+
+    private static WorkflowNextStepRequest? DeserializePendingStep(string? value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? null
+            : JsonSerializer.Deserialize<WorkflowNextStepRequest>(value, SerializerOptions)
+              ?? throw new InvalidOperationException("The persisted workflow pending step is invalid.");
+
+    public static Guid CreateStableOperationId(Guid executionId, Guid nodeId, int attempt)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"{executionId:N}|{nodeId:N}|{attempt}"));
+        return new Guid(bytes.AsSpan(0, 16));
+    }
+
+    public static WorkflowNextStepRequest? ResolveFollowingStep(
+        WorkflowExecutionRecord record,
+        WorkflowNextStepRequest completedStep)
+    {
+        if (string.IsNullOrWhiteSpace(record.DefinitionSnapshotJson))
+        {
+            throw new InvalidOperationException("The workflow execution has no immutable definition snapshot to advance.");
+        }
+
+        var definition = DeserializeDefinition(record.DefinitionSnapshotJson);
+        var request = DeserializeRequest(record.RequestJson);
+        var nodes = (definition.Nodes ?? Array.Empty<WorkflowNode>())
+            .OrderBy(node => node.Order)
+            .ToArray();
+        var nodesById = nodes.ToDictionary(node => node.Id);
+        if (!nodesById.TryGetValue(completedStep.NodeId, out var current))
+        {
+            throw new InvalidOperationException("The completed workflow node is absent from the immutable definition snapshot.");
+        }
+
+        var hasExplicitEdges = nodes.Any(node => node.NextNodeIds is { Count: > 0 });
+        var visited = new HashSet<Guid> { current.Id };
+        while (true)
+        {
+            var nextNodeIds = (current.NextNodeIds ?? Array.Empty<Guid>()).ToArray();
+            if (nextNodeIds.Length > 1)
+            {
+                throw new InvalidOperationException("Workflow runtime cannot advance an unselected branch.");
+            }
+
+            WorkflowNode? next = null;
+            if (nextNodeIds.Length == 1)
+            {
+                nodesById.TryGetValue(nextNodeIds[0], out next);
+                if (next is null)
+                {
+                    throw new InvalidOperationException("The workflow path points to a missing node.");
+                }
+            }
+            else if (!hasExplicitEdges)
+            {
+                next = nodes.FirstOrDefault(node => node.Order > current.Order);
+            }
+
+            if (next is null || next.Type == WorkflowNodeType.End)
+            {
+                return null;
+            }
+
+            if (!visited.Add(next.Id))
+            {
+                throw new InvalidOperationException("The workflow path contains a cycle and cannot be advanced safely.");
+            }
+
+            current = next;
+            if (current.Type == WorkflowNodeType.Start)
+            {
+                continue;
+            }
+
+            return new WorkflowNextStepRequest
+            {
+                StepRequestId = Guid.NewGuid(),
+                ExecutionId = record.ExecutionId,
+                WorkflowId = record.WorkflowId,
+                Version = record.Version,
+                NodeId = current.Id,
+                NodeType = current.Type,
+                NodeName = current.Name,
+                TargetStation = current.TargetStation,
+                DryRun = request.DryRun,
+                Parameters = ResolveParameters(request, current)
+            };
+        }
+    }
+
+    private static IReadOnlyDictionary<string, string?> ResolveParameters(
+        WorkflowExecutionRequest request,
+        WorkflowNode node)
+    {
+        var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var parameter in node.Parameters ?? Array.Empty<WorkflowParameter>())
+        {
+            values[parameter.Name] = parameter.Value;
+            if (request.Parameters is not null)
+            {
+                var supplied = request.Parameters.FirstOrDefault(pair =>
+                    StringComparer.OrdinalIgnoreCase.Equals(pair.Key, parameter.Name));
+                if (!string.IsNullOrEmpty(supplied.Key)) values[parameter.Name] = supplied.Value;
+            }
+
+            if (parameter.IsRequired && string.IsNullOrWhiteSpace(values[parameter.Name]))
+            {
+                throw new InvalidOperationException($"Required workflow parameter '{parameter.Name}' is missing.");
+            }
+        }
+
+        return values;
+    }
+
+    public static WorkflowExecutionSnapshot ToExecutionSnapshot(WorkflowExecutionRecord record)
+    {
+        var result = DeserializeResult(record.ResultJson);
+        var runtimeStatus = GetRuntimeStatus(record, result);
+        var pendingStep = DeserializePendingStep(record.PendingStepJson) ?? result.NextStepRequest;
+        var createdAt = new DateTimeOffset(DateTime.SpecifyKind(record.CreatedAtUtc, DateTimeKind.Utc));
+        var updatedAtUtc = record.UpdatedAtUtc ?? record.CreatedAtUtc;
+        var updatedAt = new DateTimeOffset(DateTime.SpecifyKind(updatedAtUtc, DateTimeKind.Utc));
+        return new WorkflowExecutionSnapshot
+        {
+            RequestId = record.RequestId,
+            ExecutionId = record.ExecutionId,
+            WorkflowId = record.WorkflowId,
+            Version = record.Version,
+            RuntimeStatus = runtimeStatus,
+            DryRun = result.DryRun,
+            CurrentNodeId = record.CurrentNodeId ?? pendingStep?.NodeId,
+            PendingStepRequest = runtimeStatus is WorkflowRuntimeStatus.Rejected or
+                WorkflowRuntimeStatus.DryRunCompleted or
+                WorkflowRuntimeStatus.Completed or
+                WorkflowRuntimeStatus.Failed or
+                WorkflowRuntimeStatus.Cancelled
+                ? null
+                : pendingStep,
+            TransportOperationId = record.TransportOperationId,
+            Attempt = record.Attempt,
+            LastError = record.LastError,
+            RejectionCode = result.RejectionCode,
+            RejectionReason = result.RejectionReason,
+            CreatedAt = createdAt,
+            UpdatedAt = updatedAt
+        };
+    }
 
     public static WorkflowVersion ToContract(WorkflowVersionRecord record, int? publishedVersion) => new()
     {

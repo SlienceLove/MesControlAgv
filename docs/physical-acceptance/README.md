@@ -1,5 +1,7 @@
 # Physical AGV acceptance configuration
 
+Last updated: 2026-08-17
+
 `adapter.physical-acceptance.example.json` is a versioned template for a future
 physical-AGV acceptance deployment. It is not a live deployment configuration,
 does not grant permission to connect to a controller, and does not replace
@@ -24,7 +26,7 @@ The timestamp and every snapshot value must be replaced with a fresh, read-only
 controller inspection before any future dispatch. A local `.smap` file must not
 be used as a substitute for controller data.
 
-## 2026-08-06 map change and pause status
+## Historical 2026-08-06 map change and pause status
 
 The historical Profile snapshot above is no longer current. The last supplied
 controller status before the vehicle was powered off reported map
@@ -33,15 +35,15 @@ the template MD5. That status did not contain an authoritative map version,
 station catalog, or directed-edge list, so it is not sufficient to update the
 Profile or permit a dispatch.
 
-The vehicle is currently powered off. Treat both the historical template and
-the last supplied status as stale. Do not replace the template MD5 with the new
+At that checkpoint the vehicle was powered off. Treat both the historical
+template and that supplied status as stale. Do not replace the template MD5 with the new
 value by hand and do not start an Adapter against the controller until a future
 authorized session completes a new read-only preflight. See
 `2026-08-06-pause-checkpoint.md` for the recorded handoff state.
 
-This paragraph is historical. The vehicle was powered on again for the
-authorized 2026-08-11 status-port-only preflight recorded below. That newer
-session did not make the historical map snapshot current and did not authorize
+The vehicle was later powered on for authorized 2026-08-11 read-only checks and
+the supervised 2026-08-13 Stages 4-6 recorded below. Those sessions do not make
+any earlier snapshot current and do not authorize a future connection or
 movement.
 
 ## Read-only preflight mode
@@ -173,7 +175,7 @@ fleet-status correlation, pause/resume, arrival confirmations, and
 passed. Use `-RequireIsolatedStores` together with temporary database paths when
 running a process-level check; do not reuse a live development database.
 
-The latest completed real checks obtained controller-authoritative map
+The completed real checks obtained controller-authoritative map
 `guangzhou606`, version `1.0.6`, MD5
 `816e68b9a367d9c8d5eaee9331a7ef58`, stations `LM1..LM5`, and nine direct
 directed edges. The physical Profile now contains that snapshot. Dedicated
@@ -206,14 +208,11 @@ The committed configuration remains read-only and dispatch-disabled.
 Do not start Adapter with this template while the AGV is unapproved, powered
 off, or outside an approved physical acceptance window.
 
-One supervised `LM1 -> LM2` attempt at the approved `0.3 m/s` limit did not move
-the vehicle. Both preflight phases passed and control acquisition succeeded, but
-the requested task read as `404 (NotFound)` and the global `1110` list was empty.
-Offline diagnosis found that a non-empty pre-dispatch `1110` item with
-`status=404` was misclassified as an existing task, so the client returned
-`unknown` before writing `3066`. No cancellation and no second dispatch were
-sent, and the old log retained no raw mutation data, so no historical `3066`
-response is claimed.
+The first 2026-08-11 supervised `LM1 -> LM2` attempt at the approved `0.3 m/s`
+limit did not move the vehicle. Offline diagnosis found that a non-empty
+pre-dispatch `1110` item with `status=404` was misclassified as an existing task,
+so the client returned `unknown` before writing `3066`. No historical `3066`
+response is claimed for that attempt.
 
 An all-`404` pre-dispatch result now means the task is absent and permits exactly
 one first attempt. After a write is attempted, an empty or `404` status becomes
@@ -222,11 +221,28 @@ resent automatically. Mutation audit logging is allowlisted: the `3066` request
 summary and the response `ret_code`, `err_msg`, and `create_on` are preserved,
 while the controller host and unfiltered payload are not.
 
-The site operator released control manually in the robot test software, and a
-later read-only `1060` confirmed `locked=false`. The committed template stays
-read-only and dispatch-disabled, and the boundary remains **NO-GO**. A second
-attempt requires a fresh authorized read-only preflight, a stop of that process,
-renewed explicit movement authorization, and a new unique acceptance/task ID.
+After the repair, the 2026-08-13 acceptance sessions established the following
+formal progress without granting production approval:
+
+- Stage 4 **PASS**: localization confidence reached `0.9708`, above the `0.95`
+  session threshold.
+- Stage 5 **PASS**: the supervised `LM1 -> LM2` segment completed at a configured
+  maximum of `0.3 m/s`, followed by control release.
+- Stage 6 **PARTIAL SUCCESS**: `LM2 -> LM3` completed. `LM3 -> LM1` was paused
+  after an obstacle event and external control takeover, then cancelled; that
+  segment did not complete.
+- Stage 6 used a temporary environment override of `0.92` after confidence
+  `0.928` was observed at `LM2`. This is not an approved production threshold;
+  the permanent policy still requires review and explicit risk acceptance.
+
+The committed template stays read-only and dispatch-disabled, normal
+automatic/batch dispatch and Push remain disabled, and the overall boundary
+remains **NO-GO** for production. The last recorded position (`LM3`) and idle
+state are historical evidence only. Any next connection or movement requires a
+fresh authorized read-only preflight, shutdown of that process, renewed explicit
+movement authorization, and a new unique acceptance/task ID. Multi-edge routes
+must be dispatched sequentially, one segment only after the preceding arrival
+is confirmed.
 
 The subsequent Stage 3 offline hardening is recorded in
 [`../../artifacts/physical-acceptance-20260812-stage3-offline-hardening.md`](../../artifacts/physical-acceptance-20260812-stage3-offline-hardening.md).

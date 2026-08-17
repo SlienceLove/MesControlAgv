@@ -215,6 +215,52 @@ public sealed class MesClientWorkflowHttpContractTests
         Assert.Equal(JsonValueKind.Null, root.GetProperty("parameters").GetProperty("optional").ValueKind);
     }
 
+    [Fact]
+    public async Task Workflow_execution_snapshot_queries_use_expected_routes_and_contract()
+    {
+        var executionId = Guid.NewGuid();
+        var requestId = Guid.NewGuid();
+        var snapshot = new WorkflowExecutionSnapshot
+        {
+            ExecutionId = executionId,
+            RequestId = requestId,
+            WorkflowId = Guid.NewGuid(),
+            Version = 3,
+            RuntimeStatus = WorkflowRuntimeStatus.Paused,
+            CreatedAt = DateTimeOffset.Parse("2026-08-17T03:04:05Z"),
+            UpdatedAt = DateTimeOffset.Parse("2026-08-17T03:05:06Z")
+        };
+        var handler = new RecordingHandler(request => JsonResponse(snapshot));
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://mes.local/") };
+        var client = new MesClient(httpClient);
+
+        var byExecution = await client.GetWorkflowExecutionAsync(executionId, CancellationToken.None);
+        var byRequest = await client.GetWorkflowExecutionByRequestAsync(requestId, CancellationToken.None);
+
+        Assert.Equal(executionId, byExecution!.ExecutionId);
+        Assert.Equal(WorkflowRuntimeStatus.Paused, byExecution.RuntimeStatus);
+        Assert.Equal(requestId, byRequest!.RequestId);
+        Assert.Equal($"/api/workflow-executions/{executionId}", handler.Requests[0].Uri.AbsolutePath);
+        Assert.Equal($"/api/workflow-executions/by-request/{requestId}", handler.Requests[1].Uri.AbsolutePath);
+        Assert.All(handler.Requests, request => Assert.Equal(HttpMethod.Get, request.Method));
+    }
+
+    [Fact]
+    public async Task Missing_workflow_execution_snapshots_are_mapped_to_null()
+    {
+        var executionId = Guid.NewGuid();
+        var requestId = Guid.NewGuid();
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound));
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://mes.local/") };
+        var client = new MesClient(httpClient);
+
+        Assert.Null(await client.GetWorkflowExecutionAsync(executionId, CancellationToken.None));
+        Assert.Null(await client.GetWorkflowExecutionByRequestAsync(requestId, CancellationToken.None));
+
+        Assert.Equal($"/api/workflow-executions/{executionId}", handler.Requests[0].Uri.AbsolutePath);
+        Assert.Equal($"/api/workflow-executions/by-request/{requestId}", handler.Requests[1].Uri.AbsolutePath);
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.NotFound, "WORKFLOW_VERSION_NOT_FOUND")]
     [InlineData(HttpStatusCode.Conflict, "WORKFLOW_REQUEST_ID_REUSED")]

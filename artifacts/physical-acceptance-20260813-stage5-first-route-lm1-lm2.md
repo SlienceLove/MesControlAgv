@@ -109,7 +109,7 @@ Physical acceptance safety gates were active throughout the movement:
 - Field navigation acceptance: `enabled`
 - Acquire control: `true`
 - Enable push: `false`
-- Controller host: `192.168.200.151`
+- Controller host: `<redacted-controller-host>`
 
 **AGV Profile**:
 - AGV ID: `AGV-01`
@@ -119,8 +119,8 @@ Physical acceptance safety gates were active throughout the movement:
 - Home station: `LM1`
 - **Enabled**: `true` ✅
 
-**Database**: `D:\Project\Github\Mes\artifacts\physical-acceptance\stage5-route-lm1-lm2-20260813.db`  
-**Logs**: `C:\Users\33206\AppData\Local\Temp\MesControlAgv-physical-stage5-field-nav-logs`
+**Database**: `artifacts/physical-acceptance/stage5-route-lm1-lm2-20260813.db`
+**Logs**: `<redacted-local-temp-log-directory>`
 
 ## API Calls
 

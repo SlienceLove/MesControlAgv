@@ -54,6 +54,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         WorkflowEditor = new WorkflowEditorViewModel(new WorkflowStore(), _mes, () => OperatorName);
         ExperimentFlowEditor = new ExperimentFlowEditorViewModel();
         Readiness = new ReadinessViewModel(_mes, mapLayoutSource);
+        IonChromatography = new IonChromatographyViewModel(_mes);
         _modules = new ControlCenterViewModel(WorkflowEditor, ModuleRegistry);
         Kpi = _modules.KpiDashboard;
         CreateTaskCommand = CreateActionCommand("\u521B\u5EFA\u4EFB\u52A1", CreateTaskAsync, CanCreateTask);
@@ -96,6 +97,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public WorkflowEditorViewModel WorkflowEditor { get; }
     public ExperimentFlowEditorViewModel ExperimentFlowEditor { get; }
     public ReadinessViewModel Readiness { get; }
+    public IonChromatographyViewModel IonChromatography { get; }
     public KpiDashboardViewModel Kpi { get; }
     public ControlCenterModuleRegistry ModuleRegistry { get; }
     public ControlCenterViewModel Modules => _modules;
@@ -353,6 +355,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public async Task StartAsync()
     {
         await RefreshAsync();
+        await IonChromatography.RefreshAsync(_shutdown.Token);
         await Readiness.RefreshAsync(_shutdown.Token);
         if (_refreshLoop is not null)
         {

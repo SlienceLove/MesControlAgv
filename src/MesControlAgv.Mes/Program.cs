@@ -17,10 +17,16 @@ builder.Services.AddDbContext<MesDbContext>(options => options.UseSqlite(connect
 builder.Services.AddHttpClient<IAgvGateway, AdapterClient>(client =>
     client.BaseAddress = new Uri(
         builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5041/"));
+builder.Services.AddHttpClient<IIonChromatographyStatusReader, IonChromatographyGatewayClient>(client =>
+    client.BaseAddress = new Uri(
+        builder.Configuration["IonChromatographyGateway:BaseUrl"] ?? "http://127.0.0.1:5190/"));
 builder.Services.AddSingleton(profile);
 builder.Services.AddSingleton(map);
 builder.Services.AddSingleton(new PathPlanner(map));
 builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton(builder.Configuration
+    .GetSection("WorkflowSimulatorWorker")
+    .Get<WorkflowSimulatorWorkerOptions>() ?? new WorkflowSimulatorWorkerOptions());
 builder.Services.AddSingleton<WorkflowValidator>();
 builder.Services.AddSingleton<IWorkflowRuntimeAdmissionPolicy, ActiveProfileWorkflowAdmissionPolicy>();
 builder.Services.AddScoped<MesWorkflowVersionReader>();
@@ -35,6 +41,8 @@ builder.Services.AddScoped<TaskRepository>();
 builder.Services.AddScoped<ITaskApplicationService, TaskService>();
 builder.Services.AddScoped<IKpiDashboardApplicationService, KpiDashboardService>();
 builder.Services.AddHostedService<RecoveryService>();
+builder.Services.AddHostedService<WorkflowRecoveryService>();
+builder.Services.AddHostedService<WorkflowSimulatorWorker>();
 
 var app = builder.Build();
 
@@ -48,6 +56,54 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.MapGet("/health", () => Results.Ok(new { service = "mes", status = "ok" }));
+
+app.MapGet("/api/instruments/{instrumentId}/status", async (
+    string instrumentId,
+    IIonChromatographyStatusReader reader,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        var status = await reader.GetStatusAsync(instrumentId, cancellationToken);
+        return Results.Ok(new IonChromatographyControlCenterStatusResponse(
+            new IonChromatographyStatusResponse(
+                status.InstrumentId,
+                status.Model,
+                status.SerialNumber,
+                status.Online,
+                status.DeviceState,
+                status.PortOwned,
+                status.ObservedAtUtc,
+                status.Pressure,
+                status.ColumnTemperature,
+                status.DetectorTemperature,
+                status.Alarm,
+                status.Conductivity,
+                status.TotalConductivity,
+                status.Flow,
+                status.MappingConfidence),
+            IonChromatographyReadOnlyPolicy.TaskAdmissionEnabled,
+            IonChromatographyReadOnlyPolicy.EnabledOperations.Select(operation => operation.ToString()).ToArray(),
+            "ReadOnlyCaptureCorrelated"));
+    }
+    catch (ArgumentException exception)
+    {
+        return Results.BadRequest(new { detail = exception.Message });
+    }
+    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (Exception exception) when (exception is
+        HttpRequestException or
+        TaskCanceledException or
+        InvalidOperationException)
+    {
+        return Results.Problem(
+            "The read-only instrument status gateway is unavailable.",
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
+});
 
 app.MapGet("/api/workflows", async (IWorkflowApplicationService service, CancellationToken cancellationToken) =>
     Results.Ok(await service.ListAsync(cancellationToken)));
@@ -205,6 +261,24 @@ app.MapPost("/api/workflows/execute", async (
         WorkflowExecutionRejectionCodes.RequestIdReused => Results.Conflict(result),
         _ => Results.UnprocessableEntity(result)
     };
+});
+
+app.MapGet("/api/workflow-executions/{executionId:guid}", async (
+    Guid executionId,
+    IWorkflowApplicationService service,
+    CancellationToken cancellationToken) =>
+{
+    var execution = await service.GetExecutionAsync(executionId, cancellationToken);
+    return execution is null ? Results.NotFound() : Results.Ok(execution);
+});
+
+app.MapGet("/api/workflow-executions/by-request/{requestId:guid}", async (
+    Guid requestId,
+    IWorkflowApplicationService service,
+    CancellationToken cancellationToken) =>
+{
+    var execution = await service.GetExecutionByRequestAsync(requestId, cancellationToken);
+    return execution is null ? Results.NotFound() : Results.Ok(execution);
 });
 
 app.MapPost("/api/field-navigation-acceptances", async (
@@ -535,7 +609,15 @@ static async Task EnsureWorkflowTablesAsync(MesDbContext database)
             RejectionCode TEXT NULL,
             RequestJson TEXT NOT NULL,
             ResultJson TEXT NOT NULL,
-            CreatedAtUtc TEXT NOT NULL
+            CreatedAtUtc TEXT NOT NULL,
+            DefinitionSnapshotJson TEXT NULL,
+            RuntimeStatus TEXT NULL,
+            CurrentNodeId TEXT NULL,
+            PendingStepJson TEXT NULL,
+            TransportOperationId TEXT NULL,
+            Attempt INTEGER NOT NULL DEFAULT 0,
+            LastError TEXT NULL,
+            UpdatedAtUtc TEXT NULL
         );
         """,
         """
@@ -566,6 +648,40 @@ static async Task EnsureWorkflowTablesAsync(MesDbContext database)
         await using var command = connection.CreateCommand();
         command.CommandText = statement;
         await command.ExecuteNonQueryAsync();
+    }
+
+    await EnsureWorkflowExecutionColumnsAsync(connection);
+    await using var runtimeIndex = connection.CreateCommand();
+    runtimeIndex.CommandText =
+        "CREATE INDEX IF NOT EXISTS IX_WorkflowExecutions_RuntimeStatus_UpdatedAtUtc ON WorkflowExecutions (RuntimeStatus, UpdatedAtUtc);";
+    await runtimeIndex.ExecuteNonQueryAsync();
+}
+
+static async Task EnsureWorkflowExecutionColumnsAsync(System.Data.Common.DbConnection connection)
+{
+    await using var command = connection.CreateCommand();
+    command.CommandText = "PRAGMA table_info(WorkflowExecutions);";
+    var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    await using var reader = await command.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) columns.Add(reader.GetString(1));
+    await reader.CloseAsync();
+
+    foreach (var definition in new[]
+    {
+        (Name: "DefinitionSnapshotJson", Sql: "TEXT NULL"),
+        (Name: "RuntimeStatus", Sql: "TEXT NULL"),
+        (Name: "CurrentNodeId", Sql: "TEXT NULL"),
+        (Name: "PendingStepJson", Sql: "TEXT NULL"),
+        (Name: "TransportOperationId", Sql: "TEXT NULL"),
+        (Name: "Attempt", Sql: "INTEGER NOT NULL DEFAULT 0"),
+        (Name: "LastError", Sql: "TEXT NULL"),
+        (Name: "UpdatedAtUtc", Sql: "TEXT NULL")
+    })
+    {
+        if (columns.Contains(definition.Name)) continue;
+        await using var alter = connection.CreateCommand();
+        alter.CommandText = $"ALTER TABLE WorkflowExecutions ADD COLUMN {definition.Name} {definition.Sql};";
+        await alter.ExecuteNonQueryAsync();
     }
 }
 

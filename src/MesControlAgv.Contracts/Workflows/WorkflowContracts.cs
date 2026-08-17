@@ -233,6 +233,78 @@ public sealed record WorkflowExecutionResult
 }
 
 /// <summary>
+/// Durable workflow runtime status exposed by MES. Prepared means admission
+/// succeeded and a first step is waiting for a later orchestrator; it does not
+/// mean that any device command has been sent.
+/// </summary>
+public enum WorkflowRuntimeStatus
+{
+    Rejected,
+    DryRunCompleted,
+    Prepared,
+    Running,
+    Paused,
+    Completed,
+    Failed,
+    Unknown,
+    Cancelled
+}
+
+/// <summary>Reported by a trusted runtime worker after it has reconciled a claimed step.</summary>
+public enum WorkflowStepCompletionOutcome
+{
+    Succeeded,
+    Failed,
+    Unknown,
+    Cancelled
+}
+
+/// <summary>
+/// Device-agnostic completion evidence for a previously claimed workflow step.
+/// This contract does not issue a device command; a later worker must first
+/// durably claim the step and reconcile its operation identifier.
+/// </summary>
+public sealed record WorkflowStepCompletionRequest
+{
+    public Guid TransportOperationId { get; init; }
+    public WorkflowStepCompletionOutcome Outcome { get; init; }
+    public string? Error { get; init; }
+}
+
+/// <summary>
+/// Restart-safe read model for one persisted workflow admission. It exposes
+/// durable orchestration state only; reading it never dispatches a device or
+/// advances a workflow node.
+/// </summary>
+public sealed record WorkflowExecutionSnapshot
+{
+    public Guid RequestId { get; init; }
+    public Guid ExecutionId { get; init; }
+    public Guid WorkflowId { get; init; }
+    public int Version { get; init; }
+    public WorkflowRuntimeStatus RuntimeStatus { get; init; }
+    public bool DryRun { get; init; }
+    public bool IsTerminal => RuntimeStatus is WorkflowRuntimeStatus.Rejected or
+        WorkflowRuntimeStatus.DryRunCompleted or WorkflowRuntimeStatus.Completed or
+        WorkflowRuntimeStatus.Failed or WorkflowRuntimeStatus.Cancelled;
+    public Guid? CurrentNodeId { get; init; }
+    public Guid? PendingNodeId => PendingStepRequest?.NodeId;
+    public WorkflowNextStepRequest? PendingStepRequest { get; init; }
+    /// <summary>
+    /// Reserved for the MES-to-Adapter operation identifier once a later
+    /// orchestrator has durably claimed the pending step. It is null at
+    /// admission time, so no device write has been attempted.
+    /// </summary>
+    public Guid? TransportOperationId { get; init; }
+    public int Attempt { get; init; }
+    public string? LastError { get; init; }
+    public string? RejectionCode { get; init; }
+    public string? RejectionReason { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset UpdatedAt { get; init; }
+}
+
+/// <summary>
 /// A persisted workflow lifecycle or execution audit entry exposed for
 /// operational traceability. Details remain string-valued at the HTTP boundary
 /// so older records and vendor-specific metadata can be displayed safely.

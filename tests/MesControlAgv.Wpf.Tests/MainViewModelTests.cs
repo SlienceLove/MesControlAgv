@@ -379,6 +379,7 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
     public DashboardRuntimeSettings RuntimeSettings { get; set; } = DashboardRuntimeSettings.Default;
     public Exception? RuntimeSettingsException { get; set; }
     public int GetRuntimeSettingsCallCount { get; private set; }
+    public IonChromatographyControlCenterStatusResponse? IonChromatographyStatus { get; set; }
     public (string FromStationId, string ToStationId, IReadOnlyCollection<string>? BlockedStations)? LastPlanRequest { get; private set; }
     public (int SourceStationCode, int TargetStationCode, int Priority, string? Description, string? ExternalId)? LastCreateRequest { get; private set; }
     public IReadOnlyList<DashboardStation> Stations => _stations;
@@ -436,6 +437,9 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
             ? Task.FromException<DashboardRuntimeSettings>(exception)
             : Task.FromResult(RuntimeSettings);
     }
+    public Task<IonChromatographyControlCenterStatusResponse?> GetIonChromatographyStatusAsync(
+        string instrumentId,
+        CancellationToken cancellationToken) => Task.FromResult(IonChromatographyStatus);
     public Task<DashboardMapSnapshot> GetMapSnapshotAsync(CancellationToken cancellationToken) =>
         ReadinessException is { } exception
             ? Task.FromException<DashboardMapSnapshot>(exception)

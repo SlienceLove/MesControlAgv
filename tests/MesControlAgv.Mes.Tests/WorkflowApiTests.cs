@@ -56,6 +56,16 @@ public sealed class WorkflowApiTests : IClassFixture<MesWebApplicationFactory>
         Assert.True(accepted!.IsAccepted);
         Assert.Equal(WorkflowNodeType.Move, accepted.NextStep!.NodeType);
 
+        var executionState = await _client.GetFromJsonAsync<WorkflowExecutionSnapshot>(
+            $"/api/workflow-executions/{accepted.ExecutionId}");
+        Assert.NotNull(executionState);
+        Assert.Equal(WorkflowRuntimeStatus.DryRunCompleted, executionState!.RuntimeStatus);
+        Assert.True(executionState.IsTerminal);
+
+        var requestState = await _client.GetFromJsonAsync<WorkflowExecutionSnapshot>(
+            $"/api/workflow-executions/by-request/{request.RequestId}");
+        Assert.Equal(executionState, requestState);
+
         var replay = await _client.PostAsJsonAsync("/api/workflows/execute", request);
         Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
         var replayResult = await replay.Content.ReadFromJsonAsync<WorkflowExecutionResult>();
@@ -70,6 +80,16 @@ public sealed class WorkflowApiTests : IClassFixture<MesWebApplicationFactory>
         Assert.Contains(audits, audit => audit.EventType == "WorkflowVersionPublished");
         Assert.Contains(audits, audit => audit.EventType == "WorkflowExecutionAccepted");
         Assert.All(audits, audit => Assert.Equal(draft.WorkflowId, audit.WorkflowId));
+    }
+
+    [Fact]
+    public async Task Workflow_execution_read_endpoint_returns_not_found_for_unknown_ids()
+    {
+        var execution = await _client.GetAsync($"/api/workflow-executions/{Guid.NewGuid()}");
+        var request = await _client.GetAsync($"/api/workflow-executions/by-request/{Guid.NewGuid()}");
+
+        Assert.Equal(HttpStatusCode.NotFound, execution.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, request.StatusCode);
     }
 
     [Fact]

@@ -70,7 +70,12 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.Property(execution => execution.RejectionCode).HasMaxLength(128);
             entity.Property(execution => execution.RequestJson).HasMaxLength(65535);
             entity.Property(execution => execution.ResultJson).HasMaxLength(65535);
+            entity.Property(execution => execution.DefinitionSnapshotJson).HasMaxLength(65535);
+            entity.Property(execution => execution.RuntimeStatus).HasMaxLength(32);
+            entity.Property(execution => execution.PendingStepJson).HasMaxLength(65535);
+            entity.Property(execution => execution.LastError).HasMaxLength(2048);
             entity.HasIndex(execution => new { execution.WorkflowId, execution.Version, execution.CreatedAtUtc });
+            entity.HasIndex(execution => new { execution.RuntimeStatus, execution.UpdatedAtUtc });
         });
 
         modelBuilder.Entity<WorkflowAuditRecord>(entity =>
