@@ -14,7 +14,25 @@ public sealed record AdapterRuntimeIdentityResponse(
     string Service,
     string Status,
     string RunMode,
-    string Driver);
+    string Driver,
+    IReadOnlyList<AdapterModuleIdentityResponse>? Modules = null,
+    IReadOnlyList<AdapterDeviceIdentityResponse>? Devices = null);
+
+/// <summary>Read-only description of a device-family module loaded by the Adapter host.</summary>
+public sealed record AdapterModuleIdentityResponse(
+    string ModuleId,
+    string DeviceType,
+    IReadOnlyList<string> SupportedTransports);
+
+/// <summary>Read-only coarse policy and driver identity for one configured device.</summary>
+public sealed record AdapterDeviceIdentityResponse(
+    string DeviceId,
+    string DeviceType,
+    string ModuleId,
+    string DriverId,
+    string Transport,
+    bool Enabled,
+    bool ControlEnabled);
 
 public sealed record AgvCapabilitiesResponse(
     bool SupportsPause,

@@ -2,6 +2,7 @@ using System.Net.Sockets;
 using MesControlAgv.Contracts;
 using MesControlAgv.Adapter.Data;
 using MesControlAgv.Adapter.Entities;
+using MesControlAgv.Adapter.Modules;
 using MesControlAgv.Adapter.Services;
 using MesControlAgv.Domain.Profiles;
 using Microsoft.EntityFrameworkCore;
@@ -10,6 +11,28 @@ namespace MesControlAgv.Adapter.Tests;
 
 public class AdapterServiceTests
 {
+    [Fact]
+    public async Task Per_device_policy_blocks_dispatch_before_any_device_write()
+    {
+        var simulator = new FakeSimulatorClient();
+        var options = new DbContextOptionsBuilder<AdapterDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+        var database = new AdapterDbContext(options);
+        var policy = new DeviceOperationPolicy(new DeviceAdapterRegistry(
+        [
+            new DeviceAdapterRegistration(
+                "AGV-01", "agv", "agv", "simulator", DeviceTransportKind.Simulator, true, false)
+        ]));
+        var service = new AdapterService(database, simulator, devicePolicy: policy);
+
+        await Assert.ThrowsAsync<DeviceControlDisabledException>(() =>
+            service.DispatchAsync(Guid.NewGuid(), "SAMPLE_01", CancellationToken.None));
+
+        Assert.Equal(0, simulator.EnsureControlCalls);
+        Assert.Equal(0, simulator.NavigateCalls);
+    }
+
     [Fact]
     public async Task Duplicate_dispatch_does_not_send_a_second_navigation()
     {

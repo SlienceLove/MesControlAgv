@@ -1,5 +1,6 @@
 using System.Text;
 using MesControlAgv.Adapter.Drivers;
+using MesControlAgv.Adapter.Modules;
 using MesControlAgv.Application;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -111,6 +112,18 @@ public sealed class AdapterCompositionRootTests
         using var provider = AddServices(configuration).BuildServiceProvider();
 
         Assert.IsType<SimulatorDriver>(provider.GetRequiredService<IAgvDriver>());
+        var catalog = provider.GetRequiredService<DeviceAdapterModuleCatalog>();
+        Assert.Equal(["agv", "sample-workstation"], catalog.Descriptors.Select(item => item.ModuleId));
+        var module = catalog.Descriptors.Single(item => item.ModuleId == "agv");
+        Assert.Equal(
+            [DeviceTransportKind.Simulator, DeviceTransportKind.Tcp],
+            module.SupportedTransports);
+
+        var devices = provider.GetRequiredService<DeviceAdapterRegistry>();
+        var workstation = devices.GetRequired("SAMPLE-WORKSTATION-01");
+        Assert.False(workstation.Enabled);
+        Assert.False(workstation.ControlEnabled);
+        Assert.Equal(DeviceTransportKind.Http, workstation.Transport);
     }
 
     [Fact]

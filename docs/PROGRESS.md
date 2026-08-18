@@ -85,6 +85,42 @@ authorized preflight and movement-authorization gates recorded below.
   `docs/ION-CHROMATOGRAPHY-DIRECT-CONTROL-VALIDATION.md`, and
   `docs/ION-CHROMATOGRAPHY-SHINELAB-ANALYSIS.md`.
 
+### Adapter multi-device modularization
+
+- The Adapter host now loads device-family modules through a typed module
+  catalog. Each module owns service registration, storage initialization,
+  normalized HTTP routes, and an explicit list of supported transports.
+- Existing AGV Simulator/TCP registration, physical-acceptance validation,
+  SQLite initialization, and API routes were moved into `AgvAdapterModule`
+  without changing their public paths or behavior.
+- Adapter health retains its existing fields and now also reports the loaded
+  module and device catalogs. Existing clients remain compatible because the
+  new fields are optional contract extensions.
+- The device catalog now enforces case-insensitive device identity plus
+  per-device `Enabled` and `ControlEnabled` policy. AGV dispatch validates the
+  selected or eligible vehicles before acquiring control, so a disabled
+  control policy produces no controller write.
+- The module boundary is organized by device capability rather than by a
+  generic send/receive transport API. Future workstation, robot-arm, vision,
+  and instrument modules keep typed driver contracts while HTTP, TCP, and
+  serial remain implementation details.
+- One module architecture does not require one deployment process. Network
+  modules can share the central Adapter host; a serial module can use the same
+  module contract in a host deployed on the computer that owns the COM port.
+- `SampleWorkstationAdapterModule` is implemented as the second device family
+  and the first vendor HTTP module. It is disabled by default, permanently
+  rejects `ControlEnabled=true` in this phase, and exposes only normalized GET
+  routes for device status, error information, task list, task details, and
+  task state. MES proxies the same read-only contract without exposing the
+  vendor base URL.
+- Vendor `Code/Data` envelopes, numeric and string business codes, changing
+  `Data` shapes, status normalization, query validation, unknown error payloads,
+  disabled routing, and absence of mutation routes are covered with local fake
+  HTTP responses. No vendor or field endpoint was called.
+- Focused verification passes 176/176 Adapter tests and 67/67 MES tests. The
+  final Release solution build completed with 0 warnings and 0 errors, and the
+  full matrix passed 496 tests with 5 existing skips.
+
 ### P1 status: robot arm and vision communication
 
 - Integration architecture and a vendor-information checklist exist, but the

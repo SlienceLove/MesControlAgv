@@ -39,6 +39,37 @@ public sealed class VendorTcpTransportAcceptanceTests
 
         var health = await client.GetFromJsonAsync<JsonElement>("health");
         Assert.Equal(AdapterRunMode.ReadOnlyPreflightValue, health.GetProperty("runMode").GetString());
+        var modules = health.GetProperty("modules").EnumerateArray().ToArray();
+        Assert.Equal(2, modules.Length);
+        var module = Assert.Single(modules.Where(item => item.GetProperty("moduleId").GetString() == "agv"));
+        Assert.Equal("agv", module.GetProperty("moduleId").GetString());
+        Assert.Equal("agv", module.GetProperty("deviceType").GetString());
+        Assert.Equal(
+            ["Simulator", "Tcp"],
+            module.GetProperty("supportedTransports")
+                .EnumerateArray()
+                .Select(item => item.GetString())
+                .ToArray());
+        var workstationModule = Assert.Single(modules.Where(item =>
+            item.GetProperty("moduleId").GetString() == "sample-workstation"));
+        Assert.Equal(
+            ["Http"],
+            workstationModule.GetProperty("supportedTransports")
+                .EnumerateArray()
+                .Select(item => item.GetString())
+                .ToArray());
+        var workstation = Assert.Single(health.GetProperty("devices").EnumerateArray().Where(item =>
+            item.GetProperty("deviceId").GetString() == "SAMPLE-WORKSTATION-01"));
+        Assert.False(workstation.GetProperty("enabled").GetBoolean());
+        Assert.False(workstation.GetProperty("controlEnabled").GetBoolean());
+
+        using var workstationStatus = await client.GetAsync(
+            "api/workstations/SAMPLE-WORKSTATION-01/status");
+        using var workstationWrite = await client.PostAsync(
+            "api/workstations/SAMPLE-WORKSTATION-01/status",
+            content: null);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, workstationStatus.StatusCode);
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, workstationWrite.StatusCode);
 
         using var preflight = await client.GetAsync("physical/preflight");
         Assert.Equal(HttpStatusCode.OK, preflight.StatusCode);

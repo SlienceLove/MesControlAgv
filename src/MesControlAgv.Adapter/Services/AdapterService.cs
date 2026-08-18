@@ -3,6 +3,7 @@ using MesControlAgv.Adapter;
 using MesControlAgv.Contracts;
 using MesControlAgv.Adapter.Data;
 using MesControlAgv.Adapter.Entities;
+using MesControlAgv.Adapter.Modules;
 using MesControlAgv.Domain;
 using MesControlAgv.Domain.Profiles;
 using Microsoft.EntityFrameworkCore;
@@ -25,6 +26,7 @@ public sealed class AdapterService
     private readonly AdapterRunMode _runMode;
     private readonly PhysicalAgvSessionGate _physicalSessionGate;
     private readonly ILogger<AdapterService> _logger;
+    private readonly DeviceOperationPolicy? _devicePolicy;
 
     public AdapterService(
         AdapterDbContext database,
@@ -36,7 +38,8 @@ public sealed class AdapterService
         PhysicalAcceptancePreflightService? physicalPreflight = null,
         AdapterRunMode? runMode = null,
         PhysicalAgvSessionGate? physicalSessionGate = null,
-        ILogger<AdapterService>? logger = null)
+        ILogger<AdapterService>? logger = null,
+        DeviceOperationPolicy? devicePolicy = null)
     {
         _database = database;
         _device = device;
@@ -48,6 +51,7 @@ public sealed class AdapterService
         _runMode = runMode ?? AdapterRunMode.Standard;
         _physicalSessionGate = physicalSessionGate ?? DefaultPhysicalSessionGate;
         _logger = logger ?? NullLogger<AdapterService>.Instance;
+        _devicePolicy = devicePolicy;
     }
 
     public Task<AgvTaskResponse> DispatchAsync(Guid taskId, string targetStationId, CancellationToken cancellationToken) =>
@@ -87,6 +91,7 @@ public sealed class AdapterService
     public async Task<bool> ReleaseControlAsync(CancellationToken cancellationToken)
     {
         EnsureMutationIsAllowed("control release");
+        EnsureDeviceControlEnabled(GetDefaultAgvId());
         return await _physicalSessionGate.RunAsync(
             // Once admitted, finish the ownership transaction with the device's
             // own bounded request timeout even if the HTTP caller disconnects.
@@ -134,6 +139,7 @@ public sealed class AdapterService
     {
         EnsureMutationIsAllowed("field-navigation dispatch");
         ArgumentNullException.ThrowIfNull(command);
+        EnsureDeviceControlEnabled(command.AgvId);
         if (_profile.PhysicalAcceptance is null)
             throw new InvalidOperationException("Field navigation acceptance requires a physical acceptance profile.");
         if (!_profile.Features.EnableFieldNavigationAcceptance)
@@ -301,6 +307,7 @@ public sealed class AdapterService
             var validatedRequestedPath = requestedPath is null
                 ? null
                 : ValidateRequestedPath(sourceStationId, targetStationId, requestedPath).Stations;
+            EnsurePotentialAgvControlEnabled(requestedAgvId);
             if (dispatchPermission != DispatchPermission.FieldNavigationAcceptance)
             {
                 if (_profile.PhysicalAcceptance is null)
@@ -312,7 +319,13 @@ public sealed class AdapterService
                     controlAcquiredByThisSession = await EnsureControlForPhysicalSessionAsync(cancellationToken);
                 }
             }
-            var assignment = await SelectAgvAsync(taskId, sourceStationId, targetStationId, requestedAgvId, cancellationToken);
+            var assignment = await SelectAgvAsync(
+                taskId,
+                sourceStationId,
+                targetStationId,
+                requestedAgvId,
+                cancellationToken);
+            EnsureDeviceControlEnabled(assignment.AgvId);
             var snapshot = await GetSnapshotAsync(assignment.AgvId, cancellationToken);
             if (!snapshot.Online || snapshot.ControlOwner != "adapter") throw new ControlUnavailableException(snapshot.ControlOwner);
             if (snapshot.CurrentTaskId is { } activeTaskId && activeTaskId != taskId)
@@ -432,6 +445,7 @@ public sealed class AdapterService
         CancellationToken cancellationToken)
     {
         EnsureMutationIsAllowed("AGV command");
+        EnsureDeviceControlEnabled(agvId);
         ArgumentException.ThrowIfNullOrWhiteSpace(command);
         var normalizedCommand = command.Trim().ToLowerInvariant();
         if (normalizedCommand is not ("pause" or "stop" or "resume" or "continue" or "cancel"))
@@ -518,6 +532,7 @@ public sealed class AdapterService
         var task = await _database.Tasks.FindAsync([taskId], cancellationToken);
         if (task is null) return null;
         EnsureTaskBelongsToAgv(task, expectedAgvId);
+        EnsureDeviceControlEnabled(task.AgvId);
         var path = DeserializePath(task.PathJson);
         await _device.EnsureControlAsync(cancellationToken);
         var deviceTask = _fleet is not null
@@ -544,6 +559,7 @@ public sealed class AdapterService
         var task = await _database.Tasks.FindAsync([taskId], cancellationToken);
         if (task is null) return null;
         EnsureTaskBelongsToAgv(task, expectedAgvId);
+        EnsureDeviceControlEnabled(task.AgvId);
         var path = DeserializePath(task.PathJson);
         await _device.EnsureControlAsync(cancellationToken);
         var deviceTask = _fleet is not null
@@ -574,6 +590,7 @@ public sealed class AdapterService
         var task = await _database.Tasks.FindAsync([taskId], cancellationToken);
         if (task is null) return null;
         EnsureTaskBelongsToAgv(task, expectedAgvId);
+        EnsureDeviceControlEnabled(task.AgvId);
 
         var controlAcquiredByThisSession = false;
         try
@@ -644,6 +661,28 @@ public sealed class AdapterService
     }
 
     private void EnsureMutationIsAllowed(string operation) => _runMode.ThrowIfMutationIsBlocked(operation);
+
+    private void EnsureDeviceControlEnabled(string agvId) =>
+        _devicePolicy?.EnsureControlEnabled(agvId);
+
+    private void EnsurePotentialAgvControlEnabled(string? requestedAgvId)
+    {
+        if (_devicePolicy is null) return;
+        if (!string.IsNullOrWhiteSpace(requestedAgvId))
+        {
+            EnsureDeviceControlEnabled(requestedAgvId);
+            return;
+        }
+
+        foreach (var agv in _profile.Agvs.Where(agv => agv.Enabled))
+        {
+            EnsureDeviceControlEnabled(agv.AgvId);
+        }
+    }
+
+    private string GetDefaultAgvId() =>
+        _profile.Agvs.FirstOrDefault(agv => agv.Enabled)?.AgvId
+        ?? _profile.Agvs.First().AgvId;
 
     private static void EnsureTaskBelongsToAgv(AdapterTask task, string? expectedAgvId)
     {

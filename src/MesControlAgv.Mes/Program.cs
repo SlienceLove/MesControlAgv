@@ -17,6 +17,9 @@ builder.Services.AddDbContext<MesDbContext>(options => options.UseSqlite(connect
 builder.Services.AddHttpClient<IAgvGateway, AdapterClient>(client =>
     client.BaseAddress = new Uri(
         builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5041/"));
+builder.Services.AddHttpClient<ISampleWorkstationReader, SampleWorkstationAdapterClient>(client =>
+    client.BaseAddress = new Uri(
+        builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5041/"));
 builder.Services.AddHttpClient<IIonChromatographyStatusReader, IonChromatographyGatewayClient>(client =>
     client.BaseAddress = new Uri(
         builder.Configuration["IonChromatographyGateway:BaseUrl"] ?? "http://127.0.0.1:5190/"));
@@ -104,6 +107,61 @@ app.MapGet("/api/instruments/{instrumentId}/status", async (
             statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 });
+
+app.MapGet("/api/workstations/{deviceId}/status", async (
+    string deviceId,
+    ISampleWorkstationReader reader,
+    CancellationToken cancellationToken) =>
+    await ExecuteWorkstationReadAsync(
+        () => reader.GetStatusAsync(deviceId, cancellationToken),
+        cancellationToken));
+
+app.MapGet("/api/workstations/{deviceId}/errors", async (
+    string deviceId,
+    ISampleWorkstationReader reader,
+    CancellationToken cancellationToken) =>
+    await ExecuteWorkstationReadAsync(
+        () => reader.GetErrorsAsync(deviceId, cancellationToken),
+        cancellationToken));
+
+app.MapGet("/api/workstations/{deviceId}/tasks", async (
+    string deviceId,
+    string? state,
+    string? startDate,
+    string? endDate,
+    int? startNo,
+    int? recordNum,
+    ISampleWorkstationReader reader,
+    CancellationToken cancellationToken) =>
+    await ExecuteWorkstationReadAsync(
+        () => reader.GetTasksAsync(
+            deviceId,
+            new SampleWorkstationTaskQuery(
+                state,
+                startDate,
+                endDate,
+                startNo ?? 1,
+                recordNum ?? 50),
+            cancellationToken),
+        cancellationToken));
+
+app.MapGet("/api/workstations/{deviceId}/tasks/{taskNo}", async (
+    string deviceId,
+    string taskNo,
+    ISampleWorkstationReader reader,
+    CancellationToken cancellationToken) =>
+    await ExecuteWorkstationReadAsync(
+        () => reader.GetTaskDetailsAsync(deviceId, taskNo, cancellationToken),
+        cancellationToken));
+
+app.MapGet("/api/workstations/{deviceId}/tasks/{taskNo}/state", async (
+    string deviceId,
+    string taskNo,
+    ISampleWorkstationReader reader,
+    CancellationToken cancellationToken) =>
+    await ExecuteWorkstationReadAsync(
+        () => reader.GetTaskStateAsync(deviceId, taskNo, cancellationToken),
+        cancellationToken));
 
 app.MapGet("/api/workflows", async (IWorkflowApplicationService service, CancellationToken cancellationToken) =>
     Results.Ok(await service.ListAsync(cancellationToken)));
@@ -753,6 +811,48 @@ static ProfileConfiguration BindProfile(IConfiguration configuration)
     }
 
     return profile;
+}
+
+static async Task<IResult> ExecuteWorkstationReadAsync<T>(
+    Func<Task<T>> operation,
+    CancellationToken cancellationToken)
+{
+    try
+    {
+        return Results.Ok(await operation());
+    }
+    catch (ArgumentException exception)
+    {
+        return Results.BadRequest(new { detail = exception.Message });
+    }
+    catch (AdapterHttpException exception) when (exception.ResponseStatusCode == System.Net.HttpStatusCode.NotFound)
+    {
+        return Results.NotFound(new { detail = exception.Detail });
+    }
+    catch (AdapterHttpException exception) when (
+        exception.ResponseStatusCode == System.Net.HttpStatusCode.BadRequest)
+    {
+        return Results.BadRequest(new { detail = exception.Detail });
+    }
+    catch (AdapterHttpException exception) when (
+        exception.ResponseStatusCode is System.Net.HttpStatusCode.BadGateway
+            or System.Net.HttpStatusCode.ServiceUnavailable
+            or System.Net.HttpStatusCode.GatewayTimeout)
+    {
+        return Results.Problem(
+            exception.Detail ?? "The sample workstation Adapter is unavailable.",
+            statusCode: (int)exception.ResponseStatusCode);
+    }
+    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or InvalidOperationException)
+    {
+        return Results.Problem(
+            "The sample workstation Adapter is unavailable.",
+            statusCode: StatusCodes.Status503ServiceUnavailable);
+    }
 }
 
 app.Run();

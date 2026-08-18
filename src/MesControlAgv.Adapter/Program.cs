@@ -1,16 +1,8 @@
 using MesControlAgv.Adapter;
-using MesControlAgv.Contracts;
-using MesControlAgv.Adapter.Data;
-using MesControlAgv.Adapter.Drivers;
-using MesControlAgv.Adapter.Services;
+using MesControlAgv.Adapter.Modules;
 using MesControlAgv.Application;
-using MesControlAgv.Domain;
-using MesControlAgv.Domain.Profiles;
-using MesControlAgv.Domain.Workflows;
+using MesControlAgv.Contracts;
 using Microsoft.Data.Sqlite;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 
 var builder = WebApplication.CreateBuilder(args);
 if (builder.Environment.IsEnvironment(PhysicalAcceptanceConfiguration.EnvironmentName))
@@ -20,13 +12,17 @@ if (builder.Environment.IsEnvironment(PhysicalAcceptanceConfiguration.Environmen
         builder.Environment.ContentRootPath,
         args);
 }
-var configuredConnectionString = builder.Configuration.GetConnectionString("Adapter") ?? "Data Source=data/adapter.db";
+
+var configuredConnectionString = builder.Configuration.GetConnectionString("Adapter")
+    ?? "Data Source=data/adapter.db";
 var connectionString = ResolveSqliteConnectionString(configuredConnectionString);
 var simulatorBaseUrl = builder.Configuration["Simulator:BaseUrl"] ?? "http://localhost:5183/";
 builder.Services.AddServices(builder.Configuration, connectionString, simulatorBaseUrl);
 
 var app = builder.Build();
 var runMode = app.Services.GetRequiredService<AdapterRunMode>();
+var modules = app.Services.GetRequiredService<DeviceAdapterModuleCatalog>();
+var devices = app.Services.GetRequiredService<DeviceAdapterRegistry>();
 
 app.Use(async (context, next) =>
 {
@@ -46,133 +42,35 @@ app.Use(async (context, next) =>
     await next();
 });
 
-using (var scope = app.Services.CreateScope())
-{
-    var database = scope.ServiceProvider.GetRequiredService<AdapterDbContext>();
-    await database.Database.EnsureCreatedAsync();
-    await AddColumnIfMissingAsync(database, "AgvId");
-    await AddColumnIfMissingAsync(database, "PathJson");
-}
+await modules.InitializeAsync(app.Services, CancellationToken.None);
 
 app.MapGet("/health", (IAgvDriver driver) => Results.Ok(new AdapterRuntimeIdentityResponse(
     Service: "adapter",
     Status: "ok",
     RunMode: runMode.Value,
-    Driver: driver.DriverId)));
+    Driver: driver.DriverId,
+    Modules: modules.Descriptors.Select(descriptor => new AdapterModuleIdentityResponse(
+        descriptor.ModuleId,
+        descriptor.DeviceType,
+        descriptor.SupportedTransports.Select(transport => transport.ToString()).ToArray()))
+        .ToArray(),
+    Devices: devices.Devices.Select(ToIdentityResponse).ToArray())));
 
-app.MapPost("/tasks/{taskId:guid}/dispatch", async (Guid taskId, DispatchRequest request, AdapterService service, CancellationToken cancellationToken) =>
-{
-    try
-    {
-        return Results.Ok(await service.DispatchAsync(
-            taskId,
-            request.SourceStationId,
-            request.TargetStationId,
-            request.AgvId,
-            request.Path,
-            cancellationToken));
-    }
-    catch (DispatchDisabledException exception) { return Results.Conflict(new { detail = exception.Message }); }
-    catch (ControlUnavailableException exception) { return Results.Conflict(new { detail = exception.Message }); }
-    catch (AgvUnavailableException exception) { return Results.Conflict(new { detail = exception.Message }); }
-    catch (KeyNotFoundException exception) { return Results.UnprocessableEntity(new { detail = exception.Message }); }
-    catch (InvalidOperationException exception) { return Results.UnprocessableEntity(new { detail = exception.Message }); }
-});
+app.MapGet("/api/adapter/devices", () => Results.Ok(
+    devices.Devices.Select(ToIdentityResponse).ToArray()));
 
-app.MapPost("/field-navigation-acceptances/{acceptanceId:guid}/dispatch", async (
-    Guid acceptanceId,
-    FieldNavigationDispatchCommand command,
-    AdapterService service,
-    CancellationToken cancellationToken) =>
-{
-    try
-    {
-        return Results.Ok(await service.DispatchFieldNavigationAcceptanceAsync(acceptanceId, command, cancellationToken));
-    }
-    catch (DispatchDisabledException exception) { return Results.Conflict(new { detail = exception.Message }); }
-    catch (ControlUnavailableException exception) { return Results.Conflict(new { detail = exception.Message }); }
-    catch (AgvUnavailableException exception) { return Results.Conflict(new { detail = exception.Message }); }
-    catch (PhysicalPreflightRejectedException exception)
-    {
-        return Results.UnprocessableEntity(new { detail = exception.Message, reasons = exception.Reasons });
-    }
-    catch (KeyNotFoundException exception) { return Results.UnprocessableEntity(new { detail = exception.Message }); }
-    catch (InvalidOperationException exception) { return Results.UnprocessableEntity(new { detail = exception.Message }); }
-});
-
-app.MapGet("/tasks/{taskId:guid}", async (Guid taskId, AdapterService service, CancellationToken cancellationToken) =>
-{
-    var task = await service.GetAsync(taskId, cancellationToken);
-    return task is null ? Results.NotFound() : Results.Ok(task);
-});
-
-app.MapPost("/tasks/{taskId:guid}/{action}", async (Guid taskId, string action, AdapterService service, CancellationToken cancellationToken) =>
-{
-    if (action is not ("pause" or "resume" or "cancel")) return Results.NotFound();
-    try
-    {
-        var task = action switch
-        {
-            "pause" => await service.PauseAsync(taskId, cancellationToken),
-            "resume" => await service.ResumeAsync(taskId, cancellationToken),
-            _ => await service.CancelAsync(taskId, cancellationToken)
-        };
-        return task is null ? Results.NotFound() : Results.Ok(task);
-    }
-    catch (DispatchDisabledException exception)
-    {
-        return Results.Conflict(new { detail = exception.Message });
-    }
-    catch (ControlUnavailableException exception)
-    {
-        return Results.Conflict(new { detail = exception.Message });
-    }
-});
-
-app.MapGet("/agv/snapshot", async (IAgvDeviceClient device, CancellationToken cancellationToken) =>
-{
-    var snapshot = await device.GetSnapshotAsync(cancellationToken);
-    return Results.Ok(snapshot with { Capabilities = snapshot.Capabilities ?? AgvCapabilitiesResponse.Standard });
-});
-app.MapPost("/agv/control/release", async (AdapterService service, CancellationToken cancellationToken) =>
-{
-    try
-    {
-        return await service.ReleaseControlAsync(cancellationToken)
-            ? Results.Ok(new { released = true })
-            : Results.Conflict(new { detail = "AGV control is not owned by the Adapter." });
-    }
-    catch (ControlReleaseUnconfirmedException exception)
-    {
-        return Results.Conflict(new { detail = exception.Message });
-    }
-    catch (InvalidOperationException exception)
-    {
-        return Results.UnprocessableEntity(new { detail = exception.Message });
-    }
-});
-app.MapGet("/physical/preflight", async (PhysicalAcceptancePreflightService service, CancellationToken cancellationToken) =>
-    Results.Ok(await service.GetAsync(cancellationToken)));
-app.MapGet("/agvs", async (AdapterService service, CancellationToken cancellationToken) => Results.Ok(await service.GetFleetAsync(cancellationToken)));
-
-app.MapPost("/agvs/{agvId}/command", async (
-    string agvId,
-    AgvCommandRequest request,
-    AdapterService service,
-    CancellationToken cancellationToken) =>
-{
-    try
-    {
-        return Results.Ok(await service.ExecuteCommandAsync(agvId, request.Command, request.TaskId, cancellationToken));
-    }
-    catch (DispatchDisabledException exception) { return Results.Conflict(new { detail = exception.Message }); }
-    catch (ControlUnavailableException exception) { return Results.Conflict(new { detail = exception.Message }); }
-    catch (AgvUnavailableException exception) { return Results.Conflict(new { detail = exception.Message }); }
-    catch (KeyNotFoundException exception) { return Results.NotFound(new { detail = exception.Message }); }
-    catch (InvalidOperationException exception) { return Results.UnprocessableEntity(new { detail = exception.Message }); }
-});
+modules.MapEndpoints(app);
 
 app.Run();
+
+static AdapterDeviceIdentityResponse ToIdentityResponse(DeviceAdapterRegistration device) => new(
+    device.DeviceId,
+    device.DeviceType,
+    device.ModuleId,
+    device.DriverId,
+    device.Transport.ToString(),
+    device.Enabled,
+    device.ControlEnabled);
 
 static string ResolveSqliteConnectionString(string connectionString)
 {
@@ -210,10 +108,17 @@ static string ResolveSqliteConnectionString(string connectionString)
     return sqliteConnection.ToString();
 }
 
-static string GetProjectDataSourcePath(string relativeDataSource, string projectDirectory, string dataDirectory)
+static string GetProjectDataSourcePath(
+    string relativeDataSource,
+    string projectDirectory,
+    string dataDirectory)
 {
-    var normalizedDataSource = relativeDataSource.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar);
-    var pathParts = normalizedDataSource.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+    var normalizedDataSource = relativeDataSource
+        .Replace('\\', Path.DirectorySeparatorChar)
+        .Replace('/', Path.DirectorySeparatorChar);
+    var pathParts = normalizedDataSource.Split(
+        Path.DirectorySeparatorChar,
+        StringSplitOptions.RemoveEmptyEntries);
     if (pathParts.Length > 0 && string.Equals(pathParts[0], "data", StringComparison.OrdinalIgnoreCase))
     {
         var remainingPath = string.Join(Path.DirectorySeparatorChar, pathParts.Skip(1));
@@ -222,6 +127,7 @@ static string GetProjectDataSourcePath(string relativeDataSource, string project
 
     return Path.GetFullPath(normalizedDataSource, projectDirectory);
 }
+
 static string? FindExistingProjectDataPath(string relativeDataSource)
 {
     var startDirectories = new[]
@@ -235,7 +141,10 @@ static string? FindExistingProjectDataPath(string relativeDataSource)
         var directory = new DirectoryInfo(startDirectory);
         while (directory is not null)
         {
-            var projectDirectory = string.Equals(directory.Name, "MesControlAgv.Adapter", StringComparison.OrdinalIgnoreCase)
+            var projectDirectory = string.Equals(
+                directory.Name,
+                "MesControlAgv.Adapter",
+                StringComparison.OrdinalIgnoreCase)
                 ? directory
                 : new DirectoryInfo(Path.Combine(directory.FullName, "src", "MesControlAgv.Adapter"));
 
@@ -248,7 +157,10 @@ static string? FindExistingProjectDataPath(string relativeDataSource)
                 };
 
                 var existingDatabasePath = dataDirectories
-                    .Select(dataDirectory => GetProjectDataSourcePath(relativeDataSource, projectDirectory.FullName, dataDirectory.FullName))
+                    .Select(dataDirectory => GetProjectDataSourcePath(
+                        relativeDataSource,
+                        projectDirectory.FullName,
+                        dataDirectory.FullName))
                     .FirstOrDefault(File.Exists);
                 if (existingDatabasePath is not null)
                 {
@@ -257,7 +169,10 @@ static string? FindExistingProjectDataPath(string relativeDataSource)
 
                 var existingDataDirectoryPath = dataDirectories
                     .Where(dataDirectory => dataDirectory.Exists)
-                    .Select(dataDirectory => GetProjectDataSourcePath(relativeDataSource, projectDirectory.FullName, dataDirectory.FullName))
+                    .Select(dataDirectory => GetProjectDataSourcePath(
+                        relativeDataSource,
+                        projectDirectory.FullName,
+                        dataDirectory.FullName))
                     .FirstOrDefault();
                 if (existingDataDirectoryPath is not null)
                 {
@@ -271,32 +186,5 @@ static string? FindExistingProjectDataPath(string relativeDataSource)
 
     return null;
 }
-static async Task AddColumnIfMissingAsync(AdapterDbContext database, string columnName)
-{
-    try
-    {
-        if (columnName == "AgvId")
-        {
-            await database.Database.ExecuteSqlRawAsync("ALTER TABLE Tasks ADD COLUMN AgvId TEXT NOT NULL DEFAULT 'AGV-01'");
-        }
-        else if (columnName == "PathJson")
-        {
-            await database.Database.ExecuteSqlRawAsync("ALTER TABLE Tasks ADD COLUMN PathJson TEXT NULL");
-        }
-        else
-        {
-            throw new ArgumentOutOfRangeException(nameof(columnName));
-        }
-    }
-    catch (SqliteException exception) when (exception.Message.Contains("duplicate column name", StringComparison.OrdinalIgnoreCase))
-    {
-    }
-}
-
-public sealed record DispatchRequest(
-    string TargetStationId,
-    string? SourceStationId = null,
-    string? AgvId = null,
-    IReadOnlyList<string>? Path = null);
 
 public partial class Program;
