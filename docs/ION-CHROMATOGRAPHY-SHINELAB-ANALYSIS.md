@@ -1,6 +1,6 @@
 # ShineLab 与 CIC-D160+ 通讯分析
 
-分析日期：2026-08-17
+分析日期：2026-08-17 至 2026-08-18
 
 分析范围：`res/ShineLab`、CIC-D160+ 用户手册、ShineLab 工作站使用说明书
 
@@ -201,6 +201,51 @@ ShDevice_D160
 
 确认这些信息后，验证器应先实现：串口枚举、115200 8N1、Modbus CRC、只读帧发送、响应长度/从站/功能码/CRC 校验、原始会话归档和写入双重解锁。现场只读通过后，再按泵、温控、抑制器、淋洗液、阀、检测器、序列生命周期逐项开放能力。
 
-## 11. 资料安全提醒
+## 11. 2026-08-18 安装包静态分析补充
+
+本次只对 `res/ShineLab` 的离线副本执行了 PE 字符串/符号检查和日志分析，
+没有启动任何 ShineLab 进程，也没有打开 COM4。
+
+### 11.1 二进制边界
+
+- `ShineDataAcquire-Normal.exe`、`ShineControl-Normal.exe`、
+  `ShDevice.dll` 和 `ShDeviceFamily.dll` 是原生 MSVC C++/MFC 二进制，
+  不是可直接用 ILSpy 还原的 .NET 程序。
+- `ShDevice.dll` 保留了 `ShDevice_Modbus`、`ShSerialPort`、
+  `Modbus_Tool` 和 `ShFormatModbus` 符号，明确包含 `ReadWords_03/04`、
+  `WriteWord_06`、`WriteWords_16`、`SetInt`、`SetFloat`、串口超时和
+  `CreateFile`/`ReadFile`/`WriteFile` 相关边界。
+- `ShDeviceFamily.dll` 保留了 CIC-D160+ 专用工厂和协议类，包括
+  `ShFactoryD160Plus`、`ShDevice_D160Plus`、
+  `ShSubDeviceProtocol_D160PlusPump`、`...Temp`、`...Supp`、
+  `...Eluent`、`...Detector` 和 `...Valve6`，以及 `SetFlow`、
+  `SetPumpOpen`、`SetSupp`、`SetTemp`、`SetEluentOpen` 等写入能力符号。
+
+这些符号证明软件具备对应能力，但不等价于当前固件的寄存器表，也不证明
+任何一个写操作可以安全重放。
+
+### 11.2 日志中的现场事实
+
+- `ShDeviceDBTool` 记录 D160+ 曾配置 COM3 和 COM4，参数均为
+  `115200, parity=0, byteSize=8, stopBits=0`，即 `115200 8N1`。
+- `ShSubDeviceProtocol` 记录了请求
+  `01 04 19 00 00 14 F7 59` 的 5 秒超时失败，这与当前只读验证器的
+  请求和超时行为一致。
+- 2026-08-10 的采集日志记录了泵流量 `300.01/500.01/600.01/700.01/1000.01`、
+  泵开关、柱温/电导池温度 `35.00`、抑制器电流 `65`、淋洗液发生器开关和
+  浓度 `15/50` 等动作；同时记录了多次淋洗器流量设置失败。
+
+这些是上层业务日志，未包含对应的 TX/RX 十六进制报文。它们只能用于设计
+后续“单动作、单抓包”的验证矩阵，不能直接转换成 Modbus 写帧。
+
+### 11.3 与 USBPcap 的关联结论
+
+2026-08-17 的 USBPcap 会话只包含周期性 `0x04` 读取和未知语义的
+`0x06 0x13E4=0x5AA5` 写回显，没有包含上述 2026-08-10 手动动作的写帧。
+因此目前仍无法把“设置流量/温度/抑制器/淋洗液”映射到已确认的地址和编码。
+下一次现场抓包必须在明确授权的空载条件下，每次只做一个动作，并同时记录
+动作前后状态、原始 TX/RX、响应 CRC 和失败行为。
+
+## 12. 资料安全提醒
 
 `res/ShineLab` 包含运行日志、数据库配置、设备标识以及明文服务凭据。该目录当前未被 Git 跟踪，不应直接提交到仓库。若需要保留分析样例，应先脱敏并仅提交最小必要的协议证据。
