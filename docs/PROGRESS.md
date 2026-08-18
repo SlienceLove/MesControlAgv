@@ -38,6 +38,13 @@ authorized preflight and movement-authorization gates recorded below.
   `115200 8N1`. The known `0x1900/20-register` read passed 30 consecutive
   attempts with valid CRC responses. `COM3` and the SHA-18i remain outside the
   current scope, and ShineLab must be closed before any process opens `COM4`.
+- A fresh control-computer read-only session on 2026-08-18 revalidated the
+  same request on `COM4`: `30/30` attempts succeeded, `30/30` response CRCs
+  were valid, and every response was a 45-byte Modbus `0x04` frame from slave
+  `0x01`. The response body was identical across all 30 attempts and matched
+  the previously captured `0x1900` response, including the identity payload
+  `YA7261078` and response CRC `25CB`. The raw session is retained locally as
+  `res/d160-readonly-batch.json` and is intentionally not committed.
 - A 60-second USBPcap observation on 2026-08-17 successfully reconstructed
   ShineLab traffic for the CIC-D160+. The capture contains 666 Modbus `0x04`
   reads and 665 CRC-valid read responses, including the confirmed
