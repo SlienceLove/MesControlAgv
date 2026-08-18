@@ -45,6 +45,15 @@ authorized preflight and movement-authorization gates recorded below.
   the previously captured `0x1900` response, including the identity payload
   `YA7261078` and response CRC `25CB`. The raw session is retained locally as
   `res/d160-readonly-batch.json` and is intentionally not committed.
+- A separately authorized 60-second USBPcap session on 2026-08-18 correlated
+  four ShineLab write capabilities on the current device/software version:
+  pump flow at `0x13DA` with scale `raw / 1000`, pump enable at `0x157D`,
+  temperature-enable flags at `0x157C`, and column temperature at `0x1389`
+  with scale `raw / 100`. All five observed host writes, including one repeated
+  flow setpoint, received valid device echoes. The operator confirmed the
+  additional pump and temperature actions. This establishes address/value
+  correlation only; safe ranges, retry behavior, failure recovery, and direct
+  gateway writes remain unverified and disabled.
 - A 60-second USBPcap observation on 2026-08-17 successfully reconstructed
   ShineLab traffic for the CIC-D160+. The capture contains 666 Modbus `0x04`
   reads and 665 CRC-valid read responses, including the confirmed
