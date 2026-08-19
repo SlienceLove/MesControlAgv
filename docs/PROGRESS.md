@@ -1618,3 +1618,23 @@ Detailed continuation notes are in
 4. Keep `InstrumentOperation` at metadata/dry-run only until a device-specific
    command address, policy, and empty-load authorization are available. Add a
    dedicated instrument worker only after those gates pass.
+
+## 2026-08-19 experiment workflow G2-A document convergence
+
+- The graph document is now the canonical persistence and boundary shape for
+  workflow editing. Stable node type identifiers, schema versions, explicit
+  edge metadata, ports, layouts, and viewport state are retained.
+- `WorkflowGraphContractAdapter` projects the graph to the existing MES
+  `WorkflowDefinition` contract while keeping `NextNodeIds` populated for the
+  current runtime. Draft, validate, publish, version, and dry-run routes were
+  not changed, and execution remains pinned to an immutable version.
+- WPF local storage writes the `mes.workflow.graph` envelope and reads the
+  previous WPF JSON array as an import-only compatibility format. The historical
+  Nodify editor now exports graph documents and imports both formats.
+- Focused verification passes Graph Contract `26/26`, WPF `175/175`, and MES
+  `70/70`; the WPF project builds with 0 warnings and 0 errors. No AGV, robot,
+  CIC-D160+, serial, gateway, or instrument write path was called.
+- G2-A acceptance is recorded in
+  `docs/EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md`. The main-window Nodify canvas
+  replacement remains the next acceptance node; the current WPF observable
+  projection is retained until that UI migration is verified.

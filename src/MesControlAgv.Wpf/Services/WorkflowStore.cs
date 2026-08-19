@@ -1,6 +1,8 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Encodings.Web;
+using ContractWorkflowGraphDocument = MesControlAgv.Contracts.Workflows.WorkflowGraphDocument;
+using MesControlAgv.Domain.Workflows;
 using MesControlAgv.Wpf.Workflows;
 
 namespace MesControlAgv.Wpf.Services;
@@ -36,8 +38,8 @@ public sealed class WorkflowStore
         try
         {
             var json = File.ReadAllText(FilePath);
-            var workflows = JsonSerializer.Deserialize<List<WorkflowDefinition>>(json, JsonOptions);
-            if (workflows is null || workflows.Count == 0)
+            var workflows = DeserializeStoredWorkflows(json);
+            if (workflows.Count == 0)
             {
                 LastLoadUsedDefaults = true;
                 return CreateDefaultWorkflows();
@@ -65,8 +67,16 @@ public sealed class WorkflowStore
         var directory = Path.GetDirectoryName(Path.GetFullPath(FilePath));
         if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
 
-        var snapshot = workflows.Select(CloneForStorage).ToList();
-        var json = JsonSerializer.Serialize(snapshot, JsonOptions);
+        var snapshot = workflows
+            .Select(WorkflowDocumentMapper.ToGraph)
+            .ToList();
+        var envelope = new WorkflowGraphStorageEnvelope
+        {
+            Format = WorkflowGraphStorageEnvelope.CurrentFormat,
+            SchemaVersion = ContractWorkflowGraphDocument.CurrentSchemaVersion,
+            Workflows = snapshot
+        };
+        var json = JsonSerializer.Serialize(envelope, JsonOptions);
         var temporaryPath = FilePath + ".tmp";
         File.WriteAllText(temporaryPath, json);
         File.Move(temporaryPath, FilePath, overwrite: true);
@@ -129,33 +139,61 @@ public sealed class WorkflowStore
         Order = order
     };
 
-    private static WorkflowDefinition CloneForStorage(WorkflowDefinition workflow) => new()
+    private static IReadOnlyList<WorkflowDefinition> DeserializeStoredWorkflows(string json)
     {
-        Id = workflow.Id,
-        Name = workflow.Name,
-        Description = workflow.Description,
-        IsPreset = workflow.IsPreset,
-        PublishedVersion = workflow.PublishedVersion,
-        Nodes = new System.Collections.ObjectModel.ObservableCollection<WorkflowNode>(workflow.Nodes.OrderBy(node => node.Order).Select(node => new WorkflowNode
+        using var document = JsonDocument.Parse(json);
+        if (document.RootElement.ValueKind == JsonValueKind.Object)
         {
-            Id = node.Id,
-            Type = node.Type,
-            Name = node.Name,
-            Description = node.Description,
-            TargetStation = node.TargetStation,
-            X = node.X,
-            Y = node.Y,
-            Order = node.Order,
-            Parameters = new System.Collections.ObjectModel.ObservableCollection<WorkflowNodeParameter>(node.Parameters.Select(parameter => new WorkflowNodeParameter
+            var envelope = JsonSerializer.Deserialize<WorkflowGraphStorageEnvelope>(json, JsonOptions);
+            if (envelope?.Workflows is null)
             {
-                Name = parameter.Name,
-                Value = parameter.Value,
-                DataType = parameter.DataType,
-                IsRequired = parameter.IsRequired
-            })),
-            NextNodeIds = new System.Collections.ObjectModel.ObservableCollection<Guid>(node.NextNodeIds)
-        }))
-    };
+                return [];
+            }
+
+            return envelope.Workflows
+                .Select(WorkflowDocumentMapper.FromGraph)
+                .ToArray();
+        }
+
+        if (document.RootElement.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        if (LooksLikeGraphArray(document.RootElement))
+        {
+            var graphDocuments = JsonSerializer.Deserialize<List<ContractWorkflowGraphDocument>>(json, JsonOptions) ?? [];
+            return graphDocuments.Select(WorkflowDocumentMapper.FromGraph).ToArray();
+        }
+
+        // Legacy WPF JSON is an import-only shape. It is immediately converted
+        // through the graph mapper so subsequent saves use the new envelope.
+        var legacy = JsonSerializer.Deserialize<List<WorkflowDefinition>>(json, JsonOptions) ?? [];
+        return legacy
+            .Select(workflow => WorkflowDocumentMapper.FromGraph(WorkflowDocumentMapper.ToGraph(workflow)))
+            .ToArray();
+    }
+
+    private static bool LooksLikeGraphArray(JsonElement root)
+    {
+        var first = root.EnumerateArray().FirstOrDefault();
+        if (first.ValueKind != JsonValueKind.Object) return false;
+        if (first.TryGetProperty("layouts", out _) ||
+            first.TryGetProperty("viewport", out _) ||
+            first.TryGetProperty("schemaVersion", out _))
+        {
+            return true;
+        }
+
+        if (!first.TryGetProperty("nodes", out var nodes) ||
+            nodes.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        var node = nodes.EnumerateArray().FirstOrDefault();
+        return node.ValueKind == JsonValueKind.Object && node.TryGetProperty("nodeTypeId", out _);
+    }
 
     private static void Normalize(IEnumerable<WorkflowDefinition> workflows)
     {
@@ -166,4 +204,13 @@ public sealed class WorkflowStore
             foreach (var node in workflow.Nodes) node.Order = order++;
         }
     }
+}
+
+internal sealed class WorkflowGraphStorageEnvelope
+{
+    public const string CurrentFormat = "mes.workflow.graph";
+
+    public string Format { get; set; } = CurrentFormat;
+    public int SchemaVersion { get; set; } = ContractWorkflowGraphDocument.CurrentSchemaVersion;
+    public List<ContractWorkflowGraphDocument> Workflows { get; set; } = [];
 }

@@ -208,4 +208,94 @@ public sealed class WorkflowGraphEditorTests
         Assert.DoesNotContain(contracts, assembly => assembly.Name?.Contains("Nodify", StringComparison.OrdinalIgnoreCase) == true);
         Assert.DoesNotContain(domain, assembly => assembly.Name?.Contains("Nodify", StringComparison.OrdinalIgnoreCase) == true);
     }
+
+    [Fact]
+    public void Graph_contract_adapter_preserves_edges_ports_layout_and_parameters()
+    {
+        var start = WorkflowGraphContractAdapter.CreateNode(WorkflowNodeType.Start, "Start");
+        var instrument = WorkflowGraphContractAdapter.CreateNode(
+            WorkflowNodeType.InstrumentOperation,
+            "Read D160",
+            configuration: new Dictionary<string, string?>
+            {
+                [WorkflowGraphContractAdapter.TargetStationConfigurationKey] = "D160",
+                [WorkflowGraphContractAdapter.ParametersConfigurationKey] =
+                    "[{\"name\":\"instrumentId\",\"value\":\"D160\",\"dataType\":\"string\",\"isRequired\":true}]"
+            });
+        var end = WorkflowGraphContractAdapter.CreateNode(WorkflowNodeType.End, "End");
+        var document = new WorkflowGraphDocument
+        {
+            Id = Guid.NewGuid(),
+            Name = "Instrument graph",
+            Description = "Graph source of truth",
+            Nodes = [start, instrument, end],
+            Edges =
+            [
+                new WorkflowEdgeDefinition
+                {
+                    SourceNodeId = start.Id,
+                    SourcePort = "success",
+                    TargetNodeId = instrument.Id,
+                    TargetPort = "in",
+                    Kind = WorkflowEdgeKind.Success,
+                    Metadata = new Dictionary<string, string?> { ["legacyColor"] = "#4285F4" }
+                },
+                new WorkflowEdgeDefinition
+                {
+                    SourceNodeId = instrument.Id,
+                    SourcePort = "success",
+                    TargetNodeId = end.Id,
+                    TargetPort = "in",
+                    Kind = WorkflowEdgeKind.Success
+                }
+            ],
+            Layouts =
+            [
+                new WorkflowNodeLayout { NodeId = start.Id, X = 10, Y = 20 },
+                new WorkflowNodeLayout { NodeId = instrument.Id, X = 240, Y = 20 },
+                new WorkflowNodeLayout { NodeId = end.Id, X = 470, Y = 20 }
+            ],
+            Viewport = new WorkflowCanvasViewport { X = 4, Y = 8, Zoom = 1.25 }
+        };
+
+        var contract = WorkflowGraphContractAdapter.ToContract(document);
+        var roundTrip = WorkflowGraphContractAdapter.FromContract(contract);
+
+        Assert.Equal(document.Id, contract.Id);
+        Assert.Equal(document.Edges, contract.Edges);
+        Assert.Equal(document.Edges, roundTrip.Edges);
+        Assert.Equal(document.Layouts, roundTrip.Layouts);
+        Assert.Equal(document.Viewport, roundTrip.Viewport);
+        var roundTripInstrument = Assert.Single(roundTrip.Nodes.Where(node => node.Id == instrument.Id));
+        Assert.Equal(WorkflowGraphNodeTypeIds.InstrumentOperation, roundTripInstrument.NodeTypeId);
+        Assert.Equal("D160", roundTripInstrument.Configuration[WorkflowGraphContractAdapter.TargetStationConfigurationKey]);
+        Assert.Contains("instrumentId", roundTripInstrument.Configuration[WorkflowGraphContractAdapter.ParametersConfigurationKey]);
+        Assert.Equal(end.Id, Assert.Single(contract.Nodes.Single(node => node.Id == instrument.Id).NextNodeIds));
+        Assert.Equal(240, contract.Nodes.Single(node => node.Id == instrument.Id).X);
+    }
+
+    [Fact]
+    public void Graph_adapter_imports_legacy_next_node_ids_as_explicit_edges()
+    {
+        var start = Guid.NewGuid();
+        var end = Guid.NewGuid();
+        var legacy = new WorkflowDefinition
+        {
+            Id = Guid.NewGuid(),
+            Name = "Legacy",
+            Nodes =
+            [
+                new WorkflowNode { Id = start, Type = WorkflowNodeType.Start, Name = "Start", Order = 1, NextNodeIds = [end] },
+                new WorkflowNode { Id = end, Type = WorkflowNodeType.End, Name = "End", Order = 2 }
+            ]
+        };
+
+        var graph = WorkflowGraphContractAdapter.FromContract(legacy);
+
+        var edge = Assert.Single(graph.Edges);
+        Assert.Equal(start, edge.SourceNodeId);
+        Assert.Equal(end, edge.TargetNodeId);
+        Assert.Equal("success", edge.SourcePort);
+        Assert.Equal("in", edge.TargetPort);
+    }
 }

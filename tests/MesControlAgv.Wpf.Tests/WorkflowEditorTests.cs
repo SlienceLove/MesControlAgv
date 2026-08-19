@@ -1,3 +1,7 @@
+using ContractWorkflowEdgeDefinition = MesControlAgv.Contracts.Workflows.WorkflowEdgeDefinition;
+using ContractWorkflowEdgeKind = MesControlAgv.Contracts.Workflows.WorkflowEdgeKind;
+using ContractWorkflowNodeLayout = MesControlAgv.Contracts.Workflows.WorkflowNodeLayout;
+using ContractWorkflowViewport = MesControlAgv.Contracts.Workflows.WorkflowCanvasViewport;
 using MesControlAgv.Wpf.Services;
 using MesControlAgv.Wpf.ViewModels;
 using MesControlAgv.Wpf.Workflows;
@@ -105,6 +109,143 @@ public sealed class WorkflowEditorTests
         Assert.Equal(123.5, node.X);
         Assert.Equal(45.25, node.Y);
         Assert.Contains("温控实验", File.ReadAllText(fixture.Path));
+    }
+
+    [Fact]
+    public void Store_writes_graph_envelope_and_round_trips_explicit_edges_and_viewport()
+    {
+        using var fixture = new TempWorkflowFile();
+        var store = new WorkflowStore(fixture.Path);
+        var source = new WorkflowNode
+        {
+            Type = WorkflowNodeType.Start,
+            Name = "Start",
+            Order = 1,
+            X = 12,
+            Y = 34
+        };
+        var target = new WorkflowNode
+        {
+            Type = WorkflowNodeType.End,
+            Name = "End",
+            Order = 2,
+            X = 320,
+            Y = 34
+        };
+        source.NextNodeIds.Add(target.Id);
+        var edge = new ContractWorkflowEdgeDefinition
+        {
+            SourceNodeId = source.Id,
+            SourcePort = "success",
+            TargetNodeId = target.Id,
+            TargetPort = "in",
+            Kind = ContractWorkflowEdgeKind.Success,
+            Metadata = new Dictionary<string, string?> { ["legacyColor"] = "#34A853" }
+        };
+        var workflow = new WorkflowDefinition
+        {
+            Name = "Graph persisted",
+            Nodes = [source, target],
+            Edges = [edge],
+            Layouts =
+            [
+                new ContractWorkflowNodeLayout { NodeId = source.Id, X = source.X, Y = source.Y },
+                new ContractWorkflowNodeLayout { NodeId = target.Id, X = target.X, Y = target.Y }
+            ],
+            Viewport = new ContractWorkflowViewport { X = 50, Y = 75, Zoom = 1.5 }
+        };
+
+        store.Save([workflow]);
+        var loaded = Assert.Single(store.Load());
+
+        var loadedEdge = Assert.Single(loaded.Edges);
+        Assert.Equal(edge.Id, loadedEdge.Id);
+        Assert.Equal(edge.SourceNodeId, loadedEdge.SourceNodeId);
+        Assert.Equal(edge.TargetNodeId, loadedEdge.TargetNodeId);
+        Assert.Equal(edge.Kind, loadedEdge.Kind);
+        Assert.Equal("#34A853", loadedEdge.Metadata["legacyColor"]);
+        Assert.Equal(workflow.Layouts, loaded.Layouts);
+        Assert.Equal(workflow.Viewport, loaded.Viewport);
+        var json = File.ReadAllText(fixture.Path);
+        Assert.Contains("mes.workflow.graph", json, StringComparison.Ordinal);
+        Assert.StartsWith("{", json.TrimStart(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Store_imports_legacy_wpf_array_and_rewrites_it_as_graph_envelope()
+    {
+        using var fixture = new TempWorkflowFile();
+        Directory.CreateDirectory(System.IO.Path.GetDirectoryName(fixture.Path)!);
+        var start = Guid.NewGuid();
+        var end = Guid.NewGuid();
+        File.WriteAllText(
+            fixture.Path,
+            $$"""
+            [
+              {
+                "id": "{{Guid.NewGuid()}}",
+                "name": "Legacy local",
+                "description": "old array",
+                "nodes": [
+                  { "id": "{{start}}", "type": 0, "name": "Start", "x": 10, "y": 20, "order": 1, "nextNodeIds": ["{{end}}"] },
+                  { "id": "{{end}}", "type": 5, "name": "End", "x": 220, "y": 20, "order": 2, "nextNodeIds": [] }
+                ]
+              }
+            ]
+            """);
+        var store = new WorkflowStore(fixture.Path);
+
+        var imported = Assert.Single(store.Load());
+
+        Assert.Equal("Legacy local", imported.Name);
+        Assert.Single(imported.Edges);
+        Assert.Equal(2, imported.Layouts.Count);
+        store.Save([imported]);
+        Assert.Contains("mes.workflow.graph", File.ReadAllText(fixture.Path), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Legacy_experiment_editor_bridge_preserves_connections_and_metadata()
+    {
+        var editor = new ExperimentFlowEditorViewModel();
+        var source = new ExperimentFlowNode
+        {
+            Id = Guid.NewGuid(),
+            Type = "DataImport",
+            Title = "Import",
+            Description = "Load sample data",
+            Location = new System.Windows.Point(10, 20)
+        };
+        var target = new ExperimentFlowNode
+        {
+            Id = Guid.NewGuid(),
+            Type = "InstrumentOperation",
+            Title = "Read D160",
+            Location = new System.Windows.Point(300, 20)
+        };
+        var sourcePort = new ExperimentFlowConnector { Id = Guid.NewGuid(), IsInput = false, Node = source };
+        var targetPort = new ExperimentFlowConnector { Id = Guid.NewGuid(), IsInput = true, Node = target };
+        source.Output.Add(sourcePort);
+        target.Input.Add(targetPort);
+        editor.Nodes.Add(source);
+        editor.Nodes.Add(target);
+        editor.Connections.Add(new ExperimentFlowConnection
+        {
+            Id = Guid.NewGuid(),
+            Source = sourcePort,
+            Target = targetPort,
+            Condition = "sample.ready",
+            Color = "#34A853"
+        });
+
+        var graph = ExperimentFlowGraphAdapter.ToGraph(editor);
+        var legacy = ExperimentFlowGraphAdapter.ToLegacyConfig(graph);
+
+        Assert.Equal("DataImport", legacy.Nodes.Single(node => node.Id == source.Id).Type);
+        var connection = Assert.Single(legacy.Connections);
+        Assert.Equal("sample.ready", connection.Condition);
+        Assert.Equal("#34A853", connection.Color);
+        Assert.Equal(10, legacy.Nodes.Single(node => node.Id == source.Id).X);
     }
 
     [Fact]

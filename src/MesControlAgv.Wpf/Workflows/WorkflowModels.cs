@@ -2,6 +2,8 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 
+using MesControlAgv.Contracts.Workflows;
+
 namespace MesControlAgv.Wpf.Workflows;
 
 public enum WorkflowNodeType
@@ -44,6 +46,14 @@ public sealed class WorkflowNode : INotifyPropertyChanged
 
     public Guid Id { get; set; } = Guid.NewGuid();
 
+    /// <summary>
+    /// Stable graph-catalog identifier. The enum remains for existing WPF
+    /// bindings and is treated as a compatibility projection.
+    /// </summary>
+    public string GraphNodeTypeId { get; set; } = string.Empty;
+
+    public string SchemaVersion { get; set; } = "1.0";
+
     public WorkflowNodeType Type
     {
         get => _type;
@@ -51,8 +61,15 @@ public sealed class WorkflowNode : INotifyPropertyChanged
         {
             if (_type == value) return;
             _type = value;
+            GraphNodeTypeId = WorkflowGraphNodeTypeIds.For(
+                (MesControlAgv.Contracts.Workflows.WorkflowNodeType)value);
+            Ports = new ObservableCollection<WorkflowPortDefinition>(
+                MesControlAgv.Domain.Workflows.WorkflowGraphContractAdapter.CreatePorts(
+                    (MesControlAgv.Contracts.Workflows.WorkflowNodeType)value));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Type)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(TypeDescription)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(GraphNodeTypeId)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Ports)));
         }
     }
 
@@ -108,17 +125,26 @@ public sealed class WorkflowNode : INotifyPropertyChanged
 
     public ObservableCollection<Guid> NextNodeIds { get; set; } = [];
 
+    public ObservableCollection<WorkflowPortDefinition> Ports { get; set; } = [];
+
+    public Dictionary<string, string?> Configuration { get; set; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public WorkflowNode Clone() => new()
     {
         Id = Guid.NewGuid(),
         Type = Type,
+        GraphNodeTypeId = GraphNodeTypeId,
+        SchemaVersion = SchemaVersion,
         Name = Name,
         Description = Description,
         TargetStation = TargetStation,
         X = X,
         Y = Y,
         Order = Order,
-        Parameters = new ObservableCollection<WorkflowNodeParameter>(Parameters.Select(parameter => parameter.Clone()))
+        Parameters = new ObservableCollection<WorkflowNodeParameter>(Parameters.Select(parameter => parameter.Clone())),
+        Ports = new ObservableCollection<WorkflowPortDefinition>(Ports),
+        Configuration = new Dictionary<string, string?>(Configuration, StringComparer.OrdinalIgnoreCase)
     };
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -160,6 +186,16 @@ public sealed class WorkflowDefinition : INotifyPropertyChanged
     /// <summary>本地定义最近一次观察到的 MES 发布版本。</summary>
     public int? PublishedVersion { get; set; }
 
+    /// <summary>
+    /// Explicit graph edges are retained by the unified document adapter;
+    /// NextNodeIds remains populated for the legacy MES runtime projection.
+    /// </summary>
+    public ObservableCollection<WorkflowEdgeDefinition> Edges { get; set; } = [];
+
+    public ObservableCollection<WorkflowNodeLayout> Layouts { get; set; } = [];
+
+    public WorkflowCanvasViewport Viewport { get; set; } = new();
+
     public ObservableCollection<WorkflowNode> Nodes { get; set; } = [];
 
     public WorkflowDefinition Clone(string? name = null)
@@ -177,6 +213,8 @@ public sealed class WorkflowDefinition : INotifyPropertyChanged
             return clone;
         });
 
+        var clonedIds = sourceNodes.Select(node => node.Id).ToHashSet();
+        var cloneMap = sourceNodes.ToDictionary(node => node.Id, node => idMap[node.Id]);
         return new WorkflowDefinition
         {
             Id = Guid.NewGuid(),
@@ -184,7 +222,19 @@ public sealed class WorkflowDefinition : INotifyPropertyChanged
             Description = Description,
             IsPreset = false,
             PublishedVersion = null,
-            Nodes = new ObservableCollection<WorkflowNode>(clonedNodes)
+            Nodes = new ObservableCollection<WorkflowNode>(clonedNodes),
+            Edges = new ObservableCollection<WorkflowEdgeDefinition>(Edges
+                .Where(edge => clonedIds.Contains(edge.SourceNodeId) && clonedIds.Contains(edge.TargetNodeId))
+                .Select(edge => edge with
+                {
+                    Id = Guid.NewGuid(),
+                    SourceNodeId = cloneMap[edge.SourceNodeId],
+                    TargetNodeId = cloneMap[edge.TargetNodeId]
+                })),
+            Layouts = new ObservableCollection<WorkflowNodeLayout>(Layouts
+                .Where(layout => clonedIds.Contains(layout.NodeId))
+                .Select(layout => layout with { NodeId = cloneMap[layout.NodeId] })),
+            Viewport = Viewport
         };
     }
 

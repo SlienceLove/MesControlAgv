@@ -99,6 +99,12 @@
 - 发布版本不可由画布直接修改；运行请求固定到明确版本。
 - 用户确认：设计器已可替代旧的业务编辑入口。
 
+### G2 当前执行记录（2026-08-19）
+
+G2-A 已完成文档/契约收敛：新增 Graph Document 与 MES 合同适配器，WPF 本地存储改为 `mes.workflow.graph` 信封格式，旧 WPF JSON 仅作为导入格式；历史 Nodify 编辑器的导出也改为 Graph Document。MES Draft、Validate、Publish、Version 和 DryRun HTTP 路径保持不变，运行请求仍固定到明确版本，未开放任何设备写操作。
+
+G2-A 验收记录见 [EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md](EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md)。主窗口 Nodify 画布替换和旧 WPF 可观察投影的最终移除留在下一验收节点，避免在未确认前一次性破坏现有绑定。
+
 ## 6. G3：类型化节点与发布校验
 
 ### 实现范围

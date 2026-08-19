@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Input;
+using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Wpf.Infrastructure;
 using MesControlAgv.Wpf.Workflows;
 using MesControlAgv.Wpf.Views;
@@ -178,31 +179,12 @@ public sealed class ExperimentFlowEditorViewModel : INotifyPropertyChanged
 
         if (dialog.ShowDialog() == true)
         {
-            var config = new ExperimentFlowConfigDto
-            {
-                Nodes = Nodes.Select(n => new NodeDto
-                {
-                    Id = n.Id,
-                    Title = n.Title,
-                    Description = n.Description,
-                    Type = n.Type,
-                    X = n.Location.X,
-                    Y = n.Location.Y
-                }).ToList(),
-                Connections = Connections.Select(c => new ConnectionDto
-                {
-                    Id = c.Id,
-                    SourceNodeId = c.Source?.Node?.Id ?? Guid.Empty,
-                    TargetNodeId = c.Target?.Node?.Id ?? Guid.Empty,
-                    Condition = c.Condition,
-                    Color = c.Color
-                }).ToList()
-            };
-
-            var json = System.Text.Json.JsonSerializer.Serialize(config, new System.Text.Json.JsonSerializerOptions
+            var graph = ExperimentFlowGraphAdapter.ToGraph(this);
+            var json = System.Text.Json.JsonSerializer.Serialize(graph, new System.Text.Json.JsonSerializerOptions
             {
                 WriteIndented = true,
-                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+                PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
             });
 
             System.IO.File.WriteAllText(dialog.FileName, json);
@@ -224,7 +206,15 @@ public sealed class ExperimentFlowEditorViewModel : INotifyPropertyChanged
             try
             {
                 var json = System.IO.File.ReadAllText(dialog.FileName);
-                var config = System.Text.Json.JsonSerializer.Deserialize<ExperimentFlowConfigDto>(json);
+                var options = new System.Text.Json.JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                };
+                var config = ExperimentFlowGraphAdapter.LooksLikeGraphDocument(json)
+                    ? ExperimentFlowGraphAdapter.ToLegacyConfig(
+                        System.Text.Json.JsonSerializer.Deserialize<WorkflowGraphDocument>(json, options)
+                        ?? throw new InvalidOperationException("Graph document is empty."))
+                    : System.Text.Json.JsonSerializer.Deserialize<ExperimentFlowConfigDto>(json, options);
 
                 if (config == null)
                 {

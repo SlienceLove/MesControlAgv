@@ -36,6 +36,48 @@ public enum WorkflowCanvasMode
     Runtime
 }
 
+/// <summary>
+/// Stable identifiers for the first workflow node catalog. The identifier is
+/// persisted in graph documents so adding a new runtime enum value does not
+/// silently change the meaning of an existing node.
+/// </summary>
+public static class WorkflowGraphNodeTypeIds
+{
+    public const string Start = "core.start";
+    public const string Move = "agv.move";
+    public const string Wait = "core.wait";
+    public const string Pickup = "agv.pickup";
+    public const string Dropoff = "agv.dropoff";
+    public const string End = "core.end";
+    public const string Custom = "core.custom";
+    public const string InstrumentOperation = "instrument.operation";
+
+    public static string For(WorkflowNodeType type) => type switch
+    {
+        WorkflowNodeType.Start => Start,
+        WorkflowNodeType.Move => Move,
+        WorkflowNodeType.Wait => Wait,
+        WorkflowNodeType.Pickup => Pickup,
+        WorkflowNodeType.Dropoff => Dropoff,
+        WorkflowNodeType.End => End,
+        WorkflowNodeType.InstrumentOperation => InstrumentOperation,
+        _ => Custom
+    };
+
+    public static WorkflowNodeType ToContractType(string? nodeTypeId) =>
+        nodeTypeId?.Trim().ToLowerInvariant() switch
+        {
+            Start => WorkflowNodeType.Start,
+            Move => WorkflowNodeType.Move,
+            Wait => WorkflowNodeType.Wait,
+            Pickup => WorkflowNodeType.Pickup,
+            Dropoff => WorkflowNodeType.Dropoff,
+            End => WorkflowNodeType.End,
+            InstrumentOperation => WorkflowNodeType.InstrumentOperation,
+            _ => WorkflowNodeType.Custom
+        };
+}
+
 public sealed record WorkflowPortDefinition
 {
     public string Key { get; init; } = string.Empty;
@@ -72,6 +114,13 @@ public sealed record WorkflowEdgeDefinition
     public WorkflowEdgeKind Kind { get; init; } = WorkflowEdgeKind.Success;
     public string? Condition { get; init; }
     public int Priority { get; init; }
+    /// <summary>
+    /// Editor/import metadata such as a legacy connection colour. Runtime
+    /// contracts intentionally ignore this dictionary, but graph persistence
+    /// must retain it for a lossless editor round trip.
+    /// </summary>
+    public IReadOnlyDictionary<string, string?> Metadata { get; init; } =
+        new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 }
 
 public sealed record WorkflowNodeLayout
@@ -102,6 +151,8 @@ public sealed record WorkflowGraphDocument
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;
     public string Name { get; init; } = string.Empty;
     public string Description { get; init; } = string.Empty;
+    public bool IsPreset { get; init; }
+    public int? PublishedVersion { get; init; }
     public IReadOnlyList<WorkflowNodeDefinition> Nodes { get; init; } = Array.Empty<WorkflowNodeDefinition>();
     public IReadOnlyList<WorkflowEdgeDefinition> Edges { get; init; } = Array.Empty<WorkflowEdgeDefinition>();
     public IReadOnlyList<WorkflowNodeLayout> Layouts { get; init; } = Array.Empty<WorkflowNodeLayout>();

@@ -85,6 +85,9 @@ public sealed record WorkflowNode
 {
     public Guid Id { get; init; } = Guid.NewGuid();
     public WorkflowNodeType Type { get; init; }
+    /// <summary>Stable catalog identifier retained alongside the legacy enum.</summary>
+    public string NodeTypeId { get; init; } = string.Empty;
+    public string SchemaVersion { get; init; } = "1.0";
     public string Name { get; init; } = string.Empty;
     public string Description { get; init; } = string.Empty;
     public string? TargetStation { get; init; }
@@ -93,6 +96,9 @@ public sealed record WorkflowNode
     public int Order { get; init; }
     public IReadOnlyList<WorkflowParameter> Parameters { get; init; } = Array.Empty<WorkflowParameter>();
     public IReadOnlyList<Guid> NextNodeIds { get; init; } = Array.Empty<Guid>();
+    public IReadOnlyList<WorkflowPortDefinition> Ports { get; init; } = Array.Empty<WorkflowPortDefinition>();
+    public IReadOnlyDictionary<string, string?> Configuration { get; init; } =
+        new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>
@@ -103,10 +109,14 @@ public sealed record WorkflowNode
 public sealed record WorkflowDefinition
 {
     public Guid Id { get; init; } = Guid.NewGuid();
+    public int SchemaVersion { get; init; } = WorkflowGraphDocument.CurrentSchemaVersion;
     public string Name { get; init; } = string.Empty;
     public string Description { get; init; } = string.Empty;
     public bool IsPreset { get; init; }
     public IReadOnlyList<WorkflowNode> Nodes { get; init; } = Array.Empty<WorkflowNode>();
+    public IReadOnlyList<WorkflowEdgeDefinition> Edges { get; init; } = Array.Empty<WorkflowEdgeDefinition>();
+    public IReadOnlyList<WorkflowNodeLayout> Layouts { get; init; } = Array.Empty<WorkflowNodeLayout>();
+    public WorkflowCanvasViewport Viewport { get; init; } = new();
     public int? PublishedVersion { get; init; }
 }
 

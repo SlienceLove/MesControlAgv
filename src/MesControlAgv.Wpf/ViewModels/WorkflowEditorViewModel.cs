@@ -3,11 +3,13 @@ using System.ComponentModel;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
+using MesControlAgv.Domain.Workflows;
 using MesControlAgv.Wpf.Infrastructure;
 using MesControlAgv.Wpf.Services;
 using MesControlAgv.Wpf.Workflows;
 
 using ContractWorkflowDefinition = MesControlAgv.Contracts.Workflows.WorkflowDefinition;
+using ContractWorkflowGraphDocument = MesControlAgv.Contracts.Workflows.WorkflowGraphDocument;
 using ContractWorkflowNode = MesControlAgv.Contracts.Workflows.WorkflowNode;
 using ContractWorkflowExecutionRequest = MesControlAgv.Contracts.Workflows.WorkflowExecutionRequest;
 using ContractWorkflowExecutionResult = MesControlAgv.Contracts.Workflows.WorkflowExecutionResult;
@@ -194,6 +196,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
                 : null;
             OnPropertyChanged();
             OnPropertyChanged(nameof(Nodes));
+            OnPropertyChanged(nameof(SelectedGraphDocument));
             OnPropertyChanged(nameof(SelectedRemoteVersion));
             OnPropertyChanged(nameof(RemoteStatus));
             OnPropertyChanged(nameof(ValidationSummary));
@@ -213,6 +216,16 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             RefreshCommandStates();
         }
     }
+
+    /// <summary>
+    /// Unified graph snapshot consumed by future canvas adapters. WPF bindings
+    /// still expose the legacy observable projection during G2 migration, but
+    /// persistence and MES boundaries now use this document shape.
+    /// </summary>
+    public ContractWorkflowGraphDocument? SelectedGraphDocument =>
+        SelectedWorkflow is { } workflow
+            ? WorkflowDocumentMapper.ToGraph(workflow)
+            : null;
 
     public WorkflowNodeParameter? SelectedParameter
     {
@@ -771,70 +784,11 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(ValidationSummary));
     }
 
-    private static ContractWorkflowDefinition ToContract(WorkflowDefinition workflow) => new()
-    {
-        Id = workflow.Id,
-        Name = workflow.Name,
-        Description = workflow.Description,
-        IsPreset = workflow.IsPreset,
-        PublishedVersion = workflow.PublishedVersion,
-        Nodes = workflow.Nodes
-            .OrderBy(node => node.Order)
-            .Select(node => new ContractWorkflowNode
-            {
-                Id = node.Id,
-                Type = (MesControlAgv.Contracts.Workflows.WorkflowNodeType)node.Type,
-                Name = node.Name,
-                Description = node.Description,
-                TargetStation = node.TargetStation,
-                X = node.X,
-                Y = node.Y,
-                Order = node.Order,
-                Parameters = node.Parameters.Select(parameter => new ContractWorkflowParameter
-                {
-                    Name = parameter.Name,
-                    Value = parameter.Value,
-                    DataType = parameter.DataType,
-                    IsRequired = parameter.IsRequired
-                }).ToArray(),
-                NextNodeIds = node.NextNodeIds.ToArray()
-            })
-            .ToArray()
-    };
+    private static ContractWorkflowDefinition ToContract(WorkflowDefinition workflow) =>
+        WorkflowGraphContractAdapter.ToContract(WorkflowDocumentMapper.ToGraph(workflow));
 
-    private static WorkflowDefinition FromContract(ContractWorkflowDefinition workflow)
-    {
-        var local = new WorkflowDefinition
-        {
-            Id = workflow.Id,
-            Name = workflow.Name,
-            Description = workflow.Description,
-            IsPreset = workflow.IsPreset,
-            PublishedVersion = workflow.PublishedVersion,
-            Nodes = new ObservableCollection<WorkflowNode>(workflow.Nodes
-                .OrderBy(node => node.Order)
-                .Select(node => new WorkflowNode
-                {
-                    Id = node.Id,
-                    Type = (WorkflowNodeType)node.Type,
-                    Name = node.Name,
-                    Description = node.Description,
-                    TargetStation = node.TargetStation,
-                    X = node.X,
-                    Y = node.Y,
-                    Order = node.Order,
-                    Parameters = new ObservableCollection<WorkflowNodeParameter>(node.Parameters.Select(parameter => new WorkflowNodeParameter
-                    {
-                        Name = parameter.Name,
-                        Value = parameter.Value,
-                        DataType = parameter.DataType,
-                        IsRequired = parameter.IsRequired
-                    })),
-                    NextNodeIds = new ObservableCollection<Guid>(node.NextNodeIds)
-                }))
-        };
-        return local;
-    }
+    private static WorkflowDefinition FromContract(ContractWorkflowDefinition workflow) =>
+        WorkflowDocumentMapper.FromContract(workflow);
 
     private void AddNode() => AddNodeAt(WorkflowNodeType.Custom, null, null);
 
@@ -845,12 +799,19 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         var node = new WorkflowNode
         {
             Type = type,
+            GraphNodeTypeId = MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.For(
+                (MesControlAgv.Contracts.Workflows.WorkflowNodeType)type),
             Name = DefaultNodeName(type, nextOrder),
             Description = DefaultNodeDescription(type),
             X = x ?? Math.Max(0, workflow.Nodes.Count * 180),
             Y = y ?? 100,
             Order = nextOrder
         };
+        foreach (var port in WorkflowGraphContractAdapter.CreatePorts(
+                     (MesControlAgv.Contracts.Workflows.WorkflowNodeType)type))
+        {
+            node.Ports.Add(port);
+        }
         AddDefaultParameters(node);
         workflow.Nodes.Add(node);
         NormalizeOrders(workflow);
