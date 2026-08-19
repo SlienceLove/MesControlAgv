@@ -256,6 +256,29 @@ authorized preflight and movement-authorization gates recorded below.
   `docs/ROBOT-ARM-VISION-INTEGRATION.md` and
   `docs/ROBOT-ARM-VISION-CHECKLIST.md`.
 
+### 2026-08-19 experiment workflow G1 canvas Spike
+
+- G1 has a framework-neutral graph document, domain editing service and
+  isolated Nodify canvas Spike. The graph carries explicit ports, port
+  cardinality, edge semantics, layout and schema version; the WPF adapter is
+  isolated behind `IWorkflowCanvasSurface`, so Nodify does not leak into
+  Contracts, Domain, MES, Adapter or device code.
+- The Spike starts only through `--workflow-canvas-spike`, before normal
+  service startup. It uses in-memory `20/19`, `60/90`, `200/350` and `5/6`
+  samples and has no MES client, serial port, gateway or device command path.
+  It demonstrates node edits, semantic connections, undo/redo, copy/paste ID
+  rewriting, layout, JSON round trip, validation focus and read-only/runtime
+  overlays.
+- G1 verification passed with a Release WPF build at 0 warnings / 0 errors,
+  focused graph tests `24/24`, focused WPF tests `172/172`, and the full
+  Release solution matrix `553 passed / 5 skipped / 558 total`. The `200/350`
+  visual sample was visible after `273 ms` in the isolated Spike on the
+  development workstation; its working-set increase was about `67.2 MiB`.
+- G1 is **awaiting project manual acceptance and the Nodify selection
+  decision**. Do not begin G2 editor convergence, MES version integration or
+  device capability work until that decision is recorded. The handoff package
+  is `docs/EXPERIMENT-WORKFLOW-G1-ACCEPTANCE.md`.
+
 ## Current status
 
 The `.NET 8 + WPF` MVP is implemented and the current control-center flow is configuration-driven. WPF loads enabled stations and previews the configured route; a task is created as `Created` and explicitly dispatched through MES -> Adapter -> AGV. The default local service ports remain Simulator `5183`, Adapter `5041`, and MES `5045`.

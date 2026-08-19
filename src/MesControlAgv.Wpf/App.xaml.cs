@@ -5,6 +5,7 @@ using System.Windows.Media;
 using MesControlAgv.Wpf.Services;
 using MesControlAgv.Wpf.Modules;
 using MesControlAgv.Wpf.ViewModels;
+using MesControlAgv.Wpf.WorkflowCanvas;
 
 namespace MesControlAgv.Wpf;
 
@@ -24,6 +25,12 @@ public partial class App : Application
                 StringComparison.OrdinalIgnoreCase))
         {
             RenderOptions.ProcessRenderMode = RenderMode.SoftwareOnly;
+        }
+
+        if (e.Args.Any(argument => string.Equals(argument, "--workflow-canvas-spike", StringComparison.OrdinalIgnoreCase)))
+        {
+            StartWorkflowCanvasSpike();
+            return;
         }
 
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
@@ -129,6 +136,15 @@ public partial class App : Application
         _localRuntime = null;
         _startupCancellation.Dispose();
         base.OnExit(e);
+    }
+
+    private void StartWorkflowCanvasSpike()
+    {
+        ShutdownMode = ShutdownMode.OnMainWindowClose;
+        var window = new WorkflowCanvasSpikeWindow();
+        MainWindow = window;
+        _startupCompleted = true;
+        window.Show();
     }
 
     private static Uri ReadBaseUrl(string variableName, string fallback)

@@ -1,5 +1,11 @@
 # 实验流程可视化编辑器开发记录
 
+> 本文是 2026-08-13 Nodify 原型的历史实现记录，不再作为实验流程目标架构。
+> 后续架构演进以 [实验流程编排目标架构](EXPERIMENT-WORKFLOW-ARCHITECTURE.md) 和
+> [实验流程界面规划](EXPERIMENT-WORKFLOW-UI-DESIGN.md) 为准。原型中的画布、连线和自动布局能力可以复用，
+> 但业务模型需要与 MES 工作流契约收敛，不能继续独立演进。
+> 文中 `Nodify 2.2.0`、`Nodify.Compatibility` 和“框架级撤销/重做”等表述是当时的记录，不能作为当前选型或功能依据；当前结论以 [画布技术评估](EXPERIMENT-WORKFLOW-CANVAS-EVALUATION.md) 为准。
+
 ## 📋 项目概述
 
 基于 Nodify 框架的实验流程可视化编辑器，用于图形化设计和管理实验任务流程。
