@@ -48,6 +48,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     private readonly ObservableCollection<WorkflowNode> _emptyNodes = [];
     private WorkflowDefinition? _selectedWorkflow;
     private WorkflowNode? _selectedNode;
+    private WorkflowNodeParameter? _selectedParameter;
     private string _message = string.Empty;
     private WorkflowRemoteState _remoteState = WorkflowRemoteState.LocalFallback;
     private string _remoteStatus = "仅使用本地数据";
@@ -74,6 +75,10 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         SaveCommand = new EditorCommand(Save);
         AddNodeCommand = new EditorCommand(AddNode, () => SelectedWorkflow is not null);
         DeleteNodeCommand = new EditorCommand(DeleteNode, () => SelectedWorkflow is not null && SelectedNode is not null);
+        AddParameterCommand = new EditorCommand(AddParameter, () => SelectedNode is not null);
+        DeleteParameterCommand = new EditorCommand(
+            DeleteParameter,
+            () => SelectedNode is not null && SelectedParameter is not null);
         MoveNodeLeftCommand = new EditorCommand(() => MoveNode(-1), CanMoveNodeLeft);
         MoveNodeRightCommand = new EditorCommand(() => MoveNode(1), CanMoveNodeRight);
         LoadFromMesCommand = new AsyncCommand(
@@ -154,6 +159,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         new(WorkflowNodeType.Wait, "等待"),
         new(WorkflowNodeType.Pickup, "取货"),
         new(WorkflowNodeType.Dropoff, "放货"),
+        new(WorkflowNodeType.InstrumentOperation, "仪器操作"),
         new(WorkflowNodeType.Custom, "自定义"),
         new(WorkflowNodeType.End, "结束")
     ];
@@ -202,6 +208,19 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         {
             if (ReferenceEquals(_selectedNode, value)) return;
             _selectedNode = value;
+            SelectedParameter = value?.Parameters.FirstOrDefault();
+            OnPropertyChanged();
+            RefreshCommandStates();
+        }
+    }
+
+    public WorkflowNodeParameter? SelectedParameter
+    {
+        get => _selectedParameter;
+        set
+        {
+            if (ReferenceEquals(_selectedParameter, value)) return;
+            _selectedParameter = value;
             OnPropertyChanged();
             RefreshCommandStates();
         }
@@ -325,6 +344,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     public ICommand DryRunCommand { get; }
     public ICommand AddNodeCommand { get; }
     public ICommand DeleteNodeCommand { get; }
+    public ICommand AddParameterCommand { get; }
+    public ICommand DeleteParameterCommand { get; }
     public ICommand MoveNodeLeftCommand { get; }
     public ICommand MoveNodeRightCommand { get; }
     public ICommand LoadFromMesCommand { get; }
@@ -830,6 +851,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             Y = y ?? 100,
             Order = nextOrder
         };
+        AddDefaultParameters(node);
         workflow.Nodes.Add(node);
         NormalizeOrders(workflow);
         SelectedNode = node;
@@ -844,6 +866,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         WorkflowNodeType.Wait => "等待",
         WorkflowNodeType.Pickup => "确认取货",
         WorkflowNodeType.Dropoff => "确认放货",
+        WorkflowNodeType.InstrumentOperation => "仪器操作",
         WorkflowNodeType.End => "结束",
         _ => $"自定义 {order}"
     };
@@ -855,9 +878,61 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         WorkflowNodeType.Wait => "等待指定条件",
         WorkflowNodeType.Pickup => "等待人工确认取货",
         WorkflowNodeType.Dropoff => "等待人工确认放货",
+        WorkflowNodeType.InstrumentOperation => "等待仪器协议适配器执行",
         WorkflowNodeType.End => "完成实验流程",
         _ => "自定义实验步骤"
     };
+
+    private static void AddDefaultParameters(WorkflowNode node)
+    {
+        if (node.Type == WorkflowNodeType.Wait)
+        {
+            node.Parameters.Add(new WorkflowNodeParameter
+            {
+                Name = MesControlAgv.Contracts.Workflows.WorkflowRuntimeParameterNames.WaitDurationSeconds,
+                Value = "1",
+                DataType = "decimal"
+            });
+        }
+        else if (node.Type == WorkflowNodeType.InstrumentOperation)
+        {
+            node.Parameters.Add(new WorkflowNodeParameter
+            {
+                Name = MesControlAgv.Contracts.Workflows.WorkflowRuntimeParameterNames.InstrumentId,
+                DataType = "string",
+                IsRequired = true
+            });
+            node.Parameters.Add(new WorkflowNodeParameter
+            {
+                Name = MesControlAgv.Contracts.Workflows.WorkflowRuntimeParameterNames.InstrumentOperation,
+                DataType = "string",
+                IsRequired = true
+            });
+        }
+    }
+
+    private void AddParameter()
+    {
+        if (SelectedNode is not { } node) return;
+        var parameter = new WorkflowNodeParameter
+        {
+            Name = $"parameter{node.Parameters.Count + 1}",
+            DataType = "string"
+        };
+        node.Parameters.Add(parameter);
+        SelectedParameter = parameter;
+        Message = "已添加节点参数。";
+    }
+
+    private void DeleteParameter()
+    {
+        if (SelectedNode is not { } node || SelectedParameter is not { } parameter) return;
+        var index = node.Parameters.IndexOf(parameter);
+        node.Parameters.Remove(parameter);
+        SelectedParameter = node.Parameters.ElementAtOrDefault(
+            Math.Clamp(index, 0, Math.Max(node.Parameters.Count - 1, 0)));
+        Message = "已删除节点参数。";
+    }
 
     private void DeleteNode()
     {
@@ -903,6 +978,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             DeleteWorkflowCommand,
             AddNodeCommand,
             DeleteNodeCommand,
+            AddParameterCommand,
+            DeleteParameterCommand,
             MoveNodeLeftCommand,
             MoveNodeRightCommand,
             LoadFromMesCommand,

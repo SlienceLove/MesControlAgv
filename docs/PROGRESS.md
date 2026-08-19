@@ -1,6 +1,6 @@
 # AGV MES MVP Progress
 
-Last updated: 2026-08-17
+Last updated: 2026-08-19
 
 ## Current priority and branch
 
@@ -45,6 +45,44 @@ authorized preflight and movement-authorization gates recorded below.
   the previously captured `0x1900` response, including the identity payload
   `YA7261078` and response CRC `25CB`. The raw session is retained locally as
   `res/d160-readonly-batch.json` and is intentionally not committed.
+- The vendor `D160+` general protocol workbook was received and verified on
+  2026-08-18 (SHA-256
+  `0C86E1B869E6BF21E9DAFAC13C8ACFDA5D7247A2CE9054E40094A4373F8B428F`).
+  It confirms the captured pump-flow, pump-enable, temperature-enable, and
+  column-temperature write addresses, distinguishes flow setpoint `0x17DB`
+  from actual flow `0x17DC`, defines the complete `0x1900/24` identity range,
+  and identifies `0x13E4=0x5AA5` as the password required to query
+  conductivity. Pressure safety limits, most fault bits, the individual `0x157F`
+  bits, and contradictory suppressor-mode enums remain unresolved. The formal
+  comparison is in
+  `docs/ION-CHROMATOGRAPHY-D160-PROTOCOL-VERIFICATION.md`.
+- The protocol-driven COM4 read gate completed at 2026-08-18 15:19 CST. All
+  `12/12` reads succeeded across three rounds of `0x1900/24`, `0x1770/12`,
+  `0x17D4/18`, and `0x1838/10`; every frame passed an independent slave,
+  function, byte-count, length, and CRC recheck, and each range was byte-stable
+  across all rounds. The snapshot showed identifier `YA7261078`, conductivity
+  `45.4674225`, column temperature `30.01 C`, flow setpoint/actual
+  `0.700/0.700 mL/min`, raw pressure `0`, pump/temperature/suppressor states
+  `0`, and both raw fault codes `0`. The script sent no password or other
+  write. Result SHA-256 is
+  `09C122E7A41125F4D7219C22A300A6092225F221C8640411A41E63080E9D12E8`.
+- The completed field package was limited to rewriting the two currently observed
+  setpoints without activating hardware: `0x13DA=700` and `0x1389=3500`.
+  It re-reads identity, process, suppressor, pressure, and fault state first;
+  refuses to write unless every safety precondition matches the validated idle
+  snapshot; sends each fixed write at most once; requires an exact echo and
+  immediate readback; and has no enable, disable, password, `0x157F`, start,
+  stop, retry, or automatic rollback frame. Physical activation remains a
+  separate later authorization gate.
+- The current-value rewrite gate completed at 2026-08-18 15:48 CST. The
+  preflight matched `YA7261078` and the idle raw-state requirements. The tool
+  sent exactly one `0x13DA=700` and one `0x1389=3500` write; both received
+  byte-exact, CRC-valid echoes. The process response was identical before and
+  after both writes, with setpoints unchanged, raw pump/temperature/pressure
+  still zero, and the final suppressor/fault values still zero. Result SHA-256
+  is `29C85FD9E2F6F8F44FC99C715EE309597621BF0C74C11C915E85190855B4EAFA`.
+  This validates direct write/echo/readback mechanics only. No activation,
+  password, `0x157F`, retry, or rollback write was sent.
 - A separately authorized 60-second USBPcap session on 2026-08-18 correlated
   four ShineLab write capabilities on the current device/software version:
   pump flow at `0x13DA` with scale `raw / 1000`, pump enable at `0x157D`,
@@ -54,31 +92,73 @@ authorized preflight and movement-authorization gates recorded below.
   additional pump and temperature actions. This establishes address/value
   correlation only; safe ranges, retry behavior, failure recovery, and direct
   gateway writes remain unverified and disabled.
+- A second passive 60-second USBPcap session on 2026-08-18 captured the
+  operator's shutdown and restoration actions. The actual device-command
+  sequence was mixed rather than a pure rollback: pump disable
+  (`0x157D=0`), flow `700`, pump enable (`0x157D=1`), a second pump disable,
+  temperature enable (`0x157C=2`), column temperature `3500`, and temperature
+  disable (`0x157C=0`). Every request received an identical CRC-valid device
+  echo. This confirms the observed disable encodings and shows that a repeated
+  pump-disable write is accepted, but it does not prove physical idle state or
+  authorize direct replay. Four additional `0x157F=0` writes were observed;
+  their individual bit meanings are not confirmed. The automatic
+  `0x13E4=0x5AA5` password write was observed again and remains prohibited
+  until its session timing and repetition rules are field-verified. The
+  operator reported that the instrument was shut down after the session.
 - A 60-second USBPcap observation on 2026-08-17 successfully reconstructed
   ShineLab traffic for the CIC-D160+. The capture contains 666 Modbus `0x04`
   reads and 665 CRC-valid read responses, including the confirmed
   `0x1900/20-register` exchange. It also shows ShineLab automatically issuing
   and the device acknowledging function `0x06`, register `0x13E4`, value
-  `0x5AA5`. The write meaning is unknown and the frame must not be replayed.
+  `0x5AA5`. The later vendor workbook identifies this as the conductivity-query
+  password, but the frame must not be replayed until its session rules are
+  verified.
   Detailed evidence is in
   `artifacts/ion-chromatography/d160-capture-analysis-20260817-154030.md`.
 - A dedicated local `MesControlAgv.InstrumentGateway` now implements only the
-  evidenced reads `0x1900/20`, `0x1770/12`, and `0x17D4/18`. It exposes
+  evidenced reads `0x1900/24`, `0x1770/12`, `0x17D4/18`, and `0x1838/10`,
+  while retaining the independently verified `0x1900/20` read in its exact
+  allowlist. It exposes
   read-only health, identity, and status HTTP routes; rejects state-changing
   HTTP methods; has no raw-frame or register-write API; and defaults to
-  `Enabled=false`. Candidate conductivity, total-conductivity, column-
-  temperature, and flow mappings are explicitly labelled as capture-correlated
-  rather than vendor-confirmed.
-- Gateway verification passed 15/15 focused tests, including the real captured
-  identity frame, CRC and function rejection, the captured write-frame
-  rejection, exact register allowlisting, candidate field decoding, and
-  disabled API behavior. A disabled local process returned `200` from
-  `/health` without opening a serial port.
+  `Enabled=false`. Conductivity, total-conductivity, column-temperature, flow
+  setpoint, and actual-flow mappings are labelled as vendor-document and
+  field validated. Actual flow now reads `0x17DC`; `0x17DB` is exposed
+  separately as `FlowSetpoint`.
+- The same status contract now exposes column-temperature setpoint separately
+  from actual temperature and carries raw temperature-control, pump, pressure,
+  suppressor/eluent, and both fault-code values through the gateway and MES.
+  Pressure is normalized as `raw / 10 MPa` from the field correlation described
+  below while retaining `PressureRaw`; partially documented fault bits remain
+  raw and are not normalized into guessed business meanings.
+- An offline-only D160+ write model now represents the four capture-correlated
+  capabilities as six explicit operations: flow setpoint, pump enable/disable,
+  temperature-control enable/disable, and column-temperature setpoint. Its
+  policy defaults disabled and requires an exact operation/raw-value allowlist;
+  it accepts no register address from callers. The model reproduces the six
+  captured `0x06` frames, validates exact device echoes, CRCs, and Modbus
+  exception responses, and separately allowlists enable and disable actions.
+  It is not registered with dependency injection, the serial transport, or an
+  HTTP endpoint, so the running gateway remains read-only.
+- A controlled current-value write session is implemented behind a separate
+  transport interface. Its policy defaults disabled, it accepts only the two
+  already validated setpoint rewrites, requires exact identity and idle raw
+  safety state, proves the requested value is already current, sends at most
+  once, requires an exact echo, and repeats readback safety validation. A
+  timeout or I/O loss is classified as outcome unknown and cannot trigger an
+  automatic retry. The session has no concrete serial implementation, DI
+  registration, HTTP route, workflow worker, or WPF command.
+- Gateway verification passes 50/50 focused tests, including the real captured
+  identity frame, CRC and function rejection, read-register allowlisting,
+  candidate field decoding, disabled API behavior, exact captured write-frame
+  reproduction, default-deny and exact-value policies, mismatched echoes, bad
+  CRCs, and Modbus exception responses. A disabled local process returns `200`
+  from `/health` without opening a serial port.
 - MES now proxies the gateway through a GET-only normalized status route, and
   WPF has a dedicated CIC-D160+ status page for identity, connectivity,
   conductivity, total conductivity, column temperature, flow, observation
   time, mapping confidence, and enforced operation policy. It reads once at
-  startup and supports explicit refresh; it does not attach the three serial
+  startup and supports explicit refresh; it does not attach the four serial
   exchanges to the existing two-second AGV refresh loop.
 - The instrument task transition graph and read-only policy are implemented
   fail-closed. Only `Identify` and `ReadStatus` are enabled, task admission is
@@ -86,16 +166,43 @@ authorized preflight and movement-authorization gates recorded below.
   `Equilibrating` unless a future caller supplies a separately enabled control
   policy. MES exposes no instrument task creation or operation POST endpoint,
   and WPF exposes no method-load, injection, start, stop, or reset controls.
-- Final offline verification passed `478` tests with `5` existing skips and no
-  failures. The complete Release solution build finished with 0 warnings and
-  0 errors, and `git diff --check` passed. No development or test process
-  opened `COM4` or sent a device frame during this implementation stage.
-- The next field stage is intentionally gated. Vendor register/command
-  semantics, firmware applicability, failure responses, and explicit empty-
-  load authorization are required before method loading, parameter changes,
-  autosampler movement, injection, start, stop, or reset can be implemented or
-  observed as an active validation step. The captured `0x13E4 = 0x5AA5` write
-  remains prohibited from replay.
+- The latest full offline verification matrix passed `536` tests with `5`
+  existing skips and no failures; focused InstrumentGateway verification
+  passes `50/50`. The complete Release solution build finished with 0
+  warnings and 0 errors. No development or test process opened `COM4` or sent
+  a device frame during the local implementation stages.
+- The next gate is not an activation command. It requires vendor/site agreement
+  on pressure normal/hard limits, complete pump/temperature/fault state
+  meanings, approved setpoint ranges and ordering, fluid-path/load conditions,
+  supervision and power isolation, and manual recovery after an unknown write
+  outcome. Only after those inputs and per-action authorization are recorded
+  may a separately disabled serial transport and local operator-only harness be
+  prepared for one supervised action at a time. A production business API,
+  workflow worker, and unattended control remain prohibited.
+- The field-correlated pressure safety model is documented in
+  `docs/ION-CHROMATOGRAPHY-D160-PRESSURE-SAFETY-GATE.md`. It defaults to
+  disabled, rejects activation when no explicit hard stop is configured, and
+  requires a vendor/site evidence reference plus an exact raw tenth-of-an-MPa
+  mapping when enabled. The observed stable `9.8 MPa` value is retained as
+  display evidence only and is not used as a safety limit.
+- Because the vendor could not confirm the `0x17DD` pressure scaling, a passive
+  empirical correlation was completed. Reanalysis of the three existing
+  USBPcap sessions extracted `15/21/22` CRC-valid complete process responses;
+  the latter two show raw pressure rising from `0` to about `99` with pump
+  state `1` and falling back to `0` after shutdown. This confirms a dynamic
+  signal but not its scale because no ShineLab display values were timestamped.
+  The 2026-08-19 passive run then captured five display annotations and 75
+  CRC-valid process responses without opening `COM4` or injecting a frame.
+  Full-sequence review correlated display/raw pairs `0/0`, `4/40`, `6.20/62`,
+  and `0/0`. The operator corrected the not-yet-stable `9.7` entry to a final
+  `9.8 MPa` platform while raw `98` remained stable for about 25 seconds. The
+  resulting read-only mapping is `Pressure = PressureRaw / 10 MPa`. Dynamic
+  nearest-time regression was rejected because switching windows delayed the
+  terminal entries. The mapping is now carried through the gateway, MES, and
+  WPF while retaining raw pressure. It cannot define a safe limit, authorize
+  pump activation, or enable a pressure interlock by itself.
+  Method loading, autosampler movement, injection, run start/stop, reset,
+  `0x157F`, and `0x13E4=0x5AA5` remain outside the authorized scope.
 - The implementation and evidence requirements are in
   `docs/ION-CHROMATOGRAPHY-DIRECT-CONTROL-IMPLEMENTATION-PLAN.md`,
   `docs/ION-CHROMATOGRAPHY-DIRECT-CONTROL-VALIDATION.md`, and
@@ -1444,3 +1551,47 @@ Detailed continuation notes are in
    physical navigation, production dispatch, automatic/batch dispatch, or Push
    unless the separate preflight, field authorization, and NO-GO gates are
    explicitly reopened.
+
+## 2026-08-18 experiment workflow runtime continuation
+
+- Direct CIC-D160+ writes are paused until the register semantics, safe ranges,
+  readback behavior, and failure responses are explicitly confirmed. The
+  offline write model remains disconnected from serial transport, dependency
+  injection, HTTP routes, and workflow execution. No instrument or AGV command
+  was sent during this stage.
+- The canonical workflow contract now represents `InstrumentOperation` as a
+  first-class node while preserving all prior enum values. An instrument node
+  must declare `instrumentId` and `operation` as a default or required runtime
+  parameter. This is orchestration metadata only: the Simulator worker leaves
+  the node `Prepared`, creates no operation claim, and performs no device I/O.
+- `Wait` has an explicit optional `durationSeconds` parameter. A missing
+  duration continues to mean an external/manual condition and remains
+  `Prepared`. A value from `0` through `86400` enables the explicitly opt-in,
+  Simulator-only worker to claim the wait durably and complete it only after
+  the persisted claim time plus the configured duration. Invalid values fail
+  workflow validation.
+- The Simulator worker can now advance `Move -> Wait -> Move` across polling
+  cycles with one durable claim and completion audit per node. Timed waits
+  never call the Adapter. Startup AGV recovery now reconciles only claimed
+  `Move` nodes, so a persisted timed wait cannot be mistaken for an Adapter
+  transport task after restart.
+- The WPF workflow editor exposes node parameters in the properties panel and
+  creates useful defaults for timed waits and instrument operations. This
+  allows the same local JSON, MES draft, validation, publication, and dry-run
+  path to carry the new metadata without introducing a write control.
+- Release verification passed with **0 warnings / 0 errors** and **516 passed /
+  5 skipped** tests. Focused totals are MES `70/70`, WPF `165/165`, Workflow
+  Contract `14/14`, and InstrumentGateway `30/30`.
+
+### Next experiment-workflow order
+
+1. Add authenticated or otherwise trusted operator actions for prepared
+   `Pickup`, `Dropoff`, and manual-condition `Wait` nodes; keep them unavailable
+   as unauthenticated public mutation routes.
+2. Add durable workflow pause, resume, cancellation, and explicit `Unknown`
+   resolution with audit evidence and restart coverage.
+3. Expose non-dry-run Simulator execution snapshots and the full audit timeline
+   in WPF, then run an isolated process-level workflow rehearsal.
+4. Keep `InstrumentOperation` at metadata/dry-run only until a device-specific
+   command address, policy, and empty-load authorization are available. Add a
+   dedicated instrument worker only after those gates pass.

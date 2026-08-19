@@ -155,6 +155,30 @@ public sealed class WorkflowEditorTests
     }
 
     [Fact]
+    public void Editor_creates_runtime_parameters_for_wait_and_instrument_nodes()
+    {
+        using var fixture = new TempWorkflowFile();
+        var viewModel = new WorkflowEditorViewModel(new WorkflowStore(fixture.Path));
+
+        viewModel.AddNodeAt(WorkflowNodeType.Wait, 100, 100);
+        var wait = viewModel.SelectedNode!;
+        var duration = Assert.Single(wait.Parameters);
+        Assert.Equal("durationSeconds", duration.Name);
+        Assert.Equal("1", duration.Value);
+
+        viewModel.AddNodeAt(WorkflowNodeType.InstrumentOperation, 300, 100);
+        var instrument = viewModel.SelectedNode!;
+        Assert.Equal(new[] { "instrumentId", "operation" }, instrument.Parameters.Select(parameter => parameter.Name));
+        Assert.All(instrument.Parameters, parameter => Assert.True(parameter.IsRequired));
+
+        viewModel.AddParameterCommand.Execute(null);
+        Assert.Equal(3, instrument.Parameters.Count);
+        Assert.NotNull(viewModel.SelectedParameter);
+        viewModel.DeleteParameterCommand.Execute(null);
+        Assert.Equal(2, instrument.Parameters.Count);
+    }
+
+    [Fact]
     public void Selected_workflow_and_node_raise_property_notifications()
     {
         using var fixture = new TempWorkflowFile();

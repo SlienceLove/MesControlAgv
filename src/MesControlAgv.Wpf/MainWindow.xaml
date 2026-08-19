@@ -369,6 +369,7 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <StackPanel>
                         <TextBlock Foreground="Gray" Text="电导率" />
@@ -379,10 +380,14 @@
                         <TextBlock Margin="0,6,0,0" FontSize="20" Text="{Binding IonChromatography.TotalConductivity}" />
                     </StackPanel>
                     <StackPanel Grid.Column="2">
+                        <TextBlock Foreground="Gray" Text="Pressure" />
+                        <TextBlock Margin="0,6,0,0" FontSize="20" Text="{Binding IonChromatography.Pressure}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="3">
                         <TextBlock Foreground="Gray" Text="柱温" />
                         <TextBlock Margin="0,6,0,0" FontSize="20" Text="{Binding IonChromatography.ColumnTemperature}" />
                     </StackPanel>
-                    <StackPanel Grid.Column="3">
+                    <StackPanel Grid.Column="4">
                         <TextBlock Foreground="Gray" Text="流量" />
                         <TextBlock Margin="0,6,0,0" FontSize="20" Text="{Binding IonChromatography.Flow}" />
                     </StackPanel>
@@ -550,7 +555,7 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="190" />
                     <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="270" />
+                    <ColumnDefinition Width="360" />
                 </Grid.ColumnDefinitions>
 
                 <Border Padding="12" Background="#F6F8FA" CornerRadius="6">
@@ -657,6 +662,26 @@
                             <TextBox MinHeight="58" AcceptsReturn="True" TextWrapping="Wrap" Text="{Binding WorkflowEditor.SelectedNode.Description, UpdateSourceTrigger=PropertyChanged}" />
                             <TextBlock Margin="0,10,0,4" Foreground="Gray" Text="目标站点" />
                             <TextBox Text="{Binding WorkflowEditor.SelectedNode.TargetStation, UpdateSourceTrigger=PropertyChanged}" />
+                            <DockPanel Margin="0,12,0,4">
+                                <TextBlock VerticalAlignment="Center" Foreground="Gray" Text="节点参数" />
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <Button Padding="8,3" Command="{Binding WorkflowEditor.AddParameterCommand}" Content="添加" />
+                                    <Button Margin="6,0,0,0" Padding="8,3" Command="{Binding WorkflowEditor.DeleteParameterCommand}" Content="删除" />
+                                </StackPanel>
+                            </DockPanel>
+                            <DataGrid MinHeight="110"
+                                      MaxHeight="180"
+                                      AutoGenerateColumns="False"
+                                      CanUserAddRows="False"
+                                      ItemsSource="{Binding WorkflowEditor.SelectedNode.Parameters}"
+                                      SelectedItem="{Binding WorkflowEditor.SelectedParameter}">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Width="*" Header="名称" Binding="{Binding Name, UpdateSourceTrigger=PropertyChanged}" />
+                                    <DataGridTextColumn Width="*" Header="值" Binding="{Binding Value, UpdateSourceTrigger=PropertyChanged}" />
+                                    <DataGridTextColumn Width="72" Header="类型" Binding="{Binding DataType, UpdateSourceTrigger=PropertyChanged}" />
+                                    <DataGridCheckBoxColumn Width="54" Header="必填" Binding="{Binding IsRequired, UpdateSourceTrigger=PropertyChanged}" />
+                                </DataGrid.Columns>
+                            </DataGrid>
                         </StackPanel>
                     </ScrollViewer>
                 </Border>

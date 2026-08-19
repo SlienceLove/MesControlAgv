@@ -19,6 +19,7 @@ public sealed class IonChromatographyViewModelTests
                     "ReadOnlyObserved",
                     false,
                     DateTimeOffset.Parse("2026-08-17T07:40:59Z"),
+                    Pressure: 9.8,
                     ColumnTemperature: 31.23,
                     Conductivity: 261.885712,
                     TotalConductivity: 261.885712,
@@ -35,6 +36,7 @@ public sealed class IonChromatographyViewModelTests
         Assert.Equal("在线", viewModel.ConnectionStatus);
         Assert.Equal("YA7261078", viewModel.SerialNumber);
         Assert.Equal("261.88571 uS/cm", viewModel.Conductivity);
+        Assert.Equal("9.80 MPa", viewModel.Pressure);
         Assert.Equal("31.23 C", viewModel.ColumnTemperature);
         Assert.Equal("0.300 mL/min", viewModel.Flow);
         Assert.Equal("禁用", viewModel.TaskAdmissionStatus);

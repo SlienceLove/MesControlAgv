@@ -43,6 +43,7 @@ public sealed class IonChromatographyViewModel : INotifyPropertyChanged
     }
     public string Conductivity => Format(_snapshot?.Status.Conductivity, "F5", "uS/cm");
     public string TotalConductivity => Format(_snapshot?.Status.TotalConductivity, "F5", "uS/cm");
+    public string Pressure => Format(_snapshot?.Status.Pressure, "F2", "MPa");
     public string ColumnTemperature => Format(_snapshot?.Status.ColumnTemperature, "F2", "C");
     public string Flow => Format(_snapshot?.Status.Flow, "F3", "mL/min");
     public string ObservedAt => _snapshot?.Status.ObservedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) ?? "-";
@@ -103,7 +104,7 @@ public sealed class IonChromatographyViewModel : INotifyPropertyChanged
         foreach (var property in new[]
         {
             nameof(InstrumentId), nameof(Model), nameof(SerialNumber), nameof(DeviceState),
-            nameof(Conductivity), nameof(TotalConductivity), nameof(ColumnTemperature), nameof(Flow),
+            nameof(Conductivity), nameof(TotalConductivity), nameof(Pressure), nameof(ColumnTemperature), nameof(Flow),
             nameof(ObservedAt), nameof(MappingConfidence), nameof(PortStatus),
             nameof(TaskAdmissionStatus), nameof(EnabledOperations), nameof(ControlPolicy)
         })

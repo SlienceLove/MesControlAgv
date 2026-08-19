@@ -25,8 +25,11 @@ public sealed class WorkflowSimulatorDispatcher(
     IWorkflowApplicationService workflows,
     IAgvGateway adapter,
     ProfileConfiguration profile,
-    WorkflowSimulatorWorkerOptions options)
+    WorkflowSimulatorWorkerOptions options,
+    TimeProvider? timeProvider = null)
 {
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+
     public async Task ProcessAsync(CancellationToken cancellationToken)
     {
         if (!options.Enabled || !profile.Features.UseSimulator)
@@ -60,8 +63,13 @@ public sealed class WorkflowSimulatorDispatcher(
 
         foreach (var execution in await workflows.ListSimulatorDispatchableExecutionsAsync(cancellationToken))
         {
+            if (!CanExecutePreparedStep(execution.PendingStepRequest))
+            {
+                continue;
+            }
+
             var claimed = await workflows.ClaimNextStepAsync(execution.ExecutionId, cancellationToken);
-            await DispatchClaimedStepAsync(claimed, cancellationToken);
+            await ExecuteClaimedStepAsync(claimed, cancellationToken);
         }
 
         foreach (var execution in await workflows.ListRecoverableExecutionsAsync(cancellationToken))
@@ -74,7 +82,22 @@ public sealed class WorkflowSimulatorDispatcher(
         }
     }
 
-    private async Task DispatchClaimedStepAsync(
+    private static bool CanExecutePreparedStep(WorkflowNextStepRequest? step) =>
+        step is not null &&
+        (step.NodeType == WorkflowNodeType.Move ||
+         (step.NodeType == WorkflowNodeType.Wait && TryGetWaitDuration(step, out _)));
+
+    private Task ExecuteClaimedStepAsync(
+        WorkflowExecutionSnapshot claimed,
+        CancellationToken cancellationToken) =>
+        claimed.PendingStepRequest?.NodeType switch
+        {
+            WorkflowNodeType.Move => DispatchClaimedMoveAsync(claimed, cancellationToken),
+            WorkflowNodeType.Wait => CompleteWaitWhenElapsedAsync(claimed, cancellationToken),
+            _ => Task.CompletedTask
+        };
+
+    private async Task DispatchClaimedMoveAsync(
         WorkflowExecutionSnapshot claimed,
         CancellationToken cancellationToken)
     {
@@ -119,6 +142,17 @@ public sealed class WorkflowSimulatorDispatcher(
         WorkflowExecutionSnapshot execution,
         CancellationToken cancellationToken)
     {
+        if (execution.PendingStepRequest?.NodeType == WorkflowNodeType.Wait)
+        {
+            await CompleteWaitWhenElapsedAsync(execution, cancellationToken);
+            return;
+        }
+
+        if (execution.PendingStepRequest?.NodeType != WorkflowNodeType.Move)
+        {
+            return;
+        }
+
         try
         {
             var response = await adapter.GetTaskAsync(execution.TransportOperationId!.Value, cancellationToken);
@@ -152,6 +186,50 @@ public sealed class WorkflowSimulatorDispatcher(
                 exception.Message,
                 cancellationToken);
         }
+    }
+
+    private Task CompleteWaitWhenElapsedAsync(
+        WorkflowExecutionSnapshot execution,
+        CancellationToken cancellationToken)
+    {
+        if (execution.PendingStepRequest is not { NodeType: WorkflowNodeType.Wait } step ||
+            execution.TransportOperationId is not { } operationId ||
+            !TryGetWaitDuration(step, out var duration) ||
+            _timeProvider.GetUtcNow() - execution.UpdatedAt < duration)
+        {
+            return Task.CompletedTask;
+        }
+
+        return CompleteAsync(
+            execution.ExecutionId,
+            operationId,
+            WorkflowStepCompletionOutcome.Succeeded,
+            null,
+            cancellationToken);
+    }
+
+    private static bool TryGetWaitDuration(
+        WorkflowNextStepRequest step,
+        out TimeSpan duration)
+    {
+        var value = step.Parameters.FirstOrDefault(parameter =>
+            StringComparer.OrdinalIgnoreCase.Equals(
+                parameter.Key,
+                WorkflowRuntimeParameterNames.WaitDurationSeconds)).Value;
+        if (!decimal.TryParse(
+                value,
+                System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var seconds) ||
+            seconds < 0 ||
+            seconds > 86400)
+        {
+            duration = default;
+            return false;
+        }
+
+        duration = TimeSpan.FromSeconds((double)seconds);
+        return true;
     }
 
     private Task ApplyAdapterResponseAsync(
@@ -193,6 +271,7 @@ public sealed class WorkflowSimulatorWorker(
     IServiceScopeFactory scopeFactory,
     ProfileConfiguration profile,
     WorkflowSimulatorWorkerOptions options,
+    TimeProvider timeProvider,
     ILogger<WorkflowSimulatorWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -212,7 +291,8 @@ public sealed class WorkflowSimulatorWorker(
                     scope.ServiceProvider.GetRequiredService<IWorkflowApplicationService>(),
                     scope.ServiceProvider.GetRequiredService<IAgvGateway>(),
                     profile,
-                    options);
+                    options,
+                    timeProvider);
                 await dispatcher.ProcessAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

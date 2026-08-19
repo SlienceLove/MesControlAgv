@@ -24,7 +24,8 @@ public sealed class WorkflowRecoveryService(IServiceScopeFactory scopeFactory) :
         foreach (var execution in await workflows.ListRecoverableExecutionsAsync(cancellationToken))
         {
             if (execution.RuntimeStatus != WorkflowRuntimeStatus.Running ||
-                execution.TransportOperationId is null)
+                execution.TransportOperationId is null ||
+                execution.PendingStepRequest?.NodeType != WorkflowNodeType.Move)
             {
                 continue;
             }

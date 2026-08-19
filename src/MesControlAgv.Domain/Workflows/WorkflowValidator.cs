@@ -149,7 +149,67 @@ public sealed class WorkflowValidator
                         parameter.Name));
                 }
             }
+
+            ValidateRuntimeParameters(node, parameters, issues);
         }
+    }
+
+    private static void ValidateRuntimeParameters(
+        WorkflowNode node,
+        IReadOnlyList<WorkflowParameter> parameters,
+        ICollection<WorkflowValidationIssue> issues)
+    {
+        if (node.Type == WorkflowNodeType.Wait &&
+            TryGetParameter(parameters, WorkflowRuntimeParameterNames.WaitDurationSeconds, out var duration) &&
+            (!decimal.TryParse(
+                 duration.Value,
+                 System.Globalization.NumberStyles.Number,
+                 System.Globalization.CultureInfo.InvariantCulture,
+                 out var seconds) ||
+             seconds < 0 ||
+             seconds > 86400))
+        {
+            issues.Add(Error(
+                "WF018",
+                $"Wait parameter '{WorkflowRuntimeParameterNames.WaitDurationSeconds}' must be between 0 and 86400 seconds.",
+                node.Id,
+                WorkflowRuntimeParameterNames.WaitDurationSeconds));
+        }
+
+        if (node.Type != WorkflowNodeType.InstrumentOperation)
+        {
+            return;
+        }
+
+        RequireNamedParameter(node, parameters, WorkflowRuntimeParameterNames.InstrumentId, issues);
+        RequireNamedParameter(node, parameters, WorkflowRuntimeParameterNames.InstrumentOperation, issues);
+    }
+
+    private static void RequireNamedParameter(
+        WorkflowNode node,
+        IReadOnlyList<WorkflowParameter> parameters,
+        string parameterName,
+        ICollection<WorkflowValidationIssue> issues)
+    {
+        if (!TryGetParameter(parameters, parameterName, out var parameter) ||
+            (!parameter.IsRequired && string.IsNullOrWhiteSpace(parameter.Value)))
+        {
+            issues.Add(Error(
+                "WF019",
+                $"Instrument operation node requires parameter '{parameterName}' with a default value or required execution value.",
+                node.Id,
+                parameterName));
+        }
+    }
+
+    private static bool TryGetParameter(
+        IReadOnlyList<WorkflowParameter> parameters,
+        string name,
+        out WorkflowParameter parameter)
+    {
+        parameter = parameters.FirstOrDefault(item =>
+            StringComparer.OrdinalIgnoreCase.Equals(item.Name, name))!;
+        return parameter is not null;
     }
 
     private static void ValidateEdges(

@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.Text;
 using MesControlAgv.Application;
 using Microsoft.Extensions.Options;
 
@@ -29,21 +28,18 @@ public sealed class CicD160PlusReadOnlyDriver(
     IReadOnlyModbusTransport transport,
     IOptions<CicD160PlusOptions> configuredOptions)
 {
-    private const ushort IdentityStart = 0x1900;
-    private const ushort IdentityCount = 20;
-    private const ushort DetectorStart = 0x1770;
-    private const ushort DetectorCount = 12;
-    private const ushort ProcessStart = 0x17D4;
-    private const ushort ProcessCount = 18;
     private readonly CicD160PlusOptions _options = configuredOptions.Value;
 
     public async Task<CicD160PlusIdentity> IdentifyAsync(CancellationToken cancellationToken)
     {
-        var read = await transport.ReadInputRegistersAsync(IdentityStart, IdentityCount, cancellationToken);
+        var read = await transport.ReadInputRegistersAsync(
+            CicD160PlusProtocolMap.IdentityStart,
+            CicD160PlusProtocolMap.IdentityCount,
+            cancellationToken);
         return new(
             _options.InstrumentId,
             _options.Model,
-            DecodeObservedIdentifier(read.Data),
+            CicD160PlusProtocolMap.DecodeObservedIdentifier(read.Data),
             DateTimeOffset.UtcNow,
             Convert.ToHexString(read.Request),
             Convert.ToHexString(read.Response));
@@ -51,38 +47,60 @@ public sealed class CicD160PlusReadOnlyDriver(
 
     public async Task<CicD160PlusStatusResult> ReadStatusAsync(CancellationToken cancellationToken)
     {
-        var identity = await transport.ReadInputRegistersAsync(IdentityStart, IdentityCount, cancellationToken);
-        var detector = await transport.ReadInputRegistersAsync(DetectorStart, DetectorCount, cancellationToken);
-        var process = await transport.ReadInputRegistersAsync(ProcessStart, ProcessCount, cancellationToken);
+        var identity = await transport.ReadInputRegistersAsync(
+            CicD160PlusProtocolMap.IdentityStart,
+            CicD160PlusProtocolMap.IdentityCount,
+            cancellationToken);
+        var detector = await transport.ReadInputRegistersAsync(
+            CicD160PlusProtocolMap.DetectorStart,
+            CicD160PlusProtocolMap.DetectorCount,
+            cancellationToken);
+        var process = await transport.ReadInputRegistersAsync(
+            CicD160PlusProtocolMap.ProcessStart,
+            CicD160PlusProtocolMap.ProcessCount,
+            cancellationToken);
+        var suppressor = await transport.ReadInputRegistersAsync(
+            CicD160PlusProtocolMap.SuppressorStart,
+            CicD160PlusProtocolMap.SuppressorCount,
+            cancellationToken);
 
         var conductivity = ReadSingleLittleEndian(detector.Data, 0);
         var totalConductivity = ReadSingleLittleEndian(detector.Data, 12);
-        var columnTemperature = BinaryPrimitives.ReadUInt16BigEndian(process.Data.AsSpan(8, 2)) / 100d;
-        var flow = BinaryPrimitives.ReadUInt16BigEndian(process.Data.AsSpan(14, 2)) / 1000d;
+        var processState = CicD160PlusProtocolMap.DecodeProcess(process.Data);
+        var suppressorState = CicD160PlusProtocolMap.DecodeSuppressor(suppressor.Data);
         var observedAt = DateTimeOffset.UtcNow;
 
         var status = new IonChromatographyStatusSnapshot(
             _options.InstrumentId,
             _options.Model,
-            DecodeObservedIdentifier(identity.Data),
+            CicD160PlusProtocolMap.DecodeObservedIdentifier(identity.Data),
             Online: true,
             DeviceState: "ReadOnlyObserved",
             PortOwned: false,
             ObservedAtUtc: observedAt,
-            Pressure: null,
-            ColumnTemperature: columnTemperature,
+            Pressure: (double)CicD160PlusProtocolMap.DecodePressureMpa(processState.PressureRaw),
+            ColumnTemperature: processState.ColumnTemperatureActualRaw / 100d,
             DetectorTemperature: null,
             Alarm: null,
             Conductivity: conductivity,
             TotalConductivity: totalConductivity,
-            Flow: flow,
-            MappingConfidence: "CaptureCorrelatedCandidate");
+            Flow: processState.FlowActualRaw / 1000d,
+            MappingConfidence: "VendorDocumentAndFieldValidated",
+            FlowSetpoint: processState.FlowSetpointRaw / 1000d,
+            ColumnTemperatureSetpoint: processState.ColumnTemperatureSetpointRaw / 100d,
+            TemperatureControlStateRaw: processState.TemperatureControlStateRaw,
+            PumpStateRaw: processState.PumpStateRaw,
+            PressureRaw: processState.PressureRaw,
+            SuppressorEluentStateRaw: suppressorState.SuppressorEluentStateRaw,
+            FaultCode1Raw: suppressorState.FaultCode1Raw,
+            FaultCode2Raw: suppressorState.FaultCode2Raw);
 
         return new(status,
         [
             ToEvidence("Identity", identity),
             ToEvidence("Detector", detector),
-            ToEvidence("Process", process)
+            ToEvidence("Process", process),
+            ToEvidence("Suppressor", suppressor)
         ]);
     }
 
@@ -93,14 +111,6 @@ public sealed class CicD160PlusReadOnlyDriver(
         Convert.ToHexString(read.Request),
         Convert.ToHexString(read.Response),
         read.ElapsedMs);
-
-    private static string DecodeObservedIdentifier(byte[] data)
-    {
-        var length = Array.FindIndex(data, value => value == 0);
-        if (length < 0) length = data.Length;
-        var text = Encoding.ASCII.GetString(data, 0, length).Trim();
-        return text.Length == 0 ? "Unknown" : text;
-    }
 
     private static float ReadSingleLittleEndian(byte[] data, int offset)
     {

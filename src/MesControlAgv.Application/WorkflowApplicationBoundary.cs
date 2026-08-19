@@ -70,7 +70,7 @@ public interface IWorkflowApplicationService : IWorkflowVersionReader, IWorkflow
         WorkflowStepCompletionRequest completion,
         CancellationToken cancellationToken);
 
-    /// <summary>Returns non-dry-run Move steps that the Simulator worker may claim.</summary>
+    /// <summary>Returns non-dry-run Move and explicitly timed Wait steps that the Simulator worker may claim.</summary>
     Task<IReadOnlyList<WorkflowExecutionSnapshot>> ListSimulatorDispatchableExecutionsAsync(
         CancellationToken cancellationToken);
 

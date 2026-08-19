@@ -181,8 +181,13 @@ public sealed class WorkflowApplicationService : IWorkflowApplicationService
         return records
             .Select(WorkflowPersistence.ToExecutionSnapshot)
             .Where(snapshot => !snapshot.DryRun &&
-                               snapshot.PendingStepRequest?.NodeType == WorkflowNodeType.Move &&
-                               !string.IsNullOrWhiteSpace(snapshot.PendingStepRequest.TargetStation))
+                               snapshot.PendingStepRequest is { } step &&
+                               ((step.NodeType == WorkflowNodeType.Move &&
+                                 !string.IsNullOrWhiteSpace(step.TargetStation)) ||
+                                (step.NodeType == WorkflowNodeType.Wait &&
+                                 step.Parameters.Keys.Any(key => StringComparer.OrdinalIgnoreCase.Equals(
+                                     key,
+                                     WorkflowRuntimeParameterNames.WaitDurationSeconds)))))
             .ToArray();
     }
 

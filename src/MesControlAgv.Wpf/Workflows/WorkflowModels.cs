@@ -12,7 +12,8 @@ public enum WorkflowNodeType
     Pickup,
     Dropoff,
     End,
-    Custom
+    Custom,
+    InstrumentOperation
 }
 
 public sealed class WorkflowNodeParameter
@@ -63,6 +64,7 @@ public sealed class WorkflowNode : INotifyPropertyChanged
         WorkflowNodeType.Pickup => "取货",
         WorkflowNodeType.Dropoff => "放货",
         WorkflowNodeType.End => "结束",
+        WorkflowNodeType.InstrumentOperation => "仪器操作",
         _ => "自定义"
     };
 

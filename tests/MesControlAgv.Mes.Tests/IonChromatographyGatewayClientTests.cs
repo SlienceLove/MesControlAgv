@@ -22,7 +22,15 @@ public sealed class IonChromatographyGatewayClientTests
             Conductivity: 261.885712,
             TotalConductivity: 261.885712,
             Flow: 0.3,
-            MappingConfidence: "CaptureCorrelatedCandidate");
+            MappingConfidence: "VendorDocumentAndCaptureCorrelated",
+            FlowSetpoint: 0.7,
+            ColumnTemperatureSetpoint: 35,
+            TemperatureControlStateRaw: 0,
+            PumpStateRaw: 0,
+            PressureRaw: 0,
+            SuppressorEluentStateRaw: 0,
+            FaultCode1Raw: 0,
+            FaultCode2Raw: 0);
         var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
         {
             Content = JsonContent.Create(new { status })

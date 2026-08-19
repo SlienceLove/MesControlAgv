@@ -25,11 +25,20 @@ public sealed class IonChromatographyApiTests(MesWebApplicationFactory factory)
             "ReadOnlyObserved",
             false,
             observedAt,
+            Pressure: 9.8,
             ColumnTemperature: 31.23,
             Conductivity: 261.885712,
             TotalConductivity: 261.885712,
             Flow: 0.3,
-            MappingConfidence: "CaptureCorrelatedCandidate"));
+            MappingConfidence: "VendorDocumentAndCaptureCorrelated",
+            FlowSetpoint: 0.7,
+            ColumnTemperatureSetpoint: 35,
+            TemperatureControlStateRaw: 0,
+            PumpStateRaw: 0,
+            PressureRaw: 0,
+            SuppressorEluentStateRaw: 0,
+            FaultCode1Raw: 0,
+            FaultCode2Raw: 0));
         using var configuredFactory = ConfigureReader(reader);
         using var client = configuredFactory.CreateClient();
 
@@ -41,6 +50,15 @@ public sealed class IonChromatographyApiTests(MesWebApplicationFactory factory)
         Assert.Equal("YA7261078", result.Status.SerialNumber);
         Assert.Equal(31.23, result.Status.ColumnTemperature);
         Assert.Equal(0.3, result.Status.Flow);
+        Assert.Equal(0.7, result.Status.FlowSetpoint);
+        Assert.Equal(9.8, result.Status.Pressure);
+        Assert.Equal(35, result.Status.ColumnTemperatureSetpoint);
+        Assert.Equal(0, result.Status.TemperatureControlStateRaw);
+        Assert.Equal(0, result.Status.PumpStateRaw);
+        Assert.Equal(0, result.Status.PressureRaw);
+        Assert.Equal(0, result.Status.SuppressorEluentStateRaw);
+        Assert.Equal(0, result.Status.FaultCode1Raw);
+        Assert.Equal(0, result.Status.FaultCode2Raw);
         Assert.False(result.TaskAdmissionEnabled);
         Assert.Equal(["Identify", "ReadStatus"], result.EnabledOperations);
         Assert.Equal("ReadOnlyCaptureCorrelated", result.ControlPolicy);

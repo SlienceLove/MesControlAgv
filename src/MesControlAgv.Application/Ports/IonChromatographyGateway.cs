@@ -72,7 +72,15 @@ public sealed record IonChromatographyStatusSnapshot(
     double? Conductivity = null,
     double? TotalConductivity = null,
     double? Flow = null,
-    string? MappingConfidence = null);
+    string? MappingConfidence = null,
+    double? FlowSetpoint = null,
+    double? ColumnTemperatureSetpoint = null,
+    int? TemperatureControlStateRaw = null,
+    int? PumpStateRaw = null,
+    int? PressureRaw = null,
+    int? SuppressorEluentStateRaw = null,
+    int? FaultCode1Raw = null,
+    int? FaultCode2Raw = null);
 
 public interface IIonChromatographyStatusReader
 {

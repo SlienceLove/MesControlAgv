@@ -3,14 +3,21 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using MesControlAgv.InstrumentGateway;
 
 namespace MesControlAgv.InstrumentGateway.Tests;
 
 public sealed class GatewayApiTests : IClassFixture<DisabledGatewayFactory>
 {
     private readonly HttpClient _client;
+    private readonly DisabledGatewayFactory _factory;
 
-    public GatewayApiTests(DisabledGatewayFactory factory) => _client = factory.CreateClient();
+    public GatewayApiTests(DisabledGatewayFactory factory)
+    {
+        _factory = factory;
+        _client = factory.CreateClient();
+    }
 
     [Fact]
     public async Task Health_ReportsDisabledReadOnlyModeWithoutOpeningSerialPort()
@@ -50,6 +57,13 @@ public sealed class GatewayApiTests : IClassFixture<DisabledGatewayFactory>
 
         Assert.Equal(HttpStatusCode.MethodNotAllowed, response.StatusCode);
         Assert.Contains("read-only", body);
+    }
+
+    [Fact]
+    public void ControlledWriteTypes_AreNotRegisteredInRuntimeServices()
+    {
+        Assert.Null(_factory.Services.GetService<ICicD160PlusControlledWriteTransport>());
+        Assert.Null(_factory.Services.GetService<CicD160PlusControlledWriteSession>());
     }
 
     private sealed record HealthResponse(string Status, string Mode, string ComPort);

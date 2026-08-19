@@ -13,7 +13,21 @@ public enum WorkflowNodeType
     Pickup,
     Dropoff,
     End,
-    Custom
+    Custom,
+    InstrumentOperation
+}
+
+/// <summary>Well-known runtime parameter names shared by workflow clients and workers.</summary>
+public static class WorkflowRuntimeParameterNames
+{
+    /// <summary>
+    /// Optional non-negative duration for a Simulator-managed Wait node. A Wait
+    /// without this parameter remains prepared for an external condition.
+    /// </summary>
+    public const string WaitDurationSeconds = "durationSeconds";
+
+    public const string InstrumentId = "instrumentId";
+    public const string InstrumentOperation = "operation";
 }
 
 /// <summary>

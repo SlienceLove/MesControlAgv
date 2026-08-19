@@ -5,8 +5,10 @@ public static class CicD160PlusReadOnlyRegisterPolicy
     private static readonly HashSet<(ushort StartAddress, ushort RegisterCount)> AllowedReads =
     [
         (0x1900, 20),
+        (0x1900, 24),
         (0x1770, 12),
-        (0x17D4, 18)
+        (0x17D4, 18),
+        (0x1838, 10)
     ];
 
     public static bool IsAllowed(ushort startAddress, ushort registerCount) =>

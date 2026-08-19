@@ -62,8 +62,9 @@ public sealed class ModbusRtuCodecTests
     [InlineData(0x1900, 20, true)]
     [InlineData(0x1770, 12, true)]
     [InlineData(0x17D4, 18, true)]
+    [InlineData(0x1838, 10, true)]
     [InlineData(0x13E4, 1, false)]
-    [InlineData(0x1900, 24, false)]
+    [InlineData(0x1900, 24, true)]
     public void RegisterPolicy_AllowsOnlyGatewayReadRanges(int startAddress, int count, bool expected)
     {
         Assert.Equal(expected, CicD160PlusReadOnlyRegisterPolicy.IsAllowed((ushort)startAddress, (ushort)count));

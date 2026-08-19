@@ -69,6 +69,90 @@ public sealed class WorkflowContractTests
     }
 
     [Fact]
+    public void Validator_checks_timed_wait_and_instrument_operation_parameters()
+    {
+        var start = Guid.NewGuid();
+        var wait = Guid.NewGuid();
+        var instrument = Guid.NewGuid();
+        var end = Guid.NewGuid();
+        var definition = new WorkflowDefinition
+        {
+            Name = "Instrument workflow",
+            Nodes =
+            [
+                new WorkflowNode { Id = start, Type = WorkflowNodeType.Start, Name = "Start", Order = 1, NextNodeIds = [wait] },
+                new WorkflowNode
+                {
+                    Id = wait,
+                    Type = WorkflowNodeType.Wait,
+                    Name = "Wait",
+                    Order = 2,
+                    NextNodeIds = [instrument],
+                    Parameters =
+                    [
+                        new WorkflowParameter
+                        {
+                            Name = WorkflowRuntimeParameterNames.WaitDurationSeconds,
+                            Value = "-1"
+                        }
+                    ]
+                },
+                new WorkflowNode
+                {
+                    Id = instrument,
+                    Type = WorkflowNodeType.InstrumentOperation,
+                    Name = "Read D160 status",
+                    Order = 3,
+                    NextNodeIds = [end]
+                },
+                new WorkflowNode { Id = end, Type = WorkflowNodeType.End, Name = "End", Order = 4 }
+            ]
+        };
+
+        var invalid = new WorkflowValidator().Validate(definition);
+
+        Assert.Contains(invalid.Issues, issue => issue.Code == "WF018");
+        Assert.Equal(2, invalid.Issues.Count(issue => issue.Code == "WF019"));
+
+        var valid = definition with
+        {
+            Nodes = definition.Nodes.Select(node => node.Id == wait
+                    ? node with
+                    {
+                        Parameters =
+                        [
+                            new WorkflowParameter
+                            {
+                                Name = WorkflowRuntimeParameterNames.WaitDurationSeconds,
+                                Value = "1.5"
+                            }
+                        ]
+                    }
+                    : node.Id == instrument
+                        ? node with
+                        {
+                            Parameters =
+                            [
+                                new WorkflowParameter
+                                {
+                                    Name = WorkflowRuntimeParameterNames.InstrumentId,
+                                    Value = "D160-01"
+                                },
+                                new WorkflowParameter
+                                {
+                                    Name = WorkflowRuntimeParameterNames.InstrumentOperation,
+                                    IsRequired = true
+                                }
+                            ]
+                        }
+                        : node)
+                .ToArray()
+        };
+
+        Assert.True(new WorkflowValidator().Validate(valid).IsValid);
+    }
+
+    [Fact]
     public void Version_and_execution_request_pin_the_immutable_version()
     {
         var workflowId = Guid.NewGuid();
