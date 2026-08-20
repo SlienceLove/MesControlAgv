@@ -200,6 +200,49 @@ public sealed class WorkflowGraphEditorTests
     }
 
     [Fact]
+    public void Viewport_updates_are_persisted_without_polluting_edit_history()
+    {
+        var document = WorkflowSpikeSamples.CreateLinear();
+        var editor = new WorkflowDocumentEditor(document);
+        var nodeId = document.Nodes[1].Id;
+
+        Assert.True(editor.TryUpdateLayout(nodeId, 640, 320));
+        Assert.True(editor.TryUpdateViewport(new WorkflowCanvasViewport { X = 80, Y = 40, Zoom = 1.5 }));
+        Assert.False(editor.TryUpdateViewport(new WorkflowCanvasViewport { X = 80, Y = 40, Zoom = 1.5 }));
+
+        Assert.True(editor.Undo());
+        Assert.False(editor.CanUndo);
+        Assert.Equal(new WorkflowCanvasViewport { X = 80, Y = 40, Zoom = 1.5 }, editor.Current.Viewport);
+
+        Assert.True(editor.Redo());
+        Assert.Equal(new WorkflowCanvasViewport { X = 80, Y = 40, Zoom = 1.5 }, editor.Current.Viewport);
+    }
+
+    [Fact]
+    public void Property_projection_changes_share_history_and_preserve_lifecycle_metadata()
+    {
+        var document = WorkflowSpikeSamples.CreateLinear();
+        var editor = new WorkflowDocumentEditor(document);
+        var renamed = document with
+        {
+            Nodes = document.Nodes
+                .Select((node, index) => index == 0 ? node with { Name = "Renamed" } : node)
+                .ToArray()
+        };
+
+        Assert.True(editor.TryReplaceDocument(renamed));
+        Assert.True(editor.TryReplaceDocument(renamed with { PublishedVersion = 7 }, recordHistory: false));
+
+        Assert.True(editor.Undo());
+        Assert.Equal(document.Nodes[0].Name, editor.Current.Nodes[0].Name);
+        Assert.Equal(7, editor.Current.PublishedVersion);
+
+        Assert.True(editor.Redo());
+        Assert.Equal("Renamed", editor.Current.Nodes[0].Name);
+        Assert.Equal(7, editor.Current.PublishedVersion);
+    }
+
+    [Fact]
     public void Contracts_and_domain_do_not_reference_nodify()
     {
         var contracts = typeof(WorkflowGraphDocument).Assembly.GetReferencedAssemblies();

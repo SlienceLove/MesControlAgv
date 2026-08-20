@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
@@ -10,6 +11,7 @@ using MesControlAgv.Wpf.Workflows;
 
 using ContractWorkflowDefinition = MesControlAgv.Contracts.Workflows.WorkflowDefinition;
 using ContractWorkflowGraphDocument = MesControlAgv.Contracts.Workflows.WorkflowGraphDocument;
+using ContractWorkflowCanvasViewport = MesControlAgv.Contracts.Workflows.WorkflowCanvasViewport;
 using ContractWorkflowNode = MesControlAgv.Contracts.Workflows.WorkflowNode;
 using ContractWorkflowExecutionRequest = MesControlAgv.Contracts.Workflows.WorkflowExecutionRequest;
 using ContractWorkflowExecutionResult = MesControlAgv.Contracts.Workflows.WorkflowExecutionResult;
@@ -60,6 +62,15 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     private ContractWorkflowExecutionSnapshot? _lastExecutionSnapshot;
     private IReadOnlyList<ContractWorkflowAuditResponse> _lastExecutionAudits = [];
     private bool _profileDefaultsApplied;
+    private WorkflowCanvasSpikeViewModel? _canvasViewModel;
+    private WorkflowDefinition? _observedWorkflow;
+    private readonly HashSet<WorkflowNode> _observedWorkflowNodes = [];
+    private readonly HashSet<WorkflowNodeParameter> _observedWorkflowParameters = [];
+    private int _projectionUpdateDepth;
+    private bool _projectionRefreshPending;
+    private bool _projectionRefreshRecordsHistory;
+    private bool _isApplyingCanvasDocument;
+    private bool _isSynchronizingCanvasSelection;
 
     public WorkflowEditorViewModel(
         WorkflowStore store,
@@ -189,14 +200,25 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         set
         {
             if (ReferenceEquals(_selectedWorkflow, value)) return;
+            DetachWorkflowProjection();
             _selectedWorkflow = value;
-            SelectedNode = value?.Nodes.OrderBy(node => node.Order).FirstOrDefault();
+            AttachWorkflowProjection();
+            _isSynchronizingCanvasSelection = true;
+            try
+            {
+                SelectedNode = value?.Nodes.OrderBy(node => node.Order).FirstOrDefault();
+            }
+            finally
+            {
+                _isSynchronizingCanvasSelection = false;
+            }
             _lastValidation = value is not null && _remoteVersions.TryGetValue(value.Id, out var remote)
                 ? remote.Validation
                 : null;
             OnPropertyChanged();
             OnPropertyChanged(nameof(Nodes));
             OnPropertyChanged(nameof(SelectedGraphDocument));
+            RebuildCanvasForSelection();
             OnPropertyChanged(nameof(SelectedRemoteVersion));
             OnPropertyChanged(nameof(RemoteStatus));
             OnPropertyChanged(nameof(ValidationSummary));
@@ -212,6 +234,20 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             if (ReferenceEquals(_selectedNode, value)) return;
             _selectedNode = value;
             SelectedParameter = value?.Parameters.FirstOrDefault();
+            if (!_isSynchronizingCanvasSelection &&
+                value is not null &&
+                _canvasViewModel?.SelectedNode?.Id != value.Id)
+            {
+                _isSynchronizingCanvasSelection = true;
+                try
+                {
+                    _canvasViewModel?.SelectNode(value.Id);
+                }
+                finally
+                {
+                    _isSynchronizingCanvasSelection = false;
+                }
+            }
             OnPropertyChanged();
             RefreshCommandStates();
         }
@@ -226,6 +262,14 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         SelectedWorkflow is { } workflow
             ? WorkflowDocumentMapper.ToGraph(workflow)
             : null;
+
+    public WorkflowCanvasSpikeViewModel? CanvasViewModel => _canvasViewModel;
+
+    public void SelectNodeById(Guid nodeId)
+    {
+        var node = Nodes.FirstOrDefault(candidate => candidate.Id == nodeId);
+        if (node is not null) SelectedNode = node;
+    }
 
     public WorkflowNodeParameter? SelectedParameter
     {
@@ -795,29 +839,32 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     public void AddNodeAt(WorkflowNodeType type, double? x, double? y)
     {
         if (SelectedWorkflow is not { } workflow) return;
-        var nextOrder = workflow.Nodes.Count + 1;
-        var node = new WorkflowNode
+        BeginProjectionUpdate();
+        try
         {
-            Type = type,
-            GraphNodeTypeId = MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.For(
-                (MesControlAgv.Contracts.Workflows.WorkflowNodeType)type),
-            Name = DefaultNodeName(type, nextOrder),
-            Description = DefaultNodeDescription(type),
-            X = x ?? Math.Max(0, workflow.Nodes.Count * 180),
-            Y = y ?? 100,
-            Order = nextOrder
-        };
-        foreach (var port in WorkflowGraphContractAdapter.CreatePorts(
-                     (MesControlAgv.Contracts.Workflows.WorkflowNodeType)type))
-        {
-            node.Ports.Add(port);
+            var nextOrder = workflow.Nodes.Count + 1;
+            var node = new WorkflowNode
+            {
+                Type = type,
+                GraphNodeTypeId = MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.For(
+                    (MesControlAgv.Contracts.Workflows.WorkflowNodeType)type),
+                Name = DefaultNodeName(type, nextOrder),
+                Description = DefaultNodeDescription(type),
+                X = x ?? Math.Max(0, workflow.Nodes.Count * 180),
+                Y = y ?? 100,
+                Order = nextOrder
+            };
+            AddDefaultParameters(node);
+            workflow.Nodes.Add(node);
+            NormalizeOrders(workflow);
+            SelectedNode = node;
+            Message = "已添加流程节点。";
+            RefreshCommandStates();
         }
-        AddDefaultParameters(node);
-        workflow.Nodes.Add(node);
-        NormalizeOrders(workflow);
-        SelectedNode = node;
-        Message = "已添加流程节点。";
-        RefreshCommandStates();
+        finally
+        {
+            EndProjectionUpdate();
+        }
     }
 
     private static string DefaultNodeName(WorkflowNodeType type, int order) => type switch
@@ -898,11 +945,19 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     private void DeleteNode()
     {
         if (SelectedWorkflow is not { } workflow || SelectedNode is not { } node) return;
-        workflow.Nodes.Remove(node);
-        NormalizeOrders(workflow);
-        SelectedNode = workflow.Nodes.OrderBy(item => item.Order).ElementAtOrDefault(Math.Max(0, workflow.Nodes.Count - 1));
-        Message = "已删除流程节点。";
-        RefreshCommandStates();
+        BeginProjectionUpdate();
+        try
+        {
+            workflow.Nodes.Remove(node);
+            NormalizeOrders(workflow);
+            SelectedNode = workflow.Nodes.OrderBy(item => item.Order).ElementAtOrDefault(Math.Max(0, workflow.Nodes.Count - 1));
+            Message = "已删除流程节点。";
+            RefreshCommandStates();
+        }
+        finally
+        {
+            EndProjectionUpdate();
+        }
     }
 
     private void MoveNode(int direction)
@@ -913,12 +968,20 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         var target = index + direction;
         if (index < 0 || target < 0 || target >= ordered.Count) return;
 
-        (ordered[index], ordered[target]) = (ordered[target], ordered[index]);
-        workflow.Nodes.Clear();
-        foreach (var item in ordered) workflow.Nodes.Add(item);
-        NormalizeOrders(workflow);
-        Message = direction < 0 ? "节点已左移。" : "节点已右移。";
-        RefreshCommandStates();
+        BeginProjectionUpdate();
+        try
+        {
+            (ordered[index], ordered[target]) = (ordered[target], ordered[index]);
+            workflow.Nodes.Clear();
+            foreach (var item in ordered) workflow.Nodes.Add(item);
+            NormalizeOrders(workflow);
+            Message = direction < 0 ? "节点已左移。" : "节点已右移。";
+            RefreshCommandStates();
+        }
+        finally
+        {
+            EndProjectionUpdate();
+        }
     }
 
     private bool CanMoveNodeLeft() => SelectedWorkflow is not null && SelectedNode is not null && SelectedNode.Order > 1;
@@ -977,6 +1040,239 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+
+    private void RebuildCanvasForSelection()
+    {
+        if (_canvasViewModel is not null)
+        {
+            _canvasViewModel.SelectionChanged -= CanvasSelectionChanged;
+            _canvasViewModel.ViewportChanged -= CanvasViewportChanged;
+        }
+
+        if (SelectedWorkflow is not { } workflow)
+        {
+            _canvasViewModel = null;
+            OnPropertyChanged(nameof(CanvasViewModel));
+            return;
+        }
+
+        _canvasViewModel = new WorkflowCanvasSpikeViewModel(
+            WorkflowDocumentMapper.ToGraph(workflow),
+            CommitCanvasDocument);
+        _canvasViewModel.SelectionChanged += CanvasSelectionChanged;
+        _canvasViewModel.ViewportChanged += CanvasViewportChanged;
+        if (SelectedNode is { } selectedNode)
+        {
+            _isSynchronizingCanvasSelection = true;
+            try
+            {
+                _canvasViewModel.SelectNode(selectedNode.Id);
+            }
+            finally
+            {
+                _isSynchronizingCanvasSelection = false;
+            }
+        }
+        OnPropertyChanged(nameof(CanvasViewModel));
+    }
+
+    private void CommitCanvasDocument(ContractWorkflowGraphDocument document)
+    {
+        if (SelectedWorkflow is not { } workflow || document.Id != workflow.Id) return;
+
+        var selectedNodeId = SelectedNode?.Id;
+        var projected = WorkflowDocumentMapper.FromGraph(document);
+        _isApplyingCanvasDocument = true;
+        DetachWorkflowProjection();
+        try
+        {
+            workflow.Name = projected.Name;
+            workflow.Description = projected.Description;
+            workflow.IsPreset = projected.IsPreset;
+            workflow.PublishedVersion = projected.PublishedVersion;
+            workflow.Nodes = projected.Nodes;
+            workflow.Edges = projected.Edges;
+            workflow.Layouts = projected.Layouts;
+            workflow.Viewport = projected.Viewport;
+        }
+        finally
+        {
+            AttachWorkflowProjection();
+            _isApplyingCanvasDocument = false;
+        }
+
+        _isSynchronizingCanvasSelection = true;
+        try
+        {
+            SelectedNode = workflow.Nodes.FirstOrDefault(node => node.Id == selectedNodeId)
+                ?? workflow.Nodes.OrderBy(node => node.Order).FirstOrDefault();
+        }
+        finally
+        {
+            _isSynchronizingCanvasSelection = false;
+        }
+
+        OnPropertyChanged(nameof(Nodes));
+        OnPropertyChanged(nameof(SelectedGraphDocument));
+        Message = "画布修改已回写到统一流程文档。";
+    }
+
+    private void CanvasSelectionChanged(object? sender, Guid? nodeId)
+    {
+        if (_isSynchronizingCanvasSelection) return;
+        _isSynchronizingCanvasSelection = true;
+        try
+        {
+            SelectedNode = nodeId is { } id
+                ? Nodes.FirstOrDefault(node => node.Id == id)
+                : null;
+        }
+        finally
+        {
+            _isSynchronizingCanvasSelection = false;
+        }
+    }
+
+    private void CanvasViewportChanged(object? sender, ContractWorkflowCanvasViewport viewport)
+    {
+        if (!ReferenceEquals(sender, _canvasViewModel) || SelectedWorkflow is not { } workflow) return;
+        workflow.Viewport = viewport;
+        OnPropertyChanged(nameof(SelectedGraphDocument));
+    }
+
+    private void AttachWorkflowProjection()
+    {
+        _observedWorkflow = SelectedWorkflow;
+        if (_observedWorkflow is null) return;
+
+        _observedWorkflow.PropertyChanged += WorkflowProjectionPropertyChanged;
+        _observedWorkflow.Nodes.CollectionChanged += WorkflowProjectionCollectionChanged;
+        AttachWorkflowProjectionItems();
+    }
+
+    private void DetachWorkflowProjection()
+    {
+        if (_observedWorkflow is not null)
+        {
+            _observedWorkflow.PropertyChanged -= WorkflowProjectionPropertyChanged;
+            _observedWorkflow.Nodes.CollectionChanged -= WorkflowProjectionCollectionChanged;
+        }
+
+        DetachWorkflowProjectionItems();
+        _observedWorkflow = null;
+    }
+
+    private void AttachWorkflowProjectionItems()
+    {
+        if (_observedWorkflow is null) return;
+        foreach (var node in _observedWorkflow.Nodes)
+        {
+            if (_observedWorkflowNodes.Add(node))
+            {
+                node.PropertyChanged += WorkflowProjectionPropertyChanged;
+                node.Parameters.CollectionChanged += WorkflowProjectionCollectionChanged;
+            }
+
+            foreach (var parameter in node.Parameters)
+            {
+                if (!_observedWorkflowParameters.Add(parameter)) continue;
+                parameter.PropertyChanged += WorkflowProjectionPropertyChanged;
+            }
+        }
+    }
+
+    private void DetachWorkflowProjectionItems()
+    {
+        foreach (var node in _observedWorkflowNodes)
+        {
+            node.PropertyChanged -= WorkflowProjectionPropertyChanged;
+            node.Parameters.CollectionChanged -= WorkflowProjectionCollectionChanged;
+        }
+
+        foreach (var parameter in _observedWorkflowParameters)
+            parameter.PropertyChanged -= WorkflowProjectionPropertyChanged;
+
+        _observedWorkflowNodes.Clear();
+        _observedWorkflowParameters.Clear();
+    }
+
+    private void WorkflowProjectionCollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        DetachWorkflowProjectionItems();
+        AttachWorkflowProjectionItems();
+        RequestCanvasRefresh();
+    }
+
+    private void WorkflowProjectionPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (sender is WorkflowNode && e.PropertyName is not (
+                nameof(WorkflowNode.Type) or
+                nameof(WorkflowNode.Name) or
+                nameof(WorkflowNode.Description) or
+                nameof(WorkflowNode.TargetStation) or
+                nameof(WorkflowNode.X) or
+                nameof(WorkflowNode.Y) or
+                nameof(WorkflowNode.Order)))
+        {
+            return;
+        }
+
+        if (sender is WorkflowNodeParameter && e.PropertyName is not (
+                nameof(WorkflowNodeParameter.Name) or
+                nameof(WorkflowNodeParameter.Value) or
+                nameof(WorkflowNodeParameter.DataType) or
+                nameof(WorkflowNodeParameter.IsRequired)))
+        {
+            return;
+        }
+
+        var recordHistory = sender is not WorkflowDefinition ||
+            e.PropertyName != nameof(WorkflowDefinition.PublishedVersion);
+        RequestCanvasRefresh(recordHistory);
+    }
+
+    private void BeginProjectionUpdate() => _projectionUpdateDepth++;
+
+    private void EndProjectionUpdate()
+    {
+        if (_projectionUpdateDepth == 0) return;
+        _projectionUpdateDepth--;
+        if (_projectionUpdateDepth != 0 || !_projectionRefreshPending) return;
+        var recordHistory = _projectionRefreshRecordsHistory;
+        _projectionRefreshPending = false;
+        _projectionRefreshRecordsHistory = false;
+        RefreshCanvasFromProjection(recordHistory);
+    }
+
+    private void RequestCanvasRefresh(bool recordHistory = true)
+    {
+        if (_isApplyingCanvasDocument) return;
+        OnPropertyChanged(nameof(SelectedGraphDocument));
+        if (_projectionUpdateDepth > 0)
+        {
+            _projectionRefreshPending = true;
+            _projectionRefreshRecordsHistory |= recordHistory;
+            return;
+        }
+
+        RefreshCanvasFromProjection(recordHistory);
+    }
+
+    private void RefreshCanvasFromProjection(bool recordHistory = true)
+    {
+        if (SelectedWorkflow is not { } workflow || _canvasViewModel is null) return;
+        var selectedNodeId = SelectedNode?.Id;
+        _isSynchronizingCanvasSelection = true;
+        try
+        {
+            _canvasViewModel.ApplyDocument(WorkflowDocumentMapper.ToGraph(workflow), recordHistory);
+            if (selectedNodeId is { } id) _canvasViewModel.SelectNode(id);
+        }
+        finally
+        {
+            _isSynchronizingCanvasSelection = false;
+        }
+    }
 
     private sealed class EditorCommand(Action execute, Func<bool>? canExecute = null) : ICommand
     {

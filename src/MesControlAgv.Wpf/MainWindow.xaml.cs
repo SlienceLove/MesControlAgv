@@ -1,4 +1,3 @@
-using System.Collections.Specialized;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
@@ -6,7 +5,6 @@ using System.Windows.Data;
 using System.Windows.Input;
 using Microsoft.Win32;
 using System.Windows.Media;
-using System.Windows.Shapes;
 using System.Windows.Threading;
 using MesControlAgv.Domain.Map;
 using MesControlAgv.Wpf.Services;
@@ -18,10 +16,6 @@ namespace MesControlAgv.Wpf;
 public partial class MainWindow : Window
 {
     private WorkflowEditorViewModel? _workflowEditor;
-    private INotifyCollectionChanged? _observedNodes;
-    private WorkflowNode? _draggingNode;
-    private FrameworkElement? _dragSource;
-    private Point _dragOffset;
     private bool _mapPanning;
     private Point _mapPanStart;
     private DispatcherTimer? _mapAnimationTimer;
@@ -114,12 +108,18 @@ public partial class MainWindow : Window
     {
         AttachWorkflowEditor();
         AttachMapViewModel();
-        RefreshWorkflowLinks();
         StartMapAnimation();
     }
 
     private void MainWindow_Closed(object? sender, EventArgs e)
     {
+        if (_workflowEditor is not null)
+        {
+            _workflowEditor.PropertyChanged -= WorkflowEditor_PropertyChanged;
+            _workflowEditor = null;
+        }
+        WorkflowCanvasSurface.Detach();
+
         if (_observedMap is not null)
         {
             _observedMap.PropertyChanged -= MapViewModel_PropertyChanged;
@@ -135,7 +135,6 @@ public partial class MainWindow : Window
     {
         AttachWorkflowEditor();
         AttachMapViewModel();
-        RefreshWorkflowLinks();
     }
 
     private void AttachMapViewModel()
@@ -161,31 +160,30 @@ public partial class MainWindow : Window
     {
         var editor = (DataContext as MainViewModel)?.WorkflowEditor;
         if (ReferenceEquals(_workflowEditor, editor)) return;
-        if (_observedNodes is not null) _observedNodes.CollectionChanged -= WorkflowNodes_CollectionChanged;
         if (_workflowEditor is not null) _workflowEditor.PropertyChanged -= WorkflowEditor_PropertyChanged;
 
         _workflowEditor = editor;
-        if (_workflowEditor is null) return;
+        if (_workflowEditor is null)
+        {
+            WorkflowCanvasSurface.Detach();
+            return;
+        }
         _workflowEditor.PropertyChanged += WorkflowEditor_PropertyChanged;
-        AttachNodeCollection();
+        AttachWorkflowCanvas();
     }
 
     private void WorkflowEditor_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(WorkflowEditorViewModel.SelectedWorkflow)) AttachNodeCollection();
-        Dispatcher.BeginInvoke(RefreshWorkflowLinks);
+        if (e.PropertyName == nameof(WorkflowEditorViewModel.CanvasViewModel))
+            Dispatcher.BeginInvoke(AttachWorkflowCanvas);
     }
 
-    private void AttachNodeCollection()
+    private void AttachWorkflowCanvas()
     {
-        if (_observedNodes is not null) _observedNodes.CollectionChanged -= WorkflowNodes_CollectionChanged;
-        _observedNodes = _workflowEditor?.SelectedWorkflow?.Nodes;
-        if (_observedNodes is not null) _observedNodes.CollectionChanged += WorkflowNodes_CollectionChanged;
-    }
-
-    private void WorkflowNodes_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
-    {
-        Dispatcher.BeginInvoke(RefreshWorkflowLinks);
+        if (_workflowEditor?.CanvasViewModel is { } canvas)
+            WorkflowCanvasSurface.Attach(canvas);
+        else
+            WorkflowCanvasSurface.Detach();
     }
 
     private void WorkflowPalette_PreviewMouseMove(object sender, MouseEventArgs e)
@@ -203,40 +201,19 @@ public partial class MainWindow : Window
     private void WorkflowCanvas_Drop(object sender, DragEventArgs e)
     {
         if (_workflowEditor is null || e.Data.GetData(typeof(WorkflowNodeTypeOption)) is not WorkflowNodeTypeOption option) return;
-        var position = e.GetPosition(WorkflowNodes);
-        _workflowEditor.AddNodeAt(option.Value, Math.Max(0, position.X - 85), Math.Max(0, position.Y - 40));
-        RefreshWorkflowLinks();
+        var position = WorkflowCanvasSurface.GetGraphLocation(e);
+        _workflowEditor.AddNodeAt(option.Value, Math.Max(0, position.X - 100), Math.Max(0, position.Y - 60));
+        WorkflowCanvasSurface.Focus();
         e.Handled = true;
     }
 
-    private void WorkflowNode_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    private void WorkflowCanvas_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (sender is not FrameworkElement element || element.DataContext is not WorkflowNode node || _workflowEditor is null) return;
-        _workflowEditor.SelectedNode = node;
-        _draggingNode = node;
-        _dragSource = element;
-        _dragOffset = e.GetPosition(element);
-        element.CaptureMouse();
-        e.Handled = true;
+        if (_workflowEditor?.CanvasViewModel?.HandleKey(e.Key, Keyboard.Modifiers) == true)
+            e.Handled = true;
     }
 
-    private void WorkflowNode_MouseMove(object sender, MouseEventArgs e)
-    {
-        if (_draggingNode is null || _dragSource is null || e.LeftButton != MouseButtonState.Pressed || !_dragSource.IsMouseCaptured) return;
-        var position = e.GetPosition(WorkflowNodes);
-        _draggingNode.X = Math.Max(0, Math.Min(1320, position.X - _dragOffset.X));
-        _draggingNode.Y = Math.Max(0, Math.Min(638, position.Y - _dragOffset.Y));
-        RefreshWorkflowLinks();
-    }
-
-    private void WorkflowNode_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
-    {
-        if (_dragSource is not null && _dragSource.IsMouseCaptured) _dragSource.ReleaseMouseCapture();
-        _dragSource = null;
-        _draggingNode = null;
-        RefreshWorkflowLinks();
-        e.Handled = true;
-    }
+    private void WorkflowCanvas_FitToContent(object sender, RoutedEventArgs e) => WorkflowCanvasSurface.FitToContent();
 
     private void MapCanvas_MouseWheel(object sender, MouseWheelEventArgs e)
     {
@@ -521,47 +498,6 @@ public partial class MainWindow : Window
         }
     }
 
-    private void RefreshWorkflowLinks()
-    {
-        if (WorkflowLinksCanvas is null) return;
-        WorkflowLinksCanvas.Children.Clear();
-        var nodes = _workflowEditor?.SelectedWorkflow?.Nodes.OrderBy(node => node.Order).ToList();
-        if (nodes is null || nodes.Count < 2) return;
-
-        var nodeById = nodes.ToDictionary(node => node.Id);
-        var links = nodes.Any(node => node.NextNodeIds.Count > 0)
-            ? nodes.SelectMany(source => source.NextNodeIds
-                .Where(nodeById.ContainsKey)
-                .Select(targetId => (Source: source, Target: nodeById[targetId])))
-            : nodes.Zip(nodes.Skip(1), (source, target) => (Source: source, Target: target));
-
-        foreach (var (source, target) in links)
-        {
-            var x1 = source.X + 170;
-            var y1 = source.Y + 41;
-            var x2 = target.X;
-            var y2 = target.Y + 41;
-            var line = new Line
-            {
-                X1 = x1,
-                Y1 = y1,
-                X2 = x2,
-                Y2 = y2,
-                Stroke = new SolidColorBrush(Color.FromRgb(115, 129, 148)),
-                StrokeThickness = 2,
-                StrokeDashArray = x2 < x1 ? new DoubleCollection { 3, 3 } : null
-            };
-            WorkflowLinksCanvas.Children.Add(line);
-            var arrow = new Polygon
-            {
-                Points = new PointCollection { new(0, 0), new(-10, -5), new(-10, 5) },
-                Fill = new SolidColorBrush(Color.FromRgb(115, 129, 148))
-            };
-            Canvas.SetLeft(arrow, x2);
-            Canvas.SetTop(arrow, y2);
-            WorkflowLinksCanvas.Children.Add(arrow);
-        }
-    }
 }
 
 public sealed class MapBezierGeometryConverter : IValueConverter

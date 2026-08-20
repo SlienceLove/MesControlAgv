@@ -1,22 +1,20 @@
 # AGV MES MVP Progress
 
-Last updated: 2026-08-19
+Last updated: 2026-08-20
 
 ## Current priority and branch
 
 Development focus has moved to branch
-`feat/ion-chromatography-direct-control-validation`. The current delivery
-sequence is:
+`docs/experiment-workflow-architecture-plan`. The validated ion chromatography
+work remains in its dedicated branch and is used here only as a capability and
+safety-boundary input. The current delivery sequence is:
 
-1. **P0 - ion chromatography communication:** establish a safe, evidence-based
-   direct communication path to the CIC-D160+ before integrating instrument
-   control into MES.
-2. **P1 - robot arm and vision communication:** obtain the vendor protocols,
-   calibration data, and safety contracts, then implement and verify the two
-   device drivers independently.
-3. **P2 - control-center end-to-end integration:** orchestrate the verified
-   instrument, robot arm, vision, and existing AGV capabilities through one
-   auditable workflow, starting with dry-run and supervised execution.
+1. **P0 - experiment workflow G2:** converge the main editor on the versioned
+   graph document and verify the Nodify canvas without enabling device writes.
+2. **P1 - experiment workflow G3:** add typed node schemas, capability catalog
+   references, and publish-time validation after G2 acceptance.
+3. **P2 - runtime and scheduling:** add read-only execution evidence, resource
+   leases, and scheduling only after the definition editor is stable.
 
 The AGV MVP is now in a **frozen maintenance state**. Its Simulator workflow,
 vendor TCP boundary, offline verification, and physical-acceptance evidence are
@@ -1638,3 +1636,31 @@ Detailed continuation notes are in
   `docs/EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md`. The main-window Nodify canvas
   replacement remains the next acceptance node; the current WPF observable
   projection is retained until that UI migration is verified.
+
+## 2026-08-20 experiment workflow G2-B main editor integration
+
+- The hand-written workflow canvas in `实验流程管理` now uses
+  `NodifyCanvasAdapter` behind `IWorkflowCanvasSurface`. Nodify remains a WPF
+  implementation detail and is not referenced by Contracts, Domain, MES, or
+  any device project.
+- Canvas and property-panel selection are synchronized. Node properties,
+  parameters, layout, explicit connections, deletion, palette drag/drop,
+  undo/redo, auto-layout, fit-to-content, and keyboard edits now update one
+  `WorkflowGraphDocument` history. Pan and zoom are persisted with throttling
+  and do not add undo steps.
+- Graph Document schema is v2. Edge-less v1 graph documents and legacy WPF
+  arrays receive ordered success edges during import; intentionally
+  disconnected v2 drafts remain disconnected. Preset workflows directly carry
+  six nodes, five explicit edges, and matching `NextNodeIds`.
+- Release solution build passed with 0 warnings and 0 errors. Full tests passed
+  **570/570**, with 5 existing E2E tests skipped: Domain 37, MES 70, Adapter
+  176, WPF 185, E2E 19, Simulator 5, Workflow Contract 28, and Instrument
+  Gateway 50.
+- A fresh isolated Simulator UI run on ports `5583/5541/5545` confirmed
+  `节点 6`, `边 5`, five rendered connections, synchronized properties, and no
+  canvas/property-panel overlap. The run opened no serial port and sent no
+  command to a physical AGV, robot arm, or CIC-D160+.
+- G2-B acceptance and the remaining G2-C cleanup are recorded in
+  `docs/EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md`. The old `实验流程设计`
+  compatibility entry, presentation projection ownership, and visible legacy
+  import report remain intentionally unclaimed; G3 has not started.

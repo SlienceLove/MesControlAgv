@@ -20,14 +20,20 @@ public static class WorkflowDocumentMapper
         var edges = workflow.Edges is { Count: > 0 }
             ? workflow.Edges.ToArray()
             : BuildEdgesFromLegacyNodes(localNodes);
-        var layouts = workflow.Layouts is { Count: > 0 }
-            ? workflow.Layouts.ToArray()
-            : localNodes.Select(node => new WorkflowNodeLayout
-            {
-                NodeId = node.Id,
-                X = node.X,
-                Y = node.Y
-            }).ToArray();
+        var localNodeIds = localNodes.Select(node => node.Id).ToHashSet();
+        var savedLayouts = (workflow.Layouts ?? [])
+            .Where(layout => localNodeIds.Contains(layout.NodeId))
+            .GroupBy(layout => layout.NodeId)
+            .ToDictionary(group => group.Key, group => group.Last());
+        var layouts = localNodes.Select(node =>
+            savedLayouts.TryGetValue(node.Id, out var layout)
+                ? layout
+                : new WorkflowNodeLayout
+                {
+                    NodeId = node.Id,
+                    X = node.X,
+                    Y = node.Y
+                }).ToArray();
 
         return new WorkflowGraphDocument
         {

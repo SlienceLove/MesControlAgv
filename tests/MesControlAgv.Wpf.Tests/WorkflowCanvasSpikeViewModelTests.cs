@@ -11,6 +11,7 @@ public sealed class WorkflowCanvasSpikeViewModelTests
 
         Assert.Equal(20, viewModel.NodeCount);
         Assert.Equal(19, viewModel.EdgeCount);
+        Assert.Equal("已加载 19 条连接。", viewModel.LastConnectionMessage);
         Assert.Contains("不连接 MES", viewModel.Status, StringComparison.Ordinal);
     }
 
@@ -96,5 +97,63 @@ public sealed class WorkflowCanvasSpikeViewModelTests
         Assert.Equal(expectedNodes, viewModel.Nodes.Select(node => (node.Id, node.Name, node.Location)).ToArray());
         Assert.Equal(expectedEdges, viewModel.Connections.Select(edge => (edge.Id, edge.SourceNode.Id, edge.TargetNode.Id, edge.Kind, edge.Label)).ToArray());
         Assert.Contains("未写入本地或 MES", viewModel.Status, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Main_editor_callback_only_runs_for_document_changes()
+    {
+        var callbackCount = 0;
+        var viewModel = new WorkflowCanvasSpikeViewModel(null, _ => callbackCount++);
+
+        viewModel.SelectNode(viewModel.Nodes[0].Id);
+        viewModel.CopyCommand.Execute(null);
+        viewModel.RoundTripCommand.Execute(null);
+
+        Assert.Equal(0, callbackCount);
+
+        var moved = viewModel.Nodes[0];
+        moved.Location = new System.Windows.Point(moved.Location.X + 25, moved.Location.Y + 15);
+        viewModel.CommitNodeLocationsCommand.Execute(null);
+
+        Assert.Equal(1, callbackCount);
+        var layout = viewModel.Document.Layouts.Single(item => item.NodeId == moved.Id);
+        Assert.Equal(moved.Location.X, layout.X);
+        Assert.Equal(moved.Location.Y, layout.Y);
+    }
+
+    [Fact]
+    public void Selection_changes_are_exposed_without_changing_the_document()
+    {
+        var callbackCount = 0;
+        var viewModel = new WorkflowCanvasSpikeViewModel(null, _ => callbackCount++);
+        Guid? selectedNodeId = null;
+        viewModel.SelectionChanged += (_, nodeId) => selectedNodeId = nodeId;
+        var expected = viewModel.Nodes[3].Id;
+
+        viewModel.SelectNode(expected);
+
+        Assert.Equal(expected, selectedNodeId);
+        Assert.Equal(expected, viewModel.SelectedNode?.Id);
+        Assert.Equal(0, callbackCount);
+    }
+
+    [Fact]
+    public void Viewport_change_is_committed_without_creating_an_undo_entry()
+    {
+        var documentCallbackCount = 0;
+        MesControlAgv.Contracts.Workflows.WorkflowCanvasViewport? committed = null;
+        var viewModel = new WorkflowCanvasSpikeViewModel(null, _ => documentCallbackCount++);
+        viewModel.ViewportChanged += (_, viewport) => committed = viewport;
+
+        viewModel.UpdateViewport(120, 80, 1.4);
+
+        Assert.Equal(new MesControlAgv.Contracts.Workflows.WorkflowCanvasViewport
+        {
+            X = 120,
+            Y = 80,
+            Zoom = 1.4
+        }, committed);
+        Assert.Equal(0, documentCallbackCount);
+        Assert.False(viewModel.UndoCommand.CanExecute(null));
     }
 }

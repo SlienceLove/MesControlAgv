@@ -18,6 +18,7 @@ namespace MesControlAgv.Wpf.ViewModels;
 public sealed class WorkflowCanvasSpikeViewModel : INotifyPropertyChanged
 {
     private readonly WorkflowLayeredLayout _layout = new();
+    private readonly Action<WorkflowGraphDocument>? _documentChanged;
     private WorkflowDocumentEditor _editor;
     private WorkflowGraphFragment? _clipboard;
     private WorkflowCanvasMode _canvasMode = WorkflowCanvasMode.Edit;
@@ -27,10 +28,24 @@ public sealed class WorkflowCanvasSpikeViewModel : INotifyPropertyChanged
     private object? _pendingConnection;
     private IList _selectedNodes = new ObservableCollection<WorkflowCanvasNodeViewModel>();
     private string _status = string.Empty;
-    private string _lastConnectionMessage = "尚未创建连接。";
+    private string _lastConnectionMessage = string.Empty;
+    private bool _suppressDocumentChanged;
+    private bool _suppressSelectionNotifications;
 
-    public WorkflowCanvasSpikeViewModel()
+    public WorkflowCanvasSpikeViewModel() : this(null, null)
     {
+    }
+
+    /// <summary>
+    /// Creates a canvas over an existing graph document. The callback is used
+    /// by the main editor to commit canvas edits back through its document
+    /// adapter; the standalone spike leaves it null.
+    /// </summary>
+    public WorkflowCanvasSpikeViewModel(
+        WorkflowGraphDocument? initialDocument,
+        Action<WorkflowGraphDocument>? documentChanged)
+    {
+        _documentChanged = documentChanged;
         DatasetOptions =
         [
             new WorkflowCanvasDatasetOption("linear", "线性 20 / 19", "20 个节点、19 条边"),
@@ -43,7 +58,9 @@ public sealed class WorkflowCanvasSpikeViewModel : INotifyPropertyChanged
         Connections = [];
         Issues = [];
         AttachSelectedNodes(_selectedNodes);
-        _editor = new WorkflowDocumentEditor(_layout.Arrange(WorkflowSpikeSamples.CreateLinear()));
+        var isStandaloneSpike = initialDocument is null;
+        var document = initialDocument ?? _layout.Arrange(WorkflowSpikeSamples.CreateLinear());
+        _editor = new WorkflowDocumentEditor(document);
 
         LoadDatasetCommand = new RelayCommand<string>(LoadDataset);
         AddNodeCommand = new RelayCommand<string>(AddNode);
@@ -58,12 +75,74 @@ public sealed class WorkflowCanvasSpikeViewModel : INotifyPropertyChanged
         CompleteConnectionCommand = new RelayCommand<object>(CompleteConnection);
         SelectIssueCommand = new RelayCommand<WorkflowCanvasIssueViewModel>(SelectIssue);
 
-        RefreshPresentation("已加载线性 20 / 19 样例；数据仅保存在内存中，不连接 MES 或设备。");
+        _suppressDocumentChanged = true;
+        try
+        {
+            ResetLoadedConnectionMessage();
+            RefreshPresentation(isStandaloneSpike
+                ? "已加载线性 20 / 19 样例；数据仅保存在内存中，不连接 MES 或设备。"
+                : $"已加载统一流程文档：{document.Nodes.Count} 个节点，{document.Edges.Count} 条边。");
+        }
+        finally
+        {
+            _suppressDocumentChanged = false;
+        }
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public event EventHandler<Guid>? FocusNodeRequested;
+
+    /// <summary>
+    /// Raised after the diagram control changes the selected node. The WPF
+    /// shell uses this event to update the legacy property-panel projection.
+    /// </summary>
+    public event EventHandler<Guid?>? SelectionChanged;
+
+    public event EventHandler<WorkflowCanvasViewport>? ViewportChanged;
+
+    public WorkflowGraphDocument Document => _editor.Current;
+
+    public void LoadDocument(WorkflowGraphDocument document)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        var selectedNodeIds = SelectedNodes.OfType<WorkflowCanvasNodeViewModel>()
+            .Select(node => node.Id)
+            .ToArray();
+        _editor = new WorkflowDocumentEditor(document);
+        _clipboard = null;
+        _suppressDocumentChanged = true;
+        try
+        {
+            ResetLoadedConnectionMessage();
+            RefreshPresentation($"已加载统一流程文档：{document.Nodes.Count} 个节点，{document.Edges.Count} 条边。", selectedNodeIds);
+        }
+        finally
+        {
+            _suppressDocumentChanged = false;
+        }
+    }
+
+    public void ApplyDocument(WorkflowGraphDocument document, bool recordHistory = true)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        if (!_editor.TryReplaceDocument(document, recordHistory)) return;
+        var selectedNodeIds = SelectedNodes.OfType<WorkflowCanvasNodeViewModel>()
+            .Select(node => node.Id)
+            .ToArray();
+        RefreshPresentation(
+            "属性修改已同步到统一流程文档。",
+            selectedNodeIds,
+            notifyDocumentChanged: false);
+    }
+
+    public void UpdateViewport(double x, double y, double zoom)
+    {
+        var viewport = new WorkflowCanvasViewport { X = x, Y = y, Zoom = zoom };
+        if (!_editor.TryUpdateViewport(viewport)) return;
+        OnPropertyChanged(nameof(Document));
+        ViewportChanged?.Invoke(this, viewport);
+    }
 
     public ObservableCollection<WorkflowCanvasNodeViewModel> Nodes { get; }
 
@@ -190,8 +269,18 @@ public sealed class WorkflowCanvasSpikeViewModel : INotifyPropertyChanged
     {
         var node = Nodes.FirstOrDefault(candidate => candidate.Id == nodeId);
         if (node is null) return;
-        SelectedNodes.Clear();
-        SelectedNodes.Add(node);
+        _suppressSelectionNotifications = true;
+        try
+        {
+            SelectedNodes.Clear();
+            SelectedNodes.Add(node);
+        }
+        finally
+        {
+            _suppressSelectionNotifications = false;
+        }
+
+        SelectionChanged?.Invoke(this, node.Id);
     }
 
     public bool HandleKey(Key key, ModifierKeys modifiers)
@@ -240,7 +329,16 @@ public sealed class WorkflowCanvasSpikeViewModel : INotifyPropertyChanged
         };
         _editor = new WorkflowDocumentEditor(_layout.Arrange(document));
         _clipboard = null;
+        ResetLoadedConnectionMessage();
         RefreshPresentation($"已加载 {document.Name}：{document.Nodes.Count} 个节点，{document.Edges.Count} 条边；不连接 MES 或设备。");
+    }
+
+    private void ResetLoadedConnectionMessage()
+    {
+        var edgeCount = _editor.Current.Edges.Count;
+        LastConnectionMessage = edgeCount == 0
+            ? "当前流程尚无连接。"
+            : $"已加载 {edgeCount} 条连接。";
     }
 
     private void AddNode(string? nodeTypeId)
@@ -270,7 +368,10 @@ public sealed class WorkflowCanvasSpikeViewModel : INotifyPropertyChanged
         var selectedNodeIds = SelectedNodes.OfType<WorkflowCanvasNodeViewModel>().Select(node => node.Id).ToArray();
         var restored = WorkflowDocumentEditor.Deserialize(_editor.Serialize());
         _editor = new WorkflowDocumentEditor(restored);
-        RefreshPresentation("已完成内存 JSON 往返，未写入本地或 MES；编辑历史已重新开始。", selectedNodeIds);
+        RefreshPresentation(
+            "已完成内存 JSON 往返，未写入本地或 MES；编辑历史已重新开始。",
+            selectedNodeIds,
+            notifyDocumentChanged: false);
     }
 
     private void Undo()
@@ -332,6 +433,7 @@ public sealed class WorkflowCanvasSpikeViewModel : INotifyPropertyChanged
         {
             Status = "节点位置已作为一次编辑记录保存。";
             RaiseCommandStates();
+            NotifyDocumentChanged();
         }
     }
 
@@ -365,41 +467,54 @@ public sealed class WorkflowCanvasSpikeViewModel : INotifyPropertyChanged
         SelectedIssue = issue;
     }
 
-    private void RefreshPresentation(string status, IReadOnlyList<Guid>? selectNodeIds = null)
+    private void RefreshPresentation(
+        string status,
+        IReadOnlyList<Guid>? selectNodeIds = null,
+        bool notifyDocumentChanged = true)
     {
         var previousSelection = selectNodeIds ?? SelectedNodes.OfType<WorkflowCanvasNodeViewModel>().Select(node => node.Id).ToArray();
-        Nodes.Clear();
-        Connections.Clear();
-        SelectedNodes.Clear();
-
-        var layouts = _editor.Current.Layouts.ToDictionary(layout => layout.NodeId);
-        var nodeMap = new Dictionary<Guid, WorkflowCanvasNodeViewModel>();
-        foreach (var node in _editor.Current.Nodes)
+        _suppressSelectionNotifications = true;
+        try
         {
-            layouts.TryGetValue(node.Id, out var layout);
-            var viewModel = new WorkflowCanvasNodeViewModel(
-                node,
-                new Point(layout?.X ?? 80, layout?.Y ?? 80),
-                layout?.Width ?? 200,
-                layout?.Height ?? 120,
-                IsEditing);
-            nodeMap[node.Id] = viewModel;
-            Nodes.Add(viewModel);
+            Nodes.Clear();
+            Connections.Clear();
+            SelectedNodes.Clear();
+
+            var layouts = _editor.Current.Layouts.ToDictionary(layout => layout.NodeId);
+            var nodeMap = new Dictionary<Guid, WorkflowCanvasNodeViewModel>();
+            foreach (var node in _editor.Current.Nodes)
+            {
+                layouts.TryGetValue(node.Id, out var layout);
+                var viewModel = new WorkflowCanvasNodeViewModel(
+                    node,
+                    new Point(layout?.X ?? 80, layout?.Y ?? 80),
+                    layout?.Width ?? 200,
+                    layout?.Height ?? 120,
+                    IsEditing);
+                nodeMap[node.Id] = viewModel;
+                Nodes.Add(viewModel);
+            }
+
+            foreach (var edge in _editor.Current.Edges)
+            {
+                if (!nodeMap.TryGetValue(edge.SourceNodeId, out var sourceNode) ||
+                    !nodeMap.TryGetValue(edge.TargetNodeId, out var targetNode)) continue;
+                var source = sourceNode.Ports.FirstOrDefault(port =>
+                    string.Equals(port.Key, edge.SourcePort, StringComparison.OrdinalIgnoreCase));
+                var target = targetNode.Ports.FirstOrDefault(port =>
+                    string.Equals(port.Key, edge.TargetPort, StringComparison.OrdinalIgnoreCase));
+                if (source is not null && target is not null)
+                    Connections.Add(new WorkflowCanvasEdgeViewModel(edge, sourceNode, targetNode, source, target));
+            }
+
+            foreach (var id in previousSelection)
+            {
+                if (nodeMap.TryGetValue(id, out var node)) SelectedNodes.Add(node);
+            }
         }
-
-        foreach (var edge in _editor.Current.Edges)
+        finally
         {
-            if (!nodeMap.TryGetValue(edge.SourceNodeId, out var sourceNode) ||
-                !nodeMap.TryGetValue(edge.TargetNodeId, out var targetNode)) continue;
-            var source = sourceNode.Ports.FirstOrDefault(port => string.Equals(port.Key, edge.SourcePort, StringComparison.OrdinalIgnoreCase));
-            var target = targetNode.Ports.FirstOrDefault(port => string.Equals(port.Key, edge.TargetPort, StringComparison.OrdinalIgnoreCase));
-            if (source is not null && target is not null)
-                Connections.Add(new WorkflowCanvasEdgeViewModel(edge, sourceNode, targetNode, source, target));
-        }
-
-        foreach (var id in previousSelection)
-        {
-            if (nodeMap.TryGetValue(id, out var node)) SelectedNodes.Add(node);
+            _suppressSelectionNotifications = false;
         }
 
         RefreshIssues();
@@ -408,6 +523,14 @@ public sealed class WorkflowCanvasSpikeViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(NodeCount));
         OnPropertyChanged(nameof(EdgeCount));
         RaiseCommandStates();
+        if (notifyDocumentChanged) NotifyDocumentChanged();
+        SelectionChanged?.Invoke(this, SelectedNode?.Id);
+    }
+
+    private void NotifyDocumentChanged()
+    {
+        OnPropertyChanged(nameof(Document));
+        if (!_suppressDocumentChanged) _documentChanged?.Invoke(_editor.Current);
     }
 
     private void RefreshRuntimeOverlay()
@@ -436,6 +559,8 @@ public sealed class WorkflowCanvasSpikeViewModel : INotifyPropertyChanged
     {
         SelectedNode = SelectedNodes.OfType<WorkflowCanvasNodeViewModel>().FirstOrDefault();
         RaiseCommandStates();
+        if (!_suppressSelectionNotifications)
+            SelectionChanged?.Invoke(this, SelectedNode?.Id);
     }
 
     private void AttachSelectedNodes(IList selection)

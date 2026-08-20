@@ -145,7 +145,7 @@ public sealed record WorkflowCanvasViewport
 /// </summary>
 public sealed record WorkflowGraphDocument
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     public Guid Id { get; init; } = Guid.NewGuid();
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;

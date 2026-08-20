@@ -1,7 +1,7 @@
 # 实验流程编排实施计划与验收门禁
 
-> 状态：G1 已实现，等待项目方验收与画布选型确认
-> 日期：2026-08-19
+> 状态：G2-B 已实现，等待主编辑器 Nodify 接入验收；G2-C 尚未开始
+> 日期：2026-08-20
 > 关联：[目标架构](EXPERIMENT-WORKFLOW-ARCHITECTURE.md)、[界面规划](EXPERIMENT-WORKFLOW-UI-DESIGN.md)、[画布技术评估](EXPERIMENT-WORKFLOW-CANVAS-EVALUATION.md)
 
 ## 1. 执行原则
@@ -104,6 +104,14 @@
 G2-A 已完成文档/契约收敛：新增 Graph Document 与 MES 合同适配器，WPF 本地存储改为 `mes.workflow.graph` 信封格式，旧 WPF JSON 仅作为导入格式；历史 Nodify 编辑器的导出也改为 Graph Document。MES Draft、Validate、Publish、Version 和 DryRun HTTP 路径保持不变，运行请求仍固定到明确版本，未开放任何设备写操作。
 
 G2-A 验收记录见 [EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md](EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md)。主窗口 Nodify 画布替换和旧 WPF 可观察投影的最终移除留在下一验收节点，避免在未确认前一次性破坏现有绑定。
+
+### G2-B 当前执行记录（2026-08-20）
+
+主窗口手工 Canvas 已替换为 `NodifyCanvasAdapter`，并通过 `IWorkflowCanvasSurface` 保持框架可替换边界。画布选择、右侧属性、节点参数、拖放新增、移动、显式连线、删除、撤销/重做、自动布局、适应画布和视口持久化均落到同一个 `WorkflowGraphDocument` 编辑历史；视口变化不污染撤销栈。
+
+Graph Document schema 已提升到 v2：仅 v1 Graph Document 和旧 WPF 数组在整图完全无边时补顺序成功边，v2 断开草稿保持断开。默认预置流程直接保存 6 节点、5 条显式边和兼容运行时所需的 `NextNodeIds`。Release 全方案构建为 0 警告/0 错误，全量测试 570 通过、5 个既有 E2E 跳过、0 失败；隔离 Simulator 主窗口冒烟确认 `节点 6 / 边 5` 且连线和属性面板正常渲染。
+
+G2-B 的手工验收步骤和剩余边界见 [EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md](EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md)。验收前不进入 G3。G2-C 仅收口旧 `实验流程设计` 入口、WPF 兼容投影所有权和可见的旧格式转换报告，不扩展设备执行能力。
 
 ## 6. G3：类型化节点与发布校验
 

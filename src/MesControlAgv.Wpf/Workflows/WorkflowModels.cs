@@ -18,12 +18,36 @@ public enum WorkflowNodeType
     InstrumentOperation
 }
 
-public sealed class WorkflowNodeParameter
+public sealed class WorkflowNodeParameter : INotifyPropertyChanged
 {
-    public string Name { get; set; } = string.Empty;
-    public string? Value { get; set; }
-    public string DataType { get; set; } = "string";
-    public bool IsRequired { get; set; }
+    private string _name = string.Empty;
+    private string? _value;
+    private string _dataType = "string";
+    private bool _isRequired;
+
+    public string Name
+    {
+        get => _name;
+        set => SetField(ref _name, value ?? string.Empty);
+    }
+
+    public string? Value
+    {
+        get => _value;
+        set => SetField(ref _value, value);
+    }
+
+    public string DataType
+    {
+        get => _dataType;
+        set => SetField(ref _dataType, value ?? "string");
+    }
+
+    public bool IsRequired
+    {
+        get => _isRequired;
+        set => SetField(ref _isRequired, value);
+    }
 
     public WorkflowNodeParameter Clone() => new()
     {
@@ -32,6 +56,15 @@ public sealed class WorkflowNodeParameter
         DataType = DataType,
         IsRequired = IsRequired
     };
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    private void SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return;
+        field = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
 }
 
 public sealed class WorkflowNode : INotifyPropertyChanged
@@ -162,6 +195,7 @@ public sealed class WorkflowDefinition : INotifyPropertyChanged
     private string _name = string.Empty;
     private string _description = string.Empty;
     private bool _isPreset;
+    private int? _publishedVersion;
 
     public Guid Id { get; set; } = Guid.NewGuid();
 
@@ -184,7 +218,11 @@ public sealed class WorkflowDefinition : INotifyPropertyChanged
     }
 
     /// <summary>本地定义最近一次观察到的 MES 发布版本。</summary>
-    public int? PublishedVersion { get; set; }
+    public int? PublishedVersion
+    {
+        get => _publishedVersion;
+        set => SetField(ref _publishedVersion, value);
+    }
 
     /// <summary>
     /// Explicit graph edges are retained by the unified document adapter;

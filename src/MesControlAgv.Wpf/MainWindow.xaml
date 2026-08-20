@@ -4,6 +4,7 @@
         xmlns:controls="clr-namespace:MesControlAgv.Wpf.Controls"
         xmlns:local="clr-namespace:MesControlAgv.Wpf"
         xmlns:views="clr-namespace:MesControlAgv.Wpf.Views"
+        xmlns:workflowCanvas="clr-namespace:MesControlAgv.Wpf.WorkflowCanvas"
         Title="AGV MES 中控"
         WindowState="Maximized"
         Width="1420"
@@ -586,45 +587,40 @@
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <Border Padding="12" Background="#F6F8FA">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock FontSize="17" FontWeight="SemiBold" Text="{Binding WorkflowEditor.SelectedWorkflow.Name}" />
-                                 <TextBlock Margin="12,2,0,0" Foreground="Gray" Text="拖拽步骤到画布，节点可自由调整位置" />
-                            </StackPanel>
+                        <Border Padding="10" Background="#F6F8FA">
+                            <DockPanel LastChildFill="True">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <Button Width="64" Margin="6,0,0,0" Padding="8,5" Command="{Binding WorkflowEditor.CanvasViewModel.UndoCommand}" Content="撤销" ToolTip="撤销画布编辑" />
+                                    <Button Width="64" Margin="6,0,0,0" Padding="8,5" Command="{Binding WorkflowEditor.CanvasViewModel.RedoCommand}" Content="重做" ToolTip="重做画布编辑" />
+                                    <Button Width="76" Margin="6,0,0,0" Padding="8,5" Command="{Binding WorkflowEditor.CanvasViewModel.AutoLayoutCommand}" Content="自动布局" />
+                                    <Button Width="76" Margin="6,0,0,0" Padding="8,5" Click="WorkflowCanvas_FitToContent" Content="适应画布" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock FontSize="17" FontWeight="SemiBold" Text="{Binding WorkflowEditor.SelectedWorkflow.Name}" />
+                                    <TextBlock Margin="12,2,0,0" Foreground="Gray" Text="{Binding WorkflowEditor.RemoteStatus}" />
+                                </StackPanel>
+                            </DockPanel>
                         </Border>
-                        <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" AllowDrop="True" DragOver="WorkflowCanvas_DragOver" Drop="WorkflowCanvas_Drop">
-                            <Grid Width="1500" Height="720" Background="#FBFCFE">
-                                <Canvas x:Name="WorkflowLinksCanvas" Width="1500" Height="720" IsHitTestVisible="False" />
-                                <ItemsControl x:Name="WorkflowNodes" Width="1500" Height="720" ItemsSource="{Binding WorkflowEditor.Nodes}">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate>
-                                            <Canvas />
-                                        </ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemContainerStyle>
-                                        <Style TargetType="ContentPresenter">
-                                            <Setter Property="Canvas.Left" Value="{Binding X, Mode=TwoWay}" />
-                                            <Setter Property="Canvas.Top" Value="{Binding Y, Mode=TwoWay}" />
-                                        </Style>
-                                    </ItemsControl.ItemContainerStyle>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Border Width="170" MinHeight="82" Padding="10" Background="#E8F1FF" BorderBrush="#4285C5" BorderThickness="1.5" CornerRadius="8" Cursor="Hand" MouseLeftButtonDown="WorkflowNode_MouseLeftButtonDown" MouseMove="WorkflowNode_MouseMove" MouseLeftButtonUp="WorkflowNode_MouseLeftButtonUp">
-                                                <StackPanel>
-                                                    <DockPanel>
-                                                        <TextBlock FontSize="13" Foreground="#315B87" Text="{Binding TypeDescription}" />
-                                                         <TextBlock DockPanel.Dock="Right" Foreground="#6B7280" Text="{Binding Order, StringFormat={}#{0}}" />
-                                                    </DockPanel>
-                                                    <TextBlock Margin="0,5,0,0" FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding Name}" />
-                                                    <TextBlock Margin="0,3,0,0" Foreground="#586174" FontSize="11" TextWrapping="Wrap" Text="{Binding TargetStation}" />
-                                                </StackPanel>
-                                            </Border>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </Grid>
-                        </ScrollViewer>
+                        <workflowCanvas:NodifyCanvasAdapter x:Name="WorkflowCanvasSurface"
+                                                            Grid.Row="1"
+                                                            MinWidth="0"
+                                                            Focusable="True"
+                                                            AllowDrop="True"
+                                                            DragOver="WorkflowCanvas_DragOver"
+                                                            Drop="WorkflowCanvas_Drop"
+                                                            PreviewKeyDown="WorkflowCanvas_PreviewKeyDown" />
+                        <Border Grid.Row="2" Padding="8,6" Background="#F6F8FA" BorderBrush="#D0D7DE" BorderThickness="0,1,0,0">
+                            <DockPanel LastChildFill="True">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <TextBlock Foreground="#667085" Text="{Binding WorkflowEditor.CanvasViewModel.NodeCount, StringFormat={}节点 {0}}" />
+                                    <TextBlock Margin="12,0,0,0" Foreground="#667085" Text="{Binding WorkflowEditor.CanvasViewModel.EdgeCount, StringFormat={}边 {0}}" />
+                                </StackPanel>
+                                <TextBlock Foreground="#475467" TextTrimming="CharacterEllipsis" Text="{Binding WorkflowEditor.CanvasViewModel.Status}" />
+                                <TextBlock Margin="16,0,0,0" Foreground="#7A3E00" TextTrimming="CharacterEllipsis" Text="{Binding WorkflowEditor.CanvasViewModel.LastConnectionMessage}" />
+                            </DockPanel>
+                        </Border>
                     </Grid>
                 </Border>
 

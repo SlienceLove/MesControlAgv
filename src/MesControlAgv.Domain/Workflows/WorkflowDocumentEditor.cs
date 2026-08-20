@@ -123,6 +123,48 @@ public sealed class WorkflowDocumentEditor
         return true;
     }
 
+    /// <summary>
+    /// Updates persisted viewport state without adding navigation gestures to
+    /// the graph edit history. Undo and redo preserve the current viewport.
+    /// </summary>
+    public bool TryUpdateViewport(WorkflowCanvasViewport viewport)
+    {
+        ArgumentNullException.ThrowIfNull(viewport);
+        if (!double.IsFinite(viewport.X) ||
+            !double.IsFinite(viewport.Y) ||
+            !double.IsFinite(viewport.Zoom) ||
+            viewport.Zoom <= 0 ||
+            Equals(Current.Viewport, viewport))
+        {
+            return false;
+        }
+
+        Current = Current with { Viewport = viewport };
+        return true;
+    }
+
+    /// <summary>
+    /// Synchronizes edits made by a property panel with the same graph editor.
+    /// Normal edits enter history; external lifecycle metadata can update the
+    /// current snapshot without becoming an undo step.
+    /// </summary>
+    public bool TryReplaceDocument(WorkflowGraphDocument document, bool recordHistory = true)
+    {
+        ArgumentNullException.ThrowIfNull(document);
+        if (document.Id != Current.Id || ReferenceEquals(document, Current)) return false;
+
+        if (recordHistory)
+        {
+            Commit(document);
+        }
+        else
+        {
+            Current = document;
+        }
+
+        return true;
+    }
+
     public WorkflowGraphFragment Copy(IEnumerable<Guid> nodeIds)
     {
         var ids = nodeIds.Where(id => id != Guid.Empty).ToHashSet();
@@ -179,16 +221,28 @@ public sealed class WorkflowDocumentEditor
     public bool Undo()
     {
         if (_undo.Count == 0) return false;
+        var viewport = Current.Viewport;
+        var publishedVersion = Current.PublishedVersion;
         _redo.Push(Current);
-        Current = _undo.Pop();
+        Current = _undo.Pop() with
+        {
+            Viewport = viewport,
+            PublishedVersion = publishedVersion
+        };
         return true;
     }
 
     public bool Redo()
     {
         if (_redo.Count == 0) return false;
+        var viewport = Current.Viewport;
+        var publishedVersion = Current.PublishedVersion;
         _undo.Push(Current);
-        Current = _redo.Pop();
+        Current = _redo.Pop() with
+        {
+            Viewport = viewport,
+            PublishedVersion = publishedVersion
+        };
         return true;
     }
 

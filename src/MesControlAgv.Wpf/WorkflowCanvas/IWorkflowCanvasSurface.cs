@@ -11,6 +11,8 @@ internal interface IWorkflowCanvasSurface
 {
     void Attach(WorkflowCanvasSpikeViewModel viewModel);
 
+    void Detach();
+
     void FitToContent();
 
     void FocusNode(Guid nodeId);
