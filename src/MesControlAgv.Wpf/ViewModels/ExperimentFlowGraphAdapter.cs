@@ -1,19 +1,26 @@
-using System.Text.Json;
 using MesControlAgv.Contracts.Workflows;
 
 namespace MesControlAgv.Wpf.ViewModels;
 
 /// <summary>
-/// Compatibility bridge for the historical Nodify editor. New exports use the
-/// graph document; the legacy DTO is accepted only as an import shape.
+/// One-way compatibility bridge for the historical Nodify editor DTO. The
+/// legacy DTO is accepted only as an import shape and is never written again.
 /// </summary>
 public static class ExperimentFlowGraphAdapter
 {
-    public static WorkflowGraphDocument ToGraph(ExperimentFlowEditorViewModel editor)
+    /// <summary>
+    /// Converts the historical standalone-editor DTO into the shared graph
+    /// document. Validation and user-visible conversion reporting are owned by
+    /// WorkflowDocumentImporter; this method only performs a lossless mapping
+    /// of fields represented by the old DTO.
+    /// </summary>
+    public static WorkflowGraphDocument FromLegacyConfig(
+        ExperimentFlowConfigDto config,
+        string? name = null)
     {
-        ArgumentNullException.ThrowIfNull(editor);
+        ArgumentNullException.ThrowIfNull(config);
 
-        var nodes = editor.Nodes.Select(node => new WorkflowNodeDefinition
+        var nodes = config.Nodes.Select(node => new WorkflowNodeDefinition
         {
             Id = node.Id,
             NodeTypeId = ToNodeTypeId(node.Type),
@@ -25,121 +32,53 @@ public static class ExperimentFlowGraphAdapter
                 ["legacyType"] = node.Type
             }
         }).ToArray();
-        var layouts = editor.Nodes.Select(node => new WorkflowNodeLayout
+        var layouts = config.Nodes.Select(node => new WorkflowNodeLayout
         {
             NodeId = node.Id,
-            X = node.Location.X,
-            Y = node.Location.Y
+            X = node.X,
+            Y = node.Y
         }).ToArray();
-        var edges = editor.Connections
-            .Where(connection => connection.Source?.Node is not null && connection.Target?.Node is not null)
-            .Select(connection => new WorkflowEdgeDefinition
+        var edges = config.Connections.Select(connection => new WorkflowEdgeDefinition
+        {
+            Id = connection.Id,
+            SourceNodeId = connection.SourceNodeId,
+            SourcePort = "out",
+            TargetNodeId = connection.TargetNodeId,
+            TargetPort = "in",
+            Kind = WorkflowEdgeKind.Success,
+            Condition = string.IsNullOrWhiteSpace(connection.Condition) ? null : connection.Condition,
+            Metadata = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
             {
-                Id = connection.Id,
-                SourceNodeId = connection.Source!.Node!.Id,
-                SourcePort = "out",
-                TargetNodeId = connection.Target!.Node!.Id,
-                TargetPort = "in",
-                Kind = WorkflowEdgeKind.Success,
-                Condition = string.IsNullOrWhiteSpace(connection.Condition) ? null : connection.Condition,
-                Metadata = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
-                {
-                    ["legacyColor"] = connection.Color
-                }
-            }).ToArray();
+                ["legacyColor"] = connection.Color
+            }
+        }).ToArray();
 
         return new WorkflowGraphDocument
         {
             Id = Guid.NewGuid(),
-            Name = "Legacy experiment flow",
-            Description = "Exported from the compatibility editor",
+            Name = string.IsNullOrWhiteSpace(name) ? "导入的旧实验流程" : name.Trim(),
+            Description = "由旧实验流程设计器兼容格式转换",
             Nodes = nodes,
             Edges = edges,
             Layouts = layouts
         };
     }
 
-    public static ExperimentFlowConfigDto ToLegacyConfig(WorkflowGraphDocument document)
+    private static string ToNodeTypeId(string? type)
     {
-        ArgumentNullException.ThrowIfNull(document);
-        var layouts = (document.Layouts ?? Array.Empty<WorkflowNodeLayout>())
-            .ToDictionary(layout => layout.NodeId);
-
-        return new ExperimentFlowConfigDto
+        var normalized = string.IsNullOrWhiteSpace(type) ? "Custom" : type.Trim();
+        return normalized switch
         {
-            Nodes = (document.Nodes ?? Array.Empty<WorkflowNodeDefinition>())
-                .Select(node =>
-                {
-                    layouts.TryGetValue(node.Id, out var layout);
-                    var type = node.Configuration is not null &&
-                               node.Configuration.TryGetValue("legacyType", out var legacyType) &&
-                               !string.IsNullOrWhiteSpace(legacyType)
-                        ? legacyType!
-                        : FromNodeTypeId(node.NodeTypeId);
-                    return new NodeDto
-                    {
-                        Id = node.Id,
-                        Title = node.Name,
-                        Description = node.Description,
-                        Type = type,
-                        X = layout?.X ?? 0,
-                        Y = layout?.Y ?? 0
-                    };
-                }).ToList(),
-            Connections = (document.Edges ?? Array.Empty<WorkflowEdgeDefinition>())
-                .Select(edge => new ConnectionDto
-                {
-                    Id = edge.Id,
-                    SourceNodeId = edge.SourceNodeId,
-                    TargetNodeId = edge.TargetNodeId,
-                    Condition = edge.Condition ?? string.Empty,
-                    Color = edge.Metadata is not null &&
-                            edge.Metadata.TryGetValue("legacyColor", out var color) &&
-                            !string.IsNullOrWhiteSpace(color)
-                        ? color!
-                        : "#4285F4"
-                }).ToList()
+            "Start" => WorkflowGraphNodeTypeIds.Start,
+            "Move" => WorkflowGraphNodeTypeIds.Move,
+            "Wait" => WorkflowGraphNodeTypeIds.Wait,
+            "Pickup" => WorkflowGraphNodeTypeIds.Pickup,
+            "Dropoff" => WorkflowGraphNodeTypeIds.Dropoff,
+            "End" => WorkflowGraphNodeTypeIds.End,
+            "InstrumentOperation" => WorkflowGraphNodeTypeIds.InstrumentOperation,
+            _ => $"legacy.experiment.{normalized}"
         };
     }
-
-    public static bool LooksLikeGraphDocument(string json)
-    {
-        using var document = JsonDocument.Parse(json);
-        if (document.RootElement.ValueKind != JsonValueKind.Object) return false;
-        return HasProperty(document.RootElement, "schemaVersion") ||
-               HasProperty(document.RootElement, "edges") ||
-               HasProperty(document.RootElement, "layouts");
-    }
-
-    private static bool HasProperty(JsonElement element, string name) =>
-        element.EnumerateObject().Any(property =>
-            string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase));
-
-    private static string ToNodeTypeId(string type) => type switch
-    {
-        "Start" => WorkflowGraphNodeTypeIds.Start,
-        "Move" => WorkflowGraphNodeTypeIds.Move,
-        "Wait" => WorkflowGraphNodeTypeIds.Wait,
-        "Pickup" => WorkflowGraphNodeTypeIds.Pickup,
-        "Dropoff" => WorkflowGraphNodeTypeIds.Dropoff,
-        "End" => WorkflowGraphNodeTypeIds.End,
-        "InstrumentOperation" => WorkflowGraphNodeTypeIds.InstrumentOperation,
-        _ => $"legacy.experiment.{type.Trim()}"
-    };
-
-    private static string FromNodeTypeId(string? typeId) => typeId switch
-    {
-        WorkflowGraphNodeTypeIds.Start => "Start",
-        WorkflowGraphNodeTypeIds.Move => "Move",
-        WorkflowGraphNodeTypeIds.Wait => "Wait",
-        WorkflowGraphNodeTypeIds.Pickup => "Pickup",
-        WorkflowGraphNodeTypeIds.Dropoff => "Dropoff",
-        WorkflowGraphNodeTypeIds.End => "End",
-        WorkflowGraphNodeTypeIds.InstrumentOperation => "InstrumentOperation",
-        _ when typeId?.StartsWith("legacy.experiment.", StringComparison.OrdinalIgnoreCase) == true =>
-            typeId["legacy.experiment.".Length..],
-        _ => "Custom"
-    };
 
     private static IReadOnlyList<WorkflowPortDefinition> CreatePorts(string type) =>
         type switch

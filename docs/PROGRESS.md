@@ -1664,3 +1664,37 @@ Detailed continuation notes are in
   `docs/EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md`. The old `实验流程设计`
   compatibility entry, presentation projection ownership, and visible legacy
   import report remain intentionally unclaimed; G3 has not started.
+
+## 2026-08-20 experiment workflow G2-C editor convergence
+
+- The historical `实验流程设计` tab and its independent editor ViewModel,
+  node/connection model, and dialogs have been removed. `实验流程管理` is the
+  only normal workflow editing entry. `ExperimentFlowConfigDto` remains only
+  as a read-only compatibility input behind the explicit `兼容导入` action.
+- `WorkflowEditorViewModel` now owns canonical immutable
+  `WorkflowGraphDocument` snapshots. WPF observable collections are a
+  presentation projection only; property-panel edits, canvas history, local
+  persistence, and MES draft/validate/publish paths converge on the canonical
+  documents.
+- Structured import reports identify source format and schema, workflow/node/
+  edge counts, synthesized sequential edges, unknown fields, compatibility
+  node types, and blocking validation errors. Future schemas, dangling
+  references, and duplicate IDs reject the complete import without partially
+  modifying active workflows; disconnected v2 drafts remain disconnected.
+- The conversion report is shown after explicit import and remains visible in
+  the editor. Startup migration also exposes its report. Accepted imports are
+  written only as `mes.workflow.graph` schema v2.
+- Final Release verification passed with 0 warnings and 0 errors and **577
+  passed / 5 existing E2E skipped / 0 failed** tests: Domain 37, MES 70,
+  Adapter 176, WPF 192, E2E 19, Simulator 5, Workflow Contract 28, and
+  Instrument Gateway 50.
+- A software-rendered Release main-window run with isolated Simulator ports
+  `5583/5541/5545` confirmed that `实验流程管理` is present, the historical
+  `实验流程设计` tab is absent, `兼容导入` is visible, and the default workflow
+  reports six nodes, five edges, and five loaded connections. The visible
+  startup report identified the local legacy WPF input and ten synthesized
+  sequential edges. The source workflow file was unchanged, the application
+  closed normally, and all isolated ports were released.
+- G2-C added no device execution capability or protocol route. G3 typed nodes,
+  capability catalog, and publication validation have not started and remain
+  behind G2 acceptance.

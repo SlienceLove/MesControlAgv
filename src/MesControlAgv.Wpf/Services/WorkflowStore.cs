@@ -9,6 +9,8 @@ namespace MesControlAgv.Wpf.Services;
 
 public sealed class WorkflowStore
 {
+    private readonly WorkflowDocumentImporter _importer = new();
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -27,49 +29,80 @@ public sealed class WorkflowStore
 
     public bool LastLoadUsedDefaults { get; private set; }
 
-    public IReadOnlyList<WorkflowDefinition> Load()
+    public WorkflowImportReport? LastLoadReport { get; private set; }
+
+    public IReadOnlyList<ContractWorkflowGraphDocument> LoadDocuments()
     {
         if (!File.Exists(FilePath))
         {
             LastLoadUsedDefaults = true;
-            return CreateDefaultWorkflows();
+            LastLoadReport = null;
+            return CreateDefaultWorkflows().Select(WorkflowDocumentMapper.ToGraph).ToArray();
         }
 
         try
         {
             var json = File.ReadAllText(FilePath);
-            var workflows = DeserializeStoredWorkflows(json);
-            if (workflows.Count == 0)
+            var result = _importer.Import(json, FilePath);
+            LastLoadReport = result.Report.RequiresUserAttention ? result.Report : null;
+            if (!result.CanImport)
             {
                 LastLoadUsedDefaults = true;
-                return CreateDefaultWorkflows();
+                return CreateDefaultWorkflows().Select(WorkflowDocumentMapper.ToGraph).ToArray();
             }
-            Normalize(workflows);
+
             LastLoadUsedDefaults = false;
-            return workflows;
+            return result.Documents;
         }
-        catch (JsonException)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
             LastLoadUsedDefaults = true;
-            return CreateDefaultWorkflows();
-        }
-        catch (IOException)
-        {
-            LastLoadUsedDefaults = true;
-            return CreateDefaultWorkflows();
+            LastLoadReport = new WorkflowImportReport
+            {
+                SourceName = FilePath,
+                Issues =
+                [
+                    new WorkflowImportIssue(
+                        WorkflowImportIssueSeverity.Error,
+                        "IMPORT_READ_FAILED",
+                        exception.Message,
+                        FilePath)
+                ]
+            };
+            return CreateDefaultWorkflows().Select(WorkflowDocumentMapper.ToGraph).ToArray();
         }
     }
+
+    public IReadOnlyList<WorkflowDefinition> Load() =>
+        LoadDocuments().Select(WorkflowDocumentMapper.FromGraph).ToArray();
+
+    public WorkflowImportResult ImportFile(string filePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+        return _importer.Import(File.ReadAllText(filePath), filePath);
+    }
+
+    public WorkflowImportResult ImportJson(string json, string? sourceName = null) =>
+        _importer.Import(json, sourceName);
 
     public void Save(IEnumerable<WorkflowDefinition> workflows)
     {
         ArgumentNullException.ThrowIfNull(workflows);
 
+        SaveDocuments(workflows.Select(WorkflowDocumentMapper.ToGraph));
+    }
+
+    public void SaveDocuments(IEnumerable<ContractWorkflowGraphDocument> documents)
+    {
+        ArgumentNullException.ThrowIfNull(documents);
+
         var directory = Path.GetDirectoryName(Path.GetFullPath(FilePath));
         if (!string.IsNullOrWhiteSpace(directory)) Directory.CreateDirectory(directory);
 
-        var snapshot = workflows
-            .Select(WorkflowDocumentMapper.ToGraph)
-            .ToList();
+        var snapshot = documents.Select(document => document with
+        {
+            SchemaVersion = ContractWorkflowGraphDocument.CurrentSchemaVersion
+        }).ToList();
         var envelope = new WorkflowGraphStorageEnvelope
         {
             Format = WorkflowGraphStorageEnvelope.CurrentFormat,
@@ -81,6 +114,7 @@ public sealed class WorkflowStore
         File.WriteAllText(temporaryPath, json);
         File.Move(temporaryPath, FilePath, overwrite: true);
         LastLoadUsedDefaults = false;
+        LastLoadReport = null;
     }
 
     public static IReadOnlyList<WorkflowDefinition> CreateDefaultWorkflows() =>
@@ -155,105 +189,6 @@ public sealed class WorkflowStore
         Order = order
     };
 
-    private static IReadOnlyList<WorkflowDefinition> DeserializeStoredWorkflows(string json)
-    {
-        using var document = JsonDocument.Parse(json);
-        if (document.RootElement.ValueKind == JsonValueKind.Object)
-        {
-            if (!TryGetProperty(document.RootElement, "workflows", out var workflowElements) ||
-                workflowElements.ValueKind != JsonValueKind.Array)
-            {
-                return [];
-            }
-
-            var envelopeSchemaVersion = ReadSchemaVersion(document.RootElement, fallback: 1);
-            return DeserializeGraphDocuments(workflowElements, envelopeSchemaVersion)
-                .Select(WorkflowDocumentMapper.FromGraph)
-                .ToArray();
-        }
-
-        if (document.RootElement.ValueKind != JsonValueKind.Array)
-        {
-            return [];
-        }
-
-        if (LooksLikeGraphArray(document.RootElement))
-        {
-            return DeserializeGraphDocuments(document.RootElement, fallbackSchemaVersion: 1)
-                .Select(WorkflowDocumentMapper.FromGraph)
-                .ToArray();
-        }
-
-        // Legacy WPF JSON is an import-only shape. It is immediately converted
-        // through the graph mapper so subsequent saves use the new envelope.
-        var legacy = JsonSerializer.Deserialize<List<WorkflowDefinition>>(json, JsonOptions) ?? [];
-        return legacy
-            .Select(MigrateLegacyWorkflow)
-            .Select(workflow => WorkflowDocumentMapper.FromGraph(WorkflowDocumentMapper.ToGraph(workflow)))
-            .ToArray();
-    }
-
-    private static IEnumerable<ContractWorkflowGraphDocument> DeserializeGraphDocuments(
-        JsonElement workflowElements,
-        int fallbackSchemaVersion)
-    {
-        foreach (var element in workflowElements.EnumerateArray())
-        {
-            if (element.ValueKind != JsonValueKind.Object) continue;
-
-            var graph = JsonSerializer.Deserialize<ContractWorkflowGraphDocument>(element.GetRawText(), JsonOptions);
-            if (graph is null) continue;
-
-            yield return MigrateGraphDocument(
-                graph,
-                ReadSchemaVersion(element, fallbackSchemaVersion));
-        }
-    }
-
-    private static ContractWorkflowGraphDocument MigrateGraphDocument(
-        ContractWorkflowGraphDocument document,
-        int sourceSchemaVersion)
-    {
-        var requiresSequentialEdgeMigration =
-            sourceSchemaVersion < ContractWorkflowGraphDocument.CurrentSchemaVersion &&
-            document.Edges.Count == 0;
-        var edges = requiresSequentialEdgeMigration
-            ? BuildSequentialEdges(document.Nodes.Select(node => node.Id))
-            : document.Edges;
-
-        return document with
-        {
-            SchemaVersion = sourceSchemaVersion <= ContractWorkflowGraphDocument.CurrentSchemaVersion
-                ? ContractWorkflowGraphDocument.CurrentSchemaVersion
-                : sourceSchemaVersion,
-            Edges = edges
-        };
-    }
-
-    private static WorkflowDefinition MigrateLegacyWorkflow(WorkflowDefinition workflow)
-    {
-        var hasAnyConnection = workflow.Edges.Count > 0 ||
-            workflow.Nodes.Any(node => node.NextNodeIds.Count > 0);
-        if (hasAnyConnection) return workflow;
-
-        var orderedNodes = workflow.Nodes.OrderBy(node => node.Order).ToArray();
-        for (var index = 0; index < orderedNodes.Length - 1; index++)
-        {
-            orderedNodes[index].NextNodeIds.Add(orderedNodes[index + 1].Id);
-        }
-
-        return workflow;
-    }
-
-    private static IReadOnlyList<MesControlAgv.Contracts.Workflows.WorkflowEdgeDefinition> BuildSequentialEdges(
-        IEnumerable<Guid> nodeIds)
-    {
-        var ids = nodeIds.ToArray();
-        return ids
-            .Zip(ids.Skip(1), (source, target) => CreateSuccessEdge(source, target))
-            .ToArray();
-    }
-
     private static MesControlAgv.Contracts.Workflows.WorkflowEdgeDefinition CreateSuccessEdge(
         Guid sourceNodeId,
         Guid targetNodeId) => new()
@@ -265,62 +200,6 @@ public sealed class WorkflowStore
         Kind = MesControlAgv.Contracts.Workflows.WorkflowEdgeKind.Success
     };
 
-    private static int ReadSchemaVersion(JsonElement element, int fallback)
-    {
-        if (!TryGetProperty(element, "schemaVersion", out var schemaVersion) ||
-            schemaVersion.ValueKind != JsonValueKind.Number ||
-            !schemaVersion.TryGetInt32(out var value) ||
-            value <= 0)
-        {
-            return fallback;
-        }
-
-        return value;
-    }
-
-    private static bool TryGetProperty(JsonElement element, string name, out JsonElement value)
-    {
-        foreach (var property in element.EnumerateObject())
-        {
-            if (!string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase)) continue;
-            value = property.Value;
-            return true;
-        }
-
-        value = default;
-        return false;
-    }
-
-    private static bool LooksLikeGraphArray(JsonElement root)
-    {
-        var first = root.EnumerateArray().FirstOrDefault();
-        if (first.ValueKind != JsonValueKind.Object) return false;
-        if (TryGetProperty(first, "layouts", out _) ||
-            TryGetProperty(first, "viewport", out _) ||
-            TryGetProperty(first, "schemaVersion", out _))
-        {
-            return true;
-        }
-
-        if (!TryGetProperty(first, "nodes", out var nodes) ||
-            nodes.ValueKind != JsonValueKind.Array)
-        {
-            return false;
-        }
-
-        var node = nodes.EnumerateArray().FirstOrDefault();
-        return node.ValueKind == JsonValueKind.Object && TryGetProperty(node, "nodeTypeId", out _);
-    }
-
-    private static void Normalize(IEnumerable<WorkflowDefinition> workflows)
-    {
-        foreach (var workflow in workflows)
-        {
-            workflow.Nodes = new System.Collections.ObjectModel.ObservableCollection<WorkflowNode>(workflow.Nodes.OrderBy(node => node.Order));
-            var order = 1;
-            foreach (var node in workflow.Nodes) node.Order = order++;
-        }
-    }
 }
 
 internal sealed class WorkflowGraphStorageEnvelope

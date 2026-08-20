@@ -6,9 +6,10 @@ using MesControlAgv.Domain.Workflows;
 namespace MesControlAgv.Wpf.Workflows;
 
 /// <summary>
-/// WPF compatibility projection for the unified graph document. The projection
-/// is deliberately kept at the WPF boundary: MES and Domain never depend on
-/// observable collections or canvas controls.
+/// Maps the canonical graph document to the mutable observable objects needed
+/// by WPF bindings. The graph document owns workflow state; this presentation
+/// projection is deliberately kept at the WPF boundary, and MES/Domain never
+/// depend on observable collections or canvas controls.
 /// </summary>
 public static class WorkflowDocumentMapper
 {

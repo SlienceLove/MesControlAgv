@@ -1,7 +1,7 @@
 # 实验流程界面规划
 
-> 状态：界面与交互规划，不代表现有功能已经实现
-> 基线日期：2026-08-19
+> 状态：长期界面与交互规划；UI 阶段 1 / G2 编辑器收敛已实现并等待验收，其余阶段仍为规划
+> 基线日期：2026-08-20
 > 关联架构：[EXPERIMENT-WORKFLOW-ARCHITECTURE.md](EXPERIMENT-WORKFLOW-ARCHITECTURE.md)
 > 画布技术评估：[EXPERIMENT-WORKFLOW-CANVAS-EVALUATION.md](EXPERIMENT-WORKFLOW-CANVAS-EVALUATION.md)
 
@@ -137,8 +137,8 @@
 
 ### 6.1 总体布局
 
-当前建议复用 Nodify 画布，替换当前主窗口内的固定 `Canvas`，但必须先通过
-[画布技术评估](EXPERIMENT-WORKFLOW-CANVAS-EVALUATION.md) 中的 Spike 门禁。Nodify 是候选画布内核，不是流程领域模型或流程引擎：
+G2 已通过 [画布技术评估](EXPERIMENT-WORKFLOW-CANVAS-EVALUATION.md) 中的 Spike 门禁，并在主窗口中以
+`IWorkflowCanvasSurface` 隔离 `NodifyCanvasAdapter`。Nodify 只是可替换的画布内核，不是流程领域模型或流程引擎：
 
 ```text
 +--------------------------------------------------------------------------------+
@@ -598,16 +598,16 @@ audit.view
 
 ## 13. 与当前 WPF 的演进关系
 
-| 当前组件 | 建议 |
+| 当前组件 | G2 收敛状态与后续方向 |
 | --- | --- |
-| `ExperimentFlowEditorView.xaml` | 保留 Nodify 画布和连线基础，改为统一模型 |
-| `ExperimentFlowEditorViewModel` | 拆除独立业务 DTO，接入共享文档 ViewModel |
-| `ExperimentFlowConfigDto` | 仅用于旧格式导入，之后停止作为写出格式 |
-| `WorkflowEditorViewModel` | 保留 MES 生命周期逻辑，逐步拆分为文档、版本、校验和运行 ViewModel |
-| `WorkflowModels.cs` | 减少与 Contracts 重复的枚举/业务字段，只保留 WPF 展示状态 |
-| `MainWindow.xaml` 内 Canvas | 由独立流程设计视图替代，避免两套编辑器并存 |
-| `NodeConfigDialog` | 常规配置迁移到右侧类型化属性面板，复杂配置才使用对话框 |
-| `AddConnectionDialog` | 边主要通过端口拖拽创建，属性面板编辑语义和条件 |
+| `ExperimentFlowEditorView.xaml` | 已移除；不再提供第二个业务编辑入口 |
+| `ExperimentFlowEditorViewModel` | 已移除；旧编辑器业务模型不再拥有流程状态 |
+| `ExperimentFlowConfigDto` | 仅作为显式兼容导入的反序列化形状，不再写出 |
+| `WorkflowEditorViewModel` | 已持有规范图文档和 MES 生命周期逻辑；后续按文档、版本、校验和运行职责继续拆分 |
+| `WorkflowModels.cs` | 仅作为 WPF 属性面板所需的可观察展示投影，不负责持久化和 MES 提交 |
+| `MainWindow.xaml` 内 Canvas | 已由隔离的 Nodify 适配器替换；主窗口只保留一个正式流程编辑入口 |
+| `NodeConfigDialog` | 已随旧编辑器移除；G3 由右侧类型化属性面板承接常规配置 |
+| `AddConnectionDialog` | 已随旧编辑器移除；边通过画布端口创建和编辑 |
 
 建议的 ViewModel 分解：
 
@@ -628,14 +628,13 @@ WorkflowRunMonitorViewModel
 
 ## 14. 分阶段界面落地
 
-### UI 阶段 1：画布 Spike 与编辑器收敛
+### UI 阶段 1：画布 Spike 与编辑器收敛（G2 已实现，待验收）
 
-- 隔离验证 Nodify 的连接约束、复制粘贴、撤销重做、分组、性能和运行态覆盖。
-- 只有 Spike 通过后，独立流程设计页面才使用 Nodify 进入正式实现。
-- 接入现有 Draft/Validate/Publish/DryRun。
-- 统一节点和边模型。
-- 支持旧格式只读导入转换。
-- 保持当前设备零写入。
+- 已完成 Nodify Spike，并通过画布适配层接入主编辑器。
+- 已接入现有 Draft/Validate/Publish/DryRun，统一规范图文档、节点和显式边。
+- 已移除旧编辑器入口，WPF 可观察集合仅保留为展示投影。
+- 已提供旧格式显式兼容导入和用户可见转换报告，写出格式统一为 Graph Document v2。
+- 设备执行边界未改变，仍不新增现场设备写入。
 
 验收重点：保存、加载、发布往返无数据丢失，两套编辑器不再同时承担业务编辑。
 
@@ -688,17 +687,17 @@ WorkflowRunMonitorViewModel
 - 实时刷新不阻塞 UI，也不把仪器串口读取附加到高频 AGV 刷新循环。
 - 发布、运行和设备维护操作均显示当前环境/Profile/运行模式。
 
-## 16. 本阶段界面决策
+## 16. 本阶段界面决策与状态
 
-在开始 UI 实现前，建议先确认：
+G2 实施结果和后续约束如下：
 
-1. Nodify 暂作为候选流程画布内核，先通过独立 Spike 门禁。
-2. 画布必须通过适配层隔离，未来可替换商业 Diagram 控件。
-3. 主窗口现有 Canvas 编辑器逐步退出，不再增加新能力。
-4. 右侧属性面板由节点类型 schema 驱动。
-5. 成功、失败、超时和条件是独立边语义。
+1. Nodify 已通过独立 Spike 门禁并接入主编辑器。
+2. 画布已通过 `IWorkflowCanvasSurface` 适配层隔离，未来仍可替换 Diagram 控件。
+3. 主窗口手工 Canvas 和历史 `实验流程设计` 编辑器均已退出。
+4. 右侧属性面板由节点类型 schema 驱动，属于 G3 工作。
+5. 图文档已支持成功、失败、超时和条件等独立边语义；G3 继续补齐类型化校验。
 6. 流程设计、任务排程和运行监控是三个独立页面。
 7. 模块调试与正常流程运行使用不同入口和权限。
 8. D160 当前仅在设计器中提供只读节点能力，控制能力保持禁用。
 
-确认这些决策后，第一项实现工作应是“画布 Spike + 统一流程模型和编辑器往返”，而不是新增更多设备节点或运行按钮。具体交付顺序、验收标准和用户确认门禁见 [EXPERIMENT-WORKFLOW-IMPLEMENTATION-PLAN.md](EXPERIMENT-WORKFLOW-IMPLEMENTATION-PLAN.md)。
+UI 阶段 1 随 G2-C 完成实现，当前停在 G2 验收门禁。验收通过后才进入 G3 类型化节点、能力目录和发布校验，不提前新增设备节点或运行按钮。具体交付顺序和验收标准见 [EXPERIMENT-WORKFLOW-IMPLEMENTATION-PLAN.md](EXPERIMENT-WORKFLOW-IMPLEMENTATION-PLAN.md)。

@@ -1,6 +1,8 @@
 # 实验流程可视化编辑器开发记录
 
 > 本文是 2026-08-13 Nodify 原型的历史实现记录，不再作为实验流程目标架构。
+> 该原型的独立页签、ViewModel 和专用对话框已在 2026-08-20 的 G2-C 中退役并从产品代码移除；
+> `ExperimentFlowConfigDto` 仅保留为主流程编辑器 `兼容导入` 的只读输入格式。
 > 后续架构演进以 [实验流程编排目标架构](EXPERIMENT-WORKFLOW-ARCHITECTURE.md) 和
 > [实验流程界面规划](EXPERIMENT-WORKFLOW-UI-DESIGN.md) 为准。原型中的画布、连线和自动布局能力可以复用，
 > 但业务模型需要与 MES 工作流契约收敛，不能继续独立演进。

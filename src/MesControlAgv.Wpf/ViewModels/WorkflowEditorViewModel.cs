@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.IO;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
@@ -47,6 +48,9 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     private readonly WorkflowStore _store;
     private readonly IMesClient? _mes;
     private readonly Func<string> _actorProvider;
+    private readonly List<ContractWorkflowGraphDocument> _documents = [];
+    private readonly ReadOnlyCollection<ContractWorkflowGraphDocument> _documentView;
+    private readonly ObservableCollection<WorkflowDefinition> _workflowProjections = [];
     private readonly SemaphoreSlim _remoteGate = new(1, 1);
     private readonly Dictionary<Guid, ContractWorkflowVersion> _remoteVersions = [];
     private readonly ObservableCollection<WorkflowNode> _emptyNodes = [];
@@ -71,6 +75,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     private bool _projectionRefreshRecordsHistory;
     private bool _isApplyingCanvasDocument;
     private bool _isSynchronizingCanvasSelection;
+    private WorkflowImportReport? _lastImportReport;
 
     public WorkflowEditorViewModel(
         WorkflowStore store,
@@ -80,7 +85,12 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _mes = mes;
         _actorProvider = actorProvider ?? (() => "wpf-editor");
-        Workflows = new ObservableCollection<WorkflowDefinition>(_store.Load());
+        _documentView = _documents.AsReadOnly();
+        _documents.AddRange(_store.LoadDocuments());
+        foreach (var document in _documents)
+            _workflowProjections.Add(WorkflowDocumentMapper.FromGraph(document));
+        Workflows = new ReadOnlyObservableCollection<WorkflowDefinition>(_workflowProjections);
+        _lastImportReport = _store.LastLoadReport;
 
         NewWorkflowCommand = new EditorCommand(CreateWorkflow);
         CopyWorkflowCommand = new EditorCommand(CopyWorkflow, () => SelectedWorkflow is not null);
@@ -124,7 +134,14 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     {
     }
 
-    public ObservableCollection<WorkflowDefinition> Workflows { get; }
+    public ReadOnlyObservableCollection<WorkflowDefinition> Workflows { get; }
+
+    /// <summary>
+    /// Canonical workflow definitions owned by the editor. Workflows and Nodes
+    /// are WPF presentation projections only; persistence, MES requests, and
+    /// canvas history always read from this graph-document collection.
+    /// </summary>
+    public IReadOnlyList<ContractWorkflowGraphDocument> GraphDocuments => _documentView;
 
     public bool ApplyProfileStations(IReadOnlyList<DashboardStation> stations)
     {
@@ -152,12 +169,17 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             return false;
         }
         var target = FindPreferredStation(remaining, ["Preparation", "Dropoff"]) ?? remaining[^1];
-        var defaults = WorkflowStore.CreateDefaultWorkflows(source.AgvStationId, target.AgvStationId);
+        var defaults = WorkflowStore.CreateDefaultWorkflows(source.AgvStationId, target.AgvStationId)
+            .Select(WorkflowDocumentMapper.ToGraph)
+            .ToArray();
 
-        Workflows.Clear();
-        foreach (var workflow in defaults)
+        SelectedWorkflow = null;
+        _documents.Clear();
+        _workflowProjections.Clear();
+        foreach (var document in defaults)
         {
-            Workflows.Add(workflow);
+            _documents.Add(document);
+            _workflowProjections.Add(WorkflowDocumentMapper.FromGraph(document));
         }
 
         _profileDefaultsApplied = true;
@@ -253,15 +275,31 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         }
     }
 
-    /// <summary>
-    /// Unified graph snapshot consumed by future canvas adapters. WPF bindings
-    /// still expose the legacy observable projection during G2 migration, but
-    /// persistence and MES boundaries now use this document shape.
-    /// </summary>
+    /// <summary>The canonical graph currently selected by the WPF projection.</summary>
     public ContractWorkflowGraphDocument? SelectedGraphDocument =>
         SelectedWorkflow is { } workflow
-            ? WorkflowDocumentMapper.ToGraph(workflow)
+            ? FindDocument(workflow.Id)
             : null;
+
+    public WorkflowImportReport? LastImportReport
+    {
+        get => _lastImportReport;
+        private set
+        {
+            if (ReferenceEquals(_lastImportReport, value)) return;
+            _lastImportReport = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasImportReport));
+            OnPropertyChanged(nameof(ImportReportSummary));
+            OnPropertyChanged(nameof(ImportReportDetails));
+        }
+    }
+
+    public bool HasImportReport => LastImportReport is not null;
+
+    public string ImportReportSummary => LastImportReport?.Summary ?? string.Empty;
+
+    public string ImportReportDetails => LastImportReport?.Details ?? string.Empty;
 
     public WorkflowCanvasSpikeViewModel? CanvasViewModel => _canvasViewModel;
 
@@ -422,17 +460,22 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
                 new WorkflowNode { Type = WorkflowNodeType.End, Name = "结束", Description = "实验流程完成", X = 220, Y = 100, Order = 2 }
             ]
         };
-        Workflows.Add(workflow);
-        SelectedWorkflow = workflow;
+        var document = WorkflowDocumentMapper.ToGraph(workflow);
+        _documents.Add(document);
+        var projection = WorkflowDocumentMapper.FromGraph(document);
+        _workflowProjections.Add(projection);
+        SelectedWorkflow = projection;
         Message = "已新建实验流程。";
     }
 
     private void CopyWorkflow()
     {
-        if (SelectedWorkflow is not { } source) return;
-        var copy = source.Clone();
-        Workflows.Add(copy);
-        SelectedWorkflow = copy;
+        if (SelectedGraphDocument is not { } source) return;
+        var copy = CloneDocument(source);
+        _documents.Add(copy);
+        var projection = WorkflowDocumentMapper.FromGraph(copy);
+        _workflowProjections.Add(projection);
+        SelectedWorkflow = projection;
         Message = "已复制实验流程。";
     }
 
@@ -440,15 +483,74 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     {
         if (SelectedWorkflow is not { } workflow) return;
         var index = Workflows.IndexOf(workflow);
-        Workflows.Remove(workflow);
+        _documents.RemoveAll(document => document.Id == workflow.Id);
+        _workflowProjections.Remove(workflow);
         SelectedWorkflow = Workflows.ElementAtOrDefault(Math.Clamp(index, 0, Math.Max(Workflows.Count - 1, 0)));
         Message = "已删除实验流程。";
     }
 
     private void Save()
     {
-        _store.Save(Workflows);
+        _store.SaveDocuments(_documents);
         Message = $"已保存到 {_store.FilePath}";
+    }
+
+    public bool ImportCompatibilityFile(string filePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+        try
+        {
+            return ApplyImport(_store.ImportFile(filePath));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            LastImportReport = CreateImportFailureReport(filePath, "IMPORT_READ_FAILED", exception.Message);
+            Message = "兼容流程文件读取失败，未修改当前流程。";
+            return false;
+        }
+    }
+
+    public bool ImportCompatibilityJson(string json, string? sourceName = null) =>
+        ApplyImport(_store.ImportJson(json, sourceName));
+
+    private bool ApplyImport(WorkflowImportResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        LastImportReport = result.Report;
+        if (!result.CanImport)
+        {
+            Message = "兼容流程转换失败，当前流程未修改。";
+            return false;
+        }
+
+        WorkflowDefinition? firstImported = null;
+        var added = 0;
+        var replaced = 0;
+        foreach (var document in result.Documents)
+        {
+            _remoteVersions.Remove(document.Id);
+            var existing = Workflows.FirstOrDefault(workflow => workflow.Id == document.Id);
+            if (existing is null)
+            {
+                _documents.Add(document);
+                existing = WorkflowDocumentMapper.FromGraph(document);
+                _workflowProjections.Add(existing);
+                added++;
+            }
+            else
+            {
+                ReplaceDocument(document);
+                ApplyDocumentToProjection(existing, document);
+                replaced++;
+            }
+            firstImported ??= existing;
+        }
+
+        SelectedWorkflow = firstImported;
+        RebuildCanvasForSelection();
+        Message = $"兼容导入完成：新增 {added} 个流程，替换 {replaced} 个同 ID 流程；请查看转换报告并确认后保存。";
+        RefreshCommandStates();
+        return true;
     }
 
     private bool CanUseRemote() => _mes is not null && !IsRemoteBusy;
@@ -539,7 +641,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         var loadedIds = new HashSet<Guid>();
         foreach (var definition in definitions)
         {
-            var local = FromContract(definition);
+            var document = WorkflowGraphContractAdapter.FromContract(definition);
+            var local = WorkflowDocumentMapper.FromGraph(document);
             var versions = await _mes.GetWorkflowVersionsAsync(definition.Id, cancellationToken);
             var latest = versions.OrderByDescending(version => version.Version).FirstOrDefault();
             if (latest is not null) _remoteVersions[definition.Id] = latest;
@@ -547,12 +650,14 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             var existing = Workflows.FirstOrDefault(workflow => workflow.Id == local.Id);
             if (existing is null)
             {
-                Workflows.Add(local);
+                _documents.Add(document);
+                _workflowProjections.Add(local);
             }
             else
             {
                 var index = Workflows.IndexOf(existing);
-                Workflows[index] = local;
+                ReplaceDocument(document);
+                _workflowProjections[index] = local;
             }
 
             loadedIds.Add(local.Id);
@@ -582,7 +687,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 
         try
         {
-            _store.Save(Workflows);
+            _store.SaveDocuments(_documents);
         }
         catch (Exception exception)
         {
@@ -591,7 +696,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             return;
         }
 
-        var definition = ToContract(workflow);
+        var definition = WorkflowGraphContractAdapter.ToContract(
+            RequireDocument(workflow.Id));
         var current = SelectedRemoteVersion;
         ContractWorkflowVersion saved;
         if (current is { Status: ContractWorkflowVersionStatus.Draft, PublishStatus: ContractWorkflowPublishStatus.NotPublished })
@@ -619,7 +725,9 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 
         var current = SelectedRemoteVersion;
         var result = current is null
-            ? await _mes.ValidateWorkflowAsync(ToContract(workflow), cancellationToken)
+            ? await _mes.ValidateWorkflowAsync(
+                WorkflowGraphContractAdapter.ToContract(RequireDocument(workflow.Id)),
+                cancellationToken)
             : await _mes.ValidateWorkflowVersionAsync(workflow.Id, current.Version, cancellationToken);
         _lastValidation = result;
         if (current is not null)
@@ -799,7 +907,9 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         _lastValidation = version.Validation;
         if (SelectedWorkflow?.Id == version.WorkflowId)
         {
-            SelectedWorkflow.PublishedVersion = version.Definition.PublishedVersion;
+            CommitLifecycleMetadata(
+                version.WorkflowId,
+                version.Definition.PublishedVersion);
         }
 
         OnPropertyChanged(nameof(SelectedRemoteVersion));
@@ -827,12 +937,6 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(SelectedRemoteVersion));
         OnPropertyChanged(nameof(ValidationSummary));
     }
-
-    private static ContractWorkflowDefinition ToContract(WorkflowDefinition workflow) =>
-        WorkflowGraphContractAdapter.ToContract(WorkflowDocumentMapper.ToGraph(workflow));
-
-    private static WorkflowDefinition FromContract(ContractWorkflowDefinition workflow) =>
-        WorkflowDocumentMapper.FromContract(workflow);
 
     private void AddNode() => AddNodeAt(WorkflowNodeType.Custom, null, null);
 
@@ -949,6 +1053,11 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         try
         {
             workflow.Nodes.Remove(node);
+            workflow.Edges = new ObservableCollection<MesControlAgv.Contracts.Workflows.WorkflowEdgeDefinition>(
+                workflow.Edges.Where(edge =>
+                    edge.SourceNodeId != node.Id && edge.TargetNodeId != node.Id));
+            workflow.Layouts = new ObservableCollection<MesControlAgv.Contracts.Workflows.WorkflowNodeLayout>(
+                workflow.Layouts.Where(layout => layout.NodeId != node.Id));
             NormalizeOrders(workflow);
             SelectedNode = workflow.Nodes.OrderBy(item => item.Order).ElementAtOrDefault(Math.Max(0, workflow.Nodes.Count - 1));
             Message = "已删除流程节点。";
@@ -1049,7 +1158,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             _canvasViewModel.ViewportChanged -= CanvasViewportChanged;
         }
 
-        if (SelectedWorkflow is not { } workflow)
+        if (SelectedWorkflow is not { } workflow || FindDocument(workflow.Id) is not { } document)
         {
             _canvasViewModel = null;
             OnPropertyChanged(nameof(CanvasViewModel));
@@ -1057,7 +1166,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         }
 
         _canvasViewModel = new WorkflowCanvasSpikeViewModel(
-            WorkflowDocumentMapper.ToGraph(workflow),
+            document,
             CommitCanvasDocument);
         _canvasViewModel.SelectionChanged += CanvasSelectionChanged;
         _canvasViewModel.ViewportChanged += CanvasViewportChanged;
@@ -1081,25 +1190,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         if (SelectedWorkflow is not { } workflow || document.Id != workflow.Id) return;
 
         var selectedNodeId = SelectedNode?.Id;
-        var projected = WorkflowDocumentMapper.FromGraph(document);
-        _isApplyingCanvasDocument = true;
-        DetachWorkflowProjection();
-        try
-        {
-            workflow.Name = projected.Name;
-            workflow.Description = projected.Description;
-            workflow.IsPreset = projected.IsPreset;
-            workflow.PublishedVersion = projected.PublishedVersion;
-            workflow.Nodes = projected.Nodes;
-            workflow.Edges = projected.Edges;
-            workflow.Layouts = projected.Layouts;
-            workflow.Viewport = projected.Viewport;
-        }
-        finally
-        {
-            AttachWorkflowProjection();
-            _isApplyingCanvasDocument = false;
-        }
+        ReplaceDocument(document);
+        ApplyDocumentToProjection(workflow, document);
 
         _isSynchronizingCanvasSelection = true;
         try
@@ -1136,7 +1228,17 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     private void CanvasViewportChanged(object? sender, ContractWorkflowCanvasViewport viewport)
     {
         if (!ReferenceEquals(sender, _canvasViewModel) || SelectedWorkflow is not { } workflow) return;
-        workflow.Viewport = viewport;
+        var document = RequireDocument(workflow.Id) with { Viewport = viewport };
+        ReplaceDocument(document);
+        _isApplyingCanvasDocument = true;
+        try
+        {
+            workflow.Viewport = viewport;
+        }
+        finally
+        {
+            _isApplyingCanvasDocument = false;
+        }
         OnPropertyChanged(nameof(SelectedGraphDocument));
     }
 
@@ -1260,12 +1362,15 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 
     private void RefreshCanvasFromProjection(bool recordHistory = true)
     {
-        if (SelectedWorkflow is not { } workflow || _canvasViewModel is null) return;
+        if (SelectedWorkflow is not { } workflow) return;
         var selectedNodeId = SelectedNode?.Id;
+        var document = WorkflowDocumentMapper.ToGraph(workflow);
+        ReplaceDocument(document);
+        if (_canvasViewModel is null) return;
         _isSynchronizingCanvasSelection = true;
         try
         {
-            _canvasViewModel.ApplyDocument(WorkflowDocumentMapper.ToGraph(workflow), recordHistory);
+            _canvasViewModel.ApplyDocument(document, recordHistory);
             if (selectedNodeId is { } id) _canvasViewModel.SelectNode(id);
         }
         finally
@@ -1273,6 +1378,120 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             _isSynchronizingCanvasSelection = false;
         }
     }
+
+    private ContractWorkflowGraphDocument? FindDocument(Guid workflowId) =>
+        _documents.FirstOrDefault(document => document.Id == workflowId);
+
+    private ContractWorkflowGraphDocument RequireDocument(Guid workflowId) =>
+        FindDocument(workflowId) ??
+        throw new InvalidOperationException($"Workflow graph document '{workflowId}' is not owned by the editor.");
+
+    private void ReplaceDocument(ContractWorkflowGraphDocument document)
+    {
+        var index = _documents.FindIndex(candidate => candidate.Id == document.Id);
+        if (index < 0)
+            _documents.Add(document);
+        else
+            _documents[index] = document;
+        OnPropertyChanged(nameof(GraphDocuments));
+        if (SelectedWorkflow?.Id == document.Id)
+            OnPropertyChanged(nameof(SelectedGraphDocument));
+    }
+
+    private void ApplyDocumentToProjection(
+        WorkflowDefinition projection,
+        ContractWorkflowGraphDocument document)
+    {
+        var selectedNodeId = SelectedWorkflow?.Id == projection.Id ? SelectedNode?.Id : null;
+        var updated = WorkflowDocumentMapper.FromGraph(document);
+        var isObserved = ReferenceEquals(_observedWorkflow, projection);
+        _isApplyingCanvasDocument = true;
+        if (isObserved) DetachWorkflowProjection();
+        try
+        {
+            projection.Name = updated.Name;
+            projection.Description = updated.Description;
+            projection.IsPreset = updated.IsPreset;
+            projection.PublishedVersion = updated.PublishedVersion;
+            projection.Nodes = updated.Nodes;
+            projection.Edges = updated.Edges;
+            projection.Layouts = updated.Layouts;
+            projection.Viewport = updated.Viewport;
+        }
+        finally
+        {
+            if (isObserved) AttachWorkflowProjection();
+            _isApplyingCanvasDocument = false;
+        }
+
+        if (!isObserved) return;
+        _isSynchronizingCanvasSelection = true;
+        try
+        {
+            SelectedNode = projection.Nodes.FirstOrDefault(node => node.Id == selectedNodeId)
+                ?? projection.Nodes.OrderBy(node => node.Order).FirstOrDefault();
+        }
+        finally
+        {
+            _isSynchronizingCanvasSelection = false;
+        }
+        OnPropertyChanged(nameof(Nodes));
+        OnPropertyChanged(nameof(SelectedGraphDocument));
+    }
+
+    private void CommitLifecycleMetadata(Guid workflowId, int? publishedVersion)
+    {
+        var document = RequireDocument(workflowId);
+        if (document.PublishedVersion == publishedVersion) return;
+        var updated = document with { PublishedVersion = publishedVersion };
+        ReplaceDocument(updated);
+        var projection = Workflows.FirstOrDefault(workflow => workflow.Id == workflowId);
+        if (projection is not null) ApplyDocumentToProjection(projection, updated);
+        if (_canvasViewModel is not null && SelectedWorkflow?.Id == workflowId)
+            _canvasViewModel.ApplyDocument(updated, recordHistory: false);
+    }
+
+    private static ContractWorkflowGraphDocument CloneDocument(
+        ContractWorkflowGraphDocument source)
+    {
+        var idMap = source.Nodes.ToDictionary(node => node.Id, _ => Guid.NewGuid());
+        return source with
+        {
+            Id = Guid.NewGuid(),
+            Name = $"{source.Name} - 副本",
+            IsPreset = false,
+            PublishedVersion = null,
+            Nodes = source.Nodes.Select(node => node with { Id = idMap[node.Id] }).ToArray(),
+            Edges = source.Edges
+                .Where(edge => idMap.ContainsKey(edge.SourceNodeId) && idMap.ContainsKey(edge.TargetNodeId))
+                .Select(edge => edge with
+                {
+                    Id = Guid.NewGuid(),
+                    SourceNodeId = idMap[edge.SourceNodeId],
+                    TargetNodeId = idMap[edge.TargetNodeId]
+                }).ToArray(),
+            Layouts = source.Layouts
+                .Where(layout => idMap.ContainsKey(layout.NodeId))
+                .Select(layout => layout with { NodeId = idMap[layout.NodeId] })
+                .ToArray()
+        };
+    }
+
+    private static WorkflowImportReport CreateImportFailureReport(
+        string source,
+        string code,
+        string message) => new()
+    {
+        SourceName = source,
+        Issues =
+        [
+            new WorkflowImportIssue(
+                WorkflowImportIssueSeverity.Error,
+                code,
+                message,
+                source)
+        ]
+    };
 
     private sealed class EditorCommand(Action execute, Func<bool>? canExecute = null) : ICommand
     {

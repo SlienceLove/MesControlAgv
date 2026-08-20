@@ -1,5 +1,6 @@
 using ContractWorkflowEdgeDefinition = MesControlAgv.Contracts.Workflows.WorkflowEdgeDefinition;
 using ContractWorkflowEdgeKind = MesControlAgv.Contracts.Workflows.WorkflowEdgeKind;
+using ContractWorkflowGraphDocument = MesControlAgv.Contracts.Workflows.WorkflowGraphDocument;
 using ContractWorkflowNodeLayout = MesControlAgv.Contracts.Workflows.WorkflowNodeLayout;
 using ContractWorkflowViewport = MesControlAgv.Contracts.Workflows.WorkflowCanvasViewport;
 using MesControlAgv.Wpf.Services;
@@ -274,12 +275,17 @@ public sealed class WorkflowEditorTests
             }
             """);
 
-        var workflow = Assert.Single(new WorkflowStore(fixture.Path).Load());
+        var store = new WorkflowStore(fixture.Path);
+        var workflow = Assert.Single(store.Load());
 
         var edge = Assert.Single(workflow.Edges);
         Assert.Equal(start, edge.SourceNodeId);
         Assert.Equal(end, edge.TargetNodeId);
         Assert.Equal(end, Assert.Single(workflow.Nodes.Single(node => node.Id == start).NextNodeIds));
+        Assert.NotNull(store.LastLoadReport);
+        Assert.Equal(WorkflowImportSourceFormat.LegacyGraphEnvelope, store.LastLoadReport!.SourceFormat);
+        Assert.Equal(1, store.LastLoadReport.MigratedEdgeCount);
+        Assert.Contains("迁移生成 1 条顺序边", store.LastLoadReport.Summary, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -347,47 +353,247 @@ public sealed class WorkflowEditorTests
     }
 
     [Fact]
-    public void Legacy_experiment_editor_bridge_preserves_connections_and_metadata()
+    public void Compatibility_import_reports_legacy_experiment_conversion_and_unsupported_fields()
     {
-        var editor = new ExperimentFlowEditorViewModel();
-        var source = new ExperimentFlowNode
-        {
-            Id = Guid.NewGuid(),
-            Type = "DataImport",
-            Title = "Import",
-            Description = "Load sample data",
-            Location = new System.Windows.Point(10, 20)
-        };
-        var target = new ExperimentFlowNode
-        {
-            Id = Guid.NewGuid(),
-            Type = "InstrumentOperation",
-            Title = "Read D160",
-            Location = new System.Windows.Point(300, 20)
-        };
-        var sourcePort = new ExperimentFlowConnector { Id = Guid.NewGuid(), IsInput = false, Node = source };
-        var targetPort = new ExperimentFlowConnector { Id = Guid.NewGuid(), IsInput = true, Node = target };
-        source.Output.Add(sourcePort);
-        target.Input.Add(targetPort);
-        editor.Nodes.Add(source);
-        editor.Nodes.Add(target);
-        editor.Connections.Add(new ExperimentFlowConnection
-        {
-            Id = Guid.NewGuid(),
-            Source = sourcePort,
-            Target = targetPort,
-            Condition = "sample.ready",
-            Color = "#34A853"
-        });
+        using var fixture = new TempWorkflowFile();
+        var sourceId = Guid.NewGuid();
+        var targetId = Guid.NewGuid();
+        var edgeId = Guid.NewGuid();
+        var viewModel = new WorkflowEditorViewModel(new WorkflowStore(fixture.Path));
+        var initialCount = viewModel.GraphDocuments.Count;
 
-        var graph = ExperimentFlowGraphAdapter.ToGraph(editor);
-        var legacy = ExperimentFlowGraphAdapter.ToLegacyConfig(graph);
+        var imported = viewModel.ImportCompatibilityJson(
+            $$"""
+            {
+              "nodes": [
+                {
+                  "id": "{{sourceId}}",
+                  "title": "Import",
+                  "description": "Load sample data",
+                  "type": "DataImport",
+                  "x": 10,
+                  "y": 20,
+                  "script": "must be reported"
+                },
+                {
+                  "id": "{{targetId}}",
+                  "title": "Read D160",
+                  "type": "InstrumentOperation",
+                  "x": 300,
+                  "y": 20
+                }
+              ],
+              "connections": [
+                {
+                  "id": "{{edgeId}}",
+                  "sourceNodeId": "{{sourceId}}",
+                  "targetNodeId": "{{targetId}}",
+                  "condition": "sample.ready",
+                  "color": "#34A853"
+                }
+              ]
+            }
+            """,
+            "legacy-experiment.json");
 
-        Assert.Equal("DataImport", legacy.Nodes.Single(node => node.Id == source.Id).Type);
-        var connection = Assert.Single(legacy.Connections);
+        Assert.True(imported);
+        Assert.Equal(initialCount + 1, viewModel.GraphDocuments.Count);
+        var graph = viewModel.SelectedGraphDocument!;
+        Assert.Equal("legacy.experiment.DataImport", graph.Nodes.Single(node => node.Id == sourceId).NodeTypeId);
+        Assert.Equal(10, graph.Layouts.Single(layout => layout.NodeId == sourceId).X);
+        var connection = Assert.Single(graph.Edges);
         Assert.Equal("sample.ready", connection.Condition);
-        Assert.Equal("#34A853", connection.Color);
-        Assert.Equal(10, legacy.Nodes.Single(node => node.Id == source.Id).X);
+        Assert.Equal("#34A853", connection.Metadata["legacyColor"]);
+        Assert.Equal(WorkflowImportSourceFormat.LegacyExperimentFlow, viewModel.LastImportReport!.SourceFormat);
+        Assert.Contains(viewModel.LastImportReport.Issues, issue => issue.Code == "UNSUPPORTED_FIELD_REPORTED");
+        Assert.Contains(viewModel.LastImportReport.Issues, issue => issue.Code == "LEGACY_NODE_TYPE_REQUIRES_REVIEW");
+        Assert.True(viewModel.HasImportReport);
+        Assert.Contains("旧实验流程设计器", viewModel.ImportReportSummary, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Compatibility_import_rejects_future_schema_without_changing_editor_state()
+    {
+        using var fixture = new TempWorkflowFile();
+        var viewModel = new WorkflowEditorViewModel(new WorkflowStore(fixture.Path));
+        var beforeIds = viewModel.GraphDocuments.Select(document => document.Id).ToArray();
+
+        var imported = viewModel.ImportCompatibilityJson(
+            $$"""
+            {
+              "format": "mes.workflow.graph",
+              "schemaVersion": {{ContractWorkflowGraphDocument.CurrentSchemaVersion + 1}},
+              "workflows": [
+                {
+                  "id": "{{Guid.NewGuid()}}",
+                  "name": "Future",
+                  "nodes": []
+                }
+              ]
+            }
+            """,
+            "future.json");
+
+        Assert.False(imported);
+        Assert.Equal(beforeIds, viewModel.GraphDocuments.Select(document => document.Id));
+        Assert.True(viewModel.LastImportReport!.HasErrors);
+        Assert.Contains(viewModel.LastImportReport.Issues, issue => issue.Code == "GRAPH_SCHEMA_UNSUPPORTED");
+        Assert.Contains("未修改", viewModel.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Compatibility_import_rejects_future_envelope_when_child_declares_current_schema()
+    {
+        using var fixture = new TempWorkflowFile();
+        var viewModel = new WorkflowEditorViewModel(new WorkflowStore(fixture.Path));
+        var beforeIds = viewModel.GraphDocuments.Select(document => document.Id).ToArray();
+
+        var imported = viewModel.ImportCompatibilityJson(
+            $$"""
+            {
+              "format": "mes.workflow.graph",
+              "schemaVersion": {{ContractWorkflowGraphDocument.CurrentSchemaVersion + 1}},
+              "workflows": [
+                {
+                  "id": "{{Guid.NewGuid()}}",
+                  "schemaVersion": {{ContractWorkflowGraphDocument.CurrentSchemaVersion}},
+                  "name": "Future envelope",
+                  "nodes": []
+                }
+              ]
+            }
+            """,
+            "future-envelope.json");
+
+        Assert.False(imported);
+        Assert.Equal(beforeIds, viewModel.GraphDocuments.Select(document => document.Id));
+        Assert.Contains(viewModel.LastImportReport!.Issues, issue => issue.Code == "GRAPH_SCHEMA_UNSUPPORTED");
+    }
+
+    [Fact]
+    public void Compatibility_import_rejects_legacy_dangling_next_node_reference()
+    {
+        var start = Guid.NewGuid();
+        var result = new WorkflowDocumentImporter().Import(
+            $$"""
+            [
+              {
+                "id": "{{Guid.NewGuid()}}",
+                "name": "Dangling legacy next node",
+                "nodes": [
+                  {
+                    "id": "{{start}}",
+                    "type": 0,
+                    "name": "Start",
+                    "order": 1,
+                    "nextNodeIds": ["{{Guid.NewGuid()}}"]
+                  }
+                ]
+              }
+            ]
+            """,
+            "dangling-legacy-next.json");
+
+        Assert.False(result.CanImport);
+        Assert.Contains(result.Report.Issues, issue => issue.Code == "LEGACY_NEXT_NODE_DANGLING");
+    }
+
+    [Fact]
+    public void Compatibility_import_rejects_dangling_and_duplicate_layouts()
+    {
+        var workflowId = Guid.NewGuid();
+        var nodeId = Guid.NewGuid();
+        var result = new WorkflowDocumentImporter().Import(
+            $$"""
+            {
+              "id": "{{workflowId}}",
+              "schemaVersion": 2,
+              "name": "Invalid layouts",
+              "nodes": [
+                { "id": "{{nodeId}}", "nodeTypeId": "core.start", "name": "Start" }
+              ],
+              "layouts": [
+                { "nodeId": "{{nodeId}}", "x": 10, "y": 20 },
+                { "nodeId": "{{nodeId}}", "x": 30, "y": 40 },
+                { "nodeId": "{{Guid.NewGuid()}}", "x": 50, "y": 60 }
+              ]
+            }
+            """,
+            "invalid-layouts.json");
+
+        Assert.False(result.CanImport);
+        Assert.Contains(result.Report.Issues, issue => issue.Code == "GRAPH_LAYOUT_DUPLICATE");
+        Assert.Contains(result.Report.Issues, issue => issue.Code == "GRAPH_LAYOUT_DANGLING");
+    }
+
+    [Fact]
+    public void Compatibility_import_rejects_duplicate_workflow_ids_without_partial_application()
+    {
+        using var fixture = new TempWorkflowFile();
+        var workflowId = Guid.NewGuid();
+        var viewModel = new WorkflowEditorViewModel(new WorkflowStore(fixture.Path));
+        var beforeIds = viewModel.GraphDocuments.Select(document => document.Id).ToArray();
+
+        var imported = viewModel.ImportCompatibilityJson(
+            $$"""
+            {
+              "format": "mes.workflow.graph",
+              "schemaVersion": 2,
+              "workflows": [
+                { "id": "{{workflowId}}", "schemaVersion": 2, "name": "First", "nodes": [] },
+                { "id": "{{workflowId}}", "schemaVersion": 2, "name": "Second", "nodes": [] }
+              ]
+            }
+            """,
+            "duplicates.json");
+
+        Assert.False(imported);
+        Assert.Equal(beforeIds, viewModel.GraphDocuments.Select(document => document.Id));
+        Assert.Contains(viewModel.LastImportReport!.Issues, issue => issue.Code == "GRAPH_WORKFLOW_ID_DUPLICATE");
+    }
+
+    [Fact]
+    public void Legacy_wpf_array_with_graph_named_fields_is_not_misclassified_as_graph_document()
+    {
+        using var fixture = new TempWorkflowFile();
+        var start = Guid.NewGuid();
+        var end = Guid.NewGuid();
+        var edge = Guid.NewGuid();
+        var result = new WorkflowDocumentImporter().Import(
+            $$"""
+            [
+              {
+                "id": "{{Guid.NewGuid()}}",
+                "name": "Legacy with edges",
+                "nodes": [
+                  { "id": "{{start}}", "type": 0, "name": "Start", "order": 1 },
+                  { "id": "{{end}}", "type": 5, "name": "End", "order": 2 }
+                ],
+                "edges": [
+                  {
+                    "id": "{{edge}}",
+                    "sourceNodeId": "{{start}}",
+                    "sourcePort": "success",
+                    "targetNodeId": "{{end}}",
+                    "targetPort": "in",
+                    "kind": 0
+                  }
+                ],
+                "layouts": [
+                  { "nodeId": "{{start}}", "x": 10, "y": 20 },
+                  { "nodeId": "{{end}}", "x": 220, "y": 20 }
+                ]
+              }
+            ]
+            """,
+            "legacy-wpf.json");
+
+        Assert.True(result.CanImport);
+        Assert.Equal(WorkflowImportSourceFormat.LegacyWpfArray, result.Report.SourceFormat);
+        var graph = Assert.Single(result.Documents);
+        Assert.Equal("core.start", graph.Nodes.Single(node => node.Id == start).NodeTypeId);
+        Assert.Equal("core.end", graph.Nodes.Single(node => node.Id == end).NodeTypeId);
+        Assert.Equal(edge, Assert.Single(graph.Edges).Id);
     }
 
     [Fact]
@@ -438,6 +644,28 @@ public sealed class WorkflowEditorTests
     }
 
     [Fact]
+    public void Property_panel_node_delete_removes_associated_graph_edges_and_layout()
+    {
+        using var fixture = new TempWorkflowFile();
+        var viewModel = new WorkflowEditorViewModel(new WorkflowStore(fixture.Path));
+        var workflow = viewModel.SelectedWorkflow!;
+        var deleted = workflow.Nodes[1];
+        viewModel.SelectedNode = deleted;
+
+        Assert.Contains(workflow.Edges, edge =>
+            edge.SourceNodeId == deleted.Id || edge.TargetNodeId == deleted.Id);
+        Assert.Contains(workflow.Layouts, layout => layout.NodeId == deleted.Id);
+
+        viewModel.DeleteNodeCommand.Execute(null);
+
+        Assert.DoesNotContain(workflow.Edges, edge =>
+            edge.SourceNodeId == deleted.Id || edge.TargetNodeId == deleted.Id);
+        Assert.DoesNotContain(workflow.Layouts, layout => layout.NodeId == deleted.Id);
+        Assert.DoesNotContain(viewModel.SelectedGraphDocument!.Edges, edge =>
+            edge.SourceNodeId == deleted.Id || edge.TargetNodeId == deleted.Id);
+    }
+
+    [Fact]
     public void Editor_creates_runtime_parameters_for_wait_and_instrument_nodes()
     {
         using var fixture = new TempWorkflowFile();
@@ -476,6 +704,7 @@ public sealed class WorkflowEditorTests
         var nodeBeforeViewportChange = workflow.Nodes[0];
         canvas.UpdateViewport(50, 75, 1.25);
         Assert.Equal(new ContractWorkflowViewport { X = 50, Y = 75, Zoom = 1.25 }, workflow.Viewport);
+        Assert.Equal(new ContractWorkflowViewport { X = 50, Y = 75, Zoom = 1.25 }, viewModel.SelectedGraphDocument!.Viewport);
         Assert.Same(nodeBeforeViewportChange, workflow.Nodes[0]);
 
         canvas.SelectedNodes.Clear();
@@ -487,10 +716,15 @@ public sealed class WorkflowEditorTests
         Assert.Equal(
             "Updated from property panel",
             canvas.Nodes.Single(node => node.Id == selectedId).Name);
+        Assert.Equal(
+            "Updated from property panel",
+            viewModel.SelectedGraphDocument!.Nodes.Single(node => node.Id == selectedId).Name);
         canvas.UndoCommand.Execute(null);
         Assert.Equal(originalName, workflow.Nodes.Single(node => node.Id == selectedId).Name);
+        Assert.Equal(originalName, viewModel.SelectedGraphDocument!.Nodes.Single(node => node.Id == selectedId).Name);
         canvas.RedoCommand.Execute(null);
         Assert.Equal("Updated from property panel", workflow.Nodes.Single(node => node.Id == selectedId).Name);
+        Assert.Equal("Updated from property panel", viewModel.SelectedGraphDocument!.Nodes.Single(node => node.Id == selectedId).Name);
 
         viewModel.AddNodeAt(WorkflowNodeType.Wait, 615, 225);
         var addedId = viewModel.SelectedNode!.Id;
@@ -526,6 +760,7 @@ public sealed class WorkflowEditorTests
 
         Assert.DoesNotContain(viewModel.Nodes, node => node.Id == deletedId);
         Assert.DoesNotContain(canvas.Document.Nodes, node => node.Id == deletedId);
+        Assert.DoesNotContain(viewModel.SelectedGraphDocument!.Nodes, node => node.Id == deletedId);
     }
 
     [Fact]

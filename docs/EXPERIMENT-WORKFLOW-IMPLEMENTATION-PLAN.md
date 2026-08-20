@@ -1,6 +1,6 @@
 # 实验流程编排实施计划与验收门禁
 
-> 状态：G2-B 已实现，等待主编辑器 Nodify 接入验收；G2-C 尚未开始
+> 状态：G2-C 已实现，等待 G2 总体验收；G3 尚未开始
 > 日期：2026-08-20
 > 关联：[目标架构](EXPERIMENT-WORKFLOW-ARCHITECTURE.md)、[界面规划](EXPERIMENT-WORKFLOW-UI-DESIGN.md)、[画布技术评估](EXPERIMENT-WORKFLOW-CANVAS-EVALUATION.md)
 
@@ -112,6 +112,16 @@ G2-A 验收记录见 [EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md](EXPERIMENT-WORKFLOW-
 Graph Document schema 已提升到 v2：仅 v1 Graph Document 和旧 WPF 数组在整图完全无边时补顺序成功边，v2 断开草稿保持断开。默认预置流程直接保存 6 节点、5 条显式边和兼容运行时所需的 `NextNodeIds`。Release 全方案构建为 0 警告/0 错误，全量测试 570 通过、5 个既有 E2E 跳过、0 失败；隔离 Simulator 主窗口冒烟确认 `节点 6 / 边 5` 且连线和属性面板正常渲染。
 
 G2-B 的手工验收步骤和剩余边界见 [EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md](EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md)。验收前不进入 G3。G2-C 仅收口旧 `实验流程设计` 入口、WPF 兼容投影所有权和可见的旧格式转换报告，不扩展设备执行能力。
+
+### G2-C 当前执行记录（2026-08-20）
+
+旧 `实验流程设计` 页签及其独立 ViewModel、节点/连接模型和专用对话框已移除，主窗口只保留 `实验流程管理` 一个正式业务编辑入口。`ExperimentFlowConfigDto` 仅保留为显式 `兼容导入` 的反序列化格式，不再有旧格式写出或独立编辑路径。
+
+`WorkflowEditorViewModel` 现在持有规范 `WorkflowGraphDocument` 集合；WPF `ObservableCollection` 仅作为属性面板所需的展示投影。画布、属性面板、本地保存和 MES Draft/Validate/Publish 都从同一规范文档提交或读取，视口和发布版本元数据仍不进入撤销历史。
+
+新增结构化导入器和用户可见转换报告，覆盖当前/v1 图文档信封、单个/数组图文档、旧 WPF 数组和旧实验设计器 DTO。报告列出格式、schema、节点/边计数、补建顺序边、未知字段、兼容节点类型及阻断错误；未来 schema、悬空连接、重复 ID 或其他错误会整批拒绝，不会部分覆盖现有流程。G2-C 验收步骤见 [EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md](EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md)，验收前不进入 G3。
+
+G2-C 最终 Release 门禁为全方案构建 0 警告/0 错误、577 个测试通过、5 个既有 E2E 跳过、0 失败，其中 WPF 192/192。隔离 Simulator 主窗口冒烟确认旧页签已移除、`兼容导入` 和启动迁移报告可见、默认画布仍为 6 节点/5 条边且 5 条连接正常渲染；本机流程文件未被只读启动改写，隔离服务均已正常退出。
 
 ## 6. G3：类型化节点与发布校验
 

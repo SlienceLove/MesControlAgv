@@ -3,7 +3,6 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:MesControlAgv.Wpf.Controls"
         xmlns:local="clr-namespace:MesControlAgv.Wpf"
-        xmlns:views="clr-namespace:MesControlAgv.Wpf.Views"
         xmlns:workflowCanvas="clr-namespace:MesControlAgv.Wpf.WorkflowCanvas"
         Title="AGV MES 中控"
         WindowState="Maximized"
@@ -543,6 +542,7 @@
                     <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.NewWorkflowCommand}" Content="新建流程" />
                     <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.CopyWorkflowCommand}" Content="复制" />
                     <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.DeleteWorkflowCommand}" Content="删除" />
+                    <Button Margin="6,0,0,0" Padding="14,7" Click="ImportWorkflowCompatibility_Click" Content="兼容导入" ToolTip="导入旧 WPF、旧实验设计器或图文档 JSON" />
                     <Button Margin="6,0,0,0" Padding="14,7" Background="#1769AA" Foreground="White" Command="{Binding WorkflowEditor.SaveCommand}" Content="保存" />
                     <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.LoadFromMesCommand}" Content="从 MES 加载" />
                     <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.SaveDraftCommand}" Content="保存草稿" />
@@ -682,12 +682,19 @@
                     </ScrollViewer>
                 </Border>
             </Grid>
-             <StackPanel Grid.Row="2" Margin="0,10,0,0" Orientation="Horizontal">
-                 <TextBlock Foreground="Gray" Text="修改后点击保存，流程会持久化到本地 JSON 文件。" />
-                 <TextBlock Margin="18,0,0,0" Foreground="#315B87" Text="{Binding WorkflowEditor.RemoteStatus}" />
-                 <TextBlock Margin="18,0,0,0" Foreground="#7A3E00" Text="{Binding WorkflowEditor.ValidationSummary}" />
-                 <TextBlock Margin="18,0,0,0" Foreground="#315B87" Text="{Binding WorkflowEditor.ExecutionRuntimeSummary}" />
-                 <TextBlock Margin="18,0,0,0" Foreground="#7A3E00" Text="{Binding WorkflowEditor.ExecutionAuditSummary}" />
+             <StackPanel Grid.Row="2" Margin="0,10,0,0">
+                 <WrapPanel>
+                     <TextBlock Foreground="Gray" Text="修改后点击保存，流程会持久化到本地 JSON 文件。" />
+                     <TextBlock Margin="18,0,0,0" Foreground="#315B87" Text="{Binding WorkflowEditor.RemoteStatus}" />
+                     <TextBlock Margin="18,0,0,0" Foreground="#7A3E00" Text="{Binding WorkflowEditor.ValidationSummary}" />
+                     <TextBlock Margin="18,0,0,0" Foreground="#315B87" Text="{Binding WorkflowEditor.ExecutionRuntimeSummary}" />
+                     <TextBlock Margin="18,0,0,0" Foreground="#7A3E00" Text="{Binding WorkflowEditor.ExecutionAuditSummary}" />
+                 </WrapPanel>
+                 <Expander Margin="0,8,0,0"
+                           Header="{Binding WorkflowEditor.ImportReportSummary}"
+                           Visibility="{Binding WorkflowEditor.HasImportReport, Converter={StaticResource BooleanToVisibilityConverter}}">
+                     <TextBlock Margin="12,6,0,0" Foreground="#7A3E00" TextWrapping="Wrap" Text="{Binding WorkflowEditor.ImportReportDetails}" />
+                 </Expander>
              </StackPanel>
         </Grid>
     </TabItem>
@@ -1071,9 +1078,6 @@
                     </ScrollViewer>
                 </Grid>
             </Grid>
-        </TabItem>
-        <TabItem Header="实验流程设计" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
-            <views:ExperimentFlowEditorView DataContext="{Binding ExperimentFlowEditor}" />
         </TabItem>
     </TabControl>
 </Window>

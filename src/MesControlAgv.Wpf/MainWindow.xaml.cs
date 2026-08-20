@@ -104,6 +104,34 @@ public partial class MainWindow : Window
                 MessageBoxImage.Error);
         }
     }
+
+    private void ImportWorkflowCompatibility_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel viewModel) return;
+        var dialog = new OpenFileDialog
+        {
+            Filter = "流程 JSON 文件 (*.json)|*.json|所有文件 (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false,
+            Title = "兼容导入流程文件"
+        };
+        if (dialog.ShowDialog(this) != true) return;
+
+        var imported = viewModel.WorkflowEditor.ImportCompatibilityFile(dialog.FileName);
+        var report = viewModel.WorkflowEditor.LastImportReport;
+        if (report is null) return;
+        var image = !imported || report.HasErrors
+            ? MessageBoxImage.Error
+            : report.HasWarnings
+                ? MessageBoxImage.Warning
+                : MessageBoxImage.Information;
+        MessageBox.Show(
+            this,
+            $"{report.Summary}\n\n{report.Details}",
+            "流程转换报告",
+            MessageBoxButton.OK,
+            image);
+    }
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         AttachWorkflowEditor();
