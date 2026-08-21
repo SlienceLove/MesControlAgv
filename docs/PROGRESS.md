@@ -10,10 +10,9 @@ linked acceptance documents.
 Active branch: `docs/experiment-workflow-architecture-plan`
 
 - Experiment workflow G2, G3, and G4 have passed overall acceptance.
-- G4 provides durable node/device evidence, Simulator-only node execution,
-  read-only runtime monitoring, and audited run controls.
-- G5 is authorized. Work starts with plan, schedule-entry, reservation, and
-  resource-lease contracts; later scheduling and runtime behavior remain gated.
+- G5-A contracts, additive SQLite storage, and read-only scheduling projections
+  are implemented and at the project confirmation gate.
+- G5-B manual planning, G5-C runtime leases, and G5-D WPF pages have not started.
 
 The AGV MVP remains in frozen maintenance mode. Production, unattended,
 automatic/batch dispatch, and Push are **NO-GO**. G4-D controls MES scheduling
@@ -23,17 +22,25 @@ CIC-D160+ write path.
 
 ## Latest verification
 
-The G4-D Release gate completed on 2026-08-21:
+The G5-A Release gate completed on 2026-08-21:
 
 - Full solution build: **0 warnings / 0 errors**.
-- Full test suite: **648 passed / 5 existing E2E skipped / 0 failed**.
-- Breakdown: Domain 39, Workflow Contract 54, MES 93, WPF 212, Adapter 176,
+- Full test suite: **655 passed / 5 existing E2E skipped / 0 failed**.
+- Breakdown: Domain 39, Workflow Contract 57, MES 97, WPF 212, Adapter 176,
   Instrument Gateway 50, Simulator 5, and E2E 19 passed plus 5 skipped.
-- Project acceptance confirmed safe cancellation and both explicit Unknown
-  conclusions without creating or resending device operations. Stable evidence
-  is listed in the [G4 acceptance record](EXPERIMENT-WORKFLOW-G4-ACCEPTANCE.md).
+- Focused coverage proves version pinning, additive upgrade, read projections,
+  and database rejection of two active leases for one normalized resource key.
 
 ## Recent changes
+
+### 2026-08-21 - G5-A planning record foundation
+
+- Added separate plan, job, schedule-entry, reservation, and runtime-lease
+  contracts with immutable plan/workflow version references.
+- Added five additive SQLite tables and read-only plan, job, and schedule APIs.
+- Kept legacy transport tasks and direct workflow admission unchanged; no
+  scheduling command, lease acquisition, UI, or device behavior was added.
+- Implementation commit: `b690289`.
 
 ### 2026-08-21 - G4-D audited run controls
 
@@ -63,24 +70,11 @@ The G4-D Release gate completed on 2026-08-21:
   and rejected cross-run, cross-version, or unlinked evidence.
 - Kept Unknown visually distinct and explicitly non-retryable.
 
-### 2026-08-21 - G4-B node-driven Simulator worker
-
-- Migrated existing Simulator Move and Timed Wait dispatch/recovery to durable
-  node records and stable device operation IDs.
-- Timed Wait persists its start time and creates no device operation. Existing
-  G3 runs are backfilled only when active G4 records do not already exist.
-
-### 2026-08-21 - G4-A runtime records and read APIs
-
-- Added node execution, device operation, and timeline contracts, SQLite
-  storage, compatibility projection/dual writes, and read-only APIs.
-- Existing execution reads remain unchanged; no worker or device behavior was
-  added in G4-A.
-
 ## Historical trace
 
 | Date | Retained trace |
 | --- | --- |
+| 2026-08-21 | G4 overall acceptance: durable runtime evidence, Simulator-only node execution, monitoring, and audited controls. See [G4 acceptance](EXPERIMENT-WORKFLOW-G4-ACCEPTANCE.md). |
 | 2026-08-21 | G3 overall acceptance: typed catalog, strict publication gate, schema-driven inspector, and issue navigation. See [G3 acceptance](EXPERIMENT-WORKFLOW-G3-ACCEPTANCE.md). |
 | 2026-08-20 | G2 overall acceptance: one canonical v2 graph editor, Nodify canvas, compatibility importer, and lossless MES lifecycle. See [G2 acceptance](EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md). |
 | 2026-08-19 | G1 canvas evaluation and graph convergence baseline. See [G1 acceptance](EXPERIMENT-WORKFLOW-G1-ACCEPTANCE.md). |
@@ -94,19 +88,20 @@ The G4-D Release gate completed on 2026-08-21:
 - Every physical AGV connection or movement requires fresh authorization and a
   separate read-only preflight. Production and unattended operation remain
   **NO-GO**.
-- Robot arm and vision scaffolding has no G4 workflow execution authorization.
+- Robot arm and vision scaffolding has no G5 workflow execution authorization.
 
 ## Next gate
 
-1. Confirm the G5 slice boundaries and compatibility strategy from the
-   architecture, UI design, and implementation plan.
-2. Implement and verify G5-A contracts and persistence without adding the
-   scheduling algorithm, runtime lease acquisition, or complete scheduling UI.
-3. Physical device commands, serial control, protocol fields, and D160 writes
-   remain outside the authorized scope.
+1. Confirm G5-A against the
+   [G5 acceptance record](EXPERIMENT-WORKFLOW-G5-ACCEPTANCE.md).
+2. After confirmation, implement G5-B plan/job commands, manual scheduling,
+   deterministic reservation conflicts, blocking reasons, and append-only audit.
+3. Runtime lease acquisition, WPF scheduling pages, physical device commands,
+   serial control, protocol fields, and D160 writes remain outside G5-B scope.
 
 ## Planning and evidence
 
+- [G5 acceptance](EXPERIMENT-WORKFLOW-G5-ACCEPTANCE.md)
 - [G4 acceptance](EXPERIMENT-WORKFLOW-G4-ACCEPTANCE.md)
 - [G3 acceptance](EXPERIMENT-WORKFLOW-G3-ACCEPTANCE.md)
 - [Experiment workflow architecture](EXPERIMENT-WORKFLOW-ARCHITECTURE.md)
