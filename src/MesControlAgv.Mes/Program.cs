@@ -30,6 +30,8 @@ builder.Services.AddSingleton(profile);
 builder.Services.AddSingleton(map);
 builder.Services.AddSingleton(workflowCatalogs);
 builder.Services.AddSingleton(workflowPublicationContext);
+builder.Services.AddSingleton(new ExperimentResourceCatalog(profile));
+builder.Services.AddSingleton<ExperimentSchedulingMutationGate>();
 builder.Services.AddSingleton(new PathPlanner(map));
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton(builder.Configuration
@@ -47,6 +49,7 @@ builder.Services.AddScoped<IWorkflowRuntimeExecutor>(services => services.GetReq
 builder.Services.AddScoped<WorkflowApplicationService>();
 builder.Services.AddScoped<IWorkflowApplicationService>(services => services.GetRequiredService<WorkflowApplicationService>());
 builder.Services.AddScoped<IExperimentSchedulingQueryService, ExperimentSchedulingQueryService>();
+builder.Services.AddScoped<IExperimentSchedulingCommandService, ExperimentSchedulingCommandService>();
 builder.Services.AddScoped<FieldNavigationAcceptanceRepository>();
 builder.Services.AddScoped<IFieldNavigationAcceptanceApplicationService, FieldNavigationAcceptanceService>();
 builder.Services.AddScoped<TaskRepository>();
@@ -476,6 +479,58 @@ app.MapGet("/api/experiment-plans/{planId:guid}/versions/{version:int}", async (
     return plan is null ? Results.NotFound() : Results.Ok(plan);
 });
 
+app.MapPost("/api/experiment-plans", async (
+    SaveExperimentPlanDraftRequest request,
+    IExperimentSchedulingCommandService service,
+    CancellationToken cancellationToken) =>
+    await ExecuteExperimentSchedulingCommandAsync(
+        () => service.CreatePlanDraftAsync(request, cancellationToken),
+        plan => Results.Created(
+            $"/api/experiment-plans/{plan.PlanId}/versions/{plan.Version}",
+            plan)));
+
+app.MapPut("/api/experiment-plans/{planId:guid}/versions/{version:int}/draft", async (
+    Guid planId,
+    int version,
+    SaveExperimentPlanDraftRequest request,
+    IExperimentSchedulingCommandService service,
+    CancellationToken cancellationToken) =>
+    await ExecuteExperimentSchedulingCommandAsync(
+        () => service.UpdatePlanDraftAsync(planId, version, request, cancellationToken),
+        Results.Ok));
+
+app.MapPost("/api/experiment-plans/{planId:guid}/versions/{version:int}/validate", async (
+    Guid planId,
+    int version,
+    ExperimentSchedulingActionRequest request,
+    IExperimentSchedulingCommandService service,
+    CancellationToken cancellationToken) =>
+    await ExecuteExperimentSchedulingCommandAsync(
+        () => service.ValidatePlanAsync(planId, version, request, cancellationToken),
+        Results.Ok));
+
+app.MapPost("/api/experiment-plans/{planId:guid}/versions/{version:int}/publish", async (
+    Guid planId,
+    int version,
+    ExperimentSchedulingActionRequest request,
+    IExperimentSchedulingCommandService service,
+    CancellationToken cancellationToken) =>
+    await ExecuteExperimentSchedulingCommandAsync(
+        () => service.PublishPlanAsync(planId, version, request, cancellationToken),
+        Results.Ok));
+
+app.MapPost("/api/experiment-plans/{planId:guid}/versions/{sourceVersion:int}/next-draft", async (
+    Guid planId,
+    int sourceVersion,
+    ExperimentSchedulingActionRequest request,
+    IExperimentSchedulingCommandService service,
+    CancellationToken cancellationToken) =>
+    await ExecuteExperimentSchedulingCommandAsync(
+        () => service.CreateNextPlanDraftAsync(planId, sourceVersion, request, cancellationToken),
+        plan => Results.Created(
+            $"/api/experiment-plans/{plan.PlanId}/versions/{plan.Version}",
+            plan)));
+
 app.MapGet("/api/experiment-jobs", async (
     ExperimentJobStatus? status,
     IExperimentSchedulingQueryService service,
@@ -491,6 +546,41 @@ app.MapGet("/api/experiment-jobs/{jobId:guid}", async (
     return job is null ? Results.NotFound() : Results.Ok(job);
 });
 
+app.MapPost("/api/experiment-jobs", async (
+    CreateExperimentJobRequest request,
+    IExperimentSchedulingCommandService service,
+    CancellationToken cancellationToken) =>
+    await ExecuteExperimentSchedulingCommandAsync(
+        () => service.CreateJobAsync(request, cancellationToken),
+        job => Results.Created($"/api/experiment-jobs/{job.JobId}", job)));
+
+app.MapPut("/api/experiment-jobs/{jobId:guid}/schedule", async (
+    Guid jobId,
+    ScheduleExperimentJobRequest request,
+    IExperimentSchedulingCommandService service,
+    CancellationToken cancellationToken) =>
+    await ExecuteExperimentSchedulingCommandAsync(
+        () => service.ScheduleJobAsync(jobId, request, cancellationToken),
+        Results.Ok));
+
+app.MapPost("/api/experiment-jobs/{jobId:guid}/unschedule", async (
+    Guid jobId,
+    ExperimentSchedulingActionRequest request,
+    IExperimentSchedulingCommandService service,
+    CancellationToken cancellationToken) =>
+    await ExecuteExperimentSchedulingCommandAsync(
+        () => service.UnscheduleJobAsync(jobId, request, cancellationToken),
+        Results.Ok));
+
+app.MapPost("/api/experiment-jobs/{jobId:guid}/cancel", async (
+    Guid jobId,
+    ExperimentSchedulingActionRequest request,
+    IExperimentSchedulingCommandService service,
+    CancellationToken cancellationToken) =>
+    await ExecuteExperimentSchedulingCommandAsync(
+        () => service.CancelJobAsync(jobId, request, cancellationToken),
+        Results.Ok));
+
 app.MapGet("/api/schedule", async (
     DateTimeOffset? from,
     DateTimeOffset? to,
@@ -500,6 +590,45 @@ app.MapGet("/api/schedule", async (
     try
     {
         return Results.Ok(await service.GetScheduleAsync(from, to, cancellationToken));
+    }
+    catch (ArgumentException exception)
+    {
+        return Results.BadRequest(new { detail = exception.Message });
+    }
+});
+
+app.MapGet("/api/resources/availability", async (
+    DateTimeOffset? from,
+    DateTimeOffset? to,
+    IExperimentSchedulingQueryService service,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        return Results.Ok(await service.ListResourceAvailabilityAsync(from, to, cancellationToken));
+    }
+    catch (ArgumentException exception)
+    {
+        return Results.BadRequest(new { detail = exception.Message });
+    }
+});
+
+app.MapGet("/api/experiment-scheduling/audits", async (
+    Guid? planId,
+    Guid? experimentJobId,
+    Guid? scheduleEntryId,
+    int? limit,
+    IExperimentSchedulingQueryService service,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        return Results.Ok(await service.ListAuditsAsync(
+            planId,
+            experimentJobId,
+            scheduleEntryId,
+            limit ?? 200,
+            cancellationToken));
     }
     catch (ArgumentException exception)
     {
@@ -799,6 +928,36 @@ static async Task<IResult> ExecuteWorkflowRunControlAsync(
     }
 }
 
+static async Task<IResult> ExecuteExperimentSchedulingCommandAsync<T>(
+    Func<Task<T>> action,
+    Func<T, IResult> success)
+{
+    try
+    {
+        return success(await action());
+    }
+    catch (ArgumentException exception)
+    {
+        return Results.BadRequest(new { detail = exception.Message });
+    }
+    catch (KeyNotFoundException exception)
+    {
+        return Results.NotFound(new { detail = exception.Message });
+    }
+    catch (ExperimentPlanValidationException exception)
+    {
+        return Results.UnprocessableEntity(new
+        {
+            detail = exception.Message,
+            validation = exception.Validation
+        });
+    }
+    catch (ExperimentSchedulingConflictException exception)
+    {
+        return Results.Conflict(new { detail = exception.Message });
+    }
+}
+
 static async Task EnsureTaskColumnsAsync(MesDbContext database)
 {
     var connection = database.Database.GetDbConnection();
@@ -997,7 +1156,7 @@ static async Task EnsureExperimentSchedulingTablesAsync(MesDbContext database)
         await connection.OpenAsync();
     }
 
-    var statements = new[]
+    var tableStatements = new[]
     {
         """
         CREATE TABLE IF NOT EXISTS ExperimentPlans (
@@ -1014,6 +1173,9 @@ static async Task EnsureExperimentSchedulingTablesAsync(MesDbContext database)
             ProfileProductId TEXT NULL,
             ProfileVersion TEXT NULL,
             LayoutId TEXT NULL,
+            ValidationJson TEXT NULL,
+            ValidatedBy TEXT NULL,
+            ValidatedAtUtc TEXT NULL,
             CreatedBy TEXT NOT NULL,
             CreatedAtUtc TEXT NOT NULL,
             PublishedBy TEXT NULL,
@@ -1050,6 +1212,7 @@ static async Task EnsureExperimentSchedulingTablesAsync(MesDbContext database)
             PlannedEndUtc TEXT NOT NULL,
             Priority INTEGER NOT NULL,
             Status TEXT NOT NULL,
+            RequestedResourcesJson TEXT NOT NULL,
             BlockingReasonsJson TEXT NOT NULL,
             CreatedBy TEXT NOT NULL,
             CreatedAtUtc TEXT NOT NULL,
@@ -1090,6 +1253,38 @@ static async Task EnsureExperimentSchedulingTablesAsync(MesDbContext database)
             UpdatedAtUtc TEXT NOT NULL
         );
         """,
+        """
+        CREATE TABLE IF NOT EXISTS ExperimentSchedulingAudits (
+            Id TEXT NOT NULL PRIMARY KEY,
+            EventType TEXT NOT NULL,
+            Outcome TEXT NOT NULL,
+            Code TEXT NULL,
+            RequestId TEXT NOT NULL,
+            RequestFingerprint TEXT NOT NULL,
+            Actor TEXT NOT NULL,
+            Reason TEXT NOT NULL,
+            PlanId TEXT NULL,
+            PlanVersion INTEGER NULL,
+            ExperimentJobId TEXT NULL,
+            ScheduleEntryId TEXT NULL,
+            DetailsJson TEXT NOT NULL,
+            ResultJson TEXT NOT NULL,
+            OccurredAtUtc TEXT NOT NULL
+        );
+        """
+    };
+
+    foreach (var statement in tableStatements)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = statement;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    await EnsureExperimentSchedulingColumnsAsync(connection);
+
+    var indexStatements = new[]
+    {
         "CREATE INDEX IF NOT EXISTS IX_ExperimentPlans_Status_UpdatedAtUtc ON ExperimentPlans (Status, UpdatedAtUtc);",
         "CREATE INDEX IF NOT EXISTS IX_ExperimentPlans_WorkflowId_WorkflowVersion ON ExperimentPlans (WorkflowId, WorkflowVersion);",
         "CREATE INDEX IF NOT EXISTS IX_ExperimentJobs_Status_CreatedAtUtc ON ExperimentJobs (Status, CreatedAtUtc);",
@@ -1101,14 +1296,57 @@ static async Task EnsureExperimentSchedulingTablesAsync(MesDbContext database)
         "CREATE INDEX IF NOT EXISTS IX_ResourceReservations_ResourceKey_StartsAtUtc_EndsAtUtc ON ResourceReservations (ResourceKey, StartsAtUtc, EndsAtUtc);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_WorkflowResourceLeases_ActiveResourceKey ON WorkflowResourceLeases (ActiveResourceKey);",
         "CREATE INDEX IF NOT EXISTS IX_WorkflowResourceLeases_WorkflowRunId_AcquiredAtUtc ON WorkflowResourceLeases (WorkflowRunId, AcquiredAtUtc);",
-        "CREATE INDEX IF NOT EXISTS IX_WorkflowResourceLeases_ScheduleEntryId ON WorkflowResourceLeases (ScheduleEntryId);"
+        "CREATE INDEX IF NOT EXISTS IX_WorkflowResourceLeases_ScheduleEntryId ON WorkflowResourceLeases (ScheduleEntryId);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentSchedulingAudits_RequestId ON ExperimentSchedulingAudits (RequestId);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentSchedulingAudits_PlanId_PlanVersion_OccurredAtUtc ON ExperimentSchedulingAudits (PlanId, PlanVersion, OccurredAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentSchedulingAudits_ExperimentJobId_OccurredAtUtc ON ExperimentSchedulingAudits (ExperimentJobId, OccurredAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentSchedulingAudits_ScheduleEntryId_OccurredAtUtc ON ExperimentSchedulingAudits (ScheduleEntryId, OccurredAtUtc);"
     };
 
-    foreach (var statement in statements)
+    foreach (var statement in indexStatements)
     {
         await using var command = connection.CreateCommand();
         command.CommandText = statement;
         await command.ExecuteNonQueryAsync();
+    }
+}
+
+static async Task EnsureExperimentSchedulingColumnsAsync(System.Data.Common.DbConnection connection)
+{
+    await EnsureColumnsAsync(
+        connection,
+        "ExperimentPlans",
+        [
+            (Name: "ValidationJson", Sql: "TEXT NULL"),
+            (Name: "ValidatedBy", Sql: "TEXT NULL"),
+            (Name: "ValidatedAtUtc", Sql: "TEXT NULL")
+        ]);
+    await EnsureColumnsAsync(
+        connection,
+        "ScheduleEntries",
+        [
+            (Name: "RequestedResourcesJson", Sql: "TEXT NOT NULL DEFAULT '[]'")
+        ]);
+}
+
+static async Task EnsureColumnsAsync(
+    System.Data.Common.DbConnection connection,
+    string tableName,
+    IReadOnlyList<(string Name, string Sql)> definitions)
+{
+    await using var command = connection.CreateCommand();
+    command.CommandText = $"PRAGMA table_info({tableName});";
+    var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    await using var reader = await command.ExecuteReaderAsync();
+    while (await reader.ReadAsync()) columns.Add(reader.GetString(1));
+    await reader.CloseAsync();
+
+    foreach (var definition in definitions)
+    {
+        if (columns.Contains(definition.Name)) continue;
+        await using var alter = connection.CreateCommand();
+        alter.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {definition.Name} {definition.Sql};";
+        await alter.ExecuteNonQueryAsync();
     }
 }
 

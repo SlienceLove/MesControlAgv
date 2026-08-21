@@ -114,6 +114,14 @@ public sealed class ExperimentSchedulingApiTests : IClassFixture<MesWebApplicati
             PlannedEndUtc = plannedEnd,
             Priority = 80,
             Status = ScheduleEntryStatus.Scheduled.ToString(),
+            RequestedResourcesJson = JsonSerializer.Serialize(new[]
+            {
+                new ExperimentResourceReference
+                {
+                    ResourceType = ExperimentResourceTypeIds.Agv,
+                    ResourceId = "AGV-01"
+                }
+            }),
             BlockingReasonsJson = "[]",
             CreatedBy = "planner-api-test",
             CreatedAtUtc = now,

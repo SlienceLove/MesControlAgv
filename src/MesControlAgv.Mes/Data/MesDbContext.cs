@@ -32,6 +32,9 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
 
     public DbSet<WorkflowResourceLeaseRecord> WorkflowResourceLeases => Set<WorkflowResourceLeaseRecord>();
 
+    public DbSet<ExperimentSchedulingAuditRecord> ExperimentSchedulingAudits =>
+        Set<ExperimentSchedulingAuditRecord>();
+
     public DbSet<FieldNavigationAcceptance> FieldNavigationAcceptances => Set<FieldNavigationAcceptance>();
 
     public DbSet<FieldNavigationAcceptanceAudit> FieldNavigationAcceptanceAudits => Set<FieldNavigationAcceptanceAudit>();
@@ -148,6 +151,8 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.Property(plan => plan.ProfileProductId).HasMaxLength(128);
             entity.Property(plan => plan.ProfileVersion).HasMaxLength(128);
             entity.Property(plan => plan.LayoutId).HasMaxLength(256);
+            entity.Property(plan => plan.ValidationJson).HasMaxLength(65535);
+            entity.Property(plan => plan.ValidatedBy).HasMaxLength(256);
             entity.Property(plan => plan.CreatedBy).HasMaxLength(256);
             entity.Property(plan => plan.PublishedBy).HasMaxLength(256);
             entity.HasIndex(plan => new { plan.Status, plan.UpdatedAtUtc });
@@ -174,6 +179,7 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.ToTable("ScheduleEntries");
             entity.HasKey(entry => entry.ScheduleEntryId);
             entity.Property(entry => entry.Status).HasMaxLength(32);
+            entity.Property(entry => entry.RequestedResourcesJson).HasMaxLength(65535);
             entity.Property(entry => entry.BlockingReasonsJson).HasMaxLength(65535);
             entity.Property(entry => entry.CreatedBy).HasMaxLength(256);
             entity.HasIndex(entry => new { entry.Status, entry.PlannedStartUtc, entry.Priority });
@@ -212,6 +218,24 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.HasIndex(lease => lease.ActiveResourceKey).IsUnique();
             entity.HasIndex(lease => new { lease.WorkflowRunId, lease.AcquiredAtUtc });
             entity.HasIndex(lease => lease.ScheduleEntryId);
+        });
+
+        modelBuilder.Entity<ExperimentSchedulingAuditRecord>(entity =>
+        {
+            entity.ToTable("ExperimentSchedulingAudits");
+            entity.HasKey(audit => audit.Id);
+            entity.Property(audit => audit.EventType).HasMaxLength(128);
+            entity.Property(audit => audit.Outcome).HasMaxLength(64);
+            entity.Property(audit => audit.Code).HasMaxLength(128);
+            entity.Property(audit => audit.Actor).HasMaxLength(256);
+            entity.Property(audit => audit.Reason).HasMaxLength(2048);
+            entity.Property(audit => audit.RequestFingerprint).HasMaxLength(128);
+            entity.Property(audit => audit.DetailsJson).HasMaxLength(8192);
+            entity.Property(audit => audit.ResultJson).HasMaxLength(65535);
+            entity.HasIndex(audit => audit.RequestId).IsUnique();
+            entity.HasIndex(audit => new { audit.PlanId, audit.PlanVersion, audit.OccurredAtUtc });
+            entity.HasIndex(audit => new { audit.ExperimentJobId, audit.OccurredAtUtc });
+            entity.HasIndex(audit => new { audit.ScheduleEntryId, audit.OccurredAtUtc });
         });
 
         modelBuilder.Entity<FieldNavigationAcceptance>(entity =>

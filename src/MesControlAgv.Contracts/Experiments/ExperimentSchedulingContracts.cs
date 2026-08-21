@@ -128,6 +128,9 @@ public sealed record ExperimentPlan
     public string? ProfileProductId { get; init; }
     public string? ProfileVersion { get; init; }
     public string? LayoutId { get; init; }
+    public ExperimentPlanValidationResult? Validation { get; init; }
+    public string? ValidatedBy { get; init; }
+    public DateTimeOffset? ValidatedAt { get; init; }
     public string CreatedBy { get; init; } = string.Empty;
     public DateTimeOffset CreatedAt { get; init; }
     public string? PublishedBy { get; init; }
@@ -165,6 +168,7 @@ public sealed record ScheduleBlockReason
     public string Code { get; init; } = string.Empty;
     public string Message { get; init; } = string.Empty;
     public ExperimentResourceReference? Resource { get; init; }
+    public IReadOnlyList<Guid> ConflictingScheduleEntryIds { get; init; } = Array.Empty<Guid>();
 }
 
 /// <summary>
@@ -192,6 +196,8 @@ public sealed record ScheduleEntry
     public DateTimeOffset PlannedEnd { get; init; }
     public int Priority { get; init; }
     public ScheduleEntryStatus Status { get; init; }
+    public IReadOnlyList<ExperimentResourceReference> RequestedResources { get; init; } =
+        Array.Empty<ExperimentResourceReference>();
     public IReadOnlyList<ScheduleBlockReason> BlockingReasons { get; init; } =
         Array.Empty<ScheduleBlockReason>();
     public IReadOnlyList<ResourceReservation> Reservations { get; init; } =

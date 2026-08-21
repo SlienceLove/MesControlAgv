@@ -15,6 +15,9 @@ public sealed class ExperimentPlanRecord
     public string? ProfileProductId { get; set; }
     public string? ProfileVersion { get; set; }
     public string? LayoutId { get; set; }
+    public string? ValidationJson { get; set; }
+    public string? ValidatedBy { get; set; }
+    public DateTime? ValidatedAtUtc { get; set; }
     public string CreatedBy { get; set; } = string.Empty;
     public DateTime CreatedAtUtc { get; set; }
     public string? PublishedBy { get; set; }

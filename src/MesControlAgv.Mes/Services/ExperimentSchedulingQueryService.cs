@@ -1,4 +1,3 @@
-using System.Text.Json;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts.Experiments;
 using MesControlAgv.Mes.Data;
@@ -13,13 +12,9 @@ namespace MesControlAgv.Mes.Services;
 /// </summary>
 public sealed class ExperimentSchedulingQueryService(
     MesDbContext database,
-    TimeProvider timeProvider) : IExperimentSchedulingQueryService
+    TimeProvider timeProvider,
+    ExperimentResourceCatalog resourceCatalog) : IExperimentSchedulingQueryService
 {
-    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web)
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
     public async Task<IReadOnlyList<ExperimentPlan>> ListPlansAsync(
         CancellationToken cancellationToken)
     {
@@ -31,7 +26,7 @@ public sealed class ExperimentSchedulingQueryService(
 
         return records
             .GroupBy(plan => plan.PlanId)
-            .Select(group => MapPlan(group.First()))
+            .Select(group => ExperimentSchedulingPersistence.MapPlan(group.First()))
             .OrderBy(plan => plan.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(plan => plan.PlanId)
             .ToArray();
@@ -45,7 +40,7 @@ public sealed class ExperimentSchedulingQueryService(
             .Where(plan => plan.PlanId == planId)
             .OrderByDescending(plan => plan.Version)
             .ToListAsync(cancellationToken))
-        .Select(MapPlan)
+        .Select(ExperimentSchedulingPersistence.MapPlan)
         .ToArray();
 
     public async Task<ExperimentPlan?> GetPlanAsync(
@@ -58,7 +53,7 @@ public sealed class ExperimentSchedulingQueryService(
             .SingleOrDefaultAsync(
                 plan => plan.PlanId == planId && plan.Version == version,
                 cancellationToken);
-        return record is null ? null : MapPlan(record);
+        return record is null ? null : ExperimentSchedulingPersistence.MapPlan(record);
     }
 
     public async Task<IReadOnlyList<ExperimentJob>> ListJobsAsync(
@@ -75,7 +70,7 @@ public sealed class ExperimentSchedulingQueryService(
                 .OrderByDescending(job => job.CreatedAtUtc)
                 .ThenBy(job => job.JobId)
                 .ToListAsync(cancellationToken))
-            .Select(MapJob)
+            .Select(ExperimentSchedulingPersistence.MapJob)
             .ToArray();
     }
 
@@ -86,7 +81,7 @@ public sealed class ExperimentSchedulingQueryService(
         var record = await database.ExperimentJobs
             .AsNoTracking()
             .SingleOrDefaultAsync(job => job.JobId == jobId, cancellationToken);
-        return record is null ? null : MapJob(record);
+        return record is null ? null : ExperimentSchedulingPersistence.MapJob(record);
     }
 
     public async Task<ExperimentScheduleSnapshot> GetScheduleAsync(
@@ -124,7 +119,9 @@ public sealed class ExperimentSchedulingQueryService(
         {
             reservations = await database.ResourceReservations
                 .AsNoTracking()
-                .Where(reservation => entryIds.Contains(reservation.ScheduleEntryId))
+                .Where(reservation =>
+                    entryIds.Contains(reservation.ScheduleEntryId) &&
+                    reservation.Status == ResourceReservationStatus.Planned.ToString())
                 .OrderBy(reservation => reservation.StartsAtUtc)
                 .ThenBy(reservation => reservation.ResourceKey)
                 .ToListAsync(cancellationToken);
@@ -150,144 +147,122 @@ public sealed class ExperimentSchedulingQueryService(
                     reservationsByEntry.GetValueOrDefault(entry.ScheduleEntryId) ??
                     Array.Empty<ResourceReservation>()))
                 .ToArray(),
-            ActiveLeases = activeLeases.Select(MapLease).ToArray()
+            ActiveLeases = activeLeases.Select(ExperimentSchedulingPersistence.MapLease).ToArray()
         };
     }
 
-    private static ExperimentPlan MapPlan(ExperimentPlanRecord record)
+    public async Task<IReadOnlyList<ExperimentResourceAvailability>> ListResourceAvailabilityAsync(
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        CancellationToken cancellationToken)
     {
-        var parameters = Deserialize(
-            record.DefaultParametersJson,
-            new Dictionary<string, string?>());
-        return new ExperimentPlan
+        var rangeStart = from ?? timeProvider.GetUtcNow();
+        var rangeEnd = to ?? rangeStart.AddHours(24);
+        if (rangeEnd <= rangeStart)
+            throw new ArgumentException("Availability range end must be later than its start.", nameof(to));
+
+        var startUtc = rangeStart.UtcDateTime;
+        var endUtc = rangeEnd.UtcDateTime;
+        var reservations = await database.ResourceReservations
+            .AsNoTracking()
+            .Where(reservation =>
+                reservation.Status == ResourceReservationStatus.Planned.ToString() &&
+                reservation.EndsAtUtc > startUtc &&
+                reservation.StartsAtUtc < endUtc)
+            .ToListAsync(cancellationToken);
+        var reservationsByResource = reservations
+            .GroupBy(reservation => reservation.ResourceKey, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.Ordinal);
+        var activeLeaseKeys = (await database.WorkflowResourceLeases
+                .AsNoTracking()
+                .Where(lease => lease.ActiveResourceKey != null)
+                .Select(lease => lease.ActiveResourceKey!)
+                .ToListAsync(cancellationToken))
+            .ToHashSet(StringComparer.Ordinal);
+
+        return resourceCatalog.Resources.Select(resource =>
         {
-            PlanId = record.PlanId,
-            Version = record.Version,
-            Name = record.Name,
-            Description = record.Description,
-            WorkflowId = record.WorkflowId,
-            WorkflowVersion = record.WorkflowVersion,
-            Status = ParseStatus<ExperimentPlanStatus>(record.Status),
-            MaterialRequirements = Deserialize(
-                record.MaterialRequirementsJson,
-                Array.Empty<ExperimentMaterialRequirement>()),
-            DefaultParameters = new Dictionary<string, string?>(
-                parameters,
-                StringComparer.OrdinalIgnoreCase),
-            ResourceRequirements = Deserialize(
-                record.ResourceRequirementsJson,
-                Array.Empty<ExperimentResourceRequirement>()),
-            ProfileProductId = record.ProfileProductId,
-            ProfileVersion = record.ProfileVersion,
-            LayoutId = record.LayoutId,
-            CreatedBy = record.CreatedBy,
-            CreatedAt = ToOffset(record.CreatedAtUtc),
-            PublishedBy = record.PublishedBy,
-            PublishedAt = ToOffset(record.PublishedAtUtc),
-            UpdatedAt = ToOffset(record.UpdatedAtUtc)
-        };
+            var resourceReservations = reservationsByResource.GetValueOrDefault(resource.ResourceKey) ?? [];
+            var count = ExperimentSchedulingPersistence.GetPeakConcurrentReservationCount(
+                resourceReservations,
+                startUtc,
+                endUtc);
+            var hasLease = activeLeaseKeys.Contains(resource.ResourceKey);
+            var reasons = new List<ScheduleBlockReason>();
+            if (!resource.Enabled)
+            {
+                reasons.Add(new ScheduleBlockReason
+                {
+                    Code = ExperimentSchedulingIssueCodes.ResourceDisabled,
+                    Message = $"Resource '{resource.Resource.ResourceId}' is disabled by the active Profile.",
+                    Resource = resource.Resource
+                });
+            }
+            if (count >= resource.Capacity)
+            {
+                reasons.Add(new ScheduleBlockReason
+                {
+                    Code = ExperimentSchedulingIssueCodes.ResourceCapacityInsufficient,
+                    Message = $"Resource '{resource.Resource.ResourceId}' has no planning capacity in the requested window.",
+                    Resource = resource.Resource
+                });
+            }
+            if (hasLease)
+            {
+                reasons.Add(new ScheduleBlockReason
+                {
+                    Code = ExperimentSchedulingIssueCodes.ResourceLeaseActive,
+                    Message = $"Resource '{resource.Resource.ResourceId}' currently has an active runtime lease.",
+                    Resource = resource.Resource
+                });
+            }
+
+            return new ExperimentResourceAvailability
+            {
+                Resource = resource.Resource,
+                DisplayName = resource.DisplayName,
+                Enabled = resource.Enabled,
+                Capacity = resource.Capacity,
+                CapabilityIds = resource.CapabilityIds,
+                PlannedReservationCount = count,
+                AvailableCapacity = Math.Max(0, resource.Capacity - count),
+                HasActiveLease = hasLease,
+                BlockingReasons = reasons
+            };
+        }).ToArray();
     }
 
-    private static ExperimentJob MapJob(ExperimentJobRecord record)
+    public async Task<IReadOnlyList<ExperimentSchedulingAuditEntry>> ListAuditsAsync(
+        Guid? planId,
+        Guid? experimentJobId,
+        Guid? scheduleEntryId,
+        int limit,
+        CancellationToken cancellationToken)
     {
-        var parameters = Deserialize(record.ParametersJson, new Dictionary<string, string?>());
-        return new ExperimentJob
-        {
-            JobId = record.JobId,
-            PlanId = record.PlanId,
-            PlanVersion = record.PlanVersion,
-            WorkflowId = record.WorkflowId,
-            WorkflowVersion = record.WorkflowVersion,
-            SampleBatchId = record.SampleBatchId,
-            SampleId = record.SampleId,
-            Parameters = new Dictionary<string, string?>(parameters, StringComparer.OrdinalIgnoreCase),
-            Status = ParseStatus<ExperimentJobStatus>(record.Status),
-            WorkflowRunId = record.WorkflowRunId,
-            CreatedBy = record.CreatedBy,
-            CreatedAt = ToOffset(record.CreatedAtUtc),
-            UpdatedAt = ToOffset(record.UpdatedAtUtc),
-            StartedAt = ToOffset(record.StartedAtUtc),
-            CompletedAt = ToOffset(record.CompletedAtUtc),
-            LastError = record.LastError
-        };
+        if (limit is < 1 or > 1000)
+            throw new ArgumentOutOfRangeException(nameof(limit), "Audit limit must be between 1 and 1000.");
+
+        var query = database.ExperimentSchedulingAudits.AsNoTracking();
+        if (planId is not null) query = query.Where(audit => audit.PlanId == planId);
+        if (experimentJobId is not null)
+            query = query.Where(audit => audit.ExperimentJobId == experimentJobId);
+        if (scheduleEntryId is not null)
+            query = query.Where(audit => audit.ScheduleEntryId == scheduleEntryId);
+
+        return (await query
+                .OrderByDescending(audit => audit.OccurredAtUtc)
+                .ThenByDescending(audit => audit.Id)
+                .Take(limit)
+                .ToListAsync(cancellationToken))
+            .Select(ExperimentSchedulingPersistence.MapAudit)
+            .ToArray();
     }
 
     private static ScheduleEntry MapScheduleEntry(
         ScheduleEntryRecord record,
-        IReadOnlyList<ResourceReservation> reservations) => new()
-    {
-        ScheduleEntryId = record.ScheduleEntryId,
-        ExperimentJobId = record.ExperimentJobId,
-        PlannedStart = ToOffset(record.PlannedStartUtc),
-        PlannedEnd = ToOffset(record.PlannedEndUtc),
-        Priority = record.Priority,
-        Status = ParseStatus<ScheduleEntryStatus>(record.Status),
-        BlockingReasons = Deserialize(
-            record.BlockingReasonsJson,
-            Array.Empty<ScheduleBlockReason>()),
-        Reservations = reservations,
-        CreatedBy = record.CreatedBy,
-        CreatedAt = ToOffset(record.CreatedAtUtc),
-        UpdatedAt = ToOffset(record.UpdatedAtUtc)
-    };
+        IReadOnlyList<ResourceReservation> reservations) =>
+        ExperimentSchedulingPersistence.MapScheduleEntry(record, reservations);
 
-    private static ResourceReservation MapReservation(ResourceReservationRecord record) => new()
-    {
-        ReservationId = record.ReservationId,
-        ScheduleEntryId = record.ScheduleEntryId,
-        Resource = new ExperimentResourceReference
-        {
-            ResourceType = record.ResourceType,
-            ResourceId = record.ResourceId
-        },
-        StartsAt = ToOffset(record.StartsAtUtc),
-        EndsAt = ToOffset(record.EndsAtUtc),
-        Status = ParseStatus<ResourceReservationStatus>(record.Status),
-        CreatedAt = ToOffset(record.CreatedAtUtc),
-        UpdatedAt = ToOffset(record.UpdatedAtUtc)
-    };
-
-    private static ResourceLease MapLease(WorkflowResourceLeaseRecord record) => new()
-    {
-        LeaseId = record.LeaseId,
-        ScheduleEntryId = record.ScheduleEntryId,
-        WorkflowRunId = record.WorkflowRunId,
-        NodeExecutionId = record.NodeExecutionId,
-        Resource = new ExperimentResourceReference
-        {
-            ResourceType = record.ResourceType,
-            ResourceId = record.ResourceId
-        },
-        Status = ParseStatus<ResourceLeaseStatus>(record.Status),
-        AcquiredBy = record.AcquiredBy,
-        AcquiredAt = ToOffset(record.AcquiredAtUtc),
-        ExpiresAt = ToOffset(record.ExpiresAtUtc),
-        ReleasedBy = record.ReleasedBy,
-        ReleaseReason = record.ReleaseReason,
-        ReleasedAt = ToOffset(record.ReleasedAtUtc),
-        UpdatedAt = ToOffset(record.UpdatedAtUtc)
-    };
-
-    private static T Deserialize<T>(string? json, T fallback)
-    {
-        if (string.IsNullOrWhiteSpace(json)) return fallback;
-        try
-        {
-            return JsonSerializer.Deserialize<T>(json, SerializerOptions) ?? fallback;
-        }
-        catch (JsonException exception)
-        {
-            throw new InvalidOperationException("Persisted experiment scheduling JSON is invalid.", exception);
-        }
-    }
-
-    private static TStatus ParseStatus<TStatus>(string value)
-        where TStatus : struct, Enum =>
-        Enum.TryParse<TStatus>(value, ignoreCase: true, out var parsed) ? parsed : default;
-
-    private static DateTimeOffset ToOffset(DateTime value) =>
-        new(DateTime.SpecifyKind(value, DateTimeKind.Utc));
-
-    private static DateTimeOffset? ToOffset(DateTime? value) =>
-        value is null ? null : ToOffset(value.Value);
+    private static ResourceReservation MapReservation(ResourceReservationRecord record) =>
+        ExperimentSchedulingPersistence.MapReservation(record);
 }

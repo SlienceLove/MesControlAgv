@@ -29,4 +29,70 @@ public interface IExperimentSchedulingQueryService
         DateTimeOffset? from,
         DateTimeOffset? to,
         CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<ExperimentResourceAvailability>> ListResourceAvailabilityAsync(
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<ExperimentSchedulingAuditEntry>> ListAuditsAsync(
+        Guid? planId,
+        Guid? experimentJobId,
+        Guid? scheduleEntryId,
+        int limit,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// G5-B plan, job, and manual scheduling commands. Runtime lease acquisition
+/// and workflow-run admission remain outside this boundary.
+/// </summary>
+public interface IExperimentSchedulingCommandService
+{
+    Task<ExperimentPlan> CreatePlanDraftAsync(
+        SaveExperimentPlanDraftRequest request,
+        CancellationToken cancellationToken);
+
+    Task<ExperimentPlan> UpdatePlanDraftAsync(
+        Guid planId,
+        int version,
+        SaveExperimentPlanDraftRequest request,
+        CancellationToken cancellationToken);
+
+    Task<ExperimentPlan> ValidatePlanAsync(
+        Guid planId,
+        int version,
+        ExperimentSchedulingActionRequest request,
+        CancellationToken cancellationToken);
+
+    Task<ExperimentPlan> PublishPlanAsync(
+        Guid planId,
+        int version,
+        ExperimentSchedulingActionRequest request,
+        CancellationToken cancellationToken);
+
+    Task<ExperimentPlan> CreateNextPlanDraftAsync(
+        Guid planId,
+        int sourceVersion,
+        ExperimentSchedulingActionRequest request,
+        CancellationToken cancellationToken);
+
+    Task<ExperimentJob> CreateJobAsync(
+        CreateExperimentJobRequest request,
+        CancellationToken cancellationToken);
+
+    Task<ScheduleEntry> ScheduleJobAsync(
+        Guid experimentJobId,
+        ScheduleExperimentJobRequest request,
+        CancellationToken cancellationToken);
+
+    Task<ExperimentJob> UnscheduleJobAsync(
+        Guid experimentJobId,
+        ExperimentSchedulingActionRequest request,
+        CancellationToken cancellationToken);
+
+    Task<ExperimentJob> CancelJobAsync(
+        Guid experimentJobId,
+        ExperimentSchedulingActionRequest request,
+        CancellationToken cancellationToken);
 }
