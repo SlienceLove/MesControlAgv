@@ -13,7 +13,8 @@ Active branch: `docs/experiment-workflow-architecture-plan`
 - G5-A contracts, additive SQLite storage, and read-only scheduling projections
   have passed project acceptance.
 - G5-B manual planning, deterministic conflicts, blocking reasons, and audit are
-  active. G5-C runtime leases and G5-D WPF pages have not started.
+  implemented and verified, pending project acceptance. G5-C runtime leases and
+  G5-D WPF pages have not started.
 
 The AGV MVP remains in frozen maintenance mode. Production, unattended,
 automatic/batch dispatch, and Push are **NO-GO**. G4-D controls MES scheduling
@@ -23,16 +24,27 @@ CIC-D160+ write path.
 
 ## Latest verification
 
-The G5-A Release gate completed on 2026-08-21:
+The G5-B Release gate completed on 2026-08-21:
 
 - Full solution build: **0 warnings / 0 errors**.
-- Full test suite: **655 passed / 5 existing E2E skipped / 0 failed**.
-- Breakdown: Domain 39, Workflow Contract 57, MES 97, WPF 212, Adapter 176,
+- Full test suite: **662 passed / 5 existing E2E skipped / 0 failed**.
+- Breakdown: Domain 39, Workflow Contract 57, MES 104, WPF 212, Adapter 176,
   Instrument Gateway 50, Simulator 5, and E2E 19 passed plus 5 skipped.
-- Focused coverage proves version pinning, additive upgrade, read projections,
-  and database rejection of two active leases for one normalized resource key.
+- Focused coverage proves version pinning, idempotent replay, deterministic
+  half-open conflicts, peak-capacity handling, additive upgrade, and that
+  scheduling creates no workflow run, device operation, or runtime lease.
 
 ## Recent changes
+
+### 2026-08-21 - G5-B manual experiment scheduling
+
+- Added draft validation/publication/version-copy commands and published-plan
+  job creation with immutable plan/workflow references.
+- Added manual schedule, reschedule, unschedule, and cancel behavior with
+  Profile-backed resources, peak-capacity conflicts, and stable blocking reasons.
+- Added request-ID idempotency, append-only audits, resource availability, and
+  in-place G5-A schema upgrades without runtime admission or device behavior.
+- Implementation commit: `2e5ef8f`; project acceptance is pending.
 
 ### 2026-08-21 - G5-A planning record foundation
 
@@ -93,12 +105,10 @@ The G5-A Release gate completed on 2026-08-21:
 
 ## Next gate
 
-1. Implement G5-B plan/job commands, manual scheduling, deterministic
-   reservation conflicts, blocking reasons, and append-only audit.
-2. Verify that scheduling never mutates a published workflow version or advances
-   a workflow run.
-3. Runtime lease acquisition, WPF scheduling pages, physical device commands,
-   serial control, protocol fields, and D160 writes remain outside G5-B scope.
+1. Obtain project acceptance for the completed G5-B backend slice.
+2. After acceptance, G5-C may add runtime admission and lease lifecycle only.
+3. WPF scheduling pages remain G5-D; physical device commands, serial control,
+   protocol fields, and D160 writes remain closed.
 
 ## Planning and evidence
 
