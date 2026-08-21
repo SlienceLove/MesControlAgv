@@ -9,12 +9,11 @@ linked acceptance documents.
 
 Active branch: `docs/experiment-workflow-architecture-plan`
 
-- Experiment workflow G2 and G3 have passed overall acceptance.
-- G4-A and G4-B provide durable node/device records and a Simulator-only node
-  worker while retaining legacy read compatibility.
-- G4-C read-only runtime monitoring has passed project acceptance.
-- G4-D audited pause, resume, safe cancellation, and explicit Unknown
-  resolution are implemented and at the project acceptance gate.
+- Experiment workflow G2, G3, and G4 have passed overall acceptance.
+- G4 provides durable node/device evidence, Simulator-only node execution,
+  read-only runtime monitoring, and audited run controls.
+- G5 is authorized. Work starts with plan, schedule-entry, reservation, and
+  resource-lease contracts; later scheduling and runtime behavior remain gated.
 
 The AGV MVP remains in frozen maintenance mode. Production, unattended,
 automatic/batch dispatch, and Push are **NO-GO**. G4-D controls MES scheduling
@@ -30,9 +29,9 @@ The G4-D Release gate completed on 2026-08-21:
 - Full test suite: **648 passed / 5 existing E2E skipped / 0 failed**.
 - Breakdown: Domain 39, Workflow Contract 54, MES 93, WPF 212, Adapter 176,
   Instrument Gateway 50, Simulator 5, and E2E 19 passed plus 5 skipped.
-- A Release WPF process is connected to an isolated Simulator-only MES at
-  `http://localhost:5045/`; five stable acceptance runs are listed in the
-  [G4 acceptance record](EXPERIMENT-WORKFLOW-G4-ACCEPTANCE.md).
+- Project acceptance confirmed safe cancellation and both explicit Unknown
+  conclusions without creating or resending device operations. Stable evidence
+  is listed in the [G4 acceptance record](EXPERIMENT-WORKFLOW-G4-ACCEPTANCE.md).
 
 ## Recent changes
 
@@ -46,6 +45,8 @@ The G4-D Release gate completed on 2026-08-21:
   resends a command.
 - Added WPF permission checks, disabled reasons, confirmations, and a dedicated
   Unknown panel without a Retry action.
+- Project acceptance and G4 overall acceptance passed; implementation commit:
+  `379fd59`.
 
 ### 2026-08-21 - G3 typed input compatibility correction
 
@@ -97,11 +98,12 @@ The G4-D Release gate completed on 2026-08-21:
 
 ## Next gate
 
-1. Complete the G4-D manual checks recorded in
-   [EXPERIMENT-WORKFLOW-G4-ACCEPTANCE.md](EXPERIMENT-WORKFLOW-G4-ACCEPTANCE.md).
-2. Record the project acceptance conclusion and stop at G4 overall acceptance.
-3. Do not begin G5 without explicit authorization. Physical device commands,
-   serial control, and D160 writes remain outside the authorized scope.
+1. Confirm the G5 slice boundaries and compatibility strategy from the
+   architecture, UI design, and implementation plan.
+2. Implement and verify G5-A contracts and persistence without adding the
+   scheduling algorithm, runtime lease acquisition, or complete scheduling UI.
+3. Physical device commands, serial control, protocol fields, and D160 writes
+   remain outside the authorized scope.
 
 ## Planning and evidence
 
