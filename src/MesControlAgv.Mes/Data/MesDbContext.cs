@@ -22,6 +22,16 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
 
     public DbSet<WorkflowAuditRecord> WorkflowAudits => Set<WorkflowAuditRecord>();
 
+    public DbSet<ExperimentPlanRecord> ExperimentPlans => Set<ExperimentPlanRecord>();
+
+    public DbSet<ExperimentJobRecord> ExperimentJobs => Set<ExperimentJobRecord>();
+
+    public DbSet<ScheduleEntryRecord> ScheduleEntries => Set<ScheduleEntryRecord>();
+
+    public DbSet<ResourceReservationRecord> ResourceReservations => Set<ResourceReservationRecord>();
+
+    public DbSet<WorkflowResourceLeaseRecord> WorkflowResourceLeases => Set<WorkflowResourceLeaseRecord>();
+
     public DbSet<FieldNavigationAcceptance> FieldNavigationAcceptances => Set<FieldNavigationAcceptance>();
 
     public DbSet<FieldNavigationAcceptanceAudit> FieldNavigationAcceptanceAudits => Set<FieldNavigationAcceptanceAudit>();
@@ -123,6 +133,85 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.Property(audit => audit.DetailsJson).HasMaxLength(8192);
             entity.HasIndex(audit => new { audit.WorkflowId, audit.Version, audit.OccurredAtUtc });
             entity.HasIndex(audit => audit.RequestId);
+        });
+
+        modelBuilder.Entity<ExperimentPlanRecord>(entity =>
+        {
+            entity.ToTable("ExperimentPlans");
+            entity.HasKey(plan => new { plan.PlanId, plan.Version });
+            entity.Property(plan => plan.Name).HasMaxLength(256);
+            entity.Property(plan => plan.Description).HasMaxLength(2048);
+            entity.Property(plan => plan.Status).HasMaxLength(32);
+            entity.Property(plan => plan.MaterialRequirementsJson).HasMaxLength(65535);
+            entity.Property(plan => plan.DefaultParametersJson).HasMaxLength(65535);
+            entity.Property(plan => plan.ResourceRequirementsJson).HasMaxLength(65535);
+            entity.Property(plan => plan.ProfileProductId).HasMaxLength(128);
+            entity.Property(plan => plan.ProfileVersion).HasMaxLength(128);
+            entity.Property(plan => plan.LayoutId).HasMaxLength(256);
+            entity.Property(plan => plan.CreatedBy).HasMaxLength(256);
+            entity.Property(plan => plan.PublishedBy).HasMaxLength(256);
+            entity.HasIndex(plan => new { plan.Status, plan.UpdatedAtUtc });
+            entity.HasIndex(plan => new { plan.WorkflowId, plan.WorkflowVersion });
+        });
+
+        modelBuilder.Entity<ExperimentJobRecord>(entity =>
+        {
+            entity.ToTable("ExperimentJobs");
+            entity.HasKey(job => job.JobId);
+            entity.Property(job => job.SampleBatchId).HasMaxLength(256);
+            entity.Property(job => job.SampleId).HasMaxLength(256);
+            entity.Property(job => job.ParametersJson).HasMaxLength(65535);
+            entity.Property(job => job.Status).HasMaxLength(32);
+            entity.Property(job => job.CreatedBy).HasMaxLength(256);
+            entity.Property(job => job.LastError).HasMaxLength(2048);
+            entity.HasIndex(job => new { job.Status, job.CreatedAtUtc });
+            entity.HasIndex(job => new { job.PlanId, job.PlanVersion });
+            entity.HasIndex(job => job.WorkflowRunId).IsUnique();
+        });
+
+        modelBuilder.Entity<ScheduleEntryRecord>(entity =>
+        {
+            entity.ToTable("ScheduleEntries");
+            entity.HasKey(entry => entry.ScheduleEntryId);
+            entity.Property(entry => entry.Status).HasMaxLength(32);
+            entity.Property(entry => entry.BlockingReasonsJson).HasMaxLength(65535);
+            entity.Property(entry => entry.CreatedBy).HasMaxLength(256);
+            entity.HasIndex(entry => new { entry.Status, entry.PlannedStartUtc, entry.Priority });
+            entity.HasIndex(entry => entry.ExperimentJobId);
+        });
+
+        modelBuilder.Entity<ResourceReservationRecord>(entity =>
+        {
+            entity.ToTable("ResourceReservations");
+            entity.HasKey(reservation => reservation.ReservationId);
+            entity.Property(reservation => reservation.ResourceType).HasMaxLength(128);
+            entity.Property(reservation => reservation.ResourceId).HasMaxLength(256);
+            entity.Property(reservation => reservation.ResourceKey).HasMaxLength(512);
+            entity.Property(reservation => reservation.Status).HasMaxLength(32);
+            entity.HasIndex(reservation => reservation.ScheduleEntryId);
+            entity.HasIndex(reservation => new
+            {
+                reservation.ResourceKey,
+                reservation.StartsAtUtc,
+                reservation.EndsAtUtc
+            });
+        });
+
+        modelBuilder.Entity<WorkflowResourceLeaseRecord>(entity =>
+        {
+            entity.ToTable("WorkflowResourceLeases");
+            entity.HasKey(lease => lease.LeaseId);
+            entity.Property(lease => lease.ResourceType).HasMaxLength(128);
+            entity.Property(lease => lease.ResourceId).HasMaxLength(256);
+            entity.Property(lease => lease.ResourceKey).HasMaxLength(512);
+            entity.Property(lease => lease.ActiveResourceKey).HasMaxLength(512);
+            entity.Property(lease => lease.Status).HasMaxLength(32);
+            entity.Property(lease => lease.AcquiredBy).HasMaxLength(256);
+            entity.Property(lease => lease.ReleasedBy).HasMaxLength(256);
+            entity.Property(lease => lease.ReleaseReason).HasMaxLength(2048);
+            entity.HasIndex(lease => lease.ActiveResourceKey).IsUnique();
+            entity.HasIndex(lease => new { lease.WorkflowRunId, lease.AcquiredAtUtc });
+            entity.HasIndex(lease => lease.ScheduleEntryId);
         });
 
         modelBuilder.Entity<FieldNavigationAcceptance>(entity =>

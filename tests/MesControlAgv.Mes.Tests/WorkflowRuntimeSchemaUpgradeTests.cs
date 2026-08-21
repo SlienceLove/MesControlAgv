@@ -1,6 +1,7 @@
 using MesControlAgv.Application;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Services;
+using MesControlAgv.Mes.Entities;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -54,6 +55,83 @@ public sealed class WorkflowRuntimeSchemaUpgradeTests
                 Assert.Contains("WorkflowDeviceOperations", tables);
                 Assert.Contains("IX_WorkflowNodeExecutions_StepRequestId", indexes);
                 Assert.Contains("IX_WorkflowDeviceOperations_NodeExecutionId", indexes);
+            }
+
+            SqliteConnection.ClearAllPools();
+        }
+        finally
+        {
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+            if (File.Exists(databasePath + "-shm")) File.Delete(databasePath + "-shm");
+            if (File.Exists(databasePath + "-wal")) File.Delete(databasePath + "-wal");
+        }
+    }
+
+    [Fact]
+    public async Task Existing_g4_database_adds_experiment_scheduling_tables_without_recreating_prior_data()
+    {
+        var databasePath = Path.Combine(
+            Path.GetTempPath(),
+            $"mes-g5-schema-upgrade-{Guid.NewGuid():N}.db");
+
+        try
+        {
+            var options = new DbContextOptionsBuilder<MesDbContext>()
+                .UseSqlite($"Data Source={databasePath};Pooling=False")
+                .Options;
+            await using (var setup = new MesDbContext(options))
+            {
+                await setup.Database.EnsureCreatedAsync();
+                setup.WorkflowVersions.Add(new WorkflowVersionRecord
+                {
+                    WorkflowId = Guid.NewGuid(),
+                    Version = 1,
+                    DefinitionJson = "{}",
+                    Status = "Published",
+                    PublishStatus = "Published",
+                    CreatedBy = "g4-schema-test",
+                    CreatedAtUtc = DateTime.UtcNow,
+                    UpdatedAtUtc = DateTime.UtcNow
+                });
+                await setup.SaveChangesAsync();
+
+                await setup.Database.ExecuteSqlRawAsync("DROP TABLE WorkflowResourceLeases;");
+                await setup.Database.ExecuteSqlRawAsync("DROP TABLE ResourceReservations;");
+                await setup.Database.ExecuteSqlRawAsync("DROP TABLE ScheduleEntries;");
+                await setup.Database.ExecuteSqlRawAsync("DROP TABLE ExperimentJobs;");
+                await setup.Database.ExecuteSqlRawAsync("DROP TABLE ExperimentPlans;");
+            }
+
+            await using (var factory = new ExistingWorkflowDatabaseFactory(databasePath))
+            {
+                using var client = factory.CreateClient();
+                using var health = await client.GetAsync("/health");
+                health.EnsureSuccessStatusCode();
+                using var plans = await client.GetAsync("/api/experiment-plans");
+                using var schedule = await client.GetAsync("/api/schedule");
+                plans.EnsureSuccessStatusCode();
+                schedule.EnsureSuccessStatusCode();
+
+                await using var connection = new SqliteConnection($"Data Source={databasePath};Pooling=False");
+                await connection.OpenAsync();
+                var tables = await ReadNamesAsync(
+                    connection,
+                    "SELECT name FROM sqlite_master WHERE type = 'table';");
+                var indexes = await ReadNamesAsync(
+                    connection,
+                    "SELECT name FROM sqlite_master WHERE type = 'index';");
+
+                Assert.Contains("ExperimentPlans", tables);
+                Assert.Contains("ExperimentJobs", tables);
+                Assert.Contains("ScheduleEntries", tables);
+                Assert.Contains("ResourceReservations", tables);
+                Assert.Contains("WorkflowResourceLeases", tables);
+                Assert.Contains("IX_ResourceReservations_ResourceKey_StartsAtUtc_EndsAtUtc", indexes);
+                Assert.Contains("IX_WorkflowResourceLeases_ActiveResourceKey", indexes);
+
+                await using var count = connection.CreateCommand();
+                count.CommandText = "SELECT COUNT(*) FROM WorkflowVersions;";
+                Assert.Equal(1L, (long)(await count.ExecuteScalarAsync())!);
             }
 
             SqliteConnection.ClearAllPools();

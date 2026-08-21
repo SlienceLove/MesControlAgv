@@ -1,6 +1,7 @@
 ﻿using MesControlAgv.Application;
 using MesControlAgv.Domain;
 using MesControlAgv.Contracts;
+using MesControlAgv.Contracts.Experiments;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Workflows;
 using MesControlAgv.Domain.Profiles;
@@ -45,6 +46,7 @@ builder.Services.AddScoped<WorkflowRuntimeExecutor>();
 builder.Services.AddScoped<IWorkflowRuntimeExecutor>(services => services.GetRequiredService<WorkflowRuntimeExecutor>());
 builder.Services.AddScoped<WorkflowApplicationService>();
 builder.Services.AddScoped<IWorkflowApplicationService>(services => services.GetRequiredService<WorkflowApplicationService>());
+builder.Services.AddScoped<IExperimentSchedulingQueryService, ExperimentSchedulingQueryService>();
 builder.Services.AddScoped<FieldNavigationAcceptanceRepository>();
 builder.Services.AddScoped<IFieldNavigationAcceptanceApplicationService, FieldNavigationAcceptanceService>();
 builder.Services.AddScoped<TaskRepository>();
@@ -62,6 +64,7 @@ using (var scope = app.Services.CreateScope())
     await database.Database.EnsureCreatedAsync();
     await EnsureTaskColumnsAsync(database);
     await EnsureWorkflowTablesAsync(database);
+    await EnsureExperimentSchedulingTablesAsync(database);
     await EnsureFieldNavigationAcceptanceTablesAsync(database);
 }
 
@@ -451,6 +454,58 @@ app.MapPost("/api/workflow-runs/{workflowRunId:guid}/unknown-resolution", async 
     CancellationToken cancellationToken) =>
     await ExecuteWorkflowRunControlAsync(
         () => service.ResolveUnknownAsync(workflowRunId, request, cancellationToken)));
+
+app.MapGet("/api/experiment-plans", async (
+    IExperimentSchedulingQueryService service,
+    CancellationToken cancellationToken) =>
+    Results.Ok(await service.ListPlansAsync(cancellationToken)));
+
+app.MapGet("/api/experiment-plans/{planId:guid}/versions", async (
+    Guid planId,
+    IExperimentSchedulingQueryService service,
+    CancellationToken cancellationToken) =>
+    Results.Ok(await service.ListPlanVersionsAsync(planId, cancellationToken)));
+
+app.MapGet("/api/experiment-plans/{planId:guid}/versions/{version:int}", async (
+    Guid planId,
+    int version,
+    IExperimentSchedulingQueryService service,
+    CancellationToken cancellationToken) =>
+{
+    var plan = await service.GetPlanAsync(planId, version, cancellationToken);
+    return plan is null ? Results.NotFound() : Results.Ok(plan);
+});
+
+app.MapGet("/api/experiment-jobs", async (
+    ExperimentJobStatus? status,
+    IExperimentSchedulingQueryService service,
+    CancellationToken cancellationToken) =>
+    Results.Ok(await service.ListJobsAsync(status, cancellationToken)));
+
+app.MapGet("/api/experiment-jobs/{jobId:guid}", async (
+    Guid jobId,
+    IExperimentSchedulingQueryService service,
+    CancellationToken cancellationToken) =>
+{
+    var job = await service.GetJobAsync(jobId, cancellationToken);
+    return job is null ? Results.NotFound() : Results.Ok(job);
+});
+
+app.MapGet("/api/schedule", async (
+    DateTimeOffset? from,
+    DateTimeOffset? to,
+    IExperimentSchedulingQueryService service,
+    CancellationToken cancellationToken) =>
+{
+    try
+    {
+        return Results.Ok(await service.GetScheduleAsync(from, to, cancellationToken));
+    }
+    catch (ArgumentException exception)
+    {
+        return Results.BadRequest(new { detail = exception.Message });
+    }
+});
 
 app.MapPost("/api/field-navigation-acceptances", async (
     CreateFieldNavigationAcceptanceRequest request,
@@ -931,6 +986,129 @@ static async Task EnsureWorkflowExecutionColumnsAsync(System.Data.Common.DbConne
         await using var alter = connection.CreateCommand();
         alter.CommandText = $"ALTER TABLE WorkflowExecutions ADD COLUMN {definition.Name} {definition.Sql};";
         await alter.ExecuteNonQueryAsync();
+    }
+}
+
+static async Task EnsureExperimentSchedulingTablesAsync(MesDbContext database)
+{
+    var connection = database.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open)
+    {
+        await connection.OpenAsync();
+    }
+
+    var statements = new[]
+    {
+        """
+        CREATE TABLE IF NOT EXISTS ExperimentPlans (
+            PlanId TEXT NOT NULL,
+            Version INTEGER NOT NULL,
+            Name TEXT NOT NULL,
+            Description TEXT NOT NULL,
+            WorkflowId TEXT NOT NULL,
+            WorkflowVersion INTEGER NOT NULL,
+            Status TEXT NOT NULL,
+            MaterialRequirementsJson TEXT NOT NULL,
+            DefaultParametersJson TEXT NOT NULL,
+            ResourceRequirementsJson TEXT NOT NULL,
+            ProfileProductId TEXT NULL,
+            ProfileVersion TEXT NULL,
+            LayoutId TEXT NULL,
+            CreatedBy TEXT NOT NULL,
+            CreatedAtUtc TEXT NOT NULL,
+            PublishedBy TEXT NULL,
+            PublishedAtUtc TEXT NULL,
+            UpdatedAtUtc TEXT NOT NULL,
+            PRIMARY KEY (PlanId, Version)
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ExperimentJobs (
+            JobId TEXT NOT NULL PRIMARY KEY,
+            PlanId TEXT NOT NULL,
+            PlanVersion INTEGER NOT NULL,
+            WorkflowId TEXT NOT NULL,
+            WorkflowVersion INTEGER NOT NULL,
+            SampleBatchId TEXT NOT NULL,
+            SampleId TEXT NULL,
+            ParametersJson TEXT NOT NULL,
+            Status TEXT NOT NULL,
+            WorkflowRunId TEXT NULL,
+            CreatedBy TEXT NOT NULL,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL,
+            StartedAtUtc TEXT NULL,
+            CompletedAtUtc TEXT NULL,
+            LastError TEXT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ScheduleEntries (
+            ScheduleEntryId TEXT NOT NULL PRIMARY KEY,
+            ExperimentJobId TEXT NOT NULL,
+            PlannedStartUtc TEXT NOT NULL,
+            PlannedEndUtc TEXT NOT NULL,
+            Priority INTEGER NOT NULL,
+            Status TEXT NOT NULL,
+            BlockingReasonsJson TEXT NOT NULL,
+            CreatedBy TEXT NOT NULL,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ResourceReservations (
+            ReservationId TEXT NOT NULL PRIMARY KEY,
+            ScheduleEntryId TEXT NOT NULL,
+            ResourceType TEXT NOT NULL,
+            ResourceId TEXT NOT NULL,
+            ResourceKey TEXT NOT NULL,
+            StartsAtUtc TEXT NOT NULL,
+            EndsAtUtc TEXT NOT NULL,
+            Status TEXT NOT NULL,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS WorkflowResourceLeases (
+            LeaseId TEXT NOT NULL PRIMARY KEY,
+            ScheduleEntryId TEXT NULL,
+            WorkflowRunId TEXT NOT NULL,
+            NodeExecutionId TEXT NULL,
+            ResourceType TEXT NOT NULL,
+            ResourceId TEXT NOT NULL,
+            ResourceKey TEXT NOT NULL,
+            ActiveResourceKey TEXT NULL,
+            Status TEXT NOT NULL,
+            AcquiredBy TEXT NOT NULL,
+            AcquiredAtUtc TEXT NOT NULL,
+            ExpiresAtUtc TEXT NOT NULL,
+            ReleasedBy TEXT NULL,
+            ReleaseReason TEXT NULL,
+            ReleasedAtUtc TEXT NULL,
+            UpdatedAtUtc TEXT NOT NULL
+        );
+        """,
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentPlans_Status_UpdatedAtUtc ON ExperimentPlans (Status, UpdatedAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentPlans_WorkflowId_WorkflowVersion ON ExperimentPlans (WorkflowId, WorkflowVersion);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentJobs_Status_CreatedAtUtc ON ExperimentJobs (Status, CreatedAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentJobs_PlanId_PlanVersion ON ExperimentJobs (PlanId, PlanVersion);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentJobs_WorkflowRunId ON ExperimentJobs (WorkflowRunId);",
+        "CREATE INDEX IF NOT EXISTS IX_ScheduleEntries_Status_PlannedStartUtc_Priority ON ScheduleEntries (Status, PlannedStartUtc, Priority);",
+        "CREATE INDEX IF NOT EXISTS IX_ScheduleEntries_ExperimentJobId ON ScheduleEntries (ExperimentJobId);",
+        "CREATE INDEX IF NOT EXISTS IX_ResourceReservations_ScheduleEntryId ON ResourceReservations (ScheduleEntryId);",
+        "CREATE INDEX IF NOT EXISTS IX_ResourceReservations_ResourceKey_StartsAtUtc_EndsAtUtc ON ResourceReservations (ResourceKey, StartsAtUtc, EndsAtUtc);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_WorkflowResourceLeases_ActiveResourceKey ON WorkflowResourceLeases (ActiveResourceKey);",
+        "CREATE INDEX IF NOT EXISTS IX_WorkflowResourceLeases_WorkflowRunId_AcquiredAtUtc ON WorkflowResourceLeases (WorkflowRunId, AcquiredAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_WorkflowResourceLeases_ScheduleEntryId ON WorkflowResourceLeases (ScheduleEntryId);"
+    };
+
+    foreach (var statement in statements)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = statement;
+        await command.ExecuteNonQueryAsync();
     }
 }
 
