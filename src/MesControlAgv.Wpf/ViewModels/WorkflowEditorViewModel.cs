@@ -5,6 +5,7 @@ using System.IO;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
+using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Domain.Workflows;
 using MesControlAgv.Wpf.Infrastructure;
 using MesControlAgv.Wpf.Services;
@@ -48,6 +49,10 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     private readonly WorkflowStore _store;
     private readonly IMesClient? _mes;
     private readonly Func<string> _actorProvider;
+    private readonly WorkflowCatalogSet _catalog;
+    private ProfileConfiguration _profileConfiguration;
+    private WorkflowPublicationContext _publicationContext;
+    private readonly Dictionary<string, string> _profileStationNames = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<ContractWorkflowGraphDocument> _documents = [];
     private readonly ReadOnlyCollection<ContractWorkflowGraphDocument> _documentView;
     private readonly ObservableCollection<WorkflowDefinition> _workflowProjections = [];
@@ -80,11 +85,20 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     public WorkflowEditorViewModel(
         WorkflowStore store,
         IMesClient? mes = null,
-        Func<string>? actorProvider = null)
+        Func<string>? actorProvider = null,
+        WorkflowCatalogSet? catalog = null,
+        ProfileConfiguration? profileConfiguration = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _mes = mes;
         _actorProvider = actorProvider ?? (() => "wpf-editor");
+        _catalog = catalog ?? BuiltInWorkflowCatalog.Create();
+        _profileConfiguration = profileConfiguration ?? ProfileConfiguration.Default;
+        _publicationContext = WorkflowPublicationContext.FromProfile(_profileConfiguration);
+        foreach (var station in _profileConfiguration.Stations)
+            _profileStationNames[station.StationId] = station.Name;
+        Inspector = new WorkflowInspectorViewModel();
+        NodeTypeOptions = CreateNodeTypeOptions();
         _documentView = _documents.AsReadOnly();
         _documents.AddRange(_store.LoadDocuments());
         foreach (var document in _documents)
@@ -143,9 +157,14 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     /// </summary>
     public IReadOnlyList<ContractWorkflowGraphDocument> GraphDocuments => _documentView;
 
+    public WorkflowInspectorViewModel Inspector { get; }
+
+    public IReadOnlyList<WorkflowNodeTypeOption> NodeTypeOptions { get; }
+
     public bool ApplyProfileStations(IReadOnlyList<DashboardStation> stations)
     {
         ArgumentNullException.ThrowIfNull(stations);
+        ApplyInspectorProfileStations(stations);
         if (_profileDefaultsApplied || !_store.LastLoadUsedDefaults)
         {
             return false;
@@ -187,18 +206,6 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         return true;
     }
 
-    public IReadOnlyList<WorkflowNodeTypeOption> NodeTypeOptions { get; } =
-    [
-        new(WorkflowNodeType.Start, "开始"),
-        new(WorkflowNodeType.Move, "AGV 移动"),
-        new(WorkflowNodeType.Wait, "等待"),
-        new(WorkflowNodeType.Pickup, "取货"),
-        new(WorkflowNodeType.Dropoff, "放货"),
-        new(WorkflowNodeType.InstrumentOperation, "仪器操作"),
-        new(WorkflowNodeType.Custom, "自定义"),
-        new(WorkflowNodeType.End, "结束")
-    ];
-
     private static DashboardStation? FindPreferredStation(
         IEnumerable<DashboardStation> stations,
         IReadOnlyList<string> preferredTypes)
@@ -215,6 +222,136 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 
         return null;
     }
+
+    private void ApplyInspectorProfileStations(IReadOnlyList<DashboardStation> stations)
+    {
+        var profileStations = stations
+            .Where(station => !string.IsNullOrWhiteSpace(station.AgvStationId))
+            .Select(station => new StationProfile
+            {
+                Code = station.Code,
+                StationId = station.AgvStationId.Trim(),
+                AgvStationId = station.AgvStationId.Trim(),
+                Name = station.Name,
+                Type = station.Type ?? string.Empty,
+                Enabled = station.Enabled
+            })
+            .ToArray();
+        _profileConfiguration = _profileConfiguration with { Stations = profileStations };
+        _publicationContext = WorkflowPublicationContext.FromProfile(_profileConfiguration);
+        _profileStationNames.Clear();
+        foreach (var station in profileStations)
+            _profileStationNames[station.StationId] = station.Name;
+        RefreshInspector();
+    }
+
+    private IReadOnlyList<WorkflowNodeTypeOption> CreateNodeTypeOptions()
+    {
+        var orderedIds = new[]
+        {
+            MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.Start,
+            MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.End,
+            MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.Move,
+            MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.TimedWait,
+            MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.ManualConfirmation,
+            MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentReadStatus,
+            MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable
+        };
+        return orderedIds.Select(nodeTypeId =>
+        {
+            var definition = _catalog.NodeTypes.GetLatest(nodeTypeId) ??
+                throw new InvalidOperationException($"Built-in workflow node type '{nodeTypeId}' is missing.");
+            var available = IsNodeTypeAvailable(definition, out var reason);
+            return new WorkflowNodeTypeOption(
+                definition.NodeTypeId,
+                definition.SchemaVersion,
+                LocalizeNodeType(definition.NodeTypeId, definition.DisplayName),
+                definition.Category,
+                CompatibilityTypeFor(definition.NodeTypeId),
+                available,
+                reason);
+        }).ToArray();
+    }
+
+    private bool IsNodeTypeAvailable(
+        MesControlAgv.Contracts.Workflows.WorkflowNodeTypeDefinition definition,
+        out string? reason)
+    {
+        if (!definition.Enabled)
+        {
+            reason = "节点类型在当前目录中已禁用。";
+            return false;
+        }
+        if (!SupportsProfile(definition.ProfileSupport, _publicationContext.ProductId))
+        {
+            reason = "节点类型不支持当前 Profile。";
+            return false;
+        }
+
+        foreach (var capabilityId in definition.RequiredCapabilityIds)
+        {
+            var capability = _catalog.Capabilities.GetLatest(capabilityId);
+            if (capability is null || !capability.Enabled)
+            {
+                reason = capability?.UnavailableReason ?? $"目录能力 {capabilityId} 不可用。";
+                return false;
+            }
+            var requiresControl = capability.SafetyClassification is
+                MesControlAgv.Contracts.Workflows.WorkflowSafetyClassification.ControlledDeviceAction or
+                MesControlAgv.Contracts.Workflows.WorkflowSafetyClassification.RestrictedDeviceWrite;
+            if (requiresControl && !capability.ControlEnabled)
+            {
+                reason = capability.UnavailableReason ?? $"目录能力 {capabilityId} 未启用控制。";
+                return false;
+            }
+            if (!SupportsProfile(capability.ProfileSupport, _publicationContext.ProductId))
+            {
+                reason = $"目录能力 {capabilityId} 不支持当前 Profile。";
+                return false;
+            }
+
+            var providers = _publicationContext.GetDevices(capability.DeviceFamily)
+                .Where(device => device.Enabled && device.Provides(capabilityId));
+            if (requiresControl) providers = providers.Where(device => device.ControlEnabled);
+            if (!providers.Any())
+            {
+                reason = $"当前 Profile 没有可用设备提供 {capabilityId}.";
+                return false;
+            }
+        }
+
+        reason = null;
+        return true;
+    }
+
+    private static bool SupportsProfile(
+        MesControlAgv.Contracts.Workflows.WorkflowProfileSupport support,
+        string productId) =>
+        support.IsProfileIndependent ||
+        support.SupportedProductIds.Contains(productId, StringComparer.OrdinalIgnoreCase);
+
+    private static WorkflowNodeType CompatibilityTypeFor(string nodeTypeId) => nodeTypeId switch
+    {
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.Start => WorkflowNodeType.Start,
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.End => WorkflowNodeType.End,
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.Move => WorkflowNodeType.Move,
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.TimedWait => WorkflowNodeType.Wait,
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentReadStatus => WorkflowNodeType.InstrumentOperation,
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable => WorkflowNodeType.InstrumentOperation,
+        _ => WorkflowNodeType.Custom
+    };
+
+    private static string LocalizeNodeType(string nodeTypeId, string fallback) => nodeTypeId switch
+    {
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.Start => "开始",
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.End => "结束",
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.Move => "AGV 到站",
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.TimedWait => "定时等待",
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.ManualConfirmation => "人工确认",
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentReadStatus => "仪器读取",
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable => "仪器稳定等待",
+        _ => fallback
+    };
 
     public WorkflowDefinition? SelectedWorkflow
     {
@@ -256,6 +393,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             if (ReferenceEquals(_selectedNode, value)) return;
             _selectedNode = value;
             SelectedParameter = value?.Parameters.FirstOrDefault();
+            RefreshInspector();
             if (!_isSynchronizingCanvasSelection &&
                 value is not null &&
                 _canvasViewModel?.SelectedNode?.Id != value.Id)
@@ -307,6 +445,45 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     {
         var node = Nodes.FirstOrDefault(candidate => candidate.Id == nodeId);
         if (node is not null) SelectedNode = node;
+    }
+
+    private void RefreshInspector() => Inspector.Load(
+        SelectedNode,
+        _catalog,
+        _publicationContext,
+        _profileStationNames,
+        CommitInspectorField);
+
+    private void CommitInspectorField(WorkflowInspectorFieldViewModel field, string? value)
+    {
+        if (SelectedNode is not { } node || node.Id != field.NodeId || field.IsReadOnly) return;
+
+        BeginProjectionUpdate();
+        try
+        {
+            var configuration = new Dictionary<string, string?>(
+                node.Configuration,
+                StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrEmpty(value))
+                configuration.Remove(field.Key);
+            else
+                configuration[field.Key] = value;
+            node.Configuration = configuration;
+
+            if (string.Equals(
+                    field.Key,
+                    MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.TargetStation,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                node.TargetStation = value;
+            }
+
+            Message = $"已更新节点字段“{field.DisplayName}”。";
+        }
+        finally
+        {
+            EndProjectionUpdate();
+        }
     }
 
     public WorkflowNodeParameter? SelectedParameter
@@ -938,7 +1115,65 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(ValidationSummary));
     }
 
-    private void AddNode() => AddNodeAt(WorkflowNodeType.Custom, null, null);
+    private void AddNode() => AddNodeAt(
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.TimedWait,
+        null,
+        null);
+
+    public void AddNodeAt(string nodeTypeId, double? x, double? y)
+    {
+        if (SelectedWorkflow is not { } workflow) return;
+        var option = NodeTypeOptions.FirstOrDefault(candidate =>
+            string.Equals(candidate.NodeTypeId, nodeTypeId, StringComparison.OrdinalIgnoreCase));
+        if (option is null)
+        {
+            Message = $"节点类型 '{nodeTypeId}' 不在当前目录中。";
+            return;
+        }
+        if (!option.IsAvailable)
+        {
+            Message = option.UnavailableReason ?? $"节点类型 '{nodeTypeId}' 当前不可用。";
+            return;
+        }
+        if (!_catalog.NodeTypes.TryGet(option.NodeTypeId, option.SchemaVersion, out var definition) ||
+            definition is null)
+        {
+            Message = $"节点类型 '{nodeTypeId}' 的 schema 无法解析。";
+            return;
+        }
+
+        var configuration = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var field in definition.ConfigurationSchema.Fields.Where(field => field.DefaultValue is not null))
+            configuration[field.Key] = field.DefaultValue;
+
+        BeginProjectionUpdate();
+        try
+        {
+            var nextOrder = workflow.Nodes.Count + 1;
+            var node = new WorkflowNode
+            {
+                Type = option.CompatibilityType,
+                GraphNodeTypeId = definition.NodeTypeId,
+                SchemaVersion = definition.SchemaVersion,
+                Name = option.DisplayName,
+                Description = DefaultCatalogNodeDescription(definition.NodeTypeId),
+                X = x ?? Math.Max(0, workflow.Nodes.Count * 180),
+                Y = y ?? 100,
+                Order = nextOrder,
+                Ports = new ObservableCollection<MesControlAgv.Contracts.Workflows.WorkflowPortDefinition>(definition.Ports),
+                Configuration = configuration
+            };
+            workflow.Nodes.Add(node);
+            NormalizeOrders(workflow);
+            SelectedNode = node;
+            Message = $"已添加“{option.DisplayName}”节点。";
+            RefreshCommandStates();
+        }
+        finally
+        {
+            EndProjectionUpdate();
+        }
+    }
 
     public void AddNodeAt(WorkflowNodeType type, double? x, double? y)
     {
@@ -1022,6 +1257,18 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             });
         }
     }
+
+    private static string DefaultCatalogNodeDescription(string nodeTypeId) => nodeTypeId switch
+    {
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.Start => "启动实验流程",
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.End => "完成实验流程",
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.Move => "AGV 移动到 Profile 站点",
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.TimedWait => "等待指定时长",
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.ManualConfirmation => "等待操作员确认",
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentReadStatus => "读取已验证的仪器状态",
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable => "只读轮询仪器状态直至稳定",
+        _ => "实验流程步骤"
+    };
 
     private void AddParameter()
     {
@@ -1314,7 +1561,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
                 nameof(WorkflowNode.TargetStation) or
                 nameof(WorkflowNode.X) or
                 nameof(WorkflowNode.Y) or
-                nameof(WorkflowNode.Order)))
+                nameof(WorkflowNode.Order) or
+                nameof(WorkflowNode.Configuration)))
         {
             return;
         }
@@ -1326,6 +1574,11 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
                 nameof(WorkflowNodeParameter.IsRequired)))
         {
             return;
+        }
+
+        if (ReferenceEquals(sender, SelectedNode) && e.PropertyName == nameof(WorkflowNode.Type))
+        {
+            RefreshInspector();
         }
 
         var recordHistory = sender is not WorkflowDefinition ||

@@ -13,7 +13,8 @@ Active branch: `docs/experiment-workflow-architecture-plan`
 - Experiment workflow G2 has passed overall acceptance.
 - G3-A catalog/schema contracts are complete in commit `321517e`.
 - G3-B shared publication validation is complete in commit `eef0271`.
-- The next gate is G3-C: schema-driven WPF property projection and controls.
+- G3-C schema-driven WPF property projection and controls are implemented and
+  have passed the automated gate; focused UI acceptance remains before G3-D.
 - G3-D overall acceptance must pass before any G4 runtime work starts.
 
 The AGV MVP remains in frozen maintenance mode. Production, unattended,
@@ -24,16 +25,37 @@ instrument write path.
 
 ## Latest verification
 
-The G3-B Release gate completed on 2026-08-21:
+The G3-C Release gate completed on 2026-08-21:
 
 - Full solution build: **0 warnings / 0 errors**.
-- Full test suite: **610 passed / 5 existing E2E skipped / 0 failed**.
-- Breakdown: Domain 39, Workflow Contract 54, MES 74, WPF 193, Adapter 176,
+- Full test suite: **616 passed / 5 existing E2E skipped / 0 failed**.
+- Breakdown: Domain 39, Workflow Contract 54, MES 74, WPF 199, Adapter 176,
   Instrument Gateway 50, Simulator 5, and E2E 19 passed plus 5 skipped.
 - No Adapter, InstrumentGateway, WPF device-control, serial, or D160 write path
-  was added or exercised by G3-A/B.
+  was added or exercised by G3-C.
 
 ## Recent changes
+
+### 2026-08-21 - G3-C schema-driven WPF property panel
+
+- Added stable Inspector and field ViewModels over the shared node catalog.
+  Schema fields now select text, numeric, boolean, or closed-list controls.
+- The WPF toolbox creates the seven G3 node types from stable `NodeTypeId` and
+  schema definitions, copying catalog ports and new-node defaults.
+- Station and device references are closed Profile choices. Unknown, disabled,
+  or mismatched IDs cannot be submitted as free text.
+- Selected-node capability, execution-mode, and safety metadata comes from the
+  shared catalog; no protocol, endpoint, register, or command field is exposed.
+- Unknown fields and unknown/future node schemas remain losslessly preserved,
+  read-only, and explicitly marked as requiring migration.
+- Configuration edits replace the canonical graph projection and participate
+  in the existing canvas undo/redo history. Tests cover selection isolation,
+  all seven types, Profile choices, compatibility preservation, and restart
+  round trips.
+- A startup binding regression was corrected by making read-only Inspector
+  metadata explicitly one-way. An isolated full startup confirmed responsive
+  WPF plus healthy Simulator, Adapter, and MES services, followed by clean
+  shutdown and port release.
 
 ### 2026-08-21 - G3-B shared publication validation
 
@@ -184,10 +206,9 @@ and the linked evidence documents remain the authoritative audit trail.
 
 ## Next gates
 
-1. **G3-C:** project catalog schemas into stable WPF property ViewModels and
-   typed controls for station, device, enums, booleans, numbers, timeout, retry,
-   and safety information. Preserve unknown fields read-only and keep all edits
-   in canonical graph history.
+1. **G3-C focused UI acceptance:** verify the seven toolbox entries, schema
+   controls, Profile selectors, node switching, undo/redo, and save/restart in
+   the desktop editor.
 2. **G3-D:** add validation issue presentation and node/edge focus, complete MES
    lifecycle/UI smoke coverage, and write the G3 acceptance record.
 3. **G4:** remains blocked until G3 overall acceptance. It is the earliest stage

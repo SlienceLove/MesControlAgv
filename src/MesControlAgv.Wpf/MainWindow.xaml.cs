@@ -216,13 +216,16 @@ public partial class MainWindow : Window
 
     private void WorkflowPalette_PreviewMouseMove(object sender, MouseEventArgs e)
     {
-        if (e.LeftButton != MouseButtonState.Pressed || WorkflowPalette.SelectedItem is not WorkflowNodeTypeOption option) return;
+        if (e.LeftButton != MouseButtonState.Pressed ||
+            WorkflowPalette.SelectedItem is not WorkflowNodeTypeOption { IsAvailable: true } option) return;
         DragDrop.DoDragDrop(WorkflowPalette, option, DragDropEffects.Copy);
     }
 
     private void WorkflowCanvas_DragOver(object sender, DragEventArgs e)
     {
-        e.Effects = e.Data.GetDataPresent(typeof(WorkflowNodeTypeOption)) ? DragDropEffects.Copy : DragDropEffects.None;
+        e.Effects = e.Data.GetData(typeof(WorkflowNodeTypeOption)) is WorkflowNodeTypeOption { IsAvailable: true }
+            ? DragDropEffects.Copy
+            : DragDropEffects.None;
         e.Handled = true;
     }
 
@@ -230,7 +233,7 @@ public partial class MainWindow : Window
     {
         if (_workflowEditor is null || e.Data.GetData(typeof(WorkflowNodeTypeOption)) is not WorkflowNodeTypeOption option) return;
         var position = WorkflowCanvasSurface.GetGraphLocation(e);
-        _workflowEditor.AddNodeAt(option.Value, Math.Max(0, position.X - 100), Math.Max(0, position.Y - 60));
+        _workflowEditor.AddNodeAt(option.NodeTypeId, Math.Max(0, position.X - 100), Math.Max(0, position.Y - 60));
         WorkflowCanvasSurface.Focus();
         e.Handled = true;
     }

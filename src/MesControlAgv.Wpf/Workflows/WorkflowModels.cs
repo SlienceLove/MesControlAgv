@@ -70,12 +70,16 @@ public sealed class WorkflowNodeParameter : INotifyPropertyChanged
 public sealed class WorkflowNode : INotifyPropertyChanged
 {
     private WorkflowNodeType _type;
+    private string _graphNodeTypeId = string.Empty;
+    private string _schemaVersion = "1.0";
     private string _name = string.Empty;
     private string _description = string.Empty;
     private string? _targetStation;
     private double _x;
     private double _y;
     private int _order;
+    private ObservableCollection<WorkflowPortDefinition> _ports = [];
+    private Dictionary<string, string?> _configuration = new(StringComparer.OrdinalIgnoreCase);
 
     public Guid Id { get; set; } = Guid.NewGuid();
 
@@ -83,9 +87,17 @@ public sealed class WorkflowNode : INotifyPropertyChanged
     /// Stable graph-catalog identifier. The enum remains for existing WPF
     /// bindings and is treated as a compatibility projection.
     /// </summary>
-    public string GraphNodeTypeId { get; set; } = string.Empty;
+    public string GraphNodeTypeId
+    {
+        get => _graphNodeTypeId;
+        set => SetField(ref _graphNodeTypeId, value ?? string.Empty);
+    }
 
-    public string SchemaVersion { get; set; } = "1.0";
+    public string SchemaVersion
+    {
+        get => _schemaVersion;
+        set => SetField(ref _schemaVersion, string.IsNullOrWhiteSpace(value) ? "1.0" : value);
+    }
 
     public WorkflowNodeType Type
     {
@@ -101,8 +113,6 @@ public sealed class WorkflowNode : INotifyPropertyChanged
                     (MesControlAgv.Contracts.Workflows.WorkflowNodeType)value));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Type)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(TypeDescription)));
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(GraphNodeTypeId)));
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Ports)));
         }
     }
 
@@ -158,10 +168,19 @@ public sealed class WorkflowNode : INotifyPropertyChanged
 
     public ObservableCollection<Guid> NextNodeIds { get; set; } = [];
 
-    public ObservableCollection<WorkflowPortDefinition> Ports { get; set; } = [];
+    public ObservableCollection<WorkflowPortDefinition> Ports
+    {
+        get => _ports;
+        set => SetField(ref _ports, value ?? []);
+    }
 
-    public Dictionary<string, string?> Configuration { get; set; } =
-        new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, string?> Configuration
+    {
+        get => _configuration;
+        set => SetField(
+            ref _configuration,
+            value ?? new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase));
+    }
 
     public WorkflowNode Clone() => new()
     {
@@ -286,4 +305,11 @@ public sealed class WorkflowDefinition : INotifyPropertyChanged
     }
 }
 
-public sealed record WorkflowNodeTypeOption(WorkflowNodeType Value, string DisplayName);
+public sealed record WorkflowNodeTypeOption(
+    string NodeTypeId,
+    string SchemaVersion,
+    string DisplayName,
+    string Category,
+    WorkflowNodeType CompatibilityType,
+    bool IsAvailable = true,
+    string? UnavailableReason = null);
