@@ -1,6 +1,6 @@
 # AGV MES MVP Progress
 
-Last updated: 2026-08-21
+Last updated: 2026-08-22
 
 This is the concise active record. Detailed history remains in Git and the
 linked acceptance documents.
@@ -12,9 +12,9 @@ Active branch: `docs/experiment-workflow-architecture-plan`
 - Experiment workflow G2, G3, and G4 have passed overall acceptance.
 - G5-A contracts, additive SQLite storage, and read-only scheduling projections
   have passed project acceptance.
-- G5-B manual planning, deterministic conflicts, blocking reasons, and audit are
-  accepted. G5-C runtime admission and lease lifecycle are active; G5-D WPF
-  pages have not started.
+- G5-B manual planning is accepted. G5-C runtime admission, database-enforced
+  leases, terminal release, and device-free recovery are implemented and await
+  project acceptance; G5-D WPF pages have not started.
 
 The AGV MVP remains in frozen maintenance mode. Production, unattended,
 automatic/batch dispatch, and Push are **NO-GO**. G4-D controls MES scheduling
@@ -24,17 +24,28 @@ CIC-D160+ write path.
 
 ## Latest verification
 
-The G5-B Release gate completed on 2026-08-21:
+The G5-C Release gate completed on 2026-08-22:
 
 - Full solution build: **0 warnings / 0 errors**.
-- Full test suite: **662 passed / 5 existing E2E skipped / 0 failed**.
-- Breakdown: Domain 39, Workflow Contract 57, MES 104, WPF 212, Adapter 176,
+- Full test suite: **669 passed / 5 existing E2E skipped / 0 failed**.
+- Breakdown: Domain 39, Workflow Contract 58, MES 110, WPF 212, Adapter 176,
   Instrument Gateway 50, Simulator 5, and E2E 19 passed plus 5 skipped.
-- Focused coverage proves version pinning, idempotent replay, deterministic
-  half-open conflicts, peak-capacity handling, additive upgrade, and that
-  scheduling creates no workflow run, device operation, or runtime lease.
+- G5-C focused coverage: **6/6 passed**. It proves atomic admission and rollback,
+  idempotent replay, one-winner resource exclusion, terminal/recovery release,
+  Paused/Unknown retention, and legacy direct-execute compatibility.
 
 ## Recent changes
+
+### 2026-08-22 - G5-C runtime admission and lease lifecycle
+
+- Added explicit scheduled-job admission with pinned plan/workflow checks and a
+  single transaction for workflow run, reservation conversion, leases, linkage,
+  state projection, and audit.
+- Made `ActiveResourceKey` the database mutex; runtime rejection and lease
+  conflict leave no partial run or lease, while request replay stays durable.
+- Added terminal release and startup reconciliation. Paused, unresolved Unknown,
+  and expired non-terminal runs keep leases; recovery performs no device calls.
+- Implementation commit: `75655cd`; project acceptance is pending.
 
 ### 2026-08-21 - G5-B manual experiment scheduling
 
@@ -68,21 +79,6 @@ The G5-B Release gate completed on 2026-08-21:
 - Project acceptance and G4 overall acceptance passed; implementation commit:
   `379fd59`.
 
-### 2026-08-21 - G3 typed input compatibility correction
-
-- Added a shared narrow runtime input projection so published Timed Wait uses
-  immutable `durationSeconds`, while legacy free-form overrides remain valid.
-- Prevented Timed Wait audits from fabricating device evidence; legacy audits
-  without the new field retain their fallback behavior.
-
-### 2026-08-21 - G4-C read-only runtime monitor
-
-- Added a monitor for the pinned version, node attempts, device operations,
-  and audit timeline by run ID.
-- Reused the read-only Nodify Runtime surface while preserving viewport state,
-  and rejected cross-run, cross-version, or unlinked evidence.
-- Kept Unknown visually distinct and explicitly non-retryable.
-
 ## Historical trace
 
 | Date | Retained trace |
@@ -105,8 +101,9 @@ The G5-B Release gate completed on 2026-08-21:
 
 ## Next gate
 
-1. Implement G5-C runtime admission and lease lifecycle only.
-2. Prove leases are mutually exclusive and released on terminal/recovery-failure paths.
+1. Complete project acceptance for G5-C using the API/lifecycle checks in the
+   G5 acceptance record.
+2. Enter G5-D only after explicit project approval.
 3. WPF scheduling pages remain G5-D; physical device commands, serial control,
    protocol fields, and D160 writes remain closed.
 
