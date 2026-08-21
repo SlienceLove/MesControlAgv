@@ -45,12 +45,21 @@ public static class WorkflowGraphNodeTypeIds
 {
     public const string Start = "core.start";
     public const string Move = "agv.move";
+    /// <summary>
+    /// Legacy generic wait node. A missing duration historically meant an
+    /// external wait, so it must not be reinterpreted as a timed wait.
+    /// </summary>
     public const string Wait = "core.wait";
+    public const string TimedWait = "core.timed-wait";
+    public const string ManualConfirmation = "core.manual-confirmation";
     public const string Pickup = "agv.pickup";
     public const string Dropoff = "agv.dropoff";
     public const string End = "core.end";
     public const string Custom = "core.custom";
+    /// <summary>Legacy free-form instrument operation node.</summary>
     public const string InstrumentOperation = "instrument.operation";
+    public const string InstrumentReadStatus = "instrument.read-status";
+    public const string InstrumentWaitUntilStable = "instrument.wait-until-stable";
 
     public static string For(WorkflowNodeType type) => type switch
     {

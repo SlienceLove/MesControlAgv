@@ -11,7 +11,7 @@ namespace MesControlAgv.Domain.Workflows;
 /// </summary>
 public static class WorkflowGraphContractAdapter
 {
-    public const string TargetStationConfigurationKey = "$targetStation";
+    public const string TargetStationConfigurationKey = WorkflowNodeConfigurationKeys.TargetStation;
     public const string ParametersConfigurationKey = "$parameters";
 
     public static WorkflowDefinition ToContract(WorkflowGraphDocument document)
