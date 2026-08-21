@@ -175,6 +175,99 @@ public sealed class WorkflowSimulatorDispatcherTests
     }
 
     [Fact]
+    public async Task Dispatcher_projects_published_typed_wait_configuration_into_initial_inputs()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<MesDbContext>().UseSqlite(connection).Options;
+        await using var database = new MesDbContext(options);
+        await database.Database.EnsureCreatedAsync();
+        var workflows = CreateService(database);
+        var executionId = await AdmitAsync(
+            workflows,
+            WorkflowTestDefinitions.CreateTimedWaitWorkflow("0"),
+            new Dictionary<string, string?>
+            {
+                [WorkflowRuntimeParameterNames.WaitDurationSeconds] = "99"
+            });
+        var adapter = new ScriptedSimulatorGateway();
+        var dispatcher = CreateDispatcher(workflows, adapter);
+
+        var prepared = Assert.Single(await workflows.ListNodeExecutionsAsync(
+            executionId,
+            CancellationToken.None));
+        Assert.Equal(WorkflowGraphNodeTypeIds.TimedWait, prepared.NodeTypeId);
+        Assert.Equal("0", prepared.Inputs[WorkflowRuntimeParameterNames.WaitDurationSeconds]);
+        Assert.Empty(await workflows.ListDeviceOperationsAsync(executionId, CancellationToken.None));
+
+        await dispatcher.ProcessAsync(CancellationToken.None);
+
+        Assert.Equal(
+            WorkflowRuntimeStatus.Completed,
+            (await workflows.GetExecutionAsync(executionId, CancellationToken.None))!.RuntimeStatus);
+        Assert.Equal(
+            WorkflowNodeExecutionStatus.Succeeded,
+            Assert.Single(await workflows.ListNodeExecutionsAsync(executionId, CancellationToken.None)).Status);
+        Assert.Empty(await workflows.ListDeviceOperationsAsync(executionId, CancellationToken.None));
+        Assert.Equal(0, adapter.DispatchCalls);
+        Assert.Equal(0, adapter.GetTaskCalls);
+        var timeline = await workflows.ListRunTimelineAsync(executionId, 100, CancellationToken.None);
+        Assert.All(
+            timeline.Where(item => item.NodeExecutionId == prepared.Id),
+            item => Assert.Null(item.DeviceOperationId));
+    }
+
+    [Fact]
+    public async Task Dispatcher_projects_following_typed_wait_and_preserves_move_device_evidence()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<MesDbContext>().UseSqlite(connection).Options;
+        await using var database = new MesDbContext(options);
+        await database.Database.EnsureCreatedAsync();
+        var workflows = CreateService(database);
+        var executionId = await AdmitAsync(
+            workflows,
+            WorkflowTestDefinitions.CreateMoveTimedWaitMoveWorkflow("0"),
+            new Dictionary<string, string?>
+            {
+                [WorkflowRuntimeParameterNames.WaitDurationSeconds] = "99"
+            });
+        var adapter = new ScriptedSimulatorGateway { TaskState = "arrived" };
+        var dispatcher = CreateDispatcher(workflows, adapter);
+
+        await dispatcher.ProcessAsync(CancellationToken.None);
+
+        var waitPrepared = await workflows.ListNodeExecutionsAsync(executionId, CancellationToken.None);
+        Assert.Equal(2, waitPrepared.Count);
+        Assert.Equal(WorkflowNodeExecutionStatus.Succeeded, waitPrepared[0].Status);
+        Assert.Equal(WorkflowGraphNodeTypeIds.TimedWait, waitPrepared[1].NodeTypeId);
+        Assert.Equal(WorkflowNodeExecutionStatus.Ready, waitPrepared[1].Status);
+        Assert.Equal("0", waitPrepared[1].Inputs[WorkflowRuntimeParameterNames.WaitDurationSeconds]);
+        Assert.Single(await workflows.ListDeviceOperationsAsync(executionId, CancellationToken.None));
+
+        await dispatcher.ProcessAsync(CancellationToken.None);
+
+        var secondMovePrepared = await workflows.ListNodeExecutionsAsync(executionId, CancellationToken.None);
+        Assert.Equal(3, secondMovePrepared.Count);
+        Assert.Equal(WorkflowNodeExecutionStatus.Succeeded, secondMovePrepared[1].Status);
+        Assert.Equal(WorkflowGraphNodeTypeIds.Move, secondMovePrepared[2].NodeTypeId);
+        Assert.Equal(WorkflowNodeExecutionStatus.Ready, secondMovePrepared[2].Status);
+        Assert.Equal(
+            "ST_OPEN_01",
+            secondMovePrepared[2].Inputs[WorkflowNodeConfigurationKeys.TargetStation]);
+        Assert.Single(await workflows.ListDeviceOperationsAsync(executionId, CancellationToken.None));
+
+        await dispatcher.ProcessAsync(CancellationToken.None);
+
+        Assert.Equal(
+            WorkflowRuntimeStatus.Completed,
+            (await workflows.GetExecutionAsync(executionId, CancellationToken.None))!.RuntimeStatus);
+        Assert.Equal(new[] { "SAMPLE_01", "ST_OPEN_01" }, adapter.DispatchTargets);
+        Assert.Equal(2, (await workflows.ListDeviceOperationsAsync(executionId, CancellationToken.None)).Count);
+    }
+
+    [Fact]
     public async Task Dispatcher_uses_ready_node_record_when_the_legacy_run_mirror_conflicts()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
@@ -403,12 +496,15 @@ public sealed class WorkflowSimulatorDispatcherTests
             new WorkflowSimulatorWorkerOptions { Enabled = true },
             timeProvider);
 
-    private static async Task<Guid> AdmitAsync(WorkflowApplicationService workflows, WorkflowDefinition definition)
+    private static async Task<Guid> AdmitAsync(
+        WorkflowApplicationService workflows,
+        WorkflowDefinition definition,
+        IReadOnlyDictionary<string, string?>? executionParameters = null)
     {
         var draft = await workflows.CreateDraftAsync(definition, "simulator-test", CancellationToken.None);
         await workflows.ValidateVersionAsync(draft.WorkflowId, draft.Version, CancellationToken.None);
         await workflows.PublishAsync(draft.WorkflowId, draft.Version, "simulator-test", CancellationToken.None);
-        return await ExecutePublishedAsync(workflows, draft.WorkflowId, draft.Version);
+        return await ExecutePublishedAsync(workflows, draft.WorkflowId, draft.Version, executionParameters);
     }
 
     private static async Task<Guid> AdmitLegacyAsync(
@@ -439,14 +535,16 @@ public sealed class WorkflowSimulatorDispatcherTests
     private static async Task<Guid> ExecutePublishedAsync(
         WorkflowApplicationService workflows,
         Guid workflowId,
-        int version)
+        int version,
+        IReadOnlyDictionary<string, string?>? executionParameters = null)
     {
         var result = await workflows.ExecuteAsync(new WorkflowExecutionRequest
         {
             WorkflowId = workflowId,
             Version = version,
             RequestId = Guid.NewGuid(),
-            RequestedBy = "simulator-test"
+            RequestedBy = "simulator-test",
+            Parameters = executionParameters ?? new Dictionary<string, string?>()
         }, CancellationToken.None);
         Assert.True(result.IsAccepted);
         return result.ExecutionId;

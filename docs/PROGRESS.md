@@ -15,7 +15,8 @@ Active branch: `docs/experiment-workflow-architecture-plan`
 - G4-B has migrated Simulator Move and Timed Wait dispatch/recovery to durable
   node execution records while retaining legacy run-level compatibility APIs.
 - G4-C now provides an independent read-only runtime monitor over the existing
-  G4 records and APIs. It is ready for user acceptance before G4-D begins.
+  G4 records and APIs. A G3 typed Timed Wait compatibility defect found during
+  G4-C acceptance has been corrected; G4-C remains at the user acceptance gate.
 
 The AGV MVP remains in frozen maintenance mode. Production, unattended,
 automatic/batch dispatch, and Push are **NO-GO**. G4-A/B add durable records and
@@ -25,20 +26,33 @@ protocol/register fields in workflow nodes, or any CIC-D160+ write path.
 
 ## Latest verification
 
-The G4-C Release gate completed on 2026-08-21:
+The G4-C compatibility Release gate completed on 2026-08-21:
 
 - Full solution build: **0 warnings / 0 errors**.
-- Full test suite: **635 passed / 5 existing E2E skipped / 0 failed**.
-- Breakdown: Domain 39, Workflow Contract 54, MES 83, WPF 209, Adapter 176,
+- Full test suite: **637 passed / 5 existing E2E skipped / 0 failed**.
+- Breakdown: Domain 39, Workflow Contract 54, MES 85, WPF 209, Adapter 176,
   Instrument Gateway 50, Simulator 5, and E2E 19 passed plus 5 skipped.
-- G4-C coverage verifies pinned graph projection, viewport-preserving refresh,
-  Unknown presentation, evidence isolation, selection navigation, and WPF
-  binding/layout.
-- A real WPF process opened the monitor tab through UI Automation; its run ID
-  input and canvas both had non-zero layout. Local service management was
-  disabled, and no device, serial, or D160 write endpoint was called.
+- Published workflow `新实验流程` v1 completed as run
+  `383fd329-fb54-49cd-9bce-84c7c8267063`: Timed Wait consumed the immutable
+  `durationSeconds=1`, Move used `CHARGE_01`, and only Move created one
+  succeeded Simulator device operation.
+- A real Release WPF process loaded that run in the monitor. The pinned canvas
+  was visible and reported 2 node attempts, 1 device operation, and 8 timeline
+  events without weakening cross-run evidence validation.
 
 ## Recent changes
+
+### 2026-08-21 - G3 typed input compatibility correction
+
+- Added a shared narrow runtime input projection used for both initial and
+  following steps. Published `core.timed-wait` configuration now snapshots
+  `durationSeconds`; the published value wins over request parameters.
+- Retained legacy free-form parameter overrides and the existing Move station
+  projection. Timed Wait still creates no device operation.
+- Prevented an explicit null `deviceOperationId` from falling back to the
+  compatibility transport ID, so Timed Wait timeline events no longer claim
+  nonexistent device evidence. Legacy audits without the new field retain
+  their fallback behavior.
 
 ### 2026-08-21 - G4-C read-only runtime monitor
 
@@ -111,8 +125,9 @@ The G4-C Release gate completed on 2026-08-21:
 
 ## Next gate
 
-1. Load a known Simulator workflow run in `流程运行监控` and verify the pinned
-   graph, current node, device evidence, and timeline against the G4 APIs.
+1. Review the already loaded run `383fd329-fb54-49cd-9bce-84c7c8267063` in
+   `流程运行监控` and confirm the graph, two succeeded nodes, one Move device
+   operation, and eight timeline entries.
 2. Confirm G4-C acceptance before G4-D adds pause/resume/cancel and controlled
    Unknown-resolution entry points with authorization, reason, and audit.
 3. Physical device commands, serial control, and D160 writes remain outside the

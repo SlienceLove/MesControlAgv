@@ -378,8 +378,9 @@ public sealed partial class WorkflowApplicationService
             Id = record.Id,
             WorkflowRunId = record.ExecutionId ?? Guid.Empty,
             NodeExecutionId = ReadGuid(details, "nodeExecutionId"),
-            DeviceOperationId = ReadGuid(details, "deviceOperationId") ??
-                                ReadGuid(details, "transportOperationId"),
+            DeviceOperationId = details.ContainsKey("deviceOperationId")
+                ? ReadGuid(details, "deviceOperationId")
+                : ReadGuid(details, "transportOperationId"),
             EventType = record.EventType,
             Outcome = record.Outcome,
             Code = record.Code,

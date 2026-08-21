@@ -970,17 +970,9 @@ internal static class WorkflowPersistence
         WorkflowExecutionRequest request,
         WorkflowNode node)
     {
-        var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        var values = WorkflowRuntimeInputProjection.ProjectParameters(request, node);
         foreach (var parameter in node.Parameters ?? Array.Empty<WorkflowParameter>())
         {
-            values[parameter.Name] = parameter.Value;
-            if (request.Parameters is not null)
-            {
-                var supplied = request.Parameters.FirstOrDefault(pair =>
-                    StringComparer.OrdinalIgnoreCase.Equals(pair.Key, parameter.Name));
-                if (!string.IsNullOrEmpty(supplied.Key)) values[parameter.Name] = supplied.Value;
-            }
-
             if (parameter.IsRequired && string.IsNullOrWhiteSpace(values[parameter.Name]))
             {
                 throw new InvalidOperationException($"Required workflow parameter '{parameter.Name}' is missing.");

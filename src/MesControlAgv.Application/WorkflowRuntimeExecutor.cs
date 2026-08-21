@@ -307,20 +307,8 @@ public sealed class WorkflowRuntimeExecutor : IWorkflowRuntimeExecutor
         WorkflowExecutionRequest request,
         WorkflowNode node)
     {
-        var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         var parameters = node.Parameters ?? Array.Empty<WorkflowParameter>();
-        foreach (var parameter in parameters)
-        {
-            values[parameter.Name] = parameter.Value;
-        }
-
-        foreach (var parameter in parameters)
-        {
-            if (TryGetParameter(request.Parameters, parameter.Name, out var value))
-            {
-                values[parameter.Name] = value;
-            }
-        }
+        var values = WorkflowRuntimeInputProjection.ProjectParameters(request, node);
 
         var missing = parameters
             .Where(parameter => parameter.IsRequired &&
@@ -342,29 +330,7 @@ public sealed class WorkflowRuntimeExecutor : IWorkflowRuntimeExecutor
                 }).ToArray());
         }
 
-        return ParameterResolution.Success(
-            new ReadOnlyDictionary<string, string?>(values));
-    }
-
-    private static bool TryGetParameter(
-        IReadOnlyDictionary<string, string?>? parameters,
-        string name,
-        out string? value)
-    {
-        if (parameters is not null)
-        {
-            foreach (var parameter in parameters)
-            {
-                if (StringComparer.OrdinalIgnoreCase.Equals(parameter.Key, name))
-                {
-                    value = parameter.Value;
-                    return true;
-                }
-            }
-        }
-
-        value = null;
-        return false;
+        return ParameterResolution.Success(values);
     }
 
     private WorkflowExecutionResult? FindCached(

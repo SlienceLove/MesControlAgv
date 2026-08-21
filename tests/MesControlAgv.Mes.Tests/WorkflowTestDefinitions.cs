@@ -71,6 +71,103 @@ internal static class WorkflowTestDefinitions
         };
     }
 
+    public static WorkflowDefinition CreateTimedWaitWorkflow(
+        string durationSeconds,
+        Guid? workflowId = null)
+    {
+        var nodeIds = Enumerable.Range(0, 3)
+            .Select(_ => Guid.NewGuid())
+            .ToArray();
+        return new WorkflowDefinition
+        {
+            Id = workflowId ?? Guid.NewGuid(),
+            SchemaVersion = WorkflowGraphDocument.CurrentSchemaVersion,
+            Name = "Typed timed wait workflow",
+            Nodes =
+            [
+                CreateNode(nodeIds[0], WorkflowGraphNodeTypeIds.Start, "Start", 1, [nodeIds[1]]),
+                CreateNode(
+                    nodeIds[1],
+                    WorkflowGraphNodeTypeIds.TimedWait,
+                    "Timed wait",
+                    2,
+                    [nodeIds[2]],
+                    new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [WorkflowRuntimeParameterNames.WaitDurationSeconds] = durationSeconds
+                    }),
+                CreateNode(nodeIds[2], WorkflowGraphNodeTypeIds.End, "End", 3, [])
+            ],
+            Edges = CreateLinearEdges(nodeIds)
+        };
+    }
+
+    public static WorkflowDefinition CreateMoveTimedWaitMoveWorkflow(
+        string durationSeconds,
+        Guid? workflowId = null)
+    {
+        var nodeIds = Enumerable.Range(0, 5)
+            .Select(_ => Guid.NewGuid())
+            .ToArray();
+        return new WorkflowDefinition
+        {
+            Id = workflowId ?? Guid.NewGuid(),
+            SchemaVersion = WorkflowGraphDocument.CurrentSchemaVersion,
+            Name = "Typed move wait move workflow",
+            Nodes =
+            [
+                CreateNode(nodeIds[0], WorkflowGraphNodeTypeIds.Start, "Start", 1, [nodeIds[1]]),
+                CreateNode(
+                    nodeIds[1],
+                    WorkflowGraphNodeTypeIds.Move,
+                    "Move one",
+                    2,
+                    [nodeIds[2]],
+                    MoveConfiguration("SAMPLE_01")),
+                CreateNode(
+                    nodeIds[2],
+                    WorkflowGraphNodeTypeIds.TimedWait,
+                    "Timed wait",
+                    3,
+                    [nodeIds[3]],
+                    new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [WorkflowRuntimeParameterNames.WaitDurationSeconds] = durationSeconds
+                    }),
+                CreateNode(
+                    nodeIds[3],
+                    WorkflowGraphNodeTypeIds.Move,
+                    "Move two",
+                    4,
+                    [nodeIds[4]],
+                    MoveConfiguration("ST_OPEN_01")),
+                CreateNode(nodeIds[4], WorkflowGraphNodeTypeIds.End, "End", 5, [])
+            ],
+            Edges = CreateLinearEdges(nodeIds)
+        };
+    }
+
+    private static IReadOnlyDictionary<string, string?> MoveConfiguration(string station) =>
+        new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+        {
+            [WorkflowNodeConfigurationKeys.TargetStation] = station,
+            [WorkflowNodeConfigurationKeys.TimeoutSeconds] = "300",
+            [WorkflowNodeConfigurationKeys.RetryCount] = "0"
+        };
+
+    private static IReadOnlyList<WorkflowEdgeDefinition> CreateLinearEdges(IReadOnlyList<Guid> nodeIds) =>
+        Enumerable.Range(0, nodeIds.Count - 1)
+            .Select(index => new WorkflowEdgeDefinition
+            {
+                Id = Guid.NewGuid(),
+                SourceNodeId = nodeIds[index],
+                SourcePort = "success",
+                TargetNodeId = nodeIds[index + 1],
+                TargetPort = "in",
+                Kind = WorkflowEdgeKind.Success
+            })
+            .ToArray();
+
     private static WorkflowNode CreateNode(
         Guid id,
         string nodeTypeId,
