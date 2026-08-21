@@ -1,1700 +1,211 @@
 # AGV MES MVP Progress
 
-Last updated: 2026-08-20
-
-## Current priority and branch
-
-Development focus has moved to branch
-`docs/experiment-workflow-architecture-plan`. The validated ion chromatography
-work remains in its dedicated branch and is used here only as a capability and
-safety-boundary input. The current delivery sequence is:
-
-1. **P0 - experiment workflow G2:** converge the main editor on the versioned
-   graph document and verify the Nodify canvas without enabling device writes.
-2. **P1 - experiment workflow G3:** add typed node schemas, capability catalog
-   references, and publish-time validation after G2 acceptance.
-3. **P2 - runtime and scheduling:** add read-only execution evidence, resource
-   leases, and scheduling only after the definition editor is stable.
-
-The AGV MVP is now in a **frozen maintenance state**. Its Simulator workflow,
-vendor TCP boundary, offline verification, and physical-acceptance evidence are
-retained, but no new AGV feature work or physical movement is planned during
-P0-P2. Real-AGV production, unattended dispatch, automatic/batch dispatch, and
-Push remain **NO-GO**. Any future AGV field work still requires the fresh,
-authorized preflight and movement-authorization gates recorded below.
-
-### P0 status: CIC-D160+ direct communication
-
-- Static analysis confirms that the sample CIC-D160+ uses USB virtual serial
-  communication and Modbus RTU, not LAN TCP. The current sample settings are
-  `115200 8N1`; the observed read request
-  `01 04 19 00 00 14 F7 59` has a valid Modbus CRC.
-- The repository now contains `MesControlAgv.DeviceProtocolTester`, a
-  default-read-only probe with serial support, CRC validation, session
-  archiving, timeout evidence, and explicit write protection.
-- The control-computer acceptance identified the CIC-D160+ as `COM4` at
-  `115200 8N1`. The known `0x1900/20-register` read passed 30 consecutive
-  attempts with valid CRC responses. `COM3` and the SHA-18i remain outside the
-  current scope, and ShineLab must be closed before any process opens `COM4`.
-- A fresh control-computer read-only session on 2026-08-18 revalidated the
-  same request on `COM4`: `30/30` attempts succeeded, `30/30` response CRCs
-  were valid, and every response was a 45-byte Modbus `0x04` frame from slave
-  `0x01`. The response body was identical across all 30 attempts and matched
-  the previously captured `0x1900` response, including the identity payload
-  `YA7261078` and response CRC `25CB`. The raw session is retained locally as
-  `res/d160-readonly-batch.json` and is intentionally not committed.
-- The vendor `D160+` general protocol workbook was received and verified on
-  2026-08-18 (SHA-256
-  `0C86E1B869E6BF21E9DAFAC13C8ACFDA5D7247A2CE9054E40094A4373F8B428F`).
-  It confirms the captured pump-flow, pump-enable, temperature-enable, and
-  column-temperature write addresses, distinguishes flow setpoint `0x17DB`
-  from actual flow `0x17DC`, defines the complete `0x1900/24` identity range,
-  and identifies `0x13E4=0x5AA5` as the password required to query
-  conductivity. Pressure safety limits, most fault bits, the individual `0x157F`
-  bits, and contradictory suppressor-mode enums remain unresolved. The formal
-  comparison is in
-  `docs/ION-CHROMATOGRAPHY-D160-PROTOCOL-VERIFICATION.md`.
-- The protocol-driven COM4 read gate completed at 2026-08-18 15:19 CST. All
-  `12/12` reads succeeded across three rounds of `0x1900/24`, `0x1770/12`,
-  `0x17D4/18`, and `0x1838/10`; every frame passed an independent slave,
-  function, byte-count, length, and CRC recheck, and each range was byte-stable
-  across all rounds. The snapshot showed identifier `YA7261078`, conductivity
-  `45.4674225`, column temperature `30.01 C`, flow setpoint/actual
-  `0.700/0.700 mL/min`, raw pressure `0`, pump/temperature/suppressor states
-  `0`, and both raw fault codes `0`. The script sent no password or other
-  write. Result SHA-256 is
-  `09C122E7A41125F4D7219C22A300A6092225F221C8640411A41E63080E9D12E8`.
-- The completed field package was limited to rewriting the two currently observed
-  setpoints without activating hardware: `0x13DA=700` and `0x1389=3500`.
-  It re-reads identity, process, suppressor, pressure, and fault state first;
-  refuses to write unless every safety precondition matches the validated idle
-  snapshot; sends each fixed write at most once; requires an exact echo and
-  immediate readback; and has no enable, disable, password, `0x157F`, start,
-  stop, retry, or automatic rollback frame. Physical activation remains a
-  separate later authorization gate.
-- The current-value rewrite gate completed at 2026-08-18 15:48 CST. The
-  preflight matched `YA7261078` and the idle raw-state requirements. The tool
-  sent exactly one `0x13DA=700` and one `0x1389=3500` write; both received
-  byte-exact, CRC-valid echoes. The process response was identical before and
-  after both writes, with setpoints unchanged, raw pump/temperature/pressure
-  still zero, and the final suppressor/fault values still zero. Result SHA-256
-  is `29C85FD9E2F6F8F44FC99C715EE309597621BF0C74C11C915E85190855B4EAFA`.
-  This validates direct write/echo/readback mechanics only. No activation,
-  password, `0x157F`, retry, or rollback write was sent.
-- A separately authorized 60-second USBPcap session on 2026-08-18 correlated
-  four ShineLab write capabilities on the current device/software version:
-  pump flow at `0x13DA` with scale `raw / 1000`, pump enable at `0x157D`,
-  temperature-enable flags at `0x157C`, and column temperature at `0x1389`
-  with scale `raw / 100`. All five observed host writes, including one repeated
-  flow setpoint, received valid device echoes. The operator confirmed the
-  additional pump and temperature actions. This establishes address/value
-  correlation only; safe ranges, retry behavior, failure recovery, and direct
-  gateway writes remain unverified and disabled.
-- A second passive 60-second USBPcap session on 2026-08-18 captured the
-  operator's shutdown and restoration actions. The actual device-command
-  sequence was mixed rather than a pure rollback: pump disable
-  (`0x157D=0`), flow `700`, pump enable (`0x157D=1`), a second pump disable,
-  temperature enable (`0x157C=2`), column temperature `3500`, and temperature
-  disable (`0x157C=0`). Every request received an identical CRC-valid device
-  echo. This confirms the observed disable encodings and shows that a repeated
-  pump-disable write is accepted, but it does not prove physical idle state or
-  authorize direct replay. Four additional `0x157F=0` writes were observed;
-  their individual bit meanings are not confirmed. The automatic
-  `0x13E4=0x5AA5` password write was observed again and remains prohibited
-  until its session timing and repetition rules are field-verified. The
-  operator reported that the instrument was shut down after the session.
-- A 60-second USBPcap observation on 2026-08-17 successfully reconstructed
-  ShineLab traffic for the CIC-D160+. The capture contains 666 Modbus `0x04`
-  reads and 665 CRC-valid read responses, including the confirmed
-  `0x1900/20-register` exchange. It also shows ShineLab automatically issuing
-  and the device acknowledging function `0x06`, register `0x13E4`, value
-  `0x5AA5`. The later vendor workbook identifies this as the conductivity-query
-  password, but the frame must not be replayed until its session rules are
-  verified.
-  Detailed evidence is in
-  `artifacts/ion-chromatography/d160-capture-analysis-20260817-154030.md`.
-- A dedicated local `MesControlAgv.InstrumentGateway` now implements only the
-  evidenced reads `0x1900/24`, `0x1770/12`, `0x17D4/18`, and `0x1838/10`,
-  while retaining the independently verified `0x1900/20` read in its exact
-  allowlist. It exposes
-  read-only health, identity, and status HTTP routes; rejects state-changing
-  HTTP methods; has no raw-frame or register-write API; and defaults to
-  `Enabled=false`. Conductivity, total-conductivity, column-temperature, flow
-  setpoint, and actual-flow mappings are labelled as vendor-document and
-  field validated. Actual flow now reads `0x17DC`; `0x17DB` is exposed
-  separately as `FlowSetpoint`.
-- The same status contract now exposes column-temperature setpoint separately
-  from actual temperature and carries raw temperature-control, pump, pressure,
-  suppressor/eluent, and both fault-code values through the gateway and MES.
-  Pressure is normalized as `raw / 10 MPa` from the field correlation described
-  below while retaining `PressureRaw`; partially documented fault bits remain
-  raw and are not normalized into guessed business meanings.
-- An offline-only D160+ write model now represents the four capture-correlated
-  capabilities as six explicit operations: flow setpoint, pump enable/disable,
-  temperature-control enable/disable, and column-temperature setpoint. Its
-  policy defaults disabled and requires an exact operation/raw-value allowlist;
-  it accepts no register address from callers. The model reproduces the six
-  captured `0x06` frames, validates exact device echoes, CRCs, and Modbus
-  exception responses, and separately allowlists enable and disable actions.
-  It is not registered with dependency injection, the serial transport, or an
-  HTTP endpoint, so the running gateway remains read-only.
-- A controlled current-value write session is implemented behind a separate
-  transport interface. Its policy defaults disabled, it accepts only the two
-  already validated setpoint rewrites, requires exact identity and idle raw
-  safety state, proves the requested value is already current, sends at most
-  once, requires an exact echo, and repeats readback safety validation. A
-  timeout or I/O loss is classified as outcome unknown and cannot trigger an
-  automatic retry. The session has no concrete serial implementation, DI
-  registration, HTTP route, workflow worker, or WPF command.
-- Gateway verification passes 50/50 focused tests, including the real captured
-  identity frame, CRC and function rejection, read-register allowlisting,
-  candidate field decoding, disabled API behavior, exact captured write-frame
-  reproduction, default-deny and exact-value policies, mismatched echoes, bad
-  CRCs, and Modbus exception responses. A disabled local process returns `200`
-  from `/health` without opening a serial port.
-- MES now proxies the gateway through a GET-only normalized status route, and
-  WPF has a dedicated CIC-D160+ status page for identity, connectivity,
-  conductivity, total conductivity, column temperature, flow, observation
-  time, mapping confidence, and enforced operation policy. It reads once at
-  startup and supports explicit refresh; it does not attach the four serial
-  exchanges to the existing two-second AGV refresh loop.
-- The instrument task transition graph and read-only policy are implemented
-  fail-closed. Only `Identify` and `ReadStatus` are enabled, task admission is
-  false, and the state machine cannot advance from `Preflight` to
-  `Equilibrating` unless a future caller supplies a separately enabled control
-  policy. MES exposes no instrument task creation or operation POST endpoint,
-  and WPF exposes no method-load, injection, start, stop, or reset controls.
-- The latest full offline verification matrix passed `536` tests with `5`
-  existing skips and no failures; focused InstrumentGateway verification
-  passes `50/50`. The complete Release solution build finished with 0
-  warnings and 0 errors. No development or test process opened `COM4` or sent
-  a device frame during the local implementation stages.
-- The next gate is not an activation command. It requires vendor/site agreement
-  on pressure normal/hard limits, complete pump/temperature/fault state
-  meanings, approved setpoint ranges and ordering, fluid-path/load conditions,
-  supervision and power isolation, and manual recovery after an unknown write
-  outcome. Only after those inputs and per-action authorization are recorded
-  may a separately disabled serial transport and local operator-only harness be
-  prepared for one supervised action at a time. A production business API,
-  workflow worker, and unattended control remain prohibited.
-- The field-correlated pressure safety model is documented in
-  `docs/ION-CHROMATOGRAPHY-D160-PRESSURE-SAFETY-GATE.md`. It defaults to
-  disabled, rejects activation when no explicit hard stop is configured, and
-  requires a vendor/site evidence reference plus an exact raw tenth-of-an-MPa
-  mapping when enabled. The observed stable `9.8 MPa` value is retained as
-  display evidence only and is not used as a safety limit.
-- Because the vendor could not confirm the `0x17DD` pressure scaling, a passive
-  empirical correlation was completed. Reanalysis of the three existing
-  USBPcap sessions extracted `15/21/22` CRC-valid complete process responses;
-  the latter two show raw pressure rising from `0` to about `99` with pump
-  state `1` and falling back to `0` after shutdown. This confirms a dynamic
-  signal but not its scale because no ShineLab display values were timestamped.
-  The 2026-08-19 passive run then captured five display annotations and 75
-  CRC-valid process responses without opening `COM4` or injecting a frame.
-  Full-sequence review correlated display/raw pairs `0/0`, `4/40`, `6.20/62`,
-  and `0/0`. The operator corrected the not-yet-stable `9.7` entry to a final
-  `9.8 MPa` platform while raw `98` remained stable for about 25 seconds. The
-  resulting read-only mapping is `Pressure = PressureRaw / 10 MPa`. Dynamic
-  nearest-time regression was rejected because switching windows delayed the
-  terminal entries. The mapping is now carried through the gateway, MES, and
-  WPF while retaining raw pressure. It cannot define a safe limit, authorize
-  pump activation, or enable a pressure interlock by itself.
-  Method loading, autosampler movement, injection, run start/stop, reset,
-  `0x157F`, and `0x13E4=0x5AA5` remain outside the authorized scope.
-- The implementation and evidence requirements are in
-  `docs/ION-CHROMATOGRAPHY-DIRECT-CONTROL-IMPLEMENTATION-PLAN.md`,
-  `docs/ION-CHROMATOGRAPHY-DIRECT-CONTROL-VALIDATION.md`, and
-  `docs/ION-CHROMATOGRAPHY-SHINELAB-ANALYSIS.md`.
-
-### Adapter multi-device modularization
-
-- The Adapter host now loads device-family modules through a typed module
-  catalog. Each module owns service registration, storage initialization,
-  normalized HTTP routes, and an explicit list of supported transports.
-- Existing AGV Simulator/TCP registration, physical-acceptance validation,
-  SQLite initialization, and API routes were moved into `AgvAdapterModule`
-  without changing their public paths or behavior.
-- Adapter health retains its existing fields and now also reports the loaded
-  module and device catalogs. Existing clients remain compatible because the
-  new fields are optional contract extensions.
-- The device catalog now enforces case-insensitive device identity plus
-  per-device `Enabled` and `ControlEnabled` policy. AGV dispatch validates the
-  selected or eligible vehicles before acquiring control, so a disabled
-  control policy produces no controller write.
-- The module boundary is organized by device capability rather than by a
-  generic send/receive transport API. Future workstation, robot-arm, vision,
-  and instrument modules keep typed driver contracts while HTTP, TCP, and
-  serial remain implementation details.
-- One module architecture does not require one deployment process. Network
-  modules can share the central Adapter host; a serial module can use the same
-  module contract in a host deployed on the computer that owns the COM port.
-- `SampleWorkstationAdapterModule` is implemented as the second device family
-  and the first vendor HTTP module. It is disabled by default, permanently
-  rejects `ControlEnabled=true` in this phase, and exposes only normalized GET
-  routes for device status, error information, task list, task details, and
-  task state. MES proxies the same read-only contract without exposing the
-  vendor base URL.
-- Vendor `Code/Data` envelopes, numeric and string business codes, changing
-  `Data` shapes, status normalization, query validation, unknown error payloads,
-  disabled routing, and absence of mutation routes are covered with local fake
-  HTTP responses. No vendor or field endpoint was called.
-- Focused verification passes 176/176 Adapter tests and 67/67 MES tests. The
-  final Release solution build completed with 0 warnings and 0 errors, and the
-  full matrix passed 496 tests with 5 existing skips.
-
-### P1 status: robot arm and vision communication
-
-- Integration architecture and a vendor-information checklist exist, but the
-  concrete Aobot robot-arm and VisionGroup2 protocol contracts, endpoint
-  details, command samples, coordinate transforms, and safety interlocks have
-  not been confirmed.
-- Do not implement or send device-control commands from the proposed examples
-  until the vendor documents and a controlled, read-only connectivity check
-  establish the actual interface. The required evidence is tracked in
-  `docs/ROBOT-ARM-VISION-INTEGRATION.md` and
-  `docs/ROBOT-ARM-VISION-CHECKLIST.md`.
-
-### 2026-08-19 experiment workflow G1 canvas Spike
-
-- G1 has a framework-neutral graph document, domain editing service and
-  isolated Nodify canvas Spike. The graph carries explicit ports, port
-  cardinality, edge semantics, layout and schema version; the WPF adapter is
-  isolated behind `IWorkflowCanvasSurface`, so Nodify does not leak into
-  Contracts, Domain, MES, Adapter or device code.
-- The Spike starts only through `--workflow-canvas-spike`, before normal
-  service startup. It uses in-memory `20/19`, `60/90`, `200/350` and `5/6`
-  samples and has no MES client, serial port, gateway or device command path.
-  It demonstrates node edits, semantic connections, undo/redo, copy/paste ID
-  rewriting, layout, JSON round trip, validation focus and read-only/runtime
-  overlays.
-- G1 verification passed with a Release WPF build at 0 warnings / 0 errors,
-  focused graph tests `24/24`, focused WPF tests `172/172`, and the full
-  Release solution matrix `553 passed / 5 skipped / 558 total`. The `200/350`
-  visual sample was visible after `273 ms` in the isolated Spike on the
-  development workstation; its working-set increase was about `67.2 MiB`.
-- G1 is **awaiting project manual acceptance and the Nodify selection
-  decision**. Do not begin G2 editor convergence, MES version integration or
-  device capability work until that decision is recorded. The handoff package
-  is `docs/EXPERIMENT-WORKFLOW-G1-ACCEPTANCE.md`.
-
-## Current status
-
-The `.NET 8 + WPF` MVP is implemented and the current control-center flow is configuration-driven. WPF loads enabled stations and previews the configured route; a task is created as `Created` and explicitly dispatched through MES -> Adapter -> AGV. The default local service ports remain Simulator `5183`, Adapter `5041`, and MES `5045`.
-
-MES owns task state, SQLite persistence, and audit events. Adapter owns device protocol, control ownership, idempotent dispatch, device-confirmed cancellation, and timeout reconciliation. WPF calls MES action APIs; only a Debug build running with `WPF_RUNTIME_MODE=simulator` can call simulator controls.
-
-The WPF dashboard includes dynamic task creation, explicit dispatch, task detail and audit-event timeline loading, task-operation descriptions, explicit exception reasons, `UNKNOWN` recovery, and AGV pause/resume/cancel controls. Release builds hide simulator controls even when Simulator is selected; physical mode never exposes manual arrival or simulator fault injection. The Adapter now also contains a configuration-selected vendor TCP driver; Simulator remains the default. The development Simulator now exposes three virtual AGVs, while the shared Domain layer provides shortest-path planning and multi-AGV assignment.
-
-Task state handling now distinguishes a known execution failure from an unresolved device result. Adapter conflicts such as no available AGV, path conflicts, and duplicate control are persisted as `FAILED` with a Chinese reason and remain retryable. Timeouts and communication failures remain `UNKNOWN` only when the device result cannot be confirmed, and the WPF dashboard shows `系统异常` together with the stored reason instead of `状态未知`.
-
-Simulator arrival controls accept a specific transport operation ID. WPF updates the simulator AGV first and then notifies MES, so the correct AGV is released after arrival and the normal flow can continue through `MOVING_TO_DROPOFF` to `COMPLETED`.
-
-The WPF application now includes experiment workflow management. Workflows can be preset and edited, their nodes can be adjusted through a visual drag-and-drop designer, and definitions are persisted locally as JSON for reuse between runs. The editor can also load MES definitions and versions, save a draft, persist validation, publish an immutable version, and issue a Simulator-safe dry-run admission request. Node parameters and explicit directed edges are preserved across local storage and the MES contract; dry-run remains an auditable next-step decision and does not call an AGV.
-
-The WPF startup window now uses the mode-independent Chinese title `正在启动中控`; startup failures are reported as `中控启动失败` so physical mode does not incorrectly refer to a local service. Operator-facing menus, comments, and status messages remain in simplified Chinese; product/protocol names and configured station or custom workflow names are retained.
-
-Physical acceptance has advanced beyond the earlier read-only checkpoints, but
-it is not production-approved. On 2026-08-13, Stage 4 localization confidence
-passed at `0.9708`, Stage 5 completed the supervised `LM1 -> LM2` movement, and
-Stage 6 completed `LM2 -> LM3`. The remaining `LM3 -> LM1` segment was paused
-after an obstacle event and external control takeover, then cancelled; it was
-not completed. Normal automatic/batch dispatch remains disabled. The last
-recorded vehicle state is historical evidence only and must not be used to
-authorize another connection or movement.
-
-## Vendor TCP implementation
-
-The vendor driver follows the supplied integration guide and API reference. It implements the 16-byte TCP frame, channels `19204`, `19206`, `19207`, and `19301`, control ownership (`1060`/`4005`), navigation (`3066`), status query (`1110`), active status push (`19301`/`9300`), pause/resume (`3001`/`3002`), cancellation (`3067`), and emergency-stop handling. The current controller reference documents `3067` as the cancellation API; `3068` was experimentally rejected as a task-specific cleanup mechanism because it returned success without changing the legacy record.
-
-The Adapter maps vendor fatal/error, blocked, emergency-stop, localization-confidence, and forklift automatic-mode signals into dispatch safety gates. Device confirmation, idempotency, timeout reconciliation, and audit behavior remain under the existing Adapter boundary.
-
-## Automated verification
-
-Use the serial shared-compilation workaround when required:
-
-```powershell
-dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1
-dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
-```
-
-The latest clean offline Release gate passed on 2026-08-17 with **0 warnings /
-0 errors** and **452 passed / 5 skipped / 457 total tests**: Domain 37, MES 57,
-Adapter 163, WPF 161, E2E 19 passed plus 5 intentionally skipped, Simulator 5,
-and Workflow Contract 10. The earlier 2026-08-11 combined solution run passed
-**338/338 tests**: Domain 35, MES 45, Adapter 82, WPF 150, E2E 12, Simulator 5,
-and Workflow Contract 9. Coverage includes
-WPF station/task contracts,
-workflow draft/validate/publish/version/dry-run APIs, persisted read-only
-execution-snapshot recovery, and audit readback,
-read-only map/readiness aggregation, timeout recovery without duplicate
-operation IDs, restart-resume reconciliation, multi-AGV contention, supervised
-field-navigation acceptance state transitions, and existing failure/retry,
-cancellation, pause/resume and full transport flow. Physical preflight remains
-fail-closed and never opens a real AGV connection during offline verification;
-the E2E contract uses only a local fake TCP controller.
-
-## Live verification
-
-The three service processes were started from the Release output on isolated local ports with fresh temporary MES/Adapter stores for process-level validation. Existing positive and `failure-retry` runs passed, including pause/resume, arrival confirmations, audit evidence, and fleet cleanup. New isolated runs on `5511/5512/5513` passed `timeout-recover` (Simulator `timeout-unknown` -> MES `Unknown` -> same operation recreated -> `ReconciledMoving` -> completed), `5551/5552/5553` passed `multi-agv` (three distinct AGV assignments, fourth task failed closed with `DeviceFailed`, all three tasks completed), `5571/5572/5573` passed `restart-resume` (Simulator kept alive while Adapter/MES restarted and reconciled persisted work), and `5641/5642/5643` passed `workflow-publish-rollback` (three immutable versions, published pointer rollback, and lifecycle audits). Physical-robot acceptance is partially executed as recorded above and remains **NO-GO** for production or automatic dispatch.
-
-The full isolated process matrix was rerun from the Release output on 2026-08-10 with separate temporary stores and ports: `positive` (6101-6103), `failure-retry` (6111-6113), `timeout-recover` (6121-6123), `cancel` (6131-6133), `workflow-publish-rollback` (6141-6143), `multi-agv` (6151-6153), and `restart-resume` (6161-6163) all passed. All owned processes, listening ports, and state files were cleaned up afterward; no physical AGV was connected.
-
-## 2026-08-10 WPF `.smap` map enhancement completion
-
-The offline WPF map phase is complete. No physical AGV was connected, controlled,
-dispatched, cancelled, or moved.
-
-- Domain now parses RoboshopPro `.smap` `1.0.6`, including omitted zero-valued
-  coordinates, map metadata, LocationMarks, feature walls, and
-  `advancedCurveList` Bezier routes. Routes come from `advancedCurveList`;
-  `advancedLineList` is rendered only as a low-contrast wall layer.
-- WPF loads the map through `MAP_SMAP_PATH`, optionally applies
-  `MAP_STATION_MAPPING_PATH`, preserves MES automatic layout when `.smap` is
-  absent or cannot be loaded, and compares map name, version, actual file MD5,
-  station set, and directed-edge set before showing runtime overlays.
-- Identity failure is fail-closed without hiding useful static context. The
-  `.smap` geometry and textual fleet status remain visible, while canvas AGV
-  markers and active paths are disabled for `Mismatch` or `Unverifiable`.
-- The map supports mouse-wheel zoom (`0.2x` to `8x`), drag pan, reset, full-map
-  fit, and a route-area fit used on first entry. Route-area framing prevents the
-  local navigation graph from being compressed by the much larger map header
-  bounds. Direction arrows are placed inside curves instead of stacking at
-  station endpoints.
-- AGV animation uses independent refresh-stable state per AGV, a default
-  `1.6s` segment duration, Bezier position and heading, and stops at segment
-  completion instead of looping. Runtime overlays remain intentionally hidden
-  for the currently mismatched Profile; coordinator behavior is covered by
-  focused tests.
-- The local `guangzhou606.smap` was verified as map `guangzhou606`, version
-  `1.0.6`, MD5 `816e68b9a367d9c8d5eaee9331a7ef58`, with 5 stations, 9 routes,
-  and 151 feature walls. Its station/edge sets and MD5 do not match the active
-  Simulator/Profile snapshot, so the WPF correctly reports mismatch and keeps
-  runtime overlays disabled.
-- Manual Release acceptance used software rendering plus UI Automation. All 5
-  station labels were visible; route focus increased the closest vertical label
-  gaps from `36px` to `82px`; full-map fit, route fit, button zoom, mouse-wheel
-  zoom, reset, and drag pan all changed the expected screen geometry. The final
-  screenshot is `artifacts/wpf-map-route-focus-final-20260810.png`.
-- The map observability follow-up renders `normalPosList` as one bounded Gray8
-  bitmap input (default hidden, no per-point WPF visuals), adds independent
-  wall/route/label/runtime/raster layer switches, and keeps the runtime switch
-  disabled whenever identity verification is not `Match`.
-- Station nodes now have a full-size transparent hit target and an accessible
-  read-only inspector with the `.smap` ID, optional MES mapping, physical
-  coordinate, enabled state, and connected route IDs. No map action dispatches
-  or controls an AGV.
-- Final Release verification passed **312/312** tests: Domain 35, MES 45,
-  Adapter 72, WPF 135, E2E 11, Simulator 5, Workflow Contract 9. Release
-  build completed with 0 warnings and 0 errors. UI Automation confirmed the
-  raster toggle, disabled runtime layer under mismatch, and `LM1` station
-  detail; visual evidence is `artifacts/wpf-map-observability-final-20260810.png`.
-
-Map export was completed on 2026-08-11. A real AGV remains **NO-GO** until a new authorized, isolated read-only preflight
-proves the live map fingerprint, station catalog, directed edges, automatic
-mode, control ownership, and safety gates.
-
-## 2026-08-11 WPF map export and obstacle scan completion
-
-This follow-up remained Simulator-only and local. No physical AGV was
-connected, queried, controlled, dispatched, cancelled, or moved.
-
-- The map now renders both static `.smap` sources by default: `normalPosList`
-  becomes one bounded Indexed8 image with a transparent background and dark
-  occupied pixels, while `advancedLineList` remains a thinner gray-blue feature
-  outline. The checked `障碍扫描` control can still hide the scan layer.
-- The local `guangzhou606.smap` contains 36,559 scan points and 151 feature
-  lines. The larger `1140 x 780` default map canvas, darker obstacle outline,
-  `1.6` route stroke, and smaller arrows improve close-station readability
-  without altering source geometry or map identity gates.
-- `导出当前 PNG` captures the visible map viewport; `导出完整 PNG` uses the
-  untransformed `MapCanvas`. Both capture the existing visual tree so all layer
-  switches apply naturally, and an identity mismatch continues to exclude AGV
-  and active-path overlays fail-closed.
-- `MapExportPlanner` validates finite source bounds, creates safe PNG names,
-  and caps output at `8192` pixels per dimension and `32,000,000` pixels total.
-  `MapPngExportService` renders through `VisualBrush`, `RenderTargetBitmap`,
-  and `PngBitmapEncoder` on the WPF dispatcher thread.
-- Manual Simulator acceptance with the real local `.smap` produced a current
-  viewport PNG of `918 x 506` and a complete-map PNG of `1140 x 780`; both had
-  the PNG signature `89 50 4E 47 0D 0A 1A 0A`. The final complete-map export and
-  obstacle-scan window evidence are saved as
-  `artifacts/wpf-map-export-current-viewport-final-20260811.png`,
-  `artifacts/wpf-map-export-final-20260811.png`, and
-  `artifacts/wpf-map-export-obstacle-scan-final-20260811.png`.
-- Release build passed with 0 warnings and 0 errors. The Release solution test
-  run passed **327/327**: Domain 35, MES 45, Adapter 72, WPF 150, E2E 11,
-  Simulator 5, and Workflow Contract 9.
-
-## 2026-08-10 concurrent continuation
-
-No physical AGV was connected, controlled, dispatched, cancelled, or moved.
-
-- Workflow editing now uses MES draft, validation, publication, version and dry-run APIs while preserving local JSON as the offline fallback. Remote failure, cancellation and service-unavailable outcomes remain explicit to the operator.
-- The WPF read-only map view renders the configured station/edge topology, map fingerprint status, current fleet state and active execution-path overlays. It consumes only MES read APIs and does not add a physical control action.
-- MES exposes a bounded, read-only workflow-audit query for lifecycle and dry-run traceability.
-- MES also has a separate supervised field-navigation-acceptance state machine for a future single low-speed route. It records draft, permit authorization, dispatch outcome, cancellation outcome and audits, but the feature remains disabled by default. The Adapter still runs fresh physical preflight immediately before any future movement.
-- See `docs/physical-acceptance/FIELD-NAVIGATION-ACCEPTANCE.md` for the required on-site gates. The live controller map catalog/directed-edge comparison and vendor confirmation of automatic mode remain hard blockers.
-
-## 2026-08-07 next-phase handoff
-
-The WPF task form no longer assumes the default `SAMPLE` catalog at runtime. It loads the complete station directory from MES and uses that directory for task-row names, batch-import code/name/AGV-ID resolution, and enabled-station validation. Refresh operations share a single-flight gate; the dashboard exposes whether the last successful snapshot is stale and when it was received. The local process scripts accept per-run URLs, isolated stores, run IDs and state paths, wait for health readiness, and stop only a matching PID/port instance. `docs/LOCAL-VERIFICATION.md` is the repeatable Simulator-only runbook.
-
-The workflow editor to MES lifecycle slice and the first expanded process-verification matrix are now complete for offline verification. The next offline implementation order is:
-
-1. Rehearse the complete Simulator-only package and preserve isolated run evidence before any site work.
-2. Complete MES audit/reporting integration and review published-workflow runtime admission against the active profile.
-3. Keep the local process matrix in CI/release rehearsal with explicit negative contracts for unavailable fleet/profile changes.
-4. Prepare an authorized on-site read-only preflight and map comparison; do not enable physical dispatch until every gate is evidenced.
-
-The physical acceptance boundary remains separate and fail-closed: after the vehicle is powered and a fresh read-only preflight is authorized, compare the live map name/version/MD5, station catalog and directed edges with the profile, then confirm automatic mode, control ownership and safety gates. Until that evidence exists, keep `enableAutomaticDispatch=false` and do not connect or move the real AGV.
-
-The 2026-08-04 WPF Debug EXE verification also succeeded. The task-monitor refresh message, `每 2 秒从 MES 刷新`, is now fixed at the bottom of the monitoring layout in outer `Grid.Row="2"` and has hit testing disabled, so it no longer overlays the task list or prevents task clicks.
-
-The historical Code Integrity events 3077/3033 reference policy ID `0283ac0f-fff1-49ae-ada1-8a933130cad6` and the earlier blocked Simulator DLL load. The current effective state now has `AllowDevelopmentWithoutDevLicense=1`; the policy remains enforced (`VerifiedAndReputablePolicyState=1`, Device Guard enforcement status `2`), but no new project-specific 3077/3033 event appeared after the successful restart. `CiTool --list-policies` still requires administrator access for a complete policy dump.
-
-## Remaining boundary
-
-The vendor protocol is now implemented behind the Adapter driver boundary. Before enabling the canonical `Agv:Driver=vendor-tcp`, start with `Adapter:RunMode=read-only-preflight`, then confirm the robot IP, firmware, map station IDs and direct route edges and validate relocation, control ownership, safety gates and mechanism DI/DO. MES lifecycle, task state, audit events, WPF control flow, and the MES-to-Adapter API contract remain unchanged.
-
-## Next session handoff
-
-1. **P0 — baseline governance (complete):** reconcile progress, field evidence, and Profile
-   policy; decide whether the production localization threshold remains `0.95`
-   or follows a separately approved policy; keep site addresses in protected
-   deployment injection only; run a clean isolated Release build/test and
-   sensitive-data/diff checks.
-2. **P1 — workflow runtime reliability (complete):** persist the workflow instance,
-   version snapshot, current node, transport correlation IDs, attempts, and
-   audit linkage; reconcile after MES/Adapter restart without duplicating a
-   device write; orchestrate multi-segment routes one segment at a time after
-   confirmed arrival.
-3. **P1 — WPF runtime visibility (complete):** expose remote draft/publication state,
-   dry-run admission, current workflow node, correlated device task, and audit
-   timeline while clearly distinguishing an offline local draft.
-4. **P2 — conditional physical continuation:** only after a fresh authorized
-   `read-only-preflight`, stop of that read-only process, renewed movement
-   authorization, and a new unique acceptance/task ID may another supervised
-   low-speed segment be considered. Normal automatic/batch dispatch and Push
-   remain disabled.
-5. **P3 — real robot-arm and vision drivers:** proceed on a separate integration
-   track after vendor protocols and calibration inputs are available; do not
-   block or weaken the AGV safety boundary.
-
-## 2026-08-04 extension: AGV communications and batch task import
-
-The WPF control center now includes an `AGV 通讯与调度` tab. It reads the MES fleet snapshot every two seconds and displays each AGV ID, online state, control owner, current station, and current task. When an AGV is online and has an active task, the operator can send `pause`, `resume`, or `cancel` for that task. These commands travel through WPF -> MES -> Adapter -> Simulator/vendor driver; no unverified free-driving or emergency-stop behavior is exposed in this MVP screen.
-
-The WPF control center also includes a `批量任务导入` tab. CSV and XLSX files are parsed without an additional NuGet dependency. Supported columns include task ID, source station, target station, description, priority, and planned time, with Chinese and English aliases. Valid rows are sorted by priority descending, planned time ascending, and source row number. Import issues are retained for review, priority can be edited in the preview grid, and valid rows can be submitted sequentially to the existing MES task API with the task ID stored as `ExternalId`. Source and target stations accept numeric codes, configured AGV station IDs, or station names.
-
-Task responses now include `Priority`, `Description`, and `ExternalId`; old SQLite databases are upgraded at startup when these columns are missing. The WPF command client supports fleet snapshots and AGV task commands while retaining compatibility with existing test clients.
-
-## 2026-08-04 extension: KPI dashboard
-
-The WPF control center now includes a `KPI 看板` tab. It presents today's task total, running/completed/failed counts and completion rate, plus a native WPF donut chart for task status and a 24-hour created/completed trend chart. The dashboard also shows sample-processing information, consumable remaining status, and instrument/AGV operating status. The existing two-second refresh cycle refreshes KPI data together with the task-monitoring screen.
-
-KPI aggregation is exposed by MES at `GET /api/dashboard/kpi?date=yyyy-MM-dd` and is calculated from the persisted transport-task data. Sample statistics currently describe transport-task status aggregation and include a data-source note. Consumable inventory is explicitly marked `未接入` until a site inventory interface is available; real laboratory instrument status is also not fabricated and is marked as not yet connected. Current instrument/AGV status is sourced from the Adapter/AGV snapshot, and the Simulator remains the default runtime path.
-
-No third-party chart package was added. The donut and trend charts are rendered by WPF controls, keeping the MVP dependency surface unchanged.
-
-## 2026-08-10 offline readiness and recovery continuation
-
-No physical AGV was connected, controlled, dispatched, cancelled, or moved in
-this session. All process verification used fresh local Simulator, Adapter and
-MES processes with temporary SQLite stores.
-
-- WPF now has a read-only `Readiness / Map / Audit` tab. It shows the Profile
-  and live controller map fingerprints, configured stations, directed edges,
-  physical preflight blocking reasons, assigned AGV execution paths and the
-  selected task audit timeline. The refresh command only reads MES endpoints.
-- MES `GET /api/map` returns typed map/profile metadata and
-  `GET /api/physical/preflight` is consumed by the WPF client. Missing or
-  rejected physical preflight remains unavailable/blocked in the UI.
-- In fleet mode MES now treats its pre-dispatch path as advisory and lets the
-  fleet-aware Adapter replan from the AGV it actually assigns. This prevents a
-  stale default-AGV path from being sent to another idle AGV.
-- `scripts/verify-local.ps1` now supports `timeout-recovery`, `restart-resume`
-  and `multi-agv` in addition to `positive`, `failure-retry` and
-  `cancellation`. The restart scenario restarts only the MES PID recorded by
-  `run-local.ps1`, preserves environment/database settings, verifies the same
-  operation ID and checks `Timeout` plus `ReconciledMoving` audit events.
-- Verified offline HTTP runs: positive, timeout recovery, failure/retry,
-  cancellation, restart/resume and multi-AGV contention. A timeout/fault
-  scenario must use a fresh Simulator process; if the AGV is already at the
-  pickup station MES correctly bypasses navigation and no timeout is consumed.
-- Final Release verification: build `0 warnings / 0 errors`; tests
-  **312/312** (Domain 35, MES 45, Adapter 72, WPF 135, E2E 11, Simulator 5,
-  Workflow Contract 9).
-
-Physical acceptance remains **NO-GO**. The vehicle is currently powered off,
-the last known map fingerprint is stale, `manualBlock=true` was previously
-observed, and automatic mode was not proven. The next physical step is a newly
-authorized, isolated read-only preflight and map/station/directed-edge
-comparison; keep `enableAutomaticDispatch=false` until that evidence and site
-safety authorization exist.
-
-## Extension verification
-
-On 2026-08-04, the serial Debug and Release solution builds passed with 0 warnings and 0 errors. All 71 tests passed: Domain 12, MES 17, Adapter 16, WPF 18, E2E 7, and Simulator 4. The WPF XAML was also compiled successfully. Batch import parser coverage includes CSV quoting, UTF-8 BOM, XLSX shared strings/numeric cells, Chinese headers, validation issues, and priority/planned-time sorting.
-
-The extension has been verified against the Simulator path. Physical AGV connection and vendor-specific on-site acceptance remain outstanding; before using the canonical `Agv:Driver=vendor-tcp` (the legacy `tcp` alias is accepted only for compatibility), validate the robot IP, firmware, map/station IDs, control ownership, safety gates, and movement behavior in an isolated acceptance environment.
-
-## 2026-08-04 extension: task monitor date filtering and timestamps
-
-The MES task list endpoint now accepts `GET /api/tasks?date=yyyy-MM-dd`; when the query is omitted it defaults to the current UTC date, so a newly opened WPF task monitor does not load the entire historical task table. The WPF monitor has a date picker with query/refresh actions, and its two-second refresh loop preserves the selected date. KPI data now uses the same selected date as the task list.
-
-Task responses now expose `CreatedAt` and nullable `EndedAt`. The task grid displays both fields; `EndedAt` is populated when a task reaches `Completed`, `Cancelled`, or `Failed`, and is cleared when a failed task is retried. Existing SQLite databases are upgraded at startup with the nullable `EndedAt` column.
-
-After creating a task, WPF refreshes the selected date and selects the newly created task instead of retaining an older moving task. This prevents the common Debug-simulator mistake of sending an arrival control to a stale task. Simulator control failures now preserve the backend JSON `detail`, so an HTTP 409 is shown with the actionable reason rather than only the generic status text.
-
-The date-filter API, timestamp serialization, terminal end-time behavior, WPF selection behavior, KPI date propagation, and simulator error-detail handling are covered by automated tests.
-
-## 2026-08-04 extension: standard platformization refactor preparation
-
-The product direction has been clarified: this project is not intended to be copied into separate customer applications. The current WPF control center is the MVP baseline for a standard, productized control-center platform. Future customers should be able to reuse the standard functions and add site-specific devices, workflows, scheduling rules, reports, and UI modules through configuration, profiles, strategies, and controlled extensions.
-
-The current architecture is suitable for continuing MVP validation and physical AGV integration, but it is not yet platform-grade for deep customer customization. The main coupling points identified are fixed stations/maps and workflow assumptions in the Domain/MES boundary, the broad responsibility of the WPF `MainViewModel`, duplicated API/device/UI DTO shapes, direct service registration without a module registry, and the workflow editor being persisted locally without a versioned execution contract.
-
-The agreed target is an incremental “shared platform + standard modules + customer extensions” structure:
-
-```text
-Platform Core / Contracts / Application / Device Abstractions
-        -> WPF Shell + Standard Modules
-        -> Customer Profile + Customer Workflow/Driver/UI Modules
-        -> Infrastructure Drivers for Simulator, Vendor TCP, instruments and PLCs
-```
-
-The current five-project split remains usable as an intermediate structure. Physical project splitting will follow after interface boundaries stabilize. The dependency rule is that Domain and Application do not depend on WPF, databases, or vendor protocols; WPF calls application use cases; device protocols remain behind driver interfaces; and customer differences are not implemented as customer-specific branches in core services.
-
-### Agreed extension boundaries
-
-- `IAgvDriver`: connection, snapshot, dispatch, pause, resume, cancel, and vendor-error conversion.
-- Device capabilities: UI and application services check supported operations instead of testing vendor names.
-- `IWorkflowDefinition`: versioned, validated workflow definitions for standard and customer processes.
-- Scheduling strategy: pluggable AGV selection and route policy.
-- `IControlCenterModule`: service, view, command, menu, and permission registration for standard and customer modules.
-- Profile/configuration: driver selection, AGV IDs, stations, maps, feature flags, timeouts, permissions, and display options.
-
-The workflow editor must eventually feed a runtime workflow executor. Saving a draggable JSON definition alone is not sufficient for a production template; definitions require identity, version, validation, publish status, migration behavior, and auditable execution.
-
-The first boundary implementation is now in place. `src/MesControlAgv.Contracts` owns the shared task, KPI, station, AGV snapshot, command, and planning response/request records. `src/MesControlAgv.Application` owns the use-case interfaces `ITaskApplicationService`, `IKpiDashboardApplicationService`, and the normalized AGV gateway ports. MES implements those application interfaces; Adapter remains the HTTP/TCP infrastructure implementation of the AGV ports; WPF deserializes shared contracts and maps them to UI models.
-
-The current dependency direction is: `Application -> Contracts + Domain`; `MES -> Application + Contracts + Domain`; `Adapter -> Contracts + Domain`; and `WPF -> Contracts + Domain`. The MES-side `AdapterClient` implements the Application gateway ports while the Adapter service remains the device-protocol boundary. The boundary is intentionally incremental: a complete workflow executor, plugin loader, profile system, and physical-device protocol acceptance are still future work.
-
-The next platformization slice is also in place. `AgvCapabilitiesResponse` is now part of the shared device snapshot contract; Adapter normalizes capability metadata for fleet and single-snapshot responses, and WPF gates pause/resume/cancel commands from the declared capabilities instead of assuming every AGV supports every command. The WPF shell now has a `ControlCenterModuleRegistry` with standard module IDs for task monitoring, AGV communications, batch import, KPI, and workflow design. It is currently a registration boundary, while view/service composition remains the next step.
-
-### Refactor preparation backlog
-
-#### P0 — before the first deep customer customization
-
-- [x] Establish the first shared Contracts boundary for tasks, KPI, stations, device snapshots, commands, and planning responses. Error/workflow/audit contracts remain to be expanded.
-- [x] Introduce the Application/use-case layer for task and KPI boundaries; WPF no longer owns MES state transitions.
-- [ ] Move fixed stations, map data, device parameters, and timeouts toward Profile/configuration or persistence.
-- [ ] Split `MainViewModel` into task-monitor, AGV, batch-import, KPI, workflow, and future alarm/device modules.
-- [x] Establish the first device capability model and WPF module registry; vendor-specific `IAgvDriver` implementation remains.
-- [ ] Add workflow version, validation, publish status, and runtime execution entry points.
-
-#### P1 — platform capability enhancement
-
-- [ ] Add workflow executor, scheduling strategy, unified alarms, and richer audit contracts.
-- [ ] Add specialized abstractions for instruments, barcode scanners, PLCs, and other site devices.
-- [ ] Add API/plugin compatibility versions and a customer Profile model.
-- [ ] Add contract tests shared by Simulator and vendor drivers.
-
-#### P2 — customer delivery readiness
-
-- [ ] Define extension packaging, compatibility checks, configuration migration, and database migration.
-- [ ] Provide a standard-module and customer-extension sample.
-- [ ] Define production plugin whitelist/signing, audit, rollback, and release procedures.
-- [ ] Complete physical-device, instrument, workflow, and safety acceptance checklists.
-
-### Platformization acceptance criteria
-
-1. Adding another AGV vendor requires a new driver without changing Domain, standard task services, or WPF pages.
-2. Adding a customer workflow requires a workflow definition, strategy, or customer module rather than a copied application.
-3. Customer pages are loaded through module registration, Profile, and permissions.
-4. Station names, map, AGV count, device endpoints, timeouts, and feature flags can change without editing platform core code.
-5. Platform upgrades preserve or migrate customer profiles, workflow versions, and data, with a rollback path.
-6. Device commands remain capability-checked, idempotent, timeout-aware, and auditable.
-
-This entry records architecture preparation only. No production refactor has been claimed complete, and the Simulator remains the default until physical AGV acceptance is finished.
-
-## 2026-08-05 platformization pause checkpoint (local only)
-
-按推荐顺序并发推进的平台化重构已完成第一轮 P0 独立切片，当前按用户要求暂停，**本次不提交、不推送**。
-
-### 已落地的并发切片
-
-1. **AGV Driver boundary**
-   - 新增 `IAgvDriver`、`IAgvDriverFactory`、`DriverRegistry`、`AgvDriverOptions`、`AgvDriverException`。
-   - 新增 `SimulatorDriver` 与 `VendorTcpDriver` 适配骨架，均复用现有 `IAgvDeviceClient`，没有替换现有 `TcpAgvClient`。
-   - 新增统一调度/控制命令契约。
-   - 已补充 Driver Registry 测试；最终全量验证需在恢复后执行。
-
-2. **Profile/configuration**
-   - 新增 `ProductProfile`、`AgvProfile`、`StationProfile`、`FeatureFlags`、`TimeoutOptions` 和 `ProfileConfiguration`。
-   - 新增 JSON loader、验证器、验证结果和加载异常契约。
-   - Domain Profile 定向测试已通过：16 项。
-
-3. **WPF module composition boundary**
-   - 模块注册器已扩展 View、ViewModel、Service、Command、Permission 注册描述。
-   - 支持模块启停、重复注册校验、排序、权限查询和访问判断。
-   - 既有 WPF 定向测试已通过：22 项。
-
-4. **Workflow contract**
-   - 新增版本化 Workflow Contracts：定义、节点、参数、版本状态、发布状态、校验结果和执行请求。
-   - 新增 Domain Workflow Validator 与 Application `IWorkflowApplicationService` 边界。
-   - Workflow 独立测试已通过：4 项。
-
-5. **WPF ViewModel gradual split**
-   - 新增 `TaskMonitorViewModel`、`AgvCommunicationViewModel`、`BatchImportViewModel` 和 `ControlCenterViewModel` facade。
-   - `MainViewModel` 的子 VM 聚合接入正在进行中，当前已暂停，恢复后必须先完成编译和行为回归，再继续扩展。
-
-### 暂停时验证状态
-
-- 在最后一次 `MainViewModel` 渐进式接入前，Release solution build 已通过：0 warnings、0 errors。
-- 已通过的定向测试：Domain 16、MES 18、Adapter 18（含新增 Driver Registry 测试）、WPF 22、E2E 7、Simulator 4、Workflow Contract 4。
-- 最新的 `MainViewModel` 子 VM 接入修改尚未重新执行最终构建，因此恢复工作后的第一步是重新编译和运行全量测试。
-- 当前工作树包含此前所有未提交 MVP/平台化改动；保留既有 `stash@{0}`、`stash@{1}`，未清理、未回滚。
-
-### 恢复后的推荐顺序
-
-1. 先编译并运行全量测试，修正 `MainViewModel` 子 VM 接入的兼容性问题。
-2. 将 Driver Registry、Profile loader、Workflow validator 纳入统一组合根/DI（不让 WPF 直接 new 业务实现）。
-3. 完成 MainViewModel 到模块 ViewModel 的状态和命令迁移，保留 XAML 兼容代理作为过渡。
-4. 再实现 Workflow Runtime Executor、调度策略和真实 AGV Driver contract tests。
-5. 最后更新验证记录，由用户明确决定是否提交和推送。
-
-本 checkpoint 只写入本地文档，未执行 commit 或 push。
-
-## 2026-08-05 platformization pause checkpoint 2 (local only)
-
-按用户要求暂停当前平台化执行。本次不提交、不推送，不清理或回滚现有工作树改动。
-
-### 本次已落地并完成定向验证
-
-1. **WPF ViewModel 收口**
-   - 修复 `MainViewModel` 批量导入代码中的损坏字符串和 `_batchParser` 接入问题，改由 `BatchImportViewModel` 处理。
-   - 保留任务创建、取货/放货确认、重试、取消、异常原因、刷新、模拟器控制和 AGV 能力门禁。
-   - WPF 构建通过：0 warnings、0 errors；WPF 定向测试 22/22 通过。
-
-2. **Profile/configuration 收口**
-   - 补齐默认七站点、`SAMPLE_01 -> ST_PREP_01` 地图边、地图/站点/设备/超时/Features 校验。
-   - JSON loader 支持 `Profile` 包装结构，并补充 Profile 与站点测试。
-   - Domain 全量测试 16/16 通过，Profile/站点定向测试 6/6 通过；三个服务的 `appsettings.json` 可解析。
-
-3. **Workflow Runtime 收口**
-   - 增加已发布/已校验版本门禁、参数解析、下一步请求、审计结果和请求级幂等。
-   - 修复 Application Workflow 接口重复定义，补充版本、校验、参数、审计和幂等契约测试。
-   - Application 编译通过：0 warnings、0 errors；Workflow 定向测试 9/9 通过。
-
-4. **Adapter 组合根初步接线**
-   - 新增 `AdapterCompositionRoot`，默认使用 Simulator，仅显式配置 `Agv:Driver=vendor-tcp` 时选择 Vendor TCP。
-   - Adapter 入口已改为调用 `builder.Services.AddServices(...)`，并补齐 Workflow validator 的命名空间。
-   - Adapter 定向测试使用现有产物通过 16/16。
-
-### 暂停时的未完成项与验证限制
-
-- Adapter 和 MES 指定构建受到遗留 `dotnet.exe` 锁定输出 DLL 影响，尚未取得本次改动后的可靠构建结果。
-- 隔离输出构建暴露 `ProfileConfigurationValidator.cs:122` 的 `CS8602` nullable 错误，恢复后必须优先修复。
-- MES 测试 DLL 尚未生成，因此 MES 定向测试未运行；全量 solution build/test 也尚未在上述切片合并后执行。
-- MES 尚未接入 Workflow Runtime 的真实持久化/版本读取实现；当前没有伪造该注册。
-- WPF 仍使用现有桌面组合方式直接构造客户端，未强行引入 Web DI。
-- 真实 AGV 物理连接、Vendor TCP 现场验收、控制权、安全门禁和 DI/DO 验证仍未完成。
-
-### 恢复后的执行顺序
-
-1. 检查并释放遗留构建进程造成的 DLL 锁，修复 `ProfileConfigurationValidator.cs:122`。
-2. 重新构建 Adapter、MES、WPF，并运行对应定向测试。
-3. 运行 `dotnet build MesControlAgv.sln --no-restore -p:UseSharedCompilation=false -m:1` 和全量测试，确认跨切片依赖。
-4. 验证 `AdapterCompositionRoot` 的运行时默认驱动、Profile 加载和端口契约；必要时补充 DI 测试。
-5. 全量验证通过后再更新 README/设计状态，并由用户明确决定是否 commit 或 push。
-
-本 checkpoint 只写入本地文档，未执行 commit 或 push。
-
-## 2026-08-05 Workflow Runtime persistence second-round completion (local only)
-
-本轮在同一 worktree 中完成此前遗留的 MES Workflow Runtime 缺口；未执行 commit、push、reset 或 clean，也未停止现有的三个 dotnet 服务。
-
-### 本轮完成
-
-1. **MES-backed version persistence/read**
-   - 新增 `WorkflowVersions` 持久化表和 `WorkflowApplicationService`。
-   - 以 `(WorkflowId, Version)` 为复合键保存不可变定义 JSON 快照、版本生命周期、发布状态、校验结果、创建/发布操作者和时间。
-   - 支持创建下一版本 Draft、仅编辑未发布 Draft、版本列表/读取、显式校验、仅成功校验后发布。
-   - 发布新版本会将同一 Workflow 的旧 Published 版本标记为 `Archived/Superseded`；已发布版本的定义载荷不被改写。
-
-2. **Runtime composition and execution boundary**
-   - 新增真实 MES `MesWorkflowVersionReader`，由 EF Core `MesDbContext` 读取已保存版本；`WorkflowRuntimeExecutor` 通过组合根获得该 reader 和已注册的 `WorkflowValidator`。
-   - 新增 `/api/workflows`、版本读取/列表、Draft 创建/更新、校验、发布和 `/api/workflows/execute` 入口。
-   - Runtime 只做已发布版本的校验、参数解析和下一步请求准备，不调用 AGV、不发送运动/控制/调度指令，不改变既有 MES Transport Task 流程。
-
-3. **Idempotency and audit**
-   - 新增 `WorkflowExecutions`，以 `RequestId` 持久化请求指纹、请求/结果 JSON 和执行结果；同一请求跨服务实例重放返回原执行结果，不同 payload 重用同一 RequestId 返回 `WORKFLOW_REQUEST_ID_REUSED`。
-   - 新增 `WorkflowAudits`，记录 Draft 创建/更新、校验、发布/替代和 Runtime 接受/拒绝结果。
-   - 失败结果保留稳定拒绝码和审计详情；未发布、未校验、校验失败、缺少必需参数和不支持分支等边界继续由 Application Runtime 返回。
-
-4. **DI、兼容性和测试**
-   - MES 组合根注册 `WorkflowValidator`、持久化 version reader、`WorkflowRuntimeExecutor` 以及 `IWorkflowApplicationService`。
-   - 使用启动时 `CREATE TABLE IF NOT EXISTS` 补齐旧 SQLite 数据库的三张 Workflow 表和索引；不依赖破坏性迁移，不改变既有 TransportTasks 表数据。
-   - `MesControlAgv.WorkflowContract.Tests` 已安全加入 `MesControlAgv.sln`，并补充 MES SQLite 持久化/API 测试。
-
-### Release 验证结果
-
-- `dotnet build MesControlAgv.sln -c Release --no-restore -p:UseSharedCompilation=false -m:1`：成功，0 warnings，0 errors。
-- `dotnet test MesControlAgv.sln -c Release --no-build -m:1`：全量 **97/97 通过**：Domain 16、MES 21、Adapter 18、WPF 22、E2E 7、Simulator 4、Workflow Contract 9。
-- `dotnet test tests/MesControlAgv.WorkflowContract.Tests/MesControlAgv.WorkflowContract.Tests.csproj -c Release --no-restore -p:UseSharedCompilation=false -m:1`：**9/9 通过**。
-
-### 仍存限制
-
-- Runtime 仍是 MVP admission/planning 边界，只产生第一条 `WorkflowNextStepRequest`；后续节点执行、AGV 调度、任务状态联动、分支选择、循环和完整恢复编排不在本轮范围内。
-- SQLite 兼容处理使用安全的启动建表 SQL，而非 EF migration history；若未来需要跨数据库部署或复杂 schema 演进，仍应引入正式迁移流程。
-- 当前 RequestId 幂等在持久化主键和指纹基础上实现；尚未扩展为分布式锁/队列或完整通用 Workflow 平台。
-- 未连接真实 AGV `[已脱敏私网地址]`，未使用地图 `20260805111440651.smap` 发起任何连接或控制；真实参数仅保留在现场受控配置中，Simulator 默认配置保持不变（`Agv:Driver=simulator`）。
-
-本 checkpoint 仅更新本地进度文档，未执行 commit 或 push。
-## 2026-08-05 physical AGV live integration checkpoint
-
-本节记录首次基于控制器实时地图的物理 AGV 联调结果，并作为此前“尚未连接真实 AGV”记录的最新状态。现场联调只使用控制器当前数据，不再使用本地旧 `.smap` 文件作为地图依据。
-
-### 当前已确认
-
-- AGV 地址：`[已脱敏私网地址]`；RoboshopPro 进程 PID：`22872`。
-- 控制器地图：`guangzhou606`，版本 `1.0.6`，MD5 `e1b8d6b2b24362c1d44f1884c0abd8fb`。
-- 控制器站点：`LM1`、`LM2`、`LM3`、`LM4`、`LM5`。
-- 已确认的有向路径：`LM1 -> LM2`、`LM2 -> LM3`、`LM1 -> LM4`、`LM4 -> LM1`、`LM4 -> LM5`、`LM5 -> LM4`、`LM1 -> LM5`。没有直接的 `LM5 -> LM1`。
-- 控制权由 `MesControlAgv.Adapter` 持有，控制器报告来源地址为 `[已脱敏私网地址]`。
-- 实时状态正常：定位成功，置信度约 `0.98`，无 `emergency`、`blocked`、`errors` 或 `fatals`。
-
-### 已完成的实车通信和导航测试
-
-1. 通过 TCP 16-byte vendor frame 验证 API `1060`、`1100`、`1101`、`1110` 的读取链路和控制权状态。
-2. 从 `LM5` 到 `LM1` 采用控制器已配置的连续链路，向 API `3066` 发送了一个批量请求。控制器要求外层字段为 `move_task_list`，不能发送裸数组：
-
-   ```json
-   {
-     "move_task_list": [
-       {"task_id": "bed2cab8b9794ac780b88feb8973b79f", "source_id": "LM5", "id": "LM4"},
-       {"task_id": "e398e0309ea54dd7afe0f604c5671ec0", "source_id": "LM4", "id": "LM1"}
-     ]
-   }
-   ```
-
-3. API `3066` 返回 `ret_code=0`；两个任务查询状态均为 `4 (Completed)`。AGV 最终位于 `LM1`，`running_status=0`，速度为零，现场观察与接口结果一致。
-
-### 历史任务清理结论
-
-- 遗留任务 ID：`91e0218e544b452e937f8d67060b5b86`，查询状态为 `0 (StatusNone)`，不是 `Waiting=1`，且不在当前运行任务中。
-- 按任务取消 API `3068` 返回 `ret_code=0`，但该记录状态未改变；当前控制器 API 参考未将 `3068` 列为标准接口。
-- 按参考文档执行标准取消 API `3067`，返回 `ret_code=0`，但该 `StatusNone` 历史记录仍在 `1110` 列表中。当前 AGV 没有活动任务、没有运动，也没有安全报警。
-- 当前控制器协议没有历史记录删除 API，因此不能把该记录强制改成 `Canceled=6` 或从历史列表删除。后续应在 RoboshopPro/控制器历史记录管理界面处理显示清理，不得继续试探未知 API。
-
-### 下一阶段调试和开发计划
-
-#### P0: 先固化物理联调边界
-
-- 增加独立的 physical-acceptance 配置/启动说明，真实 IP、地图指纹和控制器版本只作为现场配置，不改变 `Simulator` 默认驱动。
-- 为 Adapter 增加真实协议回归测试：`move_task_list` 外层封装、连续任务校验、`task_status` 数值映射、`3067` 取消、超时对账、重复 `task_id` 幂等和 `StatusNone` 非活动记录处理。
-- 明确取消策略：默认只使用文档确认的 `3067`；移除或标记 `3068` 的实验性配置，避免把 `ret_code=0` 误认为历史记录已清除。
-- 增加控制器地图快照和路径快照记录，至少保存地图名、版本、MD5、站点、直接有向边和读取时间；禁止以本地旧地图替代控制器数据。
-- 在隔离区域完成低速空载安全回归：控制权抢占/释放、定位和置信度、自动模式、急停、障碍停障、恢复、到站停止、方向/角度和 DI/DO；每项保留请求、响应和现场结果。
-- 将真实 API 请求、响应、任务 ID、状态时间线、地图指纹和操作者写入可审计联调记录，避免只依赖终端输出。
-
-#### P1: 接入应用层和操作界面
-
-- 在 Adapter/MES 之间补齐物理任务的状态对账和取消结果语义：`accepted`、`moving`、`arrived`、`failed`、`cancelled`、`unknown`，禁止通信超时后盲目重发。
-- WPF AGV 通讯页显示控制器地图、控制权、当前站点、当前任务、任务状态和 `StatusNone` 警告；取消按钮只对确认中的活动任务启用。
-- 将站点、地图指纹、AGV 参数、端口和安全门禁纳入 Profile；Profile 与控制器快照不一致时阻止真实派单。
-- 完成真实 Vendor TCP driver contract tests，再评估把 physical-acceptance 结果接入 MES 审计和任务详情页面。
-
-#### P2: 平台化和流程运行时
-
-- 在物理协议和安全门禁稳定后，继续 Workflow Runtime 的后续节点执行、AGV 调度策略、分支/循环和恢复编排。
-- 完成多厂商 `IAgvDriver` 合同测试、能力模型、统一报警、配置迁移和客户 Profile 扩展；保持 Domain/Application 不依赖 WPF 或 vendor protocol。
-- 将真实 AGV 验收结果纳入发布前检查清单，形成可回滚的地图、Profile、驱动和数据库版本记录。
-
-### 下次现场调试执行顺序
-
-1. 先读取控制权、地图指纹、实时安全状态和 `1110` 活动任务；任何不一致都只读排查，不发运动命令。
-2. 只选择控制器已确认的直接有向边，使用唯一 `task_id`，一次只下发一个连续任务批次。
-3. 下发后持续轮询任务状态和实时位置；出现定位、急停、阻挡、报警、路径或到站异常立即停止后续动作。
-4. 任务完成后保存状态时间线和现场确认，再由用户明确决定是否释放控制权。
-
-本 checkpoint 仅更新本地进度文档，未执行 commit 或 push。
-
-## 2026-08-06 offline verification completion (local only)
-
-The interrupted continuous-route batch-dispatch change has now been reviewed and verified offline. The first segment preserves the parent operation ID; later segments use deterministic derived IDs; the parent `DeviceTaskId` remains the parent ID; the complete route is forwarded to the driver; route status is aggregated conservatively; and cancellation returns `cancelled` only after `1110` confirms every segment is terminal with at least one cancelled segment. An empty `1110` result is handled idempotently without sending `3067`.
-
-Verification completed on 2026-08-06:
-
-- Release solution build: 14 projects, 0 warnings, 0 errors, using an external temporary output directory so legacy service processes could remain untouched.
-- Release tests: 134/134 passed after the E2E repository-root contract test was rerun from the worktree Release output. Breakdown: Domain 19, MES 22, Adapter 51, WPF 22, E2E 7, Simulator 4, Workflow Contract 9.
-- TCP route-focused tests: 13/13 passed. AdapterService and composition-root tests: 19/19 passed. The complete Adapter test project: 51/51 passed.
-- Domain/Profile tests: 19/19 passed, including direct-edge route validation and physical-profile checks.
-
-The only issue observed during the first full temporary-output test run was the E2E test's intentional repository-root lookup from `AppContext.BaseDirectory`; a system-temp assembly cannot find `MesControlAgv.sln`. It was an output-layout issue, not a product or port failure, and the same Release E2E project passed 7/7 from the worktree output.
-
-No physical AGV was connected, commanded, or moved during this verification. Existing MES/Simulator/Adapter processes were left untouched, and no commit, push, reset, or broad clean was performed. The next work can proceed with offline WPF physical-state display, MES audit integration, and the platformization backlog; physical acceptance remains gated by explicit authorization, isolation, read-only preflight, and map comparison.
-
-## 2026-08-06 offline handoff before workstation restart (local only)
-
-车辆现场已断电。本轮后续工作只做离线代码、配置、文档和本地模拟测试；没有在本节期间连接、控制或移动实体 AGV。未执行 `commit`、`push`、`reset`、`clean`，也没有手动停止既有服务进程。
-
-### 本轮已完成或已落盘
-
-1. **物理验收配置和门禁**
-   - 已新增 `docs/physical-acceptance/adapter.physical-acceptance.example.json`、README 和 `FIELD-ACCEPTANCE-RECORD.md`；示例不含真实控制器地址或凭据。
-   - Profile 已记录控制器地图快照、直接有向边和安全阈值；当时 standard 模式的组合根对 physical Profile 强制 `vendor-tcp`、匹配控制客户端昵称、`AcquireControl=true` 和最低定位置信度。2026-08-11 新增的 read-only 模式改为强制 `AcquireControl=false`。
-   - 离线 JSON 解析通过；`ProfileConfigurationTests` 通过 7/7。
-
-2. **Driver/组合根离线合同覆盖**
-   - 已新增 `AgvDriverContractTests.cs`（Simulator/Vendor 驱动连接、快照、派单、控制、AGV ID、能力与 Vendor 协议异常归一化）和 `AdapterCompositionRootTests.cs`（默认 Simulator 与 physical Profile 门禁）。
-   - 合同测试在此前隔离构建产物中通过 14/14；组合根测试完成隔离编译，但测试宿主启动遇到 `OutOfMemoryException`，尚未在当前工作树确认断言结果。
-   - 合同测试已补充“路径不得在 Driver 边界丢失”的断言，但此最新断言尚未重新编译运行。
-
-3. **已中断、不可宣称完成的连续路径批量派单改造**
-   - `TcpAgvClient`、`AdapterService`、`ISimulatorClient`、`VendorTcpDriver`、`SimulatorDriver` 和 Adapter TCP 测试中已出现路径透传、多段 `move_task_list`、分段状态聚合和取消对账的未验证改动。
-   - 这些改动在重启前被主动中断，**不得**视为完成或可部署；尚未完成全量构建/测试。
-   - 恢复时首先审阅并修正以下协议不变量：
-     1. 第 0 段必须保留父 `operationId.ToString("N")`；后续段才使用确定性派生 ID。
-     2. 上游 `DeviceTaskId` 保持父任务 ID，不能泄露以逗号拼接的子任务列表。
-     3. 路径必须至少两站、站点非空、首尾匹配 source/target；经 Profile/地图验证后才允许下发。
-     4. 派发超时或重复 `operationId` 时，先以全部子 ID 查询 `1110`，不能盲目重发 `3066`。
-     5. `3067` 前先确认活动任务属于该父任务；仅所有分段终态且至少一段为 `6` 时返回 `cancelled`，否则稳定返回 `unknown/cancel_not_confirmed_by_1110`。
-     6. 多段聚合不得把“前段已完成、后段仍在运行”误判为 `arrived`。
-
-### 重启后的离线恢复顺序
-
-1. 确认旧 `dotnet.exe` 输出锁已随重启释放；不清理工作树。
-2. 完成并代码审查连续路径批量派单改造及其 TCP/Adapter/Driver 合同测试。
-3. 依次运行 Adapter 定向测试、Profile/组合根测试、再运行：
-
-   ```powershell
-   dotnet build MesControlAgv.sln -c Release --no-restore -p:UseSharedCompilation=false -m:1
-   dotnet test MesControlAgv.sln -c Release --no-build -p:UseSharedCompilation=false -m:1
-   ```
-
-## 2026-08-06 MES/Adapter offline transport loop
-
-- MES binds the active Profile for station catalog and pre-dispatch route planning; the legacy fixed `2 -> 4` restriction is removed.
-- The MES pre-dispatch plan is optional input to Adapter. Adapter validates it against its current Profile, AGV position, reservations, control ownership, readiness, and device state before sending `3066`.
-- Adapter responses are carried back through MES with the active AGV id, device task id, and current execution path for API/WPF display.
-- MES Recovery performs startup reconciliation and periodic active-task polling. Pickup and dropoff still require explicit operator confirmation.
-- Offline verification: Adapter 51/51, MES 23/23, WPF 22/22, and the real Adapter Web + fake Vendor TCP + MES service path 1/1. The integration exercised `1060`, `4005`, `1101`, `3066`, and `1110`, including two planned legs and both manual confirmations.
-- No physical AGV was connected or controlled. Template/platform refactoring remains deferred until this offline loop is accepted.
-
-### Industrial dispatch boundary refinement
-
-- MES now records a `PathPlanned` audit event immediately before each leg enters dispatch. The event captures the planning source, observed AGV station, target, candidate path, cost, and observation time.
-- Adapter treats the MES path as a proposal. Before any new dispatch it enforces the active profile's automatic-dispatch switch, control ownership, online state, idle state, known current station, and profile-map path validation. A duplicate request returns the persisted operation without acquiring control again.
-- The Vendor TCP driver remains the final protocol safety gate: it rechecks controller readiness and only then sends `3066`; timeout handling reconciles task state before any retry. The current physical profile still requires a fresh read-only controller map comparison because the vendor API integration does not yet query the controller map fingerprint.
-
-4. 仅在离线全量验证通过后，更新本进度文档的测试计数和完成状态；继续评估 WPF 物理状态展示、MES 审计接入及平台化 backlog。
-5. 实车工作继续留到车辆通电、现场隔离和明确授权之后：先只读预检/地图比对，再低速安全回归，最后才进行真实全链路验收。
-
-## 2026-08-06 final offline verification after dispatch-gate fix (local only)
-
-- 修复了 Vendor TCP 首次派单的控制权顺序：Adapter 现在在选择 AGV 和读取可派状态前先获取控制权，并在实时安全检查后、发送 `3066` 前再次确认控制权。
-- Release solution build：14 个项目，0 warnings，0 errors。
-- Release tests：**141/141 通过**：Domain 19、MES 24、Adapter 55、WPF 22、E2E 8、Simulator 4、Workflow Contract 9。
-- Adapter 定向测试：55/55；MES 定向测试：24/24；Vendor TCP + fake controller + MES 完整离线链路：8/8。完整链路覆盖 `1060`、`4005`、`1101`、`3066`、`1110`，包括连续路径两段派发和取货/卸货人工确认。
-- 本轮未连接、控制或移动实体 AGV；未执行 `commit`、`push`、`reset`、`clean`。模板化改造继续后置，实体验收仍需现场隔离、明确授权、只读预检和地图比对。
-
-## 2026-08-06 physical read-only preflight and protocol correction (local only)
-
-- 车辆通电且现场确认后，只执行了只读 TCP 查询。独立 physical Adapter 使用单独端口和临时数据库；读取完成后已停止。既有 Simulator Adapter 未修改。
-- API `1100` 确认当前地图为 `guangzhou606`，MD5 为 `e1b8d6b2b24362c1d44f1884c0abd8fb`，与 Profile 快照一致；当前位置为 `LM1`，车辆停止，电量约 `0.93`，定位置信度 `0.9859`，无急停、阻塞、错误或致命告警，`reloc_status=1`。
-- API `1101` 按厂商协议使用 `{"return_laser":false}`。响应再次确认 `LM1`、置信度 `0.9859`、无急停/阻塞/错误/致命告警、速度和角速度为零、`path=[]`、`running_status=0`。
-- 当前响应没有 `fork_auto_flag` 或其他已确认语义的自动模式信号；API 也没有返回地图版本和直接有向边。`dispatch_mode=0` 仅作为原始观测值记录，未映射成自动模式。
-- `TcpAgvClient` 已修正 `1101` 请求体，并在 physical gate 缺失自动模式信号时返回明确阻断原因。Adapter 测试 **56/56** 通过。
-- 最新 Release solution build：14 个项目，0 warnings，0 errors。Release tests：**142/142** 通过：Domain 19、MES 24、Adapter 56、WPF 22、E2E 8、Simulator 4、Workflow Contract 9。
-- 结论：只读通信与部分安全状态通过，但物理派单验收仍被自动模式、地图版本和直接有向边三项证据阻断。未发送 `4005`、`3066`、`3067` 或 `3068`，实体 AGV 未移动；physical Profile 继续保持 `enableAutomaticDispatch=false`。
-
-## 2026-08-06 physical acceptance paused after map change (local only)
-
-现场 AGV 已断电，实体导航验收暂停。本节之后不得将断电前的控制器数据视为当前就绪状态；除非未来现场重新通电、隔离并明确授权，否则不连接、不控制、不下发、不取消实体 AGV 任务。
-
-- 断电前最后提供的控制器状态报告：地图 `guangzhou606`，MD5 `816e68b9a367d9c8d5eaee9331a7ef58`，当前位置/目标 `LM1`，定位置信度 `0.9827`，车辆静止，无急停、阻塞、错误或致命告警。
-- 该 MD5 与 physical Profile 的历史快照 `e1b8d6b2b24362c1d44f1884c0abd8fb` 不一致。控制器响应未提供可信的地图版本、站点清单或直接有向边，故不能据此更新 Profile 或启用真实派单。
-- 原始字段 `manualBlock=true`、`dispatch_mode=0`、`src_release=false` 已记录；其中 `manualBlock=true` 继续作为 Adapter 阻断条件，`dispatch_mode`、`src_release` 和 SRC 控制模式均没有厂商确认语义，整车自动导航模式仍为 `unknown`。
-- 当前结论为 **NO-GO**：保持 `enableAutomaticDispatch=false`，MES 不得创建或下发实体导航任务。断电前的 `LM1`、速度和安全状态只作历史记录，不能作为下一次验收放行证据。
-- 下次现场首先做新的只读预检和地图比对，取得当前地图名称/版本/MD5、站点和直接有向边，以及自动模式、控制权与低速限制的厂商可验证证据；随后才可评估一次隔离的低速导航测试。
-- 当前 physical-acceptance API、MES/WPF 接入脚手架在最新本地改动后仍未完成全量验证，不得部署或用于实车。详见 `docs/physical-acceptance/2026-08-06-pause-checkpoint.md`。
-
-本 checkpoint 仅更新文档；未执行 `commit`、`push`、`reset`、`clean`，也未在断电后连接、控制或移动实体 AGV。
-
-## 2026-08-07 WPF fleet status and configurable offline loop (pushed)
-
-- `448c85c` 将 WPF `AGV 通讯与调度` 页面接入 `/api/agvs/fleet/status`，每行展示 MES 任务状态、设备状态、目标站点、执行路径和错误；`MainViewModel.UpdateAgvs` 现在消费完整 fleet status，而不是只显示基础 AGV 快照。
-- 同一提交修复了历史活动任务误关联：MES fleet status 优先按 Simulator snapshot 的 `CurrentTaskId` 与当前 transport operation 精确匹配，无法确认时不静默选择旧任务。新增的 MES/WPF 回归覆盖了派发、暂停、恢复状态对账。
-- `0aa94ef` 将 `scripts/verify-local.ps1` 的路线改为 `-SourceStationCode` / `-TargetStationCode` 参数，并跟随 MES 返回的 `activeAgvId` 发送暂停、恢复和到站控制；进程校验要求临时 MES/Adapter SQLite 存储，避免历史活动任务污染结果。
-- 备用端口隔离进程验证已通过：Simulator `5361`、Adapter `5362`、MES `5363`。默认 `2 -> 4` 与可配置 `2 -> 3` 路线均完成创建、派发、fleet 状态对账、暂停、恢复、取货/卸货到站确认并达到 `COMPLETED`。
-- 新增 WPF 状态化回归覆盖动态创建、显式派发、暂停、恢复、两次到站、人工取货/放货确认和完成；MES 回归补充多 AGV 独立对账及取货后按卸货 operation 取消。
-- 最新 Release solution build 为 0 warnings、0 errors；Release 全量测试 **172/172 通过**（Domain 19、MES 38、Adapter 57、WPF 36、E2E 9、Simulator 4、Workflow Contract 9）。本轮仍只使用 Simulator，未连接、控制或移动实体 AGV。
-
-真实 AGV 继续保持 **NO-GO**：车辆断电，断电前地图 MD5、`manualBlock=true` 和自动模式 `unknown` 均为历史/未确认信息。下一次现场工作必须在隔离和明确授权后，从重新通电的只读预检开始，并重新比对地图、站点、直接有向边、自动模式和控制权；这些现场条件不阻塞当前离线 WPF 调度开发。
-## 2026-08-07 concurrent next-phase checkpoint (paused)
-
-This checkpoint records the work completed before the next development session was paused. No physical AGV was connected, controlled, or moved.
-
-### Completed in this session
-
-- Runtime packaging hardening: WPF ordinary Build now copies Simulator, Adapter, and MES runtimes to `OutDir/services`; Publish uses `PublishDir/services`. Nested service `publish` trees are excluded. Launcher Build/Publish outputs validate the WPF executable and all three service DLLs, so incomplete one-click packages fail during build.
-- Simulator-only cancellation verification: `scripts/verify-local.ps1 -Scenario cancellation` now dispatches a task, completes pickup, cancels the active dropoff leg, and verifies terminal MES state, `CancelConfirmed`, simulator cancellation, AGV release, and absence from active fleet status. The isolated HTTP run and E2E coverage passed `10/10`.
-
-### Paused work
-
-- WPF Workflow API client integration is partially staged in `IMesClient` and `MesClient` for workflow list/read, draft create/update, validation, and publish. It is intentionally not wired into the Workflow editor UI yet and still needs the dry-run `/api/workflows/execute` client method and focused HTTP contract tests.
-- The remaining UI work is to connect the existing local workflow editor to MES draft/validate/publish/version state, expose a dry-run admission result, and keep local JSON storage as a fallback until remote persistence is confirmed.
-
-### Resume order
-
-1. Inspect and complete the paused Workflow client changes; add `WorkflowExecutionRequest`/`WorkflowExecutionResult` dry-run support and HTTP contract tests.
-2. Run the WPF and Workflow test projects before wiring the editor UI.
-3. Connect the editor to remote draft/validate/publish/version APIs with explicit loading, validation-error, publish-success, and service-unavailable states.
-4. Run the full solution Build/Test and the isolated Simulator positive, failure-retry, and cancellation scenarios.
-5. Keep physical acceptance **NO-GO** until a new read-only preflight confirms the live map fingerprint, station catalog, directed edges, automatic mode, control ownership, and safety gates.
-
-## 2026-08-11 offline read-only preflight hardening (local only)
-
-This checkpoint completes the offline debugging sequence for the next physical
-AGV session. No physical AGV was connected, queried, controlled, dispatched,
-cancelled, or moved.
-
-### Completed steps 1-5
-
-1. **Boundary and mode contract**: added startup-only `Adapter:RunMode` values
-   `standard` and `read-only-preflight`. The mode is exposed by `/health`, is
-   not mutable from WPF or HTTP, and requires an Adapter restart to change.
-2. **HTTP fail-closed gate**: read-only preflight accepts only `GET`/`HEAD` and
-   returns `405` for every state-changing request.
-3. **TCP mutation guards**: control acquisition, push configuration,
-   navigation, pause/resume, cancellation and dispatch are rejected before any
-   mutation API can be opened in read-only mode.
-4. **Physical startup validation**: read-only mode requires `vendor-tcp`,
-   `AcquireControl=false`, `EnablePush=false`, and automatic dispatch, field
-   navigation and cancellation disabled. The physical template no longer stores
-   a private controller address; the approved host must be injected at deploy
-   time.
-5. **Controller-authoritative evidence contract**: preflight now compares map
-   name/version/MD5, station catalog and directed edges when a vendor read-only
-   evidence source exists, and fails closed with
-   `controller_map_evidence_unavailable` when it does not.
-
-The focused Adapter suite passed **82/82**, the E2E suite passed **12/12**, and
-the complete Release solution passed **338/338**: Domain 35, MES 45, Adapter 82,
-WPF 150, E2E 12, Simulator 5, and Workflow Contract 9. The Release solution
-build completed with 0 warnings and 0 errors from an external temporary output
-directory because existing local service processes locked their normal Release
-DLLs; those processes were not stopped. The external E2E repository-root test
-was rerun from the worktree Release output and passed. The physical acceptance
-boundary remains **NO-GO** until the next authorized session obtains fresh
-controller map evidence and safety-state confirmation.
-
-### Next authorized on-site order
-
-1. Isolate the work area, confirm emergency-stop/manual takeover coverage, and
-   power the vehicle only after the site owner authorizes the read-only session.
-2. Start the Adapter with `Adapter:RunMode=read-only-preflight` and inject the
-   approved controller host through protected deployment configuration. Confirm
-   `/health` reports the expected mode.
-3. Call only `/physical/preflight` and preserve the response, raw vendor
-   requests/responses, timestamps, controller ownership, active-task list,
-   automatic-mode signal, and safety status in the acceptance record.
-4. Obtain a controller-authoritative map export/query. Compare map name,
-   version, MD5, station catalog and every direct directed edge to the Profile;
-   any mismatch or missing evidence is investigation-only and blocks movement.
-5. Stop and review the evidence with the site owner. Do not switch to standard
-   mode, acquire control, or send a low-speed route in the same step unless a
-   separate written authorization and safety checklist explicitly releases it.
-
-The implementation of the vendor map-evidence read API and the later supervised
-single-route acceptance remain the next development tasks; this offline phase
-does not claim movement readiness.
-
-## 2026-08-11 physical read-only preflight result (status port only)
-
-This checkpoint is newer than the offline-only checkpoint above. A bounded
-read-only preflight reached the real controller through the redacted host's
-status port `19204`. The temporary Adapter ran with
-`Adapter:RunMode=read-only-preflight` and was stopped immediately after the
-evidence was captured. No controller address, temporary path, or process ID is
-recorded here.
-
-- The controller reported the AGV online at station `LM1`, with no active task
-  and control owner `none`.
-- Emergency and blocked state were both `false`; fatal and error counts were
-  `0/0`. Localization confidence was `0.9696`.
-- The response did not provide the map name, map MD5, or localization-complete
-  signal. Automatic operating mode remained `unknown`. The confidence value by
-  itself therefore did not satisfy the localization gate.
-- `DispatchPermitted` remained `false`. The complete blocking-reason set was
-  `adapter_does_not_hold_control`, `controller_map_name_mismatch`,
-  `controller_map_md5_mismatch`, `controller_map_evidence_unavailable`,
-  `localization_not_confirmed`, `vehicle_automatic_mode_unconfirmed`, and
-  `automatic_dispatch_disabled`.
-- Only the read-only status port was contacted. No control acquisition, push
-  configuration, navigation, pause/resume, cancellation, or task dispatch was
-  attempted, and the real AGV did not move.
-
-The result remains **NO-GO** for movement. Missing map fields must not be
-replaced from a local `.smap` or historical snapshot, `control=none` must not be
-worked around by acquiring control in the same read-only session, and
-`automatic=unknown` must not be inferred as automatic mode. The next decision
-requires controller-authoritative map evidence plus vendor-confirmed
-localization and automatic-mode semantics under a separately approved scope.
-
-## 2026-08-11 controller map reader and physical config isolation (local only)
-
-- The physical startup path now replaces the default JSON configuration with
-  `appsettings.PhysicalAcceptance.json` before applying environment variables
-  and command-line values. This fixes the discovered indexed-array merge that
-  retained trailing Simulator stations and edges in the physical Profile.
-- `TcpAgvClient` now implements controller-authoritative map evidence with the
-  documented read-only APIs `1300`, `1301`, `1302`, and `4011`. The response
-  combines the active map name, controller MD5, current-map station catalog,
-  downloaded-map version, and direct directed edges with a UTC observation
-  timestamp. The full-map payload is bounded to 16 MiB in the physical template.
-- Map API failures, malformed downloads, missing MD5, or inconsistent map and
-  station catalogs fail closed. Read-only mode still blocks control acquisition,
-  push configuration, navigation, pause/resume, cancellation, and every HTTP
-  state change.
-- Focused Adapter verification passed **49/49**. The complete Release solution
-  build passed with 0 warnings and 0 errors, and the final suite passed
-  **341/341**: Domain 35, MES 45, Adapter 85, WPF 150, E2E 12, Simulator 5,
-  and Workflow Contract 9. The read-only E2E fake controller observed exactly
-  `1060`, `1110`, `1101`, `1300`, `1301`, `1302`, and `4011`, with no mutation
-  API. The repository-root E2E check was run from an isolated output directory
-  inside the worktree because external temporary outputs cannot locate the
-  solution file by design.
-- A separate process smoke test started the built Adapter with the real
-  `PhysicalAcceptance` configuration path, an offline placeholder host, an
-  isolated local database, and `read-only-preflight`. `/health` passed; process
-  connection inspection showed only the local HTTP listener and health request,
-  with no outbound AGV TCP connection. The process was then stopped.
-- No new real-controller request was made during this implementation. The first
-  real preflight remains the status-port-only result above. Opening the real
-  controller's `19207` channel for documented API `4011` requires a new explicit
-  authorization; movement remains **NO-GO** regardless of the map result until
-  localization and automatic-mode semantics are also confirmed.
-
-## 2026-08-11 second physical read-only preflight (map evidence obtained)
-
-- After explicit authorization, an isolated `read-only-preflight` Adapter used
-  only the redacted controller's `19204` and `19207` ports. It called
-  `1060/1110/1101/1300/1301/1302/4011`; no command or Push connection was
-  opened, no control was acquired, and the AGV did not move. The process was
-  stopped immediately after evidence capture.
-- The first `1302` request used the active base map name and received vendor
-  error `40051 no this map file`. The client was corrected to prefer the exact
-  stored filename returned by `1300.maps` and to retry the `.smap` form only for
-  that documented not-found result. Offline base-name/filename/fail-closed tests
-  passed before the authorized request was repeated.
-- The repeated preflight obtained controller-authoritative evidence:
-  `guangzhou606`, version `1.0.6`, MD5
-  `816e68b9a367d9c8d5eaee9331a7ef58`, stations `LM1..LM5`, and nine direct
-  directed edges. The seven historical edges remain, plus `LM3 -> LM1` and
-  `LM1 -> LM3`.
-- The vehicle remained online at `LM1`, idle, control owner `none`, emergency
-  and blocked both false, Fatal/Error `0/0`, and localization confidence
-  `0.9639`. The committed historical Profile does not match the current MD5 or
-  directed-edge set, so movement remains **NO-GO**.
-- Vendor documentation review identified `1101.mode` as the authoritative
-  vehicle manual/automatic field and read-only API `1021` as the dedicated
-  localization status query. Offline parsing and test coverage were added;
-  another real `1021` request requires explicit scope approval before use.
-
-## 2026-08-11 third physical preflight and dispatch-order hardening
-
-- The separately authorized `1021` query returned `reloc_status=1`; the vehicle
-  remained online and idle at `LM1`, with confidence `0.9639`, no emergency or
-  block, and Fatal/Error `0/0`. Localization is therefore confirmed.
-- Raw controller evidence proved that API `1004` is a position query, not an
-  operating-mode query. A fresh `1101` response contained 2279 bytes and more
-  than 70 top-level status fields but no `mode`. A passive, unconfigured
-  `19301` frame also omitted `mode`. Read-only `1001`, deprecated `1003`, and
-  documented `1100` filtering with `keys:["mode"]` supplied no mode value.
-  No `9300` Push configuration was sent.
-- The vendor API reference documents `1101.mode` as the authoritative vehicle
-  manual/automatic value (`0=manual`, `1=automatic`). `dispatch_mode` and
-  `fork_auto_flag` retain their separate meanings and are not used as a
-  substitute. This controller firmware therefore cannot provide automatic-mode
-  proof through the observed status APIs, and the gate remains fail-closed.
-- The physical Profile now matches the authorized controller snapshot: map
-  `guangzhou606`, version `1.0.6`, MD5
-  `816e68b9a367d9c8d5eaee9331a7ef58`, stations `LM1..LM5`, and all nine direct
-  directed edges. The committed template still uses a placeholder host and
-  keeps read-only mode, control acquisition, field navigation, automatic
-  dispatch, and cancellation disabled.
-- Field-navigation dispatch now performs two safety assessments. It first
-  checks every read-only gate except ownership, requests control only if that
-  assessment passes, then repeats the complete assessment with ownership before
-  entering dispatch. An active task is now an explicit preflight blocker. Tests
-  prove that an automatic-mode or other pre-control failure causes zero control
-  acquisition and zero navigation calls.
-- Verification passed: complete Debug solution **347/347** (Domain 35, MES 45,
-  Adapter 91, WPF 150, E2E 12, Simulator 5, Workflow Contract 9), plus isolated
-  Release Adapter **91/91** with 0 warnings and 0 errors. The normal Release
-  output remains locked by the existing local services, which were not stopped.
-
-No `4005` control acquisition or `3066` navigation request was sent in this
-checkpoint. Movement remains **NO-GO** until the on-site operator explicitly
-confirms the vehicle itself is in automatic mode and that evidence is represented
-by an approved, auditable field-acceptance mechanism; permission alone does not
-replace a missing safety-state fact.
-
-### Power-cycle revalidation
-
-After the vehicle was powered off and restarted, a new isolated
-`read-only-preflight` session revalidated the complete live state. The vehicle
-was online and idle at `LM1`, control owner `none`, localization status `1`,
-confidence `0.9651`, emergency/blocked `false/false`, and Fatal/Error `0/0`.
-The controller-authoritative map still exactly matched the updated Profile:
-`guangzhou606`, version `1.0.6`, MD5
-`816e68b9a367d9c8d5eaee9331a7ef58`, five stations and nine direct directed
-edges. The only normalized blockers were
-`adapter_does_not_hold_control`, `vehicle_automatic_mode_unconfirmed`, and
-`automatic_dispatch_disabled`. The restarted firmware still omitted
-`1101.mode`. No mutation API was called; the temporary Adapter was stopped and
-its local port was released after evidence capture.
-
-## 2026-08-11 W500-SZ mode policy and live read-only recheck
-
-- The two supplied panel photos were recorded as textual field evidence only:
-  no task, correct localization, zero linear/angular velocity, confidence about
-  `0.97`, and no manual/automatic chassis-mode field or switch. The image files
-  are not stored in the repository.
-- The approved physical profile now identifies model `W500-SZ` and explicitly
-  uses `vehicleOperatingModePolicy=not-exposed-by-approved-model` with
-  `requireAutomaticMode=false`. The default for every other profile remains
-  `vendor-field-required`; an explicit `mode=0/manual` always blocks.
-- Read-only safety readiness now queries vendor API `1000` and records model and
-  controller version. Every physical `3066` segment now carries the approved
-  `max_speed=0.3` limit. Profile validation rejects an implicit or unknown mode
-  policy, and preflight records the selected policy for audit.
-- After the power-cycle, the isolated live Adapter returned model `W500-SZ`,
-  version `v3.4.8.0011`, map `guangzhou606` / `1.0.6` /
-  `816e68b9a367d9c8d5eaee9331a7ef58`, `LM1..LM5`, nine direct edges,
-  `reloc_status=1`, confidence `0.9651`, emergency/blocked `false/false`,
-  Fatal/Error `0/0`, and no active task. The normalized blockers were only
-  `adapter_does_not_hold_control` and `automatic_dispatch_disabled`.
-- Verification passed: Debug solution **352/352** (Domain 37, MES 45,
-  Adapter 94, WPF 150, E2E 12, Simulator 5, Workflow Contract 9). No
-  mutation API was called during this recheck. The next controlled step is a
-  separately restarted standard-mode session and one supervised `LM1 -> LM2`
-  route at `0.3 m/s`; automatic batch dispatch remains disabled.
-
-## 2026-08-11 supervised-route pause checkpoint
-
-- One standard-mode acceptance used ID
-  `9fea739a-6f1e-402d-b8c2-fd70f4977c5e` for `LM1 -> LM2` at the configured
-  `0.3 m/s` limit. Control acquisition succeeded, but the vehicle stayed at
-  `LM1`, no active task appeared, the requested task read as
-  `404 (NotFound)`, and the global `1110` list was empty. No cancellation or
-  repeat dispatch was issued.
-- The operator released control in the robot test software. A subsequent
-  read-only `1060` response confirmed `locked=false`; the last verified site
-  state is no control owner, no active task, and a stopped vehicle at `LM1`.
-- Offline diagnosis found that the client treated a non-empty pre-dispatch
-  `1110 status=404` item as an existing task and returned `unknown` before
-  writing `3066`. The old session did not retain raw mutation audit output, so
-  no historical `3066 ret_code` is inferred or claimed.
-- The repair now permits an all-`404` result only before the first command
-  attempt. Once a write is attempted, `404` or an empty result becomes
-  `unknown` with `dispatch_not_confirmed_by_1110`, and the same task ID is
-  never resent automatically. Persisted active Adapter tasks also become
-  `unknown` when device status disappears.
-- Allowlisted mutation audit logging now preserves the `3066` request summary
-  and response `ret_code`, `err_msg`, and `create_on`, without recording the
-  controller host or arbitrary response content.
-- The vendor PDF confirms `3066.move_task_list`, per-item optional
-  `max_speed` in `m/s`, and no-payload control release API `4006` on port
-  `19207`, which can release only the caller's own control.
-- Completed verification before pausing: TCP client tests `20/20`, all Adapter
-  tests `96/96`, and vendor TCP E2E tests `2/2`.
-- Work is paused with no live controller connection. Full Debug, isolated
-  Release Adapter verification, remaining acceptance-document updates, and a
-  new live preflight/authorization are still pending. No commit or push has
-  been made.
-
-Detailed continuation notes are in
-[`2026-08-11-route-attempt-pause-checkpoint.md`](physical-acceptance/2026-08-11-route-attempt-pause-checkpoint.md).
-
-## 2026-08-11 control-release implementation checkpoint
-
-- Implemented vendor API `4006` control release on the control channel
-  (`19207`) with an empty payload. `ReleaseControlAsync` is fail-closed,
-  checks mutation mode before opening a channel, releases only when the
-  Adapter owns control, records allowlisted request/response mutation audit,
-  and confirms release with API `1060`.
-- Added the unauthenticated local operator endpoint
-  `POST /agv/control/release`. Read-only-preflight middleware rejects it with
-  `405`; the client-side mutation guard provides a second fail-closed barrier.
-  The interface extension has a backward-compatible default no-op for existing
-  simulator/test clients.
-- Field-navigation acceptance now acquires control between two preflight
-  assessments. If any exception occurs after control acquisition and before
-  `DispatchCoreAsync` (including transport and cancellation exceptions), it
-  attempts one rollback with `CancellationToken.None`, logs a release failure,
-  and rethrows the original exception. No automatic release was added to
-  `DispatchCoreAsync`, timeout/unknown handling, reconciliation, or any path
-  after a possible `3066` write.
-- Added coverage for non-owner idempotency, one empty `4006` request and
-  `1060` confirmation, non-zero and unconfirmed release failures,
-  read-only-preflight rejection before opening a channel, post-control
-  preflight rejection, AGV/station mismatch, transport failure, cancellation,
-  and the no-release-after-dispatch boundary.
-- Initial verification passed: Adapter tests **106/106**, vendor TCP E2E tests
-  **2/2**, solution build **0 warnings / 0 errors**, and `git diff --check`.
-  All verification used loopback/fake controllers; no real controller was
-  contacted and no running process was stopped.
-- The automated Codex adversarial-review command was unavailable because the
-  switched provider returned `503 Service Unavailable` after all channels were
-  circuit-broken. Manual adversarial review found and the implementation fixed
-  the post-control transport/cancellation control-leak paths.
-- Follow-up concurrency hardening serializes `4006` ownership read, mutation
-  audit, write, and `1060` confirmation per TCP client. It also serializes
-  field-navigation sessions across the post-control preflight/rollback window,
-  so one session cannot release control during another session's preflight.
-  Regression tests cover exactly one `4006` with ordered audit records,
-  cancellation while waiting for the release gate, and the cross-session
-  rollback race. Current-source verification passed: Adapter tests **109/109**
-  (isolated Release output), Vendor TCP E2E tests **2/2**, and `git diff
-  --check`.
-  A new full Release solution run was not possible because pre-existing local
-  Development MES, Adapter, and Simulator hosts held their Release DLLs open;
-  no running process was stopped.
-- Physical acceptance remains **NO-GO**. The committed physical template is
-  still `read-only-preflight` with automatic dispatch disabled; a fresh
-  authorized site preflight, renewed movement authorization, and a new unique
-  acceptance ID are required before any supervised route attempt. No real
-  controller was contacted by this follow-up.
-
-## 2026-08-11 powered-off offline development continuation
-
-- The physical AGV is powered off. All controller connection, read-only
-  preflight, control, dispatch, cancellation, and movement work is blocked
-  until a later explicitly authorized powered-on session. This continuation
-  used only the local Simulator driver.
-- The complete isolated process matrix passed with fresh per-scenario SQLite
-  stores and ports `6411-6473`: `positive`, `failure-retry`,
-  `timeout-recover`, `cancel`, `workflow-publish-rollback`, `multi-agv`, and
-  `restart-resume`. Every owned Simulator, Adapter, and MES process was stopped
-  through its run-state file. Evidence databases are under
-  `artifacts/offline-matrix-20260811-r2/`.
-- Workflow runtime admission now supports side-effect-free deployment policies.
-  MES registers an active-Profile policy that rejects a published workflow when
-  any Move, Pickup, or Dropoff node targets a station that is missing or
-  disabled in the current Profile. The stable rejection code is
-  `WORKFLOW_PROFILE_MISMATCH`; no next-step request is produced, and MES
-  persists the rejection and audit like other admission outcomes.
-- Added contract, Profile-policy, and SQLite persistence coverage. Workflow
-  contract tests passed **10/10**, MES tests passed **48/48**, the updated
-  workflow publish/rollback process scenario passed again on isolated ports
-  `6481-6483`, and the final full Debug solution passed **371/371**.
-- Continued the offline P0 WPF split: `MainViewModel` now delegates task
-  monitor connection status and task-filter date state to
-  `TaskMonitorViewModel` while retaining the existing XAML-compatible facade
-  properties. WPF tests passed **150/150**, and the full Debug solution was
-  rerun successfully at **371/371** after the change.
-- Continued the same split without changing command behavior: selected task
-  and AGV state, AGV execution status, batch status, batch sorting, and fleet
-  collection replacement now live in their respective module view models;
-  `MainViewModel` retains compatibility properties and cross-module action
-  orchestration. WPF tests remained **150/150**. Further extraction would
-  require a larger command/use-case boundary redesign and is intentionally
-  paused at that boundary.
-
-## 2026-08-11 offline command-boundary continuation
-
-- The verified baseline was committed as `585e0bb`.
-- Added `ControlCenterCommandCoordinator` as the first cross-module command
-  boundary. MES task mutations, Simulator arrival/control calls, and AGV
-  command result validation now run through the coordinator; `MainViewModel`
-  keeps presentation state, command availability, status text, and refresh
-  orchestration.
-- Added coordinator coverage for request forwarding, Simulator/MES arrival,
-  missing AGV results, and failed AGV results. WPF tests passed **153/153**,
-  and the full Debug solution passed **374/374**.
-- Removed the stale `SAMPLE_01 -> ST_PREP_01` wording from the generic route
-  exception; unsupported routes now report that they are not supported by the
-  active Profile.
-- No physical controller was contacted. Further `MainViewModel` extraction
-  now requires a larger command/use-case redesign rather than another local
-  state move.
-
-## 2026-08-11 profile-driven workflow preset continuation
-
-- Station type now flows from the active Profile through the Domain station
-  catalog, MES `/api/stations` and `/api/map` responses, and the WPF dashboard
-  model. The new response field is optional for backward JSON compatibility.
-- When no valid local workflow file exists, WPF rebuilds its preset workflows
-  from enabled active-Profile stations. It prefers `Sample`/`Pickup` for the
-  source and `Preparation`/`Dropoff` for the target, falls back to distinct
-  enabled stations, applies the catalog only once, and never rewrites a saved
-  operator workflow. Fewer than two distinct enabled AGV station IDs remains a
-  fail-closed no-change result.
-- Preset node targets are now direct template parameters and their descriptions
-  no longer name the historical sample/preparation route. The legacy
-  `SAMPLE_01` and `ST_PREP_01` values remain only as offline compatibility
-  defaults until a MES station catalog is available.
-- Verification passed: WPF tests **155/155**, full Debug solution **376/376**,
-  solution build **0 warnings / 0 errors**, and `git diff --check`.
-- No physical controller was contacted. The next configuration step would
-  require a WPF runtime-settings contract and startup compatibility design;
-  real workflow execution would additionally require durable execution state,
-  recovery, idempotency, transport-state transitions, and audit correlation.
-  Those are larger cross-service changes rather than another local cleanup.
-
-## 2026-08-12 profile-driven WPF runtime settings continuation
-
-- MES now exposes the read-only `/api/runtime-settings` contract from the
-  active Profile: product ID, Profile version, and
-  `timeouts.taskPollingInterval` as the dashboard refresh interval.
-- WPF resolves this setting after its initial dashboard and readiness refresh,
-  then creates the periodic refresh loop with the Profile value. Existing
-  `IMesClient` implementations retain a default method, and old MES instances
-  that return `404`, missing/invalid settings, or a transient settings-request
-  failure preserve the established two-second interval. Caller cancellation is
-  still propagated.
-- Added MES endpoint, WPF HTTP-contract, startup configuration, invalid-value,
-  old-service, and fallback coverage. Verification passed: MES tests **49/49**,
-  WPF tests **159/159**, full Debug solution **381/381**, solution build
-  **0 warnings / 0 errors**, and `git diff --check`.
-- No controller, Adapter device driver, or physical AGV was contacted. The
-  remaining workflow-runtime change needs a durable execution state machine,
-  idempotent transport-operation ownership, crash recovery, state correlation,
-  and audit linkage across Application, MES, and Adapter; it is a deliberate
-  larger design boundary.
-
-## 2026-08-12 physical acceptance stage 0 preparation
-
-- Frozen field-test source is commit `3d20cad445ef958d68bc497e781a7f16b70bdc07`.
-  The physical example remains redacted, read-only, and automatic-dispatch
-  disabled. A candidate offline session ID was generated for evidence only;
-  the field acceptance ID must be regenerated after site authorization.
-- A clean isolated Release worktree built the complete solution with **0
-  warnings / 0 errors**. The full Release suite passed **381/381**: Domain 37,
-  MES 49, Adapter 109, WPF 159, E2E 12, Simulator 5, Workflow Contract 10.
-- The WPF test project now has explicit project-level `System.IO` and
-  `System.Net.Http` global usings, removing a clean-worktree-only compile gate.
-- Runtime and configuration SHA-256 evidence is recorded in
-  `artifacts/physical-acceptance-20260812-stage0.md`. No controller connection,
-  control acquisition, task write, cancellation, pause, resume, or movement
-  occurred.
-- Stage 1 remains blocked until the vehicle is powered, the work area is
-  isolated, safety personnel are present, and written movement authorization is
-  recorded. The branch is still one commit ahead of its remote because the
-  current environment cannot connect to GitHub.
-
-## 2026-08-12 physical acceptance stage 1 site gates
-
-- The operator confirmed the Stage 1 gates: the AGV is powered and idle at
-  `LM1`; the route is isolated; a safety observer, emergency stop, and manual
-  takeover are available; written movement authorization exists; fresh unique
-  acceptance, permit, and task identifiers exist; and the frozen version,
-  configuration, route, and `0.3 m/s` limit were confirmed.
-- The identifiers remain in the controlled site record and are intentionally
-  not copied into repository evidence. Stage 2 is authorized only as a fresh
-  `read-only-preflight` session; no control acquisition, task write,
-  cancellation, pause, resume, dispatch, or movement is allowed.
-- Stage 2 is waiting for protected runtime configuration injection. The current
-  shell has no `ASPNETCORE_ENVIRONMENT`, approved AGV host, or isolated Adapter
-  database setting, and the repository example host is a placeholder. No
-  controller connection was attempted.
-
-## 2026-08-12 physical acceptance stage 2 read-only preflight
-
-- A fresh isolated Release Adapter was started with the site-injected host,
-  temporary SQLite store, and `Adapter:RunMode=read-only-preflight`; the host
-  and temporary path are intentionally omitted. The newly owned process was
-  stopped after evidence capture.
-- `/health` returned `200` with `read-only-preflight`. Dispatch, control
-  release, field-navigation dispatch, and AGV command HTTP probes all returned
-  `405`; no controller mutation API was called.
-- `/physical/preflight` returned `200` and `DispatchPermitted=false`. The AGV
-  was online and idle at `LM1`, control owner `none`, with no active task.
-  Model `W500-SZ`, controller version, localization status `1`, emergency and
-  blocked states, and Fatal/Error `0/0` were read successfully.
-- Controller-authoritative map evidence matched the Profile: `guangzhou606`,
-  version `1.0.6`, expected MD5, five stations, and nine directed edges.
-- The hard blocker was `localization_confidence_below_threshold` because the
-  observed confidence was `0.9482`, below the configured `0.95` minimum.
-  `adapter_does_not_hold_control` and `automatic_dispatch_disabled` also
-  remain expected blockers. Physical acceptance remains **NO-GO**; no control
-  acquisition, task write, cancellation, pause, resume, dispatch, or movement
-  occurred.
-
-## 2026-08-12 physical acceptance stage 3 gate
-
-- Stage 3 was authorized for evaluation, but its mandatory fresh read-only gate
-  was rechecked before any standard-mode startup. The isolated Adapter again
-  reported `read-only-preflight` and was stopped after capture.
-- The live snapshot remained online and idle at `LM1`, control owner `none`,
-  no active task, localization status `1`, emergency/blocked clear, and
-  Fatal/Error `0/0`. Model `W500-SZ`, controller version, and
-  controller-authoritative map evidence remained available and matched the
-  Profile.
-- Localization confidence remained `0.9482`, below the mandatory `0.95`
-  threshold. `DispatchPermitted=false` with blockers
-  `adapter_does_not_hold_control`, `localization_confidence_below_threshold`,
-  and `automatic_dispatch_disabled`.
-- Stage 3 is **BLOCKED / NO-GO**. No standard-mode Adapter was started; no
-  `4005`, `3066`, `3001`, `3002`, `3067`, or `9300` was sent; no control was
-  acquired and the AGV did not move. A new authorized read-only preflight is
-  required after the site restores confidence to at least `0.95`.
-
-## 2026-08-12 physical acceptance stage 3 offline hardening
-
-- Physical lifecycle writes now share one session gate with field-navigation
-  and standard physical dispatch. Manual `4006`, cancellation, and dispatch
-  cannot cross one another; rollback only releases ownership proven to have
-  been acquired by the same attempt and only before a possible `3066` write.
-- Physical pause/resume remains disabled pending an explicit lifecycle
-  authorization. Direct and aggregate command endpoints fail closed before
-  control acquisition or device writes; the aggregate endpoint now rejects
-  before even performing a fleet snapshot query. Disabled and unknown-task
-  cancellation paths also perform no controller mutation.
-- The E2E local-port contract test now resolves the repository from isolated
-  output directories as well as the normal test directory.
-- Final offline Release verification passed: Adapter `148/148`, E2E `12/12`,
-  and the full solution `420/420`; the solution build completed with
-  **0 warnings / 0 errors**, and `git diff --check` passed.
-- No controller was contacted and no `4005`, `4006`, `3066`, `3001`, `3002`,
-  `3067`, or `9300` was sent. Physical acceptance remains **NO-GO** because
-  the latest controller value is still `0.9482 < 0.95`. The next live step
-  requires a fresh authorized read-only preflight and explicit authorization
-  immediately before any possible control command.
-
-## 2026-08-13 physical acceptance stages 4-6
-
-- **Stage 4 — PASS:** three read-only checks recorded confidence values
-  `0.9241`, `0.9330`, and finally `0.9708`. The final value passed the configured
-  `0.95` threshold; localization, controller-authoritative map identity, idle
-  state, and safety checks passed for that session.
-- **Stage 5 — PASS:** the separately authorized, supervised, low-speed
-  `LM1 -> LM2` route completed. Control was acquired before movement, the
-  configured maximum speed was `0.3 m/s`, the task reached `arrived`, and
-  control was released. Automatic/batch dispatch and Push remained disabled.
-- **Stage 6 — PARTIAL SUCCESS:** direct `LM2 -> LM1` is not an available edge,
-  so the return was split into sequential segments. `LM2 -> LM3` completed.
-  During `LM3 -> LM1`, an obstacle event was recorded, an external PC took
-  control, the task paused, and the task was subsequently cancelled with
-  control released. `LM3 -> LM1` did **not** complete.
-- Stage 6 used a temporary environment override reducing the confidence
-  threshold from `0.95` to `0.92` after `0.928` was observed at `LM2`; the
-  evidence records verbal confirmation. This does not establish a production
-  threshold. A reviewed Profile policy and risk acceptance are still required.
-- The last recorded post-session state was the vehicle at `LM3`, no control
-  owner, no active task, and no active alarm. This is a historical snapshot,
-  not current readiness evidence.
-- Overall physical acceptance remains **NO-GO** for production, unattended, or
-  automatic/batch dispatch. Another connection or movement requires a fresh
-  site check, a new isolated `read-only-preflight` proving control owner `none`,
-  map/model/localization/alarm/idle gates, shutdown of that read-only process,
-  renewed explicit movement authorization, and a new unique acceptance/task ID.
-  Any route with multiple directed edges must be dispatched one segment at a
-  time and only after confirmed arrival at the preceding segment.
-- Detailed evidence is retained in
-  `artifacts/physical-acceptance-20260813-stage4-confidence-verification.md`,
-  `artifacts/physical-acceptance-20260813-stage5-first-route-lm1-lm2.md`,
-  `artifacts/physical-acceptance-20260813-stage6-return-route-lm2-lm1.md`, and
-  `artifacts/physical-acceptance-20260813-daily-summary.md`.
-
-## 2026-08-17 P0 and P1 closure
-
-- P0 governance is closed for this iteration: repository physical-acceptance
-  templates are redacted and read-only, field evidence is consistent with the
-  Stage 4--6 record above, and production remains **NO-GO**. Deployment hosts
-  and any future authorization data must be injected outside the repository.
-- MES can now rehydrate a persisted workflow admission as a strictly read-only
-  `WorkflowExecutionSnapshot`, by execution ID or request ID. Each new record
-  durably pins its serialized definition, runtime status, current node, pending
-  step, attempt count, reserved transport-operation correlation, last error,
-  and update time. Existing records without those fields retain a safe fallback
-  to their prior persisted admission result. The MES endpoints are
-  `GET /api/workflow-executions/{executionId}` and
-  `GET /api/workflow-executions/by-request/{requestId}`.
-- WPF's MES client consumes both snapshot routes and maps `404` to no snapshot;
-  existing test doubles remain compatible through default interface methods.
-  After a Simulator-safe dry-run admission, the workflow editor displays the
-  read-only runtime status, pending node, and attempt count. A missing or older
-  MES snapshot endpoint does not convert a successful admission into a failure.
-- The connection-failure cancellation test now permits either a refused socket
-  or the equivalent bounded transport timeout, while retaining the critical
-  assertion that cancellation is never marked written before a possible write.
-- P1 runtime orchestration is complete for the offline MES boundary. A durable
-  `claim` reserves one workflow node at a time and derives a stable transport
-  operation ID from the execution, node, and attempt; retrying the same claim
-  returns that same ID. A successful completion is the only event that advances
-  the immutable definition snapshot to its next unambiguous node. Failure,
-  cancellation, and unresolved outcomes are persisted fail-closed with runtime
-  audit events.
-- `WorkflowRecoveryService` performs startup reconciliation only for a running
-  record that already has a reserved operation ID. It makes the read-only task
-  lookup, persists confirmed terminal results, and retains timeout, HTTP, or
-  absent-task results as `Unknown`. It neither dispatches, retries, nor creates
-  an operation ID, so restart recovery cannot duplicate a device write.
-- WPF now shows the post-admission runtime snapshot together with the recent
-  workflow audit timeline, including the correlated transport operation. Claim
-  and completion remain internal application operations; the unauthenticated
-  mutation routes were removed so an external caller cannot forge a successful
-  step completion.
-- The controlled Simulator integration is now complete. An explicitly disabled
-  by-default worker claims only non-dry-run `Move` steps, requires both the
-  Simulator profile and an Adapter health identity of `driver=simulator`, then
-  dispatches once with the durable operation ID. It waits for
-  `arrived`/`completed` before advancing, converts ambiguous dispatch/read
-  failures to `Unknown` without retry, and leaves `Wait`, `Pickup`, `Dropoff`,
-  and custom nodes prepared without device I/O.
-- Focused offline tests passed: Adapter `163/163`, MES `57/57`, and WPF
-  `161/161`. The full serial Release gate passed with 0 warnings / 0 errors and
-  `452 passed / 5 skipped / 457 total`; no controller or physical AGV was
-  connected, controlled, dispatched, cancelled, or moved.
-
-### Confirmed next implementation order
-
-1. **P0 ion chromatography:** perform the authorized, read-only CIC-D160+
-   serial/Modbus acceptance and collect protocol evidence. Build the dedicated
-   instrument gateway only after the read path, device identity, and register
-   mapping are verified. Keep all instrument writes and automatic execution
-   disabled until separately authorized empty-load validation.
-2. **P1 robot arm and vision:** collect the Aobot and VisionGroup2 protocol,
-   endpoint, state-machine, coordinate-calibration, and safety-interlock
-   evidence. Then verify each driver independently with read-only status and
-   controlled vendor-authorized commands.
-3. **P2 complete control-center flow:** define an auditable compound workflow
-   across instrument, robot arm, vision, and the existing AGV boundary. Start
-   with dry-run and supervised single-step execution; only consider automatic
-   operation after device-level evidence, failure recovery, result traceability,
-   and safety acceptance are complete.
-4. **AGV hold:** keep AGV work at maintenance-only status. Do not resume
-   physical navigation, production dispatch, automatic/batch dispatch, or Push
-   unless the separate preflight, field authorization, and NO-GO gates are
-   explicitly reopened.
-
-## 2026-08-18 experiment workflow runtime continuation
-
-- Direct CIC-D160+ writes are paused until the register semantics, safe ranges,
-  readback behavior, and failure responses are explicitly confirmed. The
-  offline write model remains disconnected from serial transport, dependency
-  injection, HTTP routes, and workflow execution. No instrument or AGV command
-  was sent during this stage.
-- The canonical workflow contract now represents `InstrumentOperation` as a
-  first-class node while preserving all prior enum values. An instrument node
-  must declare `instrumentId` and `operation` as a default or required runtime
-  parameter. This is orchestration metadata only: the Simulator worker leaves
-  the node `Prepared`, creates no operation claim, and performs no device I/O.
-- `Wait` has an explicit optional `durationSeconds` parameter. A missing
-  duration continues to mean an external/manual condition and remains
-  `Prepared`. A value from `0` through `86400` enables the explicitly opt-in,
-  Simulator-only worker to claim the wait durably and complete it only after
-  the persisted claim time plus the configured duration. Invalid values fail
-  workflow validation.
-- The Simulator worker can now advance `Move -> Wait -> Move` across polling
-  cycles with one durable claim and completion audit per node. Timed waits
-  never call the Adapter. Startup AGV recovery now reconciles only claimed
-  `Move` nodes, so a persisted timed wait cannot be mistaken for an Adapter
-  transport task after restart.
-- The WPF workflow editor exposes node parameters in the properties panel and
-  creates useful defaults for timed waits and instrument operations. This
-  allows the same local JSON, MES draft, validation, publication, and dry-run
-  path to carry the new metadata without introducing a write control.
-- Release verification passed with **0 warnings / 0 errors** and **516 passed /
-  5 skipped** tests. Focused totals are MES `70/70`, WPF `165/165`, Workflow
-  Contract `14/14`, and InstrumentGateway `30/30`.
-
-### Next experiment-workflow order
-
-1. Add authenticated or otherwise trusted operator actions for prepared
-   `Pickup`, `Dropoff`, and manual-condition `Wait` nodes; keep them unavailable
-   as unauthenticated public mutation routes.
-2. Add durable workflow pause, resume, cancellation, and explicit `Unknown`
-   resolution with audit evidence and restart coverage.
-3. Expose non-dry-run Simulator execution snapshots and the full audit timeline
-   in WPF, then run an isolated process-level workflow rehearsal.
-4. Keep `InstrumentOperation` at metadata/dry-run only until a device-specific
-   command address, policy, and empty-load authorization are available. Add a
-   dedicated instrument worker only after those gates pass.
-
-## 2026-08-19 experiment workflow G2-A document convergence
-
-- The graph document is now the canonical persistence and boundary shape for
-  workflow editing. Stable node type identifiers, schema versions, explicit
-  edge metadata, ports, layouts, and viewport state are retained.
-- `WorkflowGraphContractAdapter` projects the graph to the existing MES
-  `WorkflowDefinition` contract while keeping `NextNodeIds` populated for the
-  current runtime. Draft, validate, publish, version, and dry-run routes were
-  not changed, and execution remains pinned to an immutable version.
-- WPF local storage writes the `mes.workflow.graph` envelope and reads the
-  previous WPF JSON array as an import-only compatibility format. The historical
-  Nodify editor now exports graph documents and imports both formats.
-- Focused verification passes Graph Contract `26/26`, WPF `175/175`, and MES
-  `70/70`; the WPF project builds with 0 warnings and 0 errors. No AGV, robot,
-  CIC-D160+, serial, gateway, or instrument write path was called.
-- G2-A acceptance is recorded in
-  `docs/EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md`. The main-window Nodify canvas
-  replacement remains the next acceptance node; the current WPF observable
-  projection is retained until that UI migration is verified.
-
-## 2026-08-20 experiment workflow G2-B main editor integration
-
-- The hand-written workflow canvas in `实验流程管理` now uses
-  `NodifyCanvasAdapter` behind `IWorkflowCanvasSurface`. Nodify remains a WPF
-  implementation detail and is not referenced by Contracts, Domain, MES, or
-  any device project.
-- Canvas and property-panel selection are synchronized. Node properties,
-  parameters, layout, explicit connections, deletion, palette drag/drop,
-  undo/redo, auto-layout, fit-to-content, and keyboard edits now update one
-  `WorkflowGraphDocument` history. Pan and zoom are persisted with throttling
-  and do not add undo steps.
-- Graph Document schema is v2. Edge-less v1 graph documents and legacy WPF
-  arrays receive ordered success edges during import; intentionally
-  disconnected v2 drafts remain disconnected. Preset workflows directly carry
-  six nodes, five explicit edges, and matching `NextNodeIds`.
-- Release solution build passed with 0 warnings and 0 errors. Full tests passed
-  **570/570**, with 5 existing E2E tests skipped: Domain 37, MES 70, Adapter
-  176, WPF 185, E2E 19, Simulator 5, Workflow Contract 28, and Instrument
-  Gateway 50.
-- A fresh isolated Simulator UI run on ports `5583/5541/5545` confirmed
-  `节点 6`, `边 5`, five rendered connections, synchronized properties, and no
-  canvas/property-panel overlap. The run opened no serial port and sent no
-  command to a physical AGV, robot arm, or CIC-D160+.
-- G2-B acceptance and the remaining G2-C cleanup are recorded in
-  `docs/EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md`. The old `实验流程设计`
-  compatibility entry, presentation projection ownership, and visible legacy
-  import report remain intentionally unclaimed; G3 has not started.
-
-## 2026-08-20 experiment workflow G2-C editor convergence
-
-- The historical `实验流程设计` tab and its independent editor ViewModel,
-  node/connection model, and dialogs have been removed. `实验流程管理` is the
-  only normal workflow editing entry. `ExperimentFlowConfigDto` remains only
-  as a read-only compatibility input behind the explicit `兼容导入` action.
-- `WorkflowEditorViewModel` now owns canonical immutable
-  `WorkflowGraphDocument` snapshots. WPF observable collections are a
-  presentation projection only; property-panel edits, canvas history, local
-  persistence, and MES draft/validate/publish paths converge on the canonical
-  documents.
-- Structured import reports identify source format and schema, workflow/node/
-  edge counts, synthesized sequential edges, unknown fields, compatibility
-  node types, and blocking validation errors. Future schemas, dangling
-  references, and duplicate IDs reject the complete import without partially
-  modifying active workflows; disconnected v2 drafts remain disconnected.
-- The conversion report is shown after explicit import and remains visible in
-  the editor. Startup migration also exposes its report. Accepted imports are
-  written only as `mes.workflow.graph` schema v2.
-- Final Release verification passed with 0 warnings and 0 errors and **577
-  passed / 5 existing E2E skipped / 0 failed** tests: Domain 37, MES 70,
-  Adapter 176, WPF 192, E2E 19, Simulator 5, Workflow Contract 28, and
-  Instrument Gateway 50.
-- A software-rendered Release main-window run with isolated Simulator ports
-  `5583/5541/5545` confirmed that `实验流程管理` is present, the historical
-  `实验流程设计` tab is absent, `兼容导入` is visible, and the default workflow
-  reports six nodes, five edges, and five loaded connections. The visible
-  startup report identified the local legacy WPF input and ten synthesized
-  sequential edges. The source workflow file was unchanged, the application
-  closed normally, and all isolated ports were released.
-- G2-C added no device execution capability or protocol route. G3 typed nodes,
-  capability catalog, and publication validation have not started and remain
-  behind G2 acceptance.
+Last updated: 2026-08-21
+
+This file is the concise active progress record. Detailed historical session
+logs remain available in Git history and in the linked acceptance/evidence
+documents. Older work is intentionally retained only as a trace here.
+
+## Current focus
+
+Active branch: `docs/experiment-workflow-architecture-plan`
+
+- Experiment workflow G2 has passed overall acceptance.
+- G3-A catalog/schema contracts are complete in commit `321517e`.
+- G3-B shared publication validation is complete in commit `eef0271`.
+- The next gate is G3-C: schema-driven WPF property projection and controls.
+- G3-D overall acceptance must pass before any G4 runtime work starts.
+
+The AGV MVP remains in frozen maintenance mode. Production, unattended,
+automatic/batch dispatch, and Push are still **NO-GO**. CIC-D160+ workflow
+capabilities remain read-only. G3 does not authorize physical device commands,
+serial access from WPF/MES, protocol/register fields in workflow nodes, or any
+instrument write path.
+
+## Latest verification
+
+The G3-B Release gate completed on 2026-08-21:
+
+- Full solution build: **0 warnings / 0 errors**.
+- Full test suite: **610 passed / 5 existing E2E skipped / 0 failed**.
+- Breakdown: Domain 39, Workflow Contract 54, MES 74, WPF 193, Adapter 176,
+  Instrument Gateway 50, Simulator 5, and E2E 19 passed plus 5 skipped.
+- No Adapter, InstrumentGateway, WPF device-control, serial, or D160 write path
+  was added or exercised by G3-A/B.
+
+## Recent changes
+
+### 2026-08-21 - G3-B shared publication validation
+
+Commit: `eef0271 feat(workflows): enforce G3 publication validation`
+
+- `WorkflowValidator.Validate()` remains the `workflow-contract-v1` runtime
+  compatibility validator for already-published definitions.
+- `ValidateForPublication()` adds the strict `workflow-publication-v2` gate.
+- Publication validation now covers document/node schema versions, required
+  typed fields, value types and ranges, Profile support, enabled stations,
+  static device declarations, capability policy, catalog-owned ports, edge
+  semantics/cardinality, Start/End boundaries, reachability, default paths,
+  exception paths, and cycle rejection.
+- Validation issues can identify `NodeId`, `EdgeId`, and `ConfigurationKey`.
+  Missing optional exception paths are warnings; warnings do not block publish.
+- Static publication facts are separated from runtime state. Device online
+  state, occupancy, controller readiness, serial ownership, and similar live
+  facts remain runtime-admission concerns.
+- The default Profile declares `CIC-D160-01` only with identify, read-status,
+  and wait-until-stable capabilities. Instrument control remains disabled.
+- MES in-memory preview, persisted version validation, and publish all use the
+  same strict rule source. Publish always revalidates the persisted definition
+  and current Profile snapshot instead of trusting cached success.
+- Failed revalidation returns an unpublished version to Draft and records a
+  `WorkflowPublicationBlocked` audit. Successful publication records validator,
+  catalog, and Profile summary metadata.
+- API and persistence tests cover Warning publication, JSON capability bypass,
+  stale validation, Profile changes, and legacy v1 runtime compatibility.
+
+### 2026-08-21 - G3-A catalog and schema contracts
+
+Commit: `321517e feat(workflows): add G3 catalog contracts`
+
+- Added immutable workflow node-type and device-capability catalogs with stable
+  IDs, schema versions, configuration/result schemas, execution modes, safety
+  classifications, Profile support, and enabled/control-enabled policy.
+- Added the first seven typed node definitions: Start, End, AGV Move, Timed
+  Wait, Manual Confirmation, Instrument Read Status, and Instrument Wait Until
+  Stable.
+- Restricted D160 write capabilities are visible as disabled catalog entries;
+  graph JSON cannot enable them.
+- Unknown node types and future schemas remain losslessly preservable for draft
+  editing but are not publishable. Migrations are explicit and never silent.
+- Graph Document schema remains v2; no unnecessary document-version bump or
+  runtime/device integration was introduced.
+
+### 2026-08-20 - G2 overall workflow editor acceptance
+
+Primary commits: `c236fd7`, `c43c447`, and `041ddae`.
+
+- The versioned graph document became the canonical workflow shape, including
+  stable node type/schema fields, explicit edges, ports, layouts, and viewport.
+- The main WPF workflow editor converged on one Nodify canvas behind
+  `IWorkflowCanvasSurface`; the historical independent editor was removed.
+- Canvas selection, property editing, connections, delete, drag/drop,
+  undo/redo, layout, pan/zoom persistence, local storage, MES lifecycle calls,
+  and compatibility imports operate on one canonical document history.
+- Legacy WPF arrays and edge-less schema-v1 graphs are import-only inputs.
+  Accepted output is always `mes.workflow.graph` schema v2, with a visible
+  structured conversion report.
+- Acceptance follow-up corrected Nodify link selection/hit testing/Delete and
+  handled the actual `ValueTuple` connection-completion payload. The follow-up
+  remained isolated from G3 commits and added no device path.
+- Overall acceptance is recorded in
+  [EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md](EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md).
+
+### 2026-08-19 - G1 canvas evaluation and graph convergence start
+
+Primary commits: `d5b137f` and `c236fd7`.
+
+- The isolated canvas Spike established the diagram-library boundary and
+  performance/interaction baseline before main-editor integration.
+- The architecture selected a single shared graph contract rather than a WPF
+  owned business model.
+- Acceptance and evaluation details are in
+  [EXPERIMENT-WORKFLOW-G1-ACCEPTANCE.md](EXPERIMENT-WORKFLOW-G1-ACCEPTANCE.md)
+  and
+  [EXPERIMENT-WORKFLOW-CANVAS-EVALUATION.md](EXPERIMENT-WORKFLOW-CANVAS-EVALUATION.md).
+
+### 2026-08-17 to 2026-08-18 - runtime and instrument boundary baseline
+
+- MES gained durable workflow snapshots, idempotent requests, stable transport
+  operation IDs, fail-closed claim/completion, read-only recovery, and audit
+  correlation. Ambiguous outcomes remain `Unknown` and are not auto-retried.
+- Simulator-only Move and explicit Timed Wait advancement were verified.
+  Legacy Instrument Operation remained metadata/prepared-only with no I/O.
+- CIC-D160+ COM4 read-only verification and protocol comparison established the
+  supported identity/status reads. The dedicated InstrumentGateway exposes
+  normalized read-only health/identity/status routes and defaults disabled.
+- Captured write mappings and narrowly supervised field probes are evidence,
+  not production authorization. No general raw-register or workflow write API
+  was opened.
+
+## Retained operational baselines
+
+### CIC-D160+
+
+- Validated transport baseline: USB virtual serial, Modbus RTU, COM4,
+  `115200 8N1`; the known read-only acceptance completed 30/30 valid responses.
+- Supported production-facing integration remains read-only and allowlisted.
+- Pressure safety semantics, some fault bits, `0x157F` meanings, and password
+  session rules are not sufficiently closed for general control.
+- Direct activation, pump/temperature control, method loading, injection,
+  start/stop analysis, automatic retry, and workflow execution remain disabled.
+- Authoritative documents:
+  [protocol verification](ION-CHROMATOGRAPHY-D160-PROTOCOL-VERIFICATION.md),
+  [pressure safety gate](ION-CHROMATOGRAPHY-D160-PRESSURE-SAFETY-GATE.md), and
+  [direct-control validation](ION-CHROMATOGRAPHY-DIRECT-CONTROL-VALIDATION.md).
+
+### Physical AGV
+
+- The supervised `LM1 -> LM2` stage passed at low speed after a fresh preflight.
+- The segmented return reached `LM3`; `LM3 -> LM1` did not complete after an
+  obstacle/control-owner event and was cancelled with control released.
+- The last historical snapshot is not current readiness evidence. Every future
+  connection or movement requires a fresh authorized read-only preflight,
+  explicit movement authorization, a unique acceptance/task ID, and
+  segment-by-segment dispatch for directed multi-edge routes.
+- Production and unattended operation remain **NO-GO**. Evidence is indexed in
+  [physical acceptance](physical-acceptance/README.md) and the retained
+  `artifacts/physical-acceptance-202608*.md` records.
+
+### Robot arm and vision
+
+- Integration scaffolding and offline tests exist, but field protocol,
+  calibration, interlock, recovery, and production safety evidence remain
+  separate acceptance work.
+- No robot/vision capability is authorized for G3 workflow execution.
+
+## Historical trace
+
+| Date | Retained trace |
+| --- | --- |
+| 2026-08-04 | Initial MES/Adapter/Simulator workflow, AGV communication extensions, batch import, KPI, task monitoring, and platformization planning. |
+| 2026-08-05 | Platform boundary refactor, persisted workflow lifecycle/runtime work, and first physical AGV checkpoint. |
+| 2026-08-06 to 2026-08-07 | Offline MES/Adapter transport loop, dispatch-gate hardening, read-only physical preflight, configurable WPF fleet flow, and recovery handoff. |
+| 2026-08-10 | WPF `.smap` visualization, map/export improvements, and offline control-center readiness. |
+| 2026-08-11 | Controller map identity, repeated read-only preflights, W500-SZ mode policy, serialized control release, Profile admission, and command-boundary isolation. |
+| 2026-08-12 | Physical acceptance stages 0-3, active-Profile WPF settings, and fail-closed site gates. |
+| 2026-08-13 | Physical stages 4-6: preflight and first route passed; return route remained partial; production stayed NO-GO. |
+| 2026-08-14 | Early Nodify experiment editor and optimized SMAP visualization groundwork. |
+| 2026-08-17 | Workflow recovery, read-only InstrumentGateway, direct-protocol tooling/plans, and P0/P1 offline closure. |
+| 2026-08-18 | D160 read-only/protocol evidence, controlled capture correlation, pressure mapping, and workflow Wait/Instrument metadata. |
+
+The former step-by-step entries, intermediate test counts, local pause notes,
+and repeated resume instructions are intentionally omitted here. Git history
+and the linked evidence documents remain the authoritative audit trail.
+
+## Next gates
+
+1. **G3-C:** project catalog schemas into stable WPF property ViewModels and
+   typed controls for station, device, enums, booleans, numbers, timeout, retry,
+   and safety information. Preserve unknown fields read-only and keep all edits
+   in canonical graph history.
+2. **G3-D:** add validation issue presentation and node/edge focus, complete MES
+   lifecycle/UI smoke coverage, and write the G3 acceptance record.
+3. **G4:** remains blocked until G3 overall acceptance. It is the earliest stage
+   that may discuss new runtime workers, and any physical device operation still
+   requires its own evidence and authorization.
+
+## Planning and evidence index
+
+- [Experiment workflow architecture](EXPERIMENT-WORKFLOW-ARCHITECTURE.md)
+- [Experiment workflow UI design](EXPERIMENT-WORKFLOW-UI-DESIGN.md)
+- [Experiment workflow implementation plan](EXPERIMENT-WORKFLOW-IMPLEMENTATION-PLAN.md)
+- [G3 start handoff](EXPERIMENT-WORKFLOW-G3-START-HANDOFF.md)
+- [Physical acceptance index](physical-acceptance/README.md)
+- [Ion chromatography protocol verification](ION-CHROMATOGRAPHY-D160-PROTOCOL-VERIFICATION.md)
+
+## Maintenance rule
+
+Keep the current state and roughly the latest three to five milestones detailed.
+When a milestone becomes historical, reduce it to one trace row and retain links
+to its acceptance record, evidence, and commits instead of appending another
+full session transcript.
