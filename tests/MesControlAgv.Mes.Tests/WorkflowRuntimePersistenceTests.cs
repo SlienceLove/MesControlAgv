@@ -293,6 +293,230 @@ public sealed class WorkflowRuntimePersistenceTests
     }
 
     [Fact]
+    public async Task Node_attempts_device_evidence_and_timeline_survive_restart_without_replacing_legacy_reads()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<MesDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        var workflowId = Guid.NewGuid();
+        Guid executionId;
+
+        await using (var database = new MesDbContext(options))
+        {
+            await database.Database.EnsureCreatedAsync();
+            var service = CreateService(database);
+            var draft = await service.CreateDraftAsync(
+                CreateValidWorkflow(workflowId),
+                "g4-planner",
+                CancellationToken.None);
+            await service.ValidateVersionAsync(workflowId, draft.Version, CancellationToken.None);
+            await service.PublishAsync(workflowId, draft.Version, "g4-planner", CancellationToken.None);
+            var admitted = await service.ExecuteAsync(new WorkflowExecutionRequest
+            {
+                WorkflowId = workflowId,
+                Version = draft.Version,
+                RequestId = Guid.NewGuid(),
+                RequestedBy = "g4-operator",
+                CorrelationId = "g4-runtime-records"
+            }, CancellationToken.None);
+            executionId = admitted.ExecutionId;
+
+            var prepared = Assert.Single(await service.ListNodeExecutionsAsync(
+                executionId,
+                CancellationToken.None));
+            Assert.Equal(WorkflowNodeExecutionStatus.Ready, prepared.Status);
+            Assert.Equal(WorkflowGraphNodeTypeIds.Move, prepared.NodeTypeId);
+            Assert.Equal(1, prepared.Attempt);
+            Assert.Equal("SAMPLE_01", prepared.Inputs[WorkflowNodeConfigurationKeys.TargetStation]);
+            Assert.Null(prepared.StartedAt);
+            Assert.Empty(await service.ListDeviceOperationsAsync(executionId, CancellationToken.None));
+
+            var firstClaim = await service.ClaimNextStepAsync(executionId, CancellationToken.None);
+            var running = Assert.Single(await service.ListNodeExecutionsAsync(
+                executionId,
+                CancellationToken.None));
+            var firstDevice = Assert.Single(await service.ListDeviceOperationsAsync(
+                executionId,
+                CancellationToken.None));
+            Assert.Equal(WorkflowNodeExecutionStatus.Running, running.Status);
+            Assert.NotNull(running.StartedAt);
+            Assert.Equal(WorkflowDeviceOperationStatus.Prepared, firstDevice.Status);
+            Assert.Equal(firstClaim.TransportOperationId, firstDevice.OperationId);
+            Assert.Equal(running.Id, firstDevice.NodeExecutionId);
+            Assert.Equal(WorkflowCapabilityIds.AgvNavigateToStation, firstDevice.CapabilityId);
+            Assert.Equal("SAMPLE_01", firstDevice.RequestSummary["targetStation"]);
+            Assert.Equal("g4-runtime-records", firstDevice.CorrelationId);
+
+            var advanced = await service.CompleteClaimedStepAsync(executionId, new WorkflowStepCompletionRequest
+            {
+                TransportOperationId = firstClaim.TransportOperationId!.Value,
+                Outcome = WorkflowStepCompletionOutcome.Succeeded
+            }, CancellationToken.None);
+            Assert.Equal(WorkflowRuntimeStatus.Prepared, advanced.RuntimeStatus);
+
+            var afterFirst = await service.ListNodeExecutionsAsync(executionId, CancellationToken.None);
+            Assert.Equal(2, afterFirst.Count);
+            Assert.Equal(WorkflowNodeExecutionStatus.Succeeded, afterFirst[0].Status);
+            Assert.NotNull(afterFirst[0].CompletedAt);
+            Assert.Equal(WorkflowNodeExecutionStatus.Ready, afterFirst[1].Status);
+            Assert.Equal(
+                WorkflowDeviceOperationStatus.Succeeded,
+                Assert.Single(await service.ListDeviceOperationsAsync(executionId, CancellationToken.None)).Status);
+
+            var secondClaim = await service.ClaimNextStepAsync(executionId, CancellationToken.None);
+            var unknown = await service.CompleteClaimedStepAsync(executionId, new WorkflowStepCompletionRequest
+            {
+                TransportOperationId = secondClaim.TransportOperationId!.Value,
+                Outcome = WorkflowStepCompletionOutcome.Unknown,
+                Error = "adapter response was ambiguous"
+            }, CancellationToken.None);
+            Assert.Equal(WorkflowRuntimeStatus.Unknown, unknown.RuntimeStatus);
+
+            var finalNodes = await service.ListNodeExecutionsAsync(executionId, CancellationToken.None);
+            Assert.Equal(WorkflowNodeExecutionStatus.Unknown, finalNodes[1].Status);
+            Assert.Null(finalNodes[1].CompletedAt);
+            Assert.Equal("adapter response was ambiguous", finalNodes[1].LastError);
+            var finalDevices = await service.ListDeviceOperationsAsync(executionId, CancellationToken.None);
+            Assert.Equal(2, finalDevices.Count);
+            Assert.Equal(WorkflowDeviceOperationStatus.Unknown, finalDevices[1].Status);
+            Assert.NotNull(finalDevices[1].ReconciledAt);
+
+            var timeline = await service.ListRunTimelineAsync(executionId, 100, CancellationToken.None);
+            Assert.Contains(timeline, item => item.EventType == "WorkflowExecutionAccepted");
+            Assert.Equal(2, timeline.Count(item => item.EventType == "WorkflowNodePrepared"));
+            Assert.Equal(2, timeline.Count(item => item.EventType == "WorkflowStepClaimed"));
+            Assert.Contains(timeline, item =>
+                item.EventType == "WorkflowStepReconciled" &&
+                item.NodeExecutionId == finalNodes[1].Id &&
+                item.DeviceOperationId == finalDevices[1].OperationId);
+        }
+
+        await using (var reloadedDatabase = new MesDbContext(options))
+        {
+            var reloaded = CreateService(reloadedDatabase);
+            Assert.Equal(2, (await reloaded.ListNodeExecutionsAsync(executionId, CancellationToken.None)).Count);
+            Assert.Equal(2, (await reloaded.ListDeviceOperationsAsync(executionId, CancellationToken.None)).Count);
+            Assert.Contains(
+                await reloaded.ListRunTimelineAsync(executionId, 100, CancellationToken.None),
+                item => item.EventType == "WorkflowStepReconciled");
+            Assert.Equal(
+                WorkflowRuntimeStatus.Unknown,
+                (await reloaded.GetExecutionAsync(executionId, CancellationToken.None))!.RuntimeStatus);
+        }
+    }
+
+    [Fact]
+    public async Task Legacy_pending_step_projects_a_stable_node_record_and_backfills_it_on_claim()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<MesDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var database = new MesDbContext(options);
+        await database.Database.EnsureCreatedAsync();
+        var service = CreateService(database);
+        var draft = await service.CreateDraftAsync(
+            CreateValidWorkflow(Guid.NewGuid()),
+            "legacy-upgrade",
+            CancellationToken.None);
+        await service.ValidateVersionAsync(draft.WorkflowId, draft.Version, CancellationToken.None);
+        await service.PublishAsync(draft.WorkflowId, draft.Version, "legacy-upgrade", CancellationToken.None);
+        var admitted = await service.ExecuteAsync(new WorkflowExecutionRequest
+        {
+            WorkflowId = draft.WorkflowId,
+            Version = draft.Version,
+            RequestId = Guid.NewGuid(),
+            RequestedBy = "legacy-operator"
+        }, CancellationToken.None);
+
+        database.WorkflowNodeExecutions.RemoveRange(database.WorkflowNodeExecutions);
+        await database.SaveChangesAsync();
+        database.ChangeTracker.Clear();
+
+        var projected = Assert.Single(await service.ListNodeExecutionsAsync(
+            admitted.ExecutionId,
+            CancellationToken.None));
+        Assert.Equal(WorkflowNodeExecutionStatus.Ready, projected.Status);
+
+        await service.ClaimNextStepAsync(admitted.ExecutionId, CancellationToken.None);
+
+        var persisted = Assert.Single(await service.ListNodeExecutionsAsync(
+            admitted.ExecutionId,
+            CancellationToken.None));
+        Assert.Equal(projected.Id, persisted.Id);
+        Assert.Equal(WorkflowNodeExecutionStatus.Running, persisted.Status);
+        Assert.Single(await service.ListDeviceOperationsAsync(admitted.ExecutionId, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Legacy_running_attempt_keeps_its_attempt_number_when_completion_backfills_runtime_records()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<MesDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var database = new MesDbContext(options);
+        await database.Database.EnsureCreatedAsync();
+        var service = CreateService(database);
+        var draft = await service.CreateDraftAsync(
+            CreateValidWorkflow(Guid.NewGuid()),
+            "legacy-running-upgrade",
+            CancellationToken.None);
+        await service.ValidateVersionAsync(draft.WorkflowId, draft.Version, CancellationToken.None);
+        await service.PublishAsync(
+            draft.WorkflowId,
+            draft.Version,
+            "legacy-running-upgrade",
+            CancellationToken.None);
+        var admitted = await service.ExecuteAsync(new WorkflowExecutionRequest
+        {
+            WorkflowId = draft.WorkflowId,
+            Version = draft.Version,
+            RequestId = Guid.NewGuid(),
+            RequestedBy = "legacy-operator"
+        }, CancellationToken.None);
+
+        database.WorkflowNodeExecutions.RemoveRange(database.WorkflowNodeExecutions);
+        var run = await database.WorkflowExecutions.SingleAsync();
+        var operationId = Guid.NewGuid();
+        run.RuntimeStatus = WorkflowRuntimeStatus.Running.ToString();
+        run.TransportOperationId = operationId;
+        run.Attempt = 3;
+        run.UpdatedAtUtc = DateTime.UtcNow;
+        await database.SaveChangesAsync();
+        database.ChangeTracker.Clear();
+
+        var projected = Assert.Single(await service.ListNodeExecutionsAsync(
+            admitted.ExecutionId,
+            CancellationToken.None));
+        Assert.Equal(3, projected.Attempt);
+        Assert.Equal(WorkflowNodeExecutionStatus.Running, projected.Status);
+
+        await service.CompleteClaimedStepAsync(admitted.ExecutionId, new WorkflowStepCompletionRequest
+        {
+            TransportOperationId = operationId,
+            Outcome = WorkflowStepCompletionOutcome.Succeeded
+        }, CancellationToken.None);
+
+        var persisted = (await service.ListNodeExecutionsAsync(
+                admitted.ExecutionId,
+                CancellationToken.None))
+            .Single(item => item.StepRequestId == projected.StepRequestId);
+        Assert.Equal(projected.Id, persisted.Id);
+        Assert.Equal(3, persisted.Attempt);
+        Assert.Equal(WorkflowNodeExecutionStatus.Succeeded, persisted.Status);
+        Assert.Equal(
+            3,
+            Assert.Single(await service.ListDeviceOperationsAsync(
+                admitted.ExecutionId,
+                CancellationToken.None)).Attempt);
+    }
+
+    [Fact]
     public async Task Publish_requires_persisted_successful_validation()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");

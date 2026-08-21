@@ -342,6 +342,28 @@ public sealed class MesClient(HttpClient client) : IMesClient
             $"api/workflow-executions/by-request/{requestId}",
             cancellationToken);
 
+    public async Task<IReadOnlyList<WorkflowNodeExecutionSnapshot>> GetWorkflowNodeExecutionsAsync(
+        Guid workflowRunId,
+        CancellationToken cancellationToken) =>
+        await client.GetFromJsonAsync<IReadOnlyList<WorkflowNodeExecutionSnapshot>>(
+            $"api/workflow-runs/{workflowRunId}/nodes",
+            cancellationToken) ?? [];
+
+    public async Task<IReadOnlyList<WorkflowDeviceOperationSnapshot>> GetWorkflowDeviceOperationsAsync(
+        Guid workflowRunId,
+        CancellationToken cancellationToken) =>
+        await client.GetFromJsonAsync<IReadOnlyList<WorkflowDeviceOperationSnapshot>>(
+            $"api/workflow-runs/{workflowRunId}/device-operations",
+            cancellationToken) ?? [];
+
+    public async Task<IReadOnlyList<WorkflowRunTimelineEntry>> GetWorkflowRunTimelineAsync(
+        Guid workflowRunId,
+        int limit,
+        CancellationToken cancellationToken) =>
+        await client.GetFromJsonAsync<IReadOnlyList<WorkflowRunTimelineEntry>>(
+            $"api/workflow-runs/{workflowRunId}/timeline?limit={Math.Clamp(limit, 1, 500)}",
+            cancellationToken) ?? [];
+
     public async Task<IReadOnlyList<WorkflowAuditResponse>> GetWorkflowAuditsAsync(
         Guid workflowId,
         int? version,

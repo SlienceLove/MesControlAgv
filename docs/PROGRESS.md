@@ -9,81 +9,61 @@ the linked acceptance/evidence documents.
 
 Active branch: `docs/experiment-workflow-architecture-plan`
 
-- Experiment workflow G2 has passed overall acceptance.
-- G3-A catalog/schema contracts are complete in `321517e`.
-- G3-B shared publication validation is complete in `eef0271`.
-- G3-C schema-driven WPF inspection is complete in `ded1752`.
-- G3-D issue navigation, lifecycle verification, and the acceptance package are
-  implemented and have passed the automated gate.
-- **G3 overall acceptance now awaits project confirmation. G4 has not started.**
+- Experiment workflow G2 and G3 have passed overall acceptance.
+- G4-A runtime record contracts, SQLite tables, compatibility dual writes, and
+  read-only APIs are implemented and have passed the automated gate.
+- **G4-B worker migration has not started.** Existing `PendingStep` behavior
+  remains the execution source until that gate is implemented and verified.
 
 The AGV MVP remains in frozen maintenance mode. Production, unattended,
-automatic/batch dispatch, and Push are **NO-GO**. G3 does not authorize device
-commands, serial access from WPF/MES, protocol/register fields in workflow
-nodes, or any CIC-D160+ write path.
+automatic/batch dispatch, and Push are **NO-GO**. G4-A adds records and reads;
+it does not authorize new device commands, serial access from WPF/MES,
+protocol/register fields in workflow nodes, or any CIC-D160+ write path.
 
 ## Latest verification
 
-The final G3 Release gate completed on 2026-08-21:
+The G4-A Release gate completed on 2026-08-21:
 
 - Full solution build: **0 warnings / 0 errors**.
-- Full test suite: **621 passed / 5 existing E2E skipped / 0 failed**.
-- Breakdown: Domain 39, Workflow Contract 54, MES 75, WPF 203, Adapter 176,
+- Full test suite: **626 passed / 5 existing E2E skipped / 0 failed**.
+- Breakdown: Domain 39, Workflow Contract 54, MES 80, WPF 203, Adapter 176,
   Instrument Gateway 50, Simulator 5, and E2E 19 passed plus 5 skipped.
-- An isolated Release UI smoke showed 21 locatable validation issues (17 errors,
-  4 warnings), correctly blocked publication, and preserved the user workflow
-  file after `WPF_WORKFLOW_STORE_PATH` isolation was introduced.
-- An isolated MES typed-graph lifecycle validated and published version 1, then
-  read back all node/edge IDs, configuration, layout, viewport, and published
-  version without loss.
-- No dry-run, execution, device, serial, or D160 write endpoint was called by
-  the G3 acceptance smoke.
+- Upgrade coverage starts MES against an existing G3 SQLite schema and verifies
+  both runtime tables and indexes are added without recreating prior tables.
+- Persistence coverage verifies restart reads, stable legacy backfill IDs,
+  attempts, device evidence, timeline links, and unchanged legacy reads.
+- Verification did not start services or call device, serial, or D160 write
+  endpoints.
 
 ## Recent changes
 
-### 2026-08-21 - G3-D validation navigation and acceptance
+### 2026-08-21 - G4-A runtime records and read APIs
 
-- Added a validation issue panel with error/warning and location filters,
-  contract metadata, configuration keys, and suggested actions.
-- Selecting an issue now selects and focuses its node or edge through the
-  existing canvas abstraction.
-- Local and remote validation results share the same projection; invalid
-  workflows cannot enable Publish.
-- Added real WPF binding/navigation coverage and MES Draft -> Validate ->
-  Publish -> version round-trip coverage for typed graphs.
-- Added optional `WPF_WORKFLOW_STORE_PATH` injection for isolated UI/process
-  checks. Existing dry-run and audit summaries remain visible.
-- Full details and the focused manual gate are in
+- Added `NodeExecution`, `DeviceOperation`, and run timeline read contracts with
+  whitelisted summaries and stable identity fields.
+- Added `WorkflowNodeExecutions` and `WorkflowDeviceOperations` with in-place
+  SQLite startup upgrade support.
+- Admission, claim, and completion atomically dual-write the legacy execution
+  row and new evidence records. Old pending/running rows project stable IDs and
+  are backfilled without losing their attempt number.
+- Added `/api/workflow-runs/{id}` read endpoints and WPF client methods. Existing
+  `/api/workflow-executions/...` reads remain unchanged.
+- Timed Wait does not fabricate a device operation, and no worker behavior or
+  device control path changed in G4-A.
+
+### 2026-08-21 - G3 overall acceptance
+
+- Catalog/schema contracts, shared publication validation, schema-driven WPF
+  inspection, issue navigation, and typed graph lifecycle verification passed.
+- Project confirmation is recorded in
   [EXPERIMENT-WORKFLOW-G3-ACCEPTANCE.md](EXPERIMENT-WORKFLOW-G3-ACCEPTANCE.md).
-
-### 2026-08-21 - G3-C schema-driven WPF inspector
-
-- The seven catalog node types now create schema-backed fields and ports from
-  stable IDs and defaults.
-- Text, numeric, boolean, and closed-list controls replace free-form key/value
-  editing; Profile stations/devices/capabilities are closed choices.
-- Capability, execution-mode, and safety metadata are read-only and expose no
-  protocol detail. Unknown fields/future schemas remain preserved and marked
-  for migration.
-- Configuration changes participate in canonical graph history, undo/redo,
-  save, and restart round trips.
-
-### 2026-08-21 - G3-A/G3-B contract and publication foundation
-
-- Immutable node/capability catalogs define the first seven node types,
-  schemas, ports, modes, safety policy, and Profile support while retaining
-  graph document schema v2 compatibility.
-- `workflow-publication-v2` validates typed configuration, Profile facts,
-  capability policy, graph topology, default/exception paths, and cycles.
-- MES preview, version validation, and publish use the same strict rule source;
-  disabled D160 write capabilities cannot be enabled through JSON.
-- `workflow-contract-v1` remains available for legacy published-runtime
-  compatibility; optional exception-path findings remain non-blocking warnings.
+- Commits: `321517e`, `eef0271`, `ded1752`, and `6b8e059`.
 
 ## Historical trace
 
 | Date | Retained trace |
 | --- | --- |
+| 2026-08-21 | G3 overall acceptance: typed catalog, strict publication gate, schema-driven inspector, and issue navigation. See [G3 acceptance](EXPERIMENT-WORKFLOW-G3-ACCEPTANCE.md). |
 | 2026-08-20 | G2 overall acceptance: one canonical v2 graph editor, Nodify canvas, compatibility importer, and lossless MES lifecycle. See [G2 acceptance](EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md). |
 | 2026-08-19 | G1 canvas evaluation and graph convergence baseline. See [G1 acceptance](EXPERIMENT-WORKFLOW-G1-ACCEPTANCE.md). |
 | 2026-08-17 to 2026-08-18 | Durable workflow recovery and audit, Simulator-only Wait/Move, read-only Instrument Gateway, and D160 protocol evidence. |
@@ -99,15 +79,15 @@ The final G3 Release gate completed on 2026-08-21:
 - Every future physical AGV connection or movement requires a fresh authorized
   read-only preflight and separate task authorization. Production and
   unattended operation remain **NO-GO**.
-- Robot arm and vision scaffolding has no G3 workflow execution authorization.
+- Robot arm and vision scaffolding has no G4 workflow execution authorization.
 
 ## Next gate
 
-1. Project owner performs the focused G3 UI checks and responds **pass** or
-   **changes required** using the G3 acceptance record.
-2. Until that confirmation, only G3 fixes are allowed.
-3. G4 is the earliest stage that may add runtime execution records/workers, but
-   even G4 does not authorize physical device commands or D160 writes.
+1. Review G4-A contracts, upgrade behavior, dual-write evidence, and read APIs.
+2. G4-B may then migrate Simulator Move and Timed Wait to use node execution
+   records as the execution and restart-recovery source.
+3. Physical device commands, serial control, and D160 writes remain outside the
+   authorized scope throughout G4.
 
 ## Planning and evidence
 

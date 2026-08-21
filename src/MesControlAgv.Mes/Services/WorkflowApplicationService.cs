@@ -46,7 +46,7 @@ public sealed class MesWorkflowVersionReader(MesDbContext database) : IWorkflowV
 /// owns draft/version lifecycle changes and persists runtime admission results;
 /// the application runtime remains side-effect free and never calls an AGV.
 /// </summary>
-public sealed class WorkflowApplicationService : IWorkflowApplicationService
+public sealed partial class WorkflowApplicationService : IWorkflowApplicationService
 {
     private readonly MesDbContext _database;
     private readonly IWorkflowVersionReader _versionReader;
@@ -199,7 +199,20 @@ public sealed class WorkflowApplicationService : IWorkflowApplicationService
         var snapshot = WorkflowPersistence.ToExecutionSnapshot(record);
         if (snapshot.RuntimeStatus == WorkflowRuntimeStatus.Running)
         {
-            return snapshot;
+            if (snapshot.PendingStepRequest is { } runningStep &&
+                record.TransportOperationId is { } runningOperationId)
+            {
+                await EnsureClaimRuntimeRecordsAsync(
+                    record,
+                    runningStep,
+                    runningOperationId,
+                    Math.Max(1, record.Attempt),
+                    record.UpdatedAtUtc ?? _timeProvider.GetUtcNow().UtcDateTime,
+                    cancellationToken);
+                await _database.SaveChangesAsync(cancellationToken);
+            }
+
+            return WorkflowPersistence.ToExecutionSnapshot(record);
         }
 
         if (snapshot.RuntimeStatus != WorkflowRuntimeStatus.Prepared || snapshot.PendingStepRequest is null)
@@ -215,11 +228,21 @@ public sealed class WorkflowApplicationService : IWorkflowApplicationService
         record.Attempt = attempt;
         record.RuntimeStatus = WorkflowRuntimeStatus.Running.ToString();
         record.LastError = null;
-        record.UpdatedAtUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        record.UpdatedAtUtc = now;
+        var runtimeRecords = await EnsureClaimRuntimeRecordsAsync(
+            record,
+            snapshot.PendingStepRequest,
+            record.TransportOperationId.Value,
+            attempt,
+            now,
+            cancellationToken);
         AddRuntimeAudit(record, "WorkflowStepClaimed", "Running", null, new Dictionary<string, string?>
         {
+            ["nodeExecutionId"] = runtimeRecords.Node.Id.ToString(),
             ["nodeId"] = snapshot.PendingStepRequest.NodeId.ToString(),
             ["transportOperationId"] = record.TransportOperationId.Value.ToString(),
+            ["deviceOperationId"] = runtimeRecords.Device?.OperationId.ToString(),
             ["attempt"] = attempt.ToString()
         });
         await _database.SaveChangesAsync(cancellationToken);
@@ -242,11 +265,14 @@ public sealed class WorkflowApplicationService : IWorkflowApplicationService
             throw new InvalidOperationException("The completion does not match a claimed workflow step.");
         }
 
+        var completedStep = snapshot.PendingStepRequest!;
+        var completedAttempt = Math.Max(1, record.Attempt);
         var error = string.IsNullOrWhiteSpace(completion.Error) ? null : completion.Error.Trim();
+        WorkflowNextStepRequest? nextStep = null;
         if (completion.Outcome == WorkflowStepCompletionOutcome.Succeeded)
         {
-            var nextStep = WorkflowPersistence.ResolveFollowingStep(record, snapshot.PendingStepRequest!);
-            record.CurrentNodeId = nextStep?.NodeId ?? snapshot.PendingStepRequest!.NodeId;
+            nextStep = WorkflowPersistence.ResolveFollowingStep(record, completedStep);
+            record.CurrentNodeId = nextStep?.NodeId ?? completedStep.NodeId;
             record.PendingStepJson = nextStep is null ? null : WorkflowPersistence.Serialize(nextStep);
             record.TransportOperationId = null;
             record.Attempt = 0;
@@ -254,11 +280,6 @@ public sealed class WorkflowApplicationService : IWorkflowApplicationService
             record.RuntimeStatus = (nextStep is null
                 ? WorkflowRuntimeStatus.Completed
                 : WorkflowRuntimeStatus.Prepared).ToString();
-            AddRuntimeAudit(record, "WorkflowStepCompleted", record.RuntimeStatus, null, new Dictionary<string, string?>
-            {
-                ["transportOperationId"] = completion.TransportOperationId.ToString(),
-                ["nextNodeId"] = nextStep?.NodeId.ToString()
-            });
         }
         else
         {
@@ -270,13 +291,35 @@ public sealed class WorkflowApplicationService : IWorkflowApplicationService
                 _ => throw new ArgumentOutOfRangeException(nameof(completion))
             };
             record.LastError = error ?? completion.Outcome.ToString();
-            AddRuntimeAudit(record, "WorkflowStepReconciled", record.RuntimeStatus, record.LastError, new Dictionary<string, string?>
-            {
-                ["transportOperationId"] = completion.TransportOperationId.ToString()
-            });
         }
 
-        record.UpdatedAtUtc = _timeProvider.GetUtcNow().UtcDateTime;
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        record.UpdatedAtUtc = now;
+        var runtimeRecords = await ApplyCompletionRuntimeRecordsAsync(
+            record,
+            completedStep,
+            completedAttempt,
+            completion with { Error = error },
+            nextStep,
+            now,
+            cancellationToken);
+        var auditDetails = new Dictionary<string, string?>
+        {
+            ["nodeExecutionId"] = runtimeRecords.NodeExecutionId.ToString(),
+            ["nodeId"] = completedStep.NodeId.ToString(),
+            ["transportOperationId"] = completion.TransportOperationId.ToString(),
+            ["deviceOperationId"] = runtimeRecords.DeviceOperationId?.ToString(),
+            ["nextNodeId"] = nextStep?.NodeId.ToString()
+        };
+        if (completion.Outcome == WorkflowStepCompletionOutcome.Succeeded)
+        {
+            AddRuntimeAudit(record, "WorkflowStepCompleted", record.RuntimeStatus, null, auditDetails);
+        }
+        else
+        {
+            AddRuntimeAudit(record, "WorkflowStepReconciled", record.RuntimeStatus, record.LastError, auditDetails);
+        }
+
         await _database.SaveChangesAsync(cancellationToken);
         return WorkflowPersistence.ToExecutionSnapshot(record);
     }
@@ -517,11 +560,19 @@ public sealed class WorkflowApplicationService : IWorkflowApplicationService
             }
 
             var result = await _runtimeExecutor.ExecuteAsync(request, cancellationToken);
-            _database.WorkflowExecutions.Add(await CreateExecutionRecordAsync(
+            var executionRecord = await CreateExecutionRecordAsync(
                 request,
                 fingerprint,
                 result,
-                cancellationToken));
+                cancellationToken);
+            _database.WorkflowExecutions.Add(executionRecord);
+            if (result is { IsAccepted: true, DryRun: false, NextStepRequest: { } initialStep })
+            {
+                AddInitialNodeExecutionRecord(
+                    executionRecord,
+                    initialStep,
+                    executionRecord.UpdatedAtUtc ?? executionRecord.CreatedAtUtc);
+            }
             AddExecutionAudit(result.Audit);
             try
             {
@@ -820,7 +871,7 @@ internal static class WorkflowPersistence
             ? runtimeStatus
             : GetAdmissionRuntimeStatus(result);
 
-    private static WorkflowNextStepRequest? DeserializePendingStep(string? value) =>
+    public static WorkflowNextStepRequest? DeserializePendingStep(string? value) =>
         string.IsNullOrWhiteSpace(value)
             ? null
             : JsonSerializer.Deserialize<WorkflowNextStepRequest>(value, SerializerOptions)
@@ -829,6 +880,13 @@ internal static class WorkflowPersistence
     public static Guid CreateStableOperationId(Guid executionId, Guid nodeId, int attempt)
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"{executionId:N}|{nodeId:N}|{attempt}"));
+        return new Guid(bytes.AsSpan(0, 16));
+    }
+
+    public static Guid CreateStableRecordId(string category, Guid executionId, Guid nodeId, int attempt)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"{category}|{executionId:N}|{nodeId:N}|{attempt}"));
         return new Guid(bytes.AsSpan(0, 16));
     }
 

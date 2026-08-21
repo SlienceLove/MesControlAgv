@@ -168,6 +168,22 @@ public interface IMesClient
     Task<WorkflowExecutionSnapshot?> GetWorkflowExecutionByRequestAsync(Guid requestId, CancellationToken cancellationToken) =>
         Task.FromResult<WorkflowExecutionSnapshot?>(null);
 
+    Task<IReadOnlyList<WorkflowNodeExecutionSnapshot>> GetWorkflowNodeExecutionsAsync(
+        Guid workflowRunId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<WorkflowNodeExecutionSnapshot>>([]);
+
+    Task<IReadOnlyList<WorkflowDeviceOperationSnapshot>> GetWorkflowDeviceOperationsAsync(
+        Guid workflowRunId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<WorkflowDeviceOperationSnapshot>>([]);
+
+    Task<IReadOnlyList<WorkflowRunTimelineEntry>> GetWorkflowRunTimelineAsync(
+        Guid workflowRunId,
+        int limit,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<WorkflowRunTimelineEntry>>([]);
+
     Task<IReadOnlyList<WorkflowAuditResponse>> GetWorkflowAuditsAsync(
         Guid workflowId,
         int? version,

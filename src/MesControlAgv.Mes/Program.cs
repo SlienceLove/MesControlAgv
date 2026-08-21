@@ -351,6 +351,58 @@ app.MapGet("/api/workflow-executions/by-request/{requestId:guid}", async (
     return execution is null ? Results.NotFound() : Results.Ok(execution);
 });
 
+app.MapGet("/api/workflow-runs/{workflowRunId:guid}", async (
+    Guid workflowRunId,
+    IWorkflowApplicationService service,
+    CancellationToken cancellationToken) =>
+{
+    var execution = await service.GetExecutionAsync(workflowRunId, cancellationToken);
+    return execution is null ? Results.NotFound() : Results.Ok(execution);
+});
+
+app.MapGet("/api/workflow-runs/{workflowRunId:guid}/nodes", async (
+    Guid workflowRunId,
+    IWorkflowApplicationService service,
+    CancellationToken cancellationToken) =>
+{
+    if (await service.GetExecutionAsync(workflowRunId, cancellationToken) is null)
+    {
+        return Results.NotFound();
+    }
+
+    return Results.Ok(await service.ListNodeExecutionsAsync(workflowRunId, cancellationToken));
+});
+
+app.MapGet("/api/workflow-runs/{workflowRunId:guid}/device-operations", async (
+    Guid workflowRunId,
+    IWorkflowApplicationService service,
+    CancellationToken cancellationToken) =>
+{
+    if (await service.GetExecutionAsync(workflowRunId, cancellationToken) is null)
+    {
+        return Results.NotFound();
+    }
+
+    return Results.Ok(await service.ListDeviceOperationsAsync(workflowRunId, cancellationToken));
+});
+
+app.MapGet("/api/workflow-runs/{workflowRunId:guid}/timeline", async (
+    Guid workflowRunId,
+    int? limit,
+    IWorkflowApplicationService service,
+    CancellationToken cancellationToken) =>
+{
+    if (await service.GetExecutionAsync(workflowRunId, cancellationToken) is null)
+    {
+        return Results.NotFound();
+    }
+
+    return Results.Ok(await service.ListRunTimelineAsync(
+        workflowRunId,
+        limit ?? 200,
+        cancellationToken));
+});
+
 app.MapPost("/api/field-navigation-acceptances", async (
     CreateFieldNavigationAcceptanceRequest request,
     IFieldNavigationAcceptanceApplicationService service,
@@ -691,6 +743,48 @@ static async Task EnsureWorkflowTablesAsync(MesDbContext database)
         );
         """,
         """
+        CREATE TABLE IF NOT EXISTS WorkflowNodeExecutions (
+            Id TEXT NOT NULL PRIMARY KEY,
+            WorkflowRunId TEXT NOT NULL,
+            WorkflowId TEXT NOT NULL,
+            Version INTEGER NOT NULL,
+            StepRequestId TEXT NOT NULL,
+            NodeId TEXT NOT NULL,
+            NodeTypeId TEXT NOT NULL,
+            NodeName TEXT NOT NULL,
+            Attempt INTEGER NOT NULL,
+            Status TEXT NOT NULL,
+            InputJson TEXT NOT NULL,
+            OutputJson TEXT NOT NULL,
+            StartedAtUtc TEXT NULL,
+            CompletedAtUtc TEXT NULL,
+            LastError TEXT NULL,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS WorkflowDeviceOperations (
+            OperationId TEXT NOT NULL PRIMARY KEY,
+            WorkflowRunId TEXT NOT NULL,
+            NodeExecutionId TEXT NOT NULL,
+            RequestId TEXT NOT NULL,
+            Attempt INTEGER NOT NULL,
+            CapabilityId TEXT NOT NULL,
+            DeviceId TEXT NULL,
+            IdempotencyKey TEXT NOT NULL,
+            CorrelationId TEXT NULL,
+            Status TEXT NOT NULL,
+            RequestSummaryJson TEXT NOT NULL,
+            ResultSummaryJson TEXT NOT NULL,
+            RequestedAtUtc TEXT NOT NULL,
+            CompletedAtUtc TEXT NULL,
+            ReconciledAtUtc TEXT NULL,
+            LastError TEXT NULL,
+            UpdatedAtUtc TEXT NOT NULL
+        );
+        """,
+        """
         CREATE TABLE IF NOT EXISTS WorkflowAudits (
             Id TEXT NOT NULL PRIMARY KEY,
             EventType TEXT NOT NULL,
@@ -709,6 +803,11 @@ static async Task EnsureWorkflowTablesAsync(MesDbContext database)
         """,
         "CREATE INDEX IF NOT EXISTS IX_WorkflowVersions_WorkflowId_PublishStatus ON WorkflowVersions (WorkflowId, PublishStatus);",
         "CREATE INDEX IF NOT EXISTS IX_WorkflowExecutions_WorkflowId_Version_CreatedAtUtc ON WorkflowExecutions (WorkflowId, Version, CreatedAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_WorkflowNodeExecutions_WorkflowRunId_CreatedAtUtc ON WorkflowNodeExecutions (WorkflowRunId, CreatedAtUtc);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_WorkflowNodeExecutions_StepRequestId ON WorkflowNodeExecutions (StepRequestId);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_WorkflowNodeExecutions_WorkflowRunId_NodeId_Attempt ON WorkflowNodeExecutions (WorkflowRunId, NodeId, Attempt);",
+        "CREATE INDEX IF NOT EXISTS IX_WorkflowDeviceOperations_WorkflowRunId_RequestedAtUtc ON WorkflowDeviceOperations (WorkflowRunId, RequestedAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_WorkflowDeviceOperations_NodeExecutionId ON WorkflowDeviceOperations (NodeExecutionId);",
         "CREATE INDEX IF NOT EXISTS IX_WorkflowAudits_WorkflowId_Version_OccurredAtUtc ON WorkflowAudits (WorkflowId, Version, OccurredAtUtc);",
         "CREATE INDEX IF NOT EXISTS IX_WorkflowAudits_RequestId ON WorkflowAudits (RequestId);"
     };

@@ -101,11 +101,62 @@ public sealed class WorkflowApiTests : IClassFixture<MesWebApplicationFactory>
     [Fact]
     public async Task Workflow_execution_read_endpoint_returns_not_found_for_unknown_ids()
     {
-        var execution = await _client.GetAsync($"/api/workflow-executions/{Guid.NewGuid()}");
+        var unknownId = Guid.NewGuid();
+        var execution = await _client.GetAsync($"/api/workflow-executions/{unknownId}");
         var request = await _client.GetAsync($"/api/workflow-executions/by-request/{Guid.NewGuid()}");
+        var run = await _client.GetAsync($"/api/workflow-runs/{unknownId}");
+        var nodes = await _client.GetAsync($"/api/workflow-runs/{unknownId}/nodes");
+        var operations = await _client.GetAsync($"/api/workflow-runs/{unknownId}/device-operations");
+        var timeline = await _client.GetAsync($"/api/workflow-runs/{unknownId}/timeline");
 
         Assert.Equal(HttpStatusCode.NotFound, execution.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, request.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, run.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, nodes.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, operations.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, timeline.StatusCode);
+    }
+
+    [Fact]
+    public async Task Workflow_run_read_endpoints_expose_prepared_node_and_timeline_without_device_activity()
+    {
+        var definition = WorkflowTestDefinitions.CreateMoveWorkflow();
+        var create = await _client.PostAsJsonAsync("/api/workflows?actor=g4-api", definition);
+        var draft = await create.Content.ReadFromJsonAsync<WorkflowVersion>();
+        await _client.PostAsync(
+            $"/api/workflows/{draft!.WorkflowId}/versions/{draft.Version}/validate",
+            content: null);
+        await _client.PostAsync(
+            $"/api/workflows/{draft.WorkflowId}/versions/{draft.Version}/publish?actor=g4-api",
+            content: null);
+        var execute = await _client.PostAsJsonAsync("/api/workflows/execute", new WorkflowExecutionRequest
+        {
+            WorkflowId = draft.WorkflowId,
+            Version = draft.Version,
+            RequestId = Guid.NewGuid(),
+            RequestedBy = "g4-api-operator",
+            CorrelationId = "g4-api-read-model"
+        });
+        Assert.Equal(HttpStatusCode.Accepted, execute.StatusCode);
+        var accepted = await execute.Content.ReadFromJsonAsync<WorkflowExecutionResult>();
+
+        var run = await _client.GetFromJsonAsync<WorkflowExecutionSnapshot>(
+            $"/api/workflow-runs/{accepted!.ExecutionId}");
+        var nodes = await _client.GetFromJsonAsync<IReadOnlyList<WorkflowNodeExecutionSnapshot>>(
+            $"/api/workflow-runs/{accepted.ExecutionId}/nodes");
+        var operations = await _client.GetFromJsonAsync<IReadOnlyList<WorkflowDeviceOperationSnapshot>>(
+            $"/api/workflow-runs/{accepted.ExecutionId}/device-operations");
+        var timeline = await _client.GetFromJsonAsync<IReadOnlyList<WorkflowRunTimelineEntry>>(
+            $"/api/workflow-runs/{accepted.ExecutionId}/timeline?limit=20");
+
+        Assert.Equal(WorkflowRuntimeStatus.Prepared, run!.RuntimeStatus);
+        var prepared = Assert.Single(nodes!);
+        Assert.Equal(WorkflowNodeExecutionStatus.Ready, prepared.Status);
+        Assert.Equal(accepted.NextStepRequest!.NodeId, prepared.NodeId);
+        Assert.Empty(operations!);
+        Assert.Contains(timeline!, item => item.EventType == "WorkflowExecutionAccepted");
+        Assert.Contains(timeline!, item =>
+            item.EventType == "WorkflowNodePrepared" && item.NodeExecutionId == prepared.Id);
     }
 
     [Fact]

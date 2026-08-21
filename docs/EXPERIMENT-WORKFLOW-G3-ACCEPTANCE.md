@@ -1,6 +1,6 @@
 # 实验流程 G3 验收记录
 
-> 状态：G3-A 至 G3-D 已实现并通过自动化门禁，等待项目方总体验收；未进入 G4
+> 状态：G3-A 至 G3-D 已实现并通过自动化门禁；项目方已于 2026-08-21 确认总体验收通过并授权进入 G4
 
 日期：2026-08-21
 
@@ -120,7 +120,7 @@ $env:WPF_WORKFLOW_STORE_PATH = Join-Path $runRoot 'workflows.json'
 6. 修复阻断问题后保存草稿、校验并发布，再读取版本；确认图、属性、布局、连线和视口保持一致。
 7. 关闭 WPF 后运行 `.\scripts\stop-local.ps1 -RunId $runId`，确认本次启动的隔离服务退出；再运行 `Remove-Item Env:MES_BASE_URL,Env:WPF_WORKFLOW_STORE_PATH` 清理当前 PowerShell 会话。
 
-项目方需要确认：**通过 / 需修改**。确认通过前只修复 G3 问题，不开始 G4。
+项目方验收结论：**通过**。上述步骤作为已完成的 G3 人工验收留痕。
 
 ## 5. 兼容性、风险与回退
 
@@ -135,4 +135,4 @@ $env:WPF_WORKFLOW_STORE_PATH = Join-Path $runRoot 'workflows.json'
 - 未新增 WPF/MES 到 Adapter、Instrument Gateway、串口或实体设备的直连控制路径。
 - 未发送 AGV、机械臂或仪器实体命令。
 - D160 仅保留已验证只读能力；泵、温度、流量、方法、进样、分析启停及任何写入仍不可发布。
-- G3 总体验收通过只允许讨论 G4，不构成任何实体设备活动授权。
+- G3 总体验收通过只授权进入 G4 软件开发，不构成任何实体设备活动授权。

@@ -56,6 +56,22 @@ public interface IWorkflowApplicationService : IWorkflowVersionReader, IWorkflow
         Guid requestId,
         CancellationToken cancellationToken);
 
+    /// <summary>Returns the durable attempt history for one workflow run.</summary>
+    Task<IReadOnlyList<WorkflowNodeExecutionSnapshot>> ListNodeExecutionsAsync(
+        Guid workflowRunId,
+        CancellationToken cancellationToken);
+
+    /// <summary>Returns whitelisted device-operation evidence for one workflow run.</summary>
+    Task<IReadOnlyList<WorkflowDeviceOperationSnapshot>> ListDeviceOperationsAsync(
+        Guid workflowRunId,
+        CancellationToken cancellationToken);
+
+    /// <summary>Returns the chronological audit timeline for one workflow run.</summary>
+    Task<IReadOnlyList<WorkflowRunTimelineEntry>> ListRunTimelineAsync(
+        Guid workflowRunId,
+        int limit,
+        CancellationToken cancellationToken);
+
     /// <summary>
     /// Atomically reserves the pending step's stable Adapter operation id.
     /// It never writes to an Adapter or device.
