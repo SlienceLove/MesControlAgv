@@ -140,6 +140,52 @@ public sealed class WorkflowRemoteIntegrationTests
     }
 
     [Fact]
+    public async Task Remote_validation_result_populates_the_locatable_problem_projection()
+    {
+        using var fixture = new TempWorkflowFile();
+        var targetNodeId = Guid.NewGuid();
+        var workflow = new WorkflowDefinition
+        {
+            Id = Guid.NewGuid(),
+            Name = "invalid-remote-workflow",
+            Nodes =
+            [
+                new WorkflowNode { Type = WorkflowNodeType.Start, Name = "Start", Order = 1, NextNodeIds = [targetNodeId] },
+                new WorkflowNode { Id = targetNodeId, Type = WorkflowNodeType.End, Name = "End", Order = 2 }
+            ]
+        };
+        var client = new FakeWorkflowMesClient(workflow)
+        {
+            ValidationResult = new ContractWorkflowValidationResult
+            {
+                ValidatorVersion = "workflow-publication-v2",
+                CatalogVersion = "catalog-v1",
+                Issues =
+                [
+                    new MesControlAgv.Contracts.Workflows.WorkflowValidationIssue
+                    {
+                        Code = "NODE_CONFIGURATION_REQUIRED",
+                        Message = "A required configuration value is missing.",
+                        NodeId = targetNodeId,
+                        ConfigurationKey = "timeoutSeconds"
+                    }
+                ]
+            }
+        };
+        var viewModel = new WorkflowEditorViewModel(new WorkflowStore(fixture.Path), client);
+
+        await viewModel.LoadRemoteAsync();
+        await viewModel.ValidateRemoteAsync();
+
+        Assert.Equal(WorkflowRemoteState.ValidationFailed, viewModel.RemoteState);
+        var issue = Assert.Single(viewModel.Validation.AllIssues);
+        Assert.Equal("NODE_CONFIGURATION_REQUIRED", issue.Code);
+        Assert.Equal(targetNodeId, issue.NodeId);
+        Assert.Equal("节点：End", issue.Location);
+        Assert.Contains("workflow-publication-v2", viewModel.Validation.ValidatorMetadata, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Dry_run_without_confirmed_published_version_is_rejected_locally()
     {
         using var fixture = new TempWorkflowFile();
@@ -197,6 +243,8 @@ internal sealed class FakeWorkflowMesClient : IMesClient
     public int ExecutionSnapshotCallCount { get; private set; }
     public ContractWorkflowExecutionSnapshot? ExecutionSnapshot { get; init; }
     public IReadOnlyList<ContractWorkflowAuditResponse> WorkflowAudits { get; init; } = [];
+    public ContractWorkflowValidationResult ValidationResult { get; init; } =
+        ContractWorkflowValidationResult.Valid("fake");
 
     public Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<DashboardTask>>([]);
@@ -274,7 +322,7 @@ internal sealed class FakeWorkflowMesClient : IMesClient
     public Task<ContractWorkflowValidationResult> ValidateWorkflowAsync(
         ContractWorkflowDefinition definition,
         CancellationToken cancellationToken) =>
-        Task.FromResult(ContractWorkflowValidationResult.Valid("fake"));
+        Task.FromResult(ValidationResult);
 
     public Task<ContractWorkflowValidationResult> ValidateWorkflowVersionAsync(
         Guid workflowId,
@@ -282,7 +330,8 @@ internal sealed class FakeWorkflowMesClient : IMesClient
         CancellationToken cancellationToken)
     {
         ValidateVersionCallCount++;
-        return Task.FromResult(ContractWorkflowValidationResult.Valid("fake"));
+        _version = _version with { Validation = ValidationResult };
+        return Task.FromResult(ValidationResult);
     }
 
     public Task<ContractWorkflowVersion> PublishWorkflowAsync(

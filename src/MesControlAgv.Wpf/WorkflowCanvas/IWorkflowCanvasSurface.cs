@@ -16,4 +16,6 @@ internal interface IWorkflowCanvasSurface
     void FitToContent();
 
     void FocusNode(Guid nodeId);
+
+    void FocusEdge(Guid edgeId);
 }

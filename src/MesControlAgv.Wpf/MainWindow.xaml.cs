@@ -144,6 +144,7 @@ public partial class MainWindow : Window
         if (_workflowEditor is not null)
         {
             _workflowEditor.PropertyChanged -= WorkflowEditor_PropertyChanged;
+            _workflowEditor.ValidationNavigationRequested -= WorkflowEditor_ValidationNavigationRequested;
             _workflowEditor = null;
         }
         WorkflowCanvasSurface.Detach();
@@ -188,7 +189,11 @@ public partial class MainWindow : Window
     {
         var editor = (DataContext as MainViewModel)?.WorkflowEditor;
         if (ReferenceEquals(_workflowEditor, editor)) return;
-        if (_workflowEditor is not null) _workflowEditor.PropertyChanged -= WorkflowEditor_PropertyChanged;
+        if (_workflowEditor is not null)
+        {
+            _workflowEditor.PropertyChanged -= WorkflowEditor_PropertyChanged;
+            _workflowEditor.ValidationNavigationRequested -= WorkflowEditor_ValidationNavigationRequested;
+        }
 
         _workflowEditor = editor;
         if (_workflowEditor is null)
@@ -197,6 +202,7 @@ public partial class MainWindow : Window
             return;
         }
         _workflowEditor.PropertyChanged += WorkflowEditor_PropertyChanged;
+        _workflowEditor.ValidationNavigationRequested += WorkflowEditor_ValidationNavigationRequested;
         AttachWorkflowCanvas();
     }
 
@@ -212,6 +218,20 @@ public partial class MainWindow : Window
             WorkflowCanvasSurface.Attach(canvas);
         else
             WorkflowCanvasSurface.Detach();
+    }
+
+    private void WorkflowEditor_ValidationNavigationRequested(
+        object? sender,
+        WorkflowValidationIssueItemViewModel issue)
+    {
+        if (!ReferenceEquals(sender, _workflowEditor)) return;
+        if (issue.EdgeId is { } edgeId)
+        {
+            WorkflowCanvasSurface.FocusEdge(edgeId);
+            return;
+        }
+
+        if (issue.NodeId is { } nodeId) WorkflowCanvasSurface.FocusNode(nodeId);
     }
 
     private void WorkflowPalette_PreviewMouseMove(object sender, MouseEventArgs e)

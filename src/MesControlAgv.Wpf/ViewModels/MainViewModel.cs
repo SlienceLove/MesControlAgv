@@ -45,13 +45,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         IMesClient mes,
         ISimulatorControlClient? simulator = null,
         ControlCenterModuleRegistry? moduleRegistry = null,
-        IMapLayoutSource? mapLayoutSource = null)
+        IMapLayoutSource? mapLayoutSource = null,
+        WorkflowStore? workflowStore = null)
     {
         _mes = mes;
         _simulator = simulator;
         _commands = new ControlCenterCommandCoordinator(mes, simulator);
         ModuleRegistry = moduleRegistry ?? ControlCenterModuleRegistry.CreateStandard();
-        WorkflowEditor = new WorkflowEditorViewModel(new WorkflowStore(), _mes, () => OperatorName);
+        WorkflowEditor = new WorkflowEditorViewModel(workflowStore ?? new WorkflowStore(), _mes, () => OperatorName);
         Readiness = new ReadinessViewModel(_mes, mapLayoutSource);
         IonChromatography = new IonChromatographyViewModel(_mes);
         _modules = new ControlCenterViewModel(WorkflowEditor, ModuleRegistry);

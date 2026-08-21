@@ -89,7 +89,16 @@ public partial class App : Application
             var mapLayoutSource = new SmapMapLayoutSource(
                 () => Environment.GetEnvironmentVariable("MAP_SMAP_PATH"),
                 () => Environment.GetEnvironmentVariable("MAP_STATION_MAPPING_PATH"));
-            _viewModel = new MainViewModel(mesClient, simulatorClient, moduleRegistry, mapLayoutSource);
+            var workflowStorePath = Environment.GetEnvironmentVariable("WPF_WORKFLOW_STORE_PATH");
+            var workflowStore = string.IsNullOrWhiteSpace(workflowStorePath)
+                ? null
+                : new WorkflowStore(workflowStorePath);
+            _viewModel = new MainViewModel(
+                mesClient,
+                simulatorClient,
+                moduleRegistry,
+                mapLayoutSource,
+                workflowStore);
             var window = new MainWindow { DataContext = _viewModel };
             window.Closed += (_, _) =>
             {

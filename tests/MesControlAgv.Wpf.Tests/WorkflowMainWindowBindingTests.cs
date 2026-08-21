@@ -1,22 +1,47 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Threading;
+using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Wpf.Services;
 using MesControlAgv.Wpf.ViewModels;
+using MesControlAgv.Wpf.WorkflowCanvas;
+using MesControlAgv.Wpf.Workflows;
 
 namespace MesControlAgv.Wpf.Tests;
 
 public sealed class WorkflowMainWindowBindingTests
 {
     [Fact]
-    public void Main_window_can_bind_read_only_workflow_inspector_metadata()
+    public void Main_window_binds_inspector_and_validation_edge_navigation()
     {
         using var fixture = new TempWorkflowFile();
         Exception? failure = null;
+        Guid? expectedEdgeId = null;
+        Guid? selectedEdgeId = null;
         var thread = new Thread(() =>
         {
             try
             {
                 var editor = new WorkflowEditorViewModel(new WorkflowStore(fixture.Path));
+                var document = Assert.IsType<WorkflowGraphDocument>(editor.SelectedGraphDocument);
+                var edge = document.Edges.First();
+                expectedEdgeId = edge.Id;
+                editor.Validation.Load(
+                    new WorkflowValidationResult
+                    {
+                        ValidatorVersion = "workflow-publication-v2",
+                        Issues =
+                        [
+                            new WorkflowValidationIssue
+                            {
+                                Code = "EDGE_UI_BINDING",
+                                Message = "Select the edge from the validation grid.",
+                                NodeId = edge.SourceNodeId,
+                                EdgeId = edge.Id
+                            }
+                        ]
+                    },
+                    document);
                 var window = new MainWindow
                 {
                     DataContext = new WorkflowBindingHost(editor)
@@ -26,11 +51,14 @@ public sealed class WorkflowMainWindowBindingTests
                 window.Arrange(new Rect(0, 0, 1420, 860));
                 window.UpdateLayout();
 
-                var frame = new DispatcherFrame();
-                window.Dispatcher.BeginInvoke(
-                    DispatcherPriority.ContextIdle,
-                    new Action(() => frame.Continue = false));
-                Dispatcher.PushFrame(frame);
+                var surface = Assert.IsType<NodifyCanvasAdapter>(window.FindName("WorkflowCanvasSurface"));
+                surface.Attach(Assert.IsType<WorkflowCanvasSpikeViewModel>(editor.CanvasViewModel));
+                PumpDispatcher(window.Dispatcher);
+                var validationGrid = Assert.IsType<DataGrid>(window.FindName("WorkflowValidationGrid"));
+                validationGrid.SelectedItem = Assert.Single(
+                    validationGrid.Items.OfType<WorkflowValidationIssueItemViewModel>());
+                PumpDispatcher(window.Dispatcher);
+                selectedEdgeId = editor.CanvasViewModel?.SelectedConnection?.Id;
                 window.Close();
             }
             catch (Exception exception)
@@ -47,6 +75,16 @@ public sealed class WorkflowMainWindowBindingTests
 
         Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "WPF binding smoke test did not complete.");
         Assert.Null(failure);
+        Assert.Equal(expectedEdgeId, selectedEdgeId);
+    }
+
+    private static void PumpDispatcher(Dispatcher dispatcher)
+    {
+        var frame = new DispatcherFrame();
+        dispatcher.BeginInvoke(
+            DispatcherPriority.ContextIdle,
+            new Action(() => frame.Continue = false));
+        Dispatcher.PushFrame(frame);
     }
 
     private sealed record WorkflowBindingHost(WorkflowEditorViewModel WorkflowEditor);

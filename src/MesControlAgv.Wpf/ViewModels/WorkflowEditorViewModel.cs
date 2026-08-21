@@ -98,6 +98,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         foreach (var station in _profileConfiguration.Stations)
             _profileStationNames[station.StationId] = station.Name;
         Inspector = new WorkflowInspectorViewModel();
+        Validation = new WorkflowValidationViewModel(NavigateToValidationIssue);
         NodeTypeOptions = CreateNodeTypeOptions();
         _documentView = _documents.AsReadOnly();
         _documents.AddRange(_store.LoadDocuments());
@@ -158,6 +159,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     public IReadOnlyList<ContractWorkflowGraphDocument> GraphDocuments => _documentView;
 
     public WorkflowInspectorViewModel Inspector { get; }
+
+    public WorkflowValidationViewModel Validation { get; }
 
     public IReadOnlyList<WorkflowNodeTypeOption> NodeTypeOptions { get; }
 
@@ -374,6 +377,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             _lastValidation = value is not null && _remoteVersions.TryGetValue(value.Id, out var remote)
                 ? remote.Validation
                 : null;
+            RefreshValidation();
             OnPropertyChanged();
             OnPropertyChanged(nameof(Nodes));
             OnPropertyChanged(nameof(SelectedGraphDocument));
@@ -446,6 +450,32 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         var node = Nodes.FirstOrDefault(candidate => candidate.Id == nodeId);
         if (node is not null) SelectedNode = node;
     }
+
+    private void NavigateToValidationIssue(WorkflowValidationIssueItemViewModel issue)
+    {
+        if (issue.EdgeId is { } edgeId &&
+            _canvasViewModel?.Connections.FirstOrDefault(candidate => candidate.Id == edgeId) is { } edge)
+        {
+            _canvasViewModel.SelectedNodes.Clear();
+            _canvasViewModel.SelectedConnection = edge;
+            ValidationNavigationRequested?.Invoke(this, issue);
+            Message = $"已定位校验问题 {issue.Code}：{issue.Location}。";
+            return;
+        }
+
+        if (issue.NodeId is { } nodeId && Nodes.Any(candidate => candidate.Id == nodeId))
+        {
+            if (_canvasViewModel is not null) _canvasViewModel.SelectedConnection = null;
+            SelectNodeById(nodeId);
+            ValidationNavigationRequested?.Invoke(this, issue);
+            Message = $"已定位校验问题 {issue.Code}：{issue.Location}。";
+            return;
+        }
+
+        Message = $"校验问题 {issue.Code} 没有可定位的当前画布对象。";
+    }
+
+    private void RefreshValidation() => Validation.Load(_lastValidation, SelectedGraphDocument);
 
     private void RefreshInspector() => Inspector.Load(
         SelectedNode,
@@ -623,6 +653,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     public ICommand LoadFromMesCommand { get; }
 
     public event PropertyChangedEventHandler? PropertyChanged;
+
+    public event EventHandler<WorkflowValidationIssueItemViewModel>? ValidationNavigationRequested;
 
     private void CreateWorkflow()
     {
@@ -918,6 +950,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 
         UpdateRemotePresentation(result.IsValid ? "校验通过" : "校验未通过");
         RemoteState = result.IsValid ? WorkflowRemoteState.Validated : WorkflowRemoteState.ValidationFailed;
+        RefreshValidation();
         OnPropertyChanged(nameof(LastValidation));
         OnPropertyChanged(nameof(ValidationSummary));
         Message = ValidationSummary;
@@ -1082,6 +1115,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     {
         _remoteVersions[version.WorkflowId] = version;
         _lastValidation = version.Validation;
+        RefreshValidation();
         if (SelectedWorkflow?.Id == version.WorkflowId)
         {
             CommitLifecycleMetadata(
@@ -1648,7 +1682,10 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             _documents[index] = document;
         OnPropertyChanged(nameof(GraphDocuments));
         if (SelectedWorkflow?.Id == document.Id)
+        {
             OnPropertyChanged(nameof(SelectedGraphDocument));
+            RefreshValidation();
+        }
     }
 
     private void ApplyDocumentToProjection(

@@ -7,6 +7,32 @@ namespace MesControlAgv.Wpf.Tests;
 public class MainViewModelTests
 {
     [Fact]
+    public void Main_view_model_can_use_an_explicit_workflow_store()
+    {
+        var directory = Path.Combine(
+            Path.GetTempPath(),
+            "MesControlAgv.MainViewModelTests",
+            Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(directory, "workflows.json");
+
+        try
+        {
+            using var viewModel = new MainViewModel(
+                new FakeMesClient([]),
+                workflowStore: new WorkflowStore(path));
+
+            viewModel.WorkflowEditor.SaveCommand.Execute(null);
+
+            Assert.True(File.Exists(path));
+            Assert.Contains("mes.workflow.graph", File.ReadAllText(path), StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Operator_module_defaults_use_chinese_prompts()
     {
         Assert.Equal("未知", new AgvCommunicationViewModel().AgvStatus);

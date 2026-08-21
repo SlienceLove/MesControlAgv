@@ -63,6 +63,17 @@ public partial class NodifyCanvasAdapter : UserControl, IWorkflowCanvasSurface
         Editor.BringIntoView(new Rect(node.Location.X, node.Location.Y, node.Width, node.Height));
     }
 
+    public void FocusEdge(Guid edgeId)
+    {
+        var edge = _viewModel?.Connections.FirstOrDefault(candidate => candidate.Id == edgeId);
+        if (edge is null) return;
+
+        _viewModel!.SelectedNodes.Clear();
+        _viewModel.SelectedConnection = edge;
+        var midpoint = edge.MidPoint;
+        Editor.BringIntoView(new Rect(midpoint.X - 48, midpoint.Y - 48, 96, 96));
+    }
+
     private void OnFocusNodeRequested(object? sender, Guid nodeId) => FocusNode(nodeId);
 
     public void Detach()

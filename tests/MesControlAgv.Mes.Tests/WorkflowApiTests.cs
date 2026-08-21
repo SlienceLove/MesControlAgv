@@ -150,6 +150,80 @@ public sealed class WorkflowApiTests : IClassFixture<MesWebApplicationFactory>
     }
 
     [Fact]
+    public async Task Typed_graph_round_trips_through_draft_validation_publish_and_version_read()
+    {
+        var source = WorkflowTestDefinitions.CreateMoveWorkflow();
+        var definition = source with
+        {
+            Description = "G3 lifecycle round trip",
+            Layouts = source.Nodes.Select((node, index) => new WorkflowNodeLayout
+            {
+                NodeId = node.Id,
+                X = 120 + index * 240,
+                Y = 80 + index * 25,
+                Width = 210,
+                Height = 125
+            }).ToArray(),
+            Viewport = new WorkflowCanvasViewport { X = 45, Y = 30, Zoom = 0.85 }
+        };
+
+        var create = await _client.PostAsJsonAsync("/api/workflows?actor=g3-lifecycle", definition);
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var draft = await create.Content.ReadFromJsonAsync<WorkflowVersion>();
+        Assert.NotNull(draft);
+
+        var validate = await _client.PostAsync(
+            $"/api/workflows/{draft!.WorkflowId}/versions/{draft.Version}/validate",
+            content: null);
+        Assert.Equal(HttpStatusCode.OK, validate.StatusCode);
+        var validation = await validate.Content.ReadFromJsonAsync<WorkflowValidationResult>();
+        Assert.True(validation!.IsValid);
+
+        var publish = await _client.PostAsync(
+            $"/api/workflows/{draft.WorkflowId}/versions/{draft.Version}/publish?actor=g3-lifecycle",
+            content: null);
+        Assert.Equal(HttpStatusCode.OK, publish.StatusCode);
+
+        var persisted = await _client.GetFromJsonAsync<WorkflowVersion>(
+            $"/api/workflows/{draft.WorkflowId}/versions/{draft.Version}");
+        Assert.NotNull(persisted);
+        Assert.Equal(WorkflowVersionStatus.Published, persisted!.Status);
+        Assert.Equal(WorkflowPublishStatus.Published, persisted.PublishStatus);
+        Assert.Equal(draft.Version, persisted.Definition.PublishedVersion);
+        Assert.Equal(definition.SchemaVersion, persisted.Definition.SchemaVersion);
+        Assert.Equal(definition.Description, persisted.Definition.Description);
+        Assert.Equal(
+            definition.Edges.Select(edge =>
+                (edge.Id, edge.SourceNodeId, edge.SourcePort, edge.TargetNodeId, edge.TargetPort, edge.Kind, edge.Priority)),
+            persisted.Definition.Edges.Select(edge =>
+                (edge.Id, edge.SourceNodeId, edge.SourcePort, edge.TargetNodeId, edge.TargetPort, edge.Kind, edge.Priority)));
+        Assert.Equal(
+            definition.Layouts.Select(layout =>
+                (layout.NodeId, layout.X, layout.Y, layout.Width, layout.Height)),
+            persisted.Definition.Layouts.Select(layout =>
+                (layout.NodeId, layout.X, layout.Y, layout.Width, layout.Height)));
+        Assert.Equal(definition.Viewport, persisted.Definition.Viewport);
+
+        foreach (var expected in definition.Nodes)
+        {
+            var actual = Assert.Single(persisted.Definition.Nodes, node => node.Id == expected.Id);
+            Assert.Equal(expected.NodeTypeId, actual.NodeTypeId);
+            Assert.Equal(expected.SchemaVersion, actual.SchemaVersion);
+            Assert.Equal(
+                expected.Ports.Select(port =>
+                    (port.Key, port.Direction, port.DataType, port.Cardinality, port.EdgeKind)),
+                actual.Ports.Select(port =>
+                    (port.Key, port.Direction, port.DataType, port.Cardinality, port.EdgeKind)));
+            Assert.Equal(expected.Configuration.Count, actual.Configuration.Count);
+            foreach (var (key, value) in expected.Configuration)
+            {
+                Assert.True(actual.Configuration.TryGetValue(key, out var actualValue));
+                Assert.Equal(value, actualValue);
+            }
+        }
+    }
+
+    [Fact]
     public async Task Json_payload_cannot_self_authorize_a_restricted_instrument_capability()
     {
         const string injectedKey = "capabilityId";
