@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts.Workflows;
+using MesControlAgv.Domain.Workflows;
 
 namespace MesControlAgv.Mes.Tests;
 
@@ -18,7 +19,12 @@ public sealed class WorkflowApiTests : IClassFixture<MesWebApplicationFactory>
     [Fact]
     public async Task Workflow_endpoints_create_validate_publish_read_and_admit_execution()
     {
-        var definition = CreateValidWorkflow();
+        var definition = WorkflowTestDefinitions.CreateMoveWorkflow();
+        var preview = await _client.PostAsJsonAsync("/api/workflows/validate", definition);
+        Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
+        var previewResult = await preview.Content.ReadFromJsonAsync<WorkflowValidationResult>();
+        Assert.NotNull(previewResult);
+
         var create = await _client.PostAsJsonAsync("/api/workflows?actor=planner-api", definition);
         Assert.Equal(HttpStatusCode.Created, create.StatusCode);
         var draft = await create.Content.ReadFromJsonAsync<WorkflowVersion>();
@@ -30,6 +36,16 @@ public sealed class WorkflowApiTests : IClassFixture<MesWebApplicationFactory>
         Assert.Equal(HttpStatusCode.OK, validation.StatusCode);
         var validationResult = await validation.Content.ReadFromJsonAsync<WorkflowValidationResult>();
         Assert.True(validationResult!.IsValid);
+        Assert.True(validationResult.HasWarnings);
+        Assert.Equal(WorkflowValidator.PublicationValidatorVersion, validationResult.ValidatorVersion);
+        Assert.Equal(BuiltInWorkflowCatalog.CurrentCatalogVersion, validationResult.CatalogVersion);
+        Assert.Equal("MES-AGV", validationResult.ProfileProductId);
+        Assert.Equal(previewResult!.ValidatorVersion, validationResult.ValidatorVersion);
+        Assert.Equal(previewResult.CatalogVersion, validationResult.CatalogVersion);
+        Assert.Equal(previewResult.ProfileProductId, validationResult.ProfileProductId);
+        Assert.Equal(
+            previewResult.Issues.Select(issue => (issue.Code, issue.Severity, issue.NodeId, issue.EdgeId)),
+            validationResult.Issues.Select(issue => (issue.Code, issue.Severity, issue.NodeId, issue.EdgeId)));
 
         var publish = await _client.PostAsync(
             $"/api/workflows/{draft.WorkflowId}/versions/{draft.Version}/publish?actor=planner-api",
@@ -95,7 +111,7 @@ public sealed class WorkflowApiTests : IClassFixture<MesWebApplicationFactory>
     [Fact]
     public async Task Workflow_audit_endpoint_returns_read_only_lifecycle_events()
     {
-        var definition = CreateValidWorkflow();
+        var definition = WorkflowTestDefinitions.CreateMoveWorkflow();
         var create = await _client.PostAsJsonAsync("/api/workflows?actor=audit-test", definition);
         Assert.Equal(HttpStatusCode.Created, create.StatusCode);
         var draft = await create.Content.ReadFromJsonAsync<WorkflowVersion>();
@@ -133,21 +149,44 @@ public sealed class WorkflowApiTests : IClassFixture<MesWebApplicationFactory>
         Assert.Equal("Published", events[2].Outcome);
     }
 
-    private static WorkflowDefinition CreateValidWorkflow()
+    [Fact]
+    public async Task Json_payload_cannot_self_authorize_a_restricted_instrument_capability()
     {
-        var start = Guid.NewGuid();
-        var move = Guid.NewGuid();
-        var end = Guid.NewGuid();
-        return new WorkflowDefinition
+        const string injectedKey = "capabilityId";
+        var valid = WorkflowTestDefinitions.CreateMoveWorkflow();
+        var move = valid.Nodes.Single(node => node.NodeTypeId == WorkflowGraphNodeTypeIds.Move);
+        var injected = valid with
         {
-            Id = Guid.NewGuid(),
-            Name = "API workflow",
-            Nodes =
-            [
-                new WorkflowNode { Id = start, Type = WorkflowNodeType.Start, Name = "Start", Order = 1, NextNodeIds = [move] },
-                new WorkflowNode { Id = move, Type = WorkflowNodeType.Move, Name = "Move", TargetStation = "SAMPLE_01", Order = 2, NextNodeIds = [end] },
-                new WorkflowNode { Id = end, Type = WorkflowNodeType.End, Name = "End", Order = 3 }
-            ]
+            Nodes = valid.Nodes.Select(node => node.Id == move.Id
+                ? node with
+                {
+                    Configuration = new Dictionary<string, string?>(node.Configuration)
+                    {
+                        [injectedKey] = WorkflowCapabilityIds.InstrumentStartAnalysis
+                    }
+                }
+                : node).ToArray()
         };
+
+        var preview = await _client.PostAsJsonAsync("/api/workflows/validate", injected);
+        Assert.Equal(HttpStatusCode.OK, preview.StatusCode);
+        var previewResult = await preview.Content.ReadFromJsonAsync<WorkflowValidationResult>();
+        Assert.False(previewResult!.IsValid);
+        Assert.Contains(previewResult.Issues, issue =>
+            issue.Code == WorkflowPublicationIssueCodes.FieldUnknown &&
+            issue.NodeId == move.Id &&
+            issue.ConfigurationKey == injectedKey);
+
+        var create = await _client.PostAsJsonAsync("/api/workflows?actor=json-bypass-test", injected);
+        var draft = await create.Content.ReadFromJsonAsync<WorkflowVersion>();
+        var validate = await _client.PostAsync(
+            $"/api/workflows/{draft!.WorkflowId}/versions/{draft.Version}/validate",
+            content: null);
+        Assert.Equal(HttpStatusCode.OK, validate.StatusCode);
+
+        var publish = await _client.PostAsync(
+            $"/api/workflows/{draft.WorkflowId}/versions/{draft.Version}/publish?actor=json-bypass-test",
+            content: null);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, publish.StatusCode);
     }
 }

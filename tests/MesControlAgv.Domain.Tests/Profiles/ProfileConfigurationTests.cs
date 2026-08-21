@@ -1,4 +1,5 @@
 using System.Text;
+using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Profiles;
 
 namespace MesControlAgv.Domain.Tests.Profiles;
@@ -199,6 +200,52 @@ public sealed class ProfileConfigurationTests
         Assert.True(configuration.Features.UseSimulator);
         Assert.Equal("simulator", configuration.Agvs.Single().Driver);
         Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void Validator_rejects_ambiguous_workflow_device_declarations()
+    {
+        var configuration = CreateValidConfiguration() with
+        {
+            WorkflowDevices =
+            [
+                new WorkflowDeviceProfile
+                {
+                    DeviceId = "AGV-01",
+                    DeviceFamily = "",
+                    CapabilityIds = ["instrument.read-status", "INSTRUMENT.READ-STATUS"],
+                    Enabled = false,
+                    ControlEnabled = true
+                }
+            ]
+        };
+
+        var result = new ProfileConfigurationValidator().Validate(configuration);
+
+        Assert.False(result.IsValid);
+        Assert.Contains(result.Errors, error => error.Path == "workflowDevices[0].deviceId");
+        Assert.Contains(result.Errors, error => error.Path == "workflowDevices[0].deviceFamily");
+        Assert.Contains(result.Errors, error => error.Path == "workflowDevices[0].capabilityIds[1]");
+        Assert.Contains(result.Errors, error => error.Path == "workflowDevices[0].controlEnabled");
+    }
+
+    [Fact]
+    public void Default_profile_exposes_only_the_read_only_instrument_capabilities()
+    {
+        var device = Assert.Single(ProfileConfiguration.Default.WorkflowDevices);
+
+        Assert.Equal("CIC-D160-01", device.DeviceId);
+        Assert.Equal(WorkflowDeviceFamilyIds.IonChromatography, device.DeviceFamily);
+        Assert.Equal(
+        [
+            WorkflowCapabilityIds.InstrumentIdentify,
+            WorkflowCapabilityIds.InstrumentReadStatus,
+            WorkflowCapabilityIds.InstrumentWaitUntilStable
+        ],
+            device.CapabilityIds);
+        Assert.True(device.Enabled);
+        Assert.False(device.ControlEnabled);
+        Assert.DoesNotContain(WorkflowCapabilityIds.InstrumentStartAnalysis, device.CapabilityIds);
     }
 
     private static ProfileConfiguration CreatePhysicalAcceptanceConfiguration() => new()

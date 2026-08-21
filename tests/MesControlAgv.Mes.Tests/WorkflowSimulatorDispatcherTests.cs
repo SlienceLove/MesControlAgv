@@ -4,9 +4,12 @@ using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Domain.Workflows;
 using MesControlAgv.Mes.Data;
+using MesControlAgv.Mes.Entities;
 using MesControlAgv.Mes.Services;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace MesControlAgv.Mes.Tests;
 
@@ -87,7 +90,7 @@ public sealed class WorkflowSimulatorDispatcherTests
         await using var database = new MesDbContext(options);
         await database.Database.EnsureCreatedAsync();
         var workflows = CreateService(database);
-        var executionId = await AdmitAsync(workflows, CreateMoveThenWaitWorkflow());
+        var executionId = await AdmitLegacyAsync(database, workflows, CreateMoveThenWaitWorkflow());
         var adapter = new ScriptedSimulatorGateway { TaskState = "arrived" };
         var dispatcher = CreateDispatcher(workflows, adapter);
 
@@ -112,7 +115,7 @@ public sealed class WorkflowSimulatorDispatcherTests
         await database.Database.EnsureCreatedAsync();
         var clock = new MutableTimeProvider(new DateTimeOffset(2026, 8, 18, 4, 0, 0, TimeSpan.Zero));
         var workflows = CreateService(database, clock);
-        var executionId = await AdmitAsync(workflows, CreateTimedWaitWorkflow("5"));
+        var executionId = await AdmitLegacyAsync(database, workflows, CreateTimedWaitWorkflow("5"));
         var adapter = new ScriptedSimulatorGateway();
         var dispatcher = CreateDispatcher(workflows, adapter, clock);
 
@@ -148,7 +151,7 @@ public sealed class WorkflowSimulatorDispatcherTests
         await using var database = new MesDbContext(options);
         await database.Database.EnsureCreatedAsync();
         var workflows = CreateService(database);
-        var executionId = await AdmitAsync(workflows, CreateMoveWaitMoveWorkflow());
+        var executionId = await AdmitLegacyAsync(database, workflows, CreateMoveWaitMoveWorkflow());
         var adapter = new ScriptedSimulatorGateway { TaskState = "arrived" };
         var dispatcher = CreateDispatcher(workflows, adapter);
 
@@ -181,7 +184,7 @@ public sealed class WorkflowSimulatorDispatcherTests
         await using var database = new MesDbContext(options);
         await database.Database.EnsureCreatedAsync();
         var workflows = CreateService(database);
-        var executionId = await AdmitAsync(workflows, CreateInstrumentWorkflow());
+        var executionId = await AdmitLegacyAsync(database, workflows, CreateInstrumentWorkflow());
         var adapter = new ScriptedSimulatorGateway();
         var dispatcher = CreateDispatcher(workflows, adapter);
 
@@ -240,10 +243,43 @@ public sealed class WorkflowSimulatorDispatcherTests
         var draft = await workflows.CreateDraftAsync(definition, "simulator-test", CancellationToken.None);
         await workflows.ValidateVersionAsync(draft.WorkflowId, draft.Version, CancellationToken.None);
         await workflows.PublishAsync(draft.WorkflowId, draft.Version, "simulator-test", CancellationToken.None);
+        return await ExecutePublishedAsync(workflows, draft.WorkflowId, draft.Version);
+    }
+
+    private static async Task<Guid> AdmitLegacyAsync(
+        MesDbContext database,
+        WorkflowApplicationService workflows,
+        WorkflowDefinition definition)
+    {
+        var validation = new WorkflowValidator().Validate(definition);
+        var now = DateTime.UtcNow;
+        database.WorkflowVersions.Add(new WorkflowVersionRecord
+        {
+            WorkflowId = definition.Id,
+            Version = 1,
+            DefinitionJson = JsonSerializer.Serialize(definition, SerializerOptions),
+            Status = WorkflowVersionStatus.Published.ToString(),
+            PublishStatus = WorkflowPublishStatus.Published.ToString(),
+            ValidationJson = JsonSerializer.Serialize(validation, SerializerOptions),
+            CreatedBy = "legacy-v1-test-fixture",
+            CreatedAtUtc = now,
+            PublishedBy = "legacy-v1-test-fixture",
+            PublishedAtUtc = now,
+            UpdatedAtUtc = now
+        });
+        await database.SaveChangesAsync();
+        return await ExecutePublishedAsync(workflows, definition.Id, 1);
+    }
+
+    private static async Task<Guid> ExecutePublishedAsync(
+        WorkflowApplicationService workflows,
+        Guid workflowId,
+        int version)
+    {
         var result = await workflows.ExecuteAsync(new WorkflowExecutionRequest
         {
-            WorkflowId = draft.WorkflowId,
-            Version = draft.Version,
+            WorkflowId = workflowId,
+            Version = version,
             RequestId = Guid.NewGuid(),
             RequestedBy = "simulator-test"
         }, CancellationToken.None);
@@ -269,26 +305,8 @@ public sealed class WorkflowSimulatorDispatcherTests
             timeProvider);
     }
 
-    private static WorkflowDefinition CreateTwoMoveWorkflow()
-    {
-        var workflowId = Guid.NewGuid();
-        var start = Guid.NewGuid();
-        var firstMove = Guid.NewGuid();
-        var secondMove = Guid.NewGuid();
-        var end = Guid.NewGuid();
-        return new WorkflowDefinition
-        {
-            Id = workflowId,
-            Name = "Two move Simulator workflow",
-            Nodes =
-            [
-                new WorkflowNode { Id = start, Type = WorkflowNodeType.Start, Name = "Start", Order = 1, NextNodeIds = [firstMove] },
-                new WorkflowNode { Id = firstMove, Type = WorkflowNodeType.Move, Name = "Move one", TargetStation = "SAMPLE_01", Order = 2, NextNodeIds = [secondMove] },
-                new WorkflowNode { Id = secondMove, Type = WorkflowNodeType.Move, Name = "Move two", TargetStation = "ST_OPEN_01", Order = 3, NextNodeIds = [end] },
-                new WorkflowNode { Id = end, Type = WorkflowNodeType.End, Name = "End", Order = 4 }
-            ]
-        };
-    }
+    private static WorkflowDefinition CreateTwoMoveWorkflow() =>
+        WorkflowTestDefinitions.CreateMoveWorkflow(null, "SAMPLE_01", "ST_OPEN_01");
 
     private static WorkflowDefinition CreateMoveThenWaitWorkflow()
     {
@@ -421,6 +439,12 @@ public sealed class WorkflowSimulatorDispatcherTests
             ]
         };
     }
+
+    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter() }
+    };
 
     private sealed class MutableTimeProvider(DateTimeOffset initialUtc) : TimeProvider
     {

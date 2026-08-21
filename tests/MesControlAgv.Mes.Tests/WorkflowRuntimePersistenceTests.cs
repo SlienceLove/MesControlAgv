@@ -1,5 +1,7 @@
 ﻿using MesControlAgv.Application;
 using MesControlAgv.Contracts.Workflows;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Domain.Workflows;
 using MesControlAgv.Mes.Data;
@@ -263,7 +265,7 @@ public sealed class WorkflowRuntimePersistenceTests
             }, CancellationToken.None);
 
             Assert.Equal(WorkflowRuntimeStatus.Prepared, advanced.RuntimeStatus);
-            Assert.Equal(WorkflowNodeType.Wait, advanced.PendingStepRequest!.NodeType);
+            Assert.Equal(WorkflowNodeType.Move, advanced.PendingStepRequest!.NodeType);
             Assert.Null(advanced.TransportOperationId);
             Assert.Equal(0, advanced.Attempt);
 
@@ -347,13 +349,141 @@ public sealed class WorkflowRuntimePersistenceTests
         Assert.Contains(database.WorkflowAudits, audit => audit.Code == WorkflowExecutionRejectionCodes.ProfileMismatch);
     }
 
+    [Fact]
+    public async Task Publish_revalidates_the_persisted_definition_instead_of_trusting_cached_success()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<MesDbContext>().UseSqlite(connection).Options;
+        await using var database = new MesDbContext(options);
+        await database.Database.EnsureCreatedAsync();
+        var service = CreateService(database);
+        var definition = CreateValidWorkflow(Guid.NewGuid());
+        var draft = await service.CreateDraftAsync(definition, "planner-1", CancellationToken.None);
+        var validation = await service.ValidateVersionAsync(draft.WorkflowId, draft.Version, CancellationToken.None);
+        Assert.True(validation.IsValid);
+
+        var move = definition.Nodes.First(node => node.NodeTypeId == WorkflowGraphNodeTypeIds.Move);
+        var incompleteConfiguration = move.Configuration
+            .Where(pair => pair.Key != WorkflowNodeConfigurationKeys.TimeoutSeconds)
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+        var tampered = definition with
+        {
+            Nodes = definition.Nodes.Select(node => node.Id == move.Id
+                ? node with { Configuration = incompleteConfiguration }
+                : node).ToArray()
+        };
+        var record = await database.WorkflowVersions.SingleAsync();
+        record.DefinitionJson = JsonSerializer.Serialize(tampered, SerializerOptions);
+        await database.SaveChangesAsync();
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.PublishAsync(draft.WorkflowId, draft.Version, "planner-1", CancellationToken.None));
+
+        Assert.Contains("current publication validation gate", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(WorkflowVersionStatus.Draft.ToString(), record.Status);
+        var currentValidation = JsonSerializer.Deserialize<WorkflowValidationResult>(
+            record.ValidationJson!,
+            SerializerOptions);
+        Assert.Contains(currentValidation!.Issues, issue =>
+            issue.Code == WorkflowPublicationIssueCodes.FieldRequired &&
+            issue.NodeId == move.Id &&
+            issue.ConfigurationKey == WorkflowNodeConfigurationKeys.TimeoutSeconds);
+        Assert.Contains(database.WorkflowAudits, audit => audit.EventType == "WorkflowPublicationBlocked");
+    }
+
+    [Fact]
+    public async Task Publish_revalidates_against_the_current_profile_snapshot()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<MesDbContext>().UseSqlite(connection).Options;
+        await using var database = new MesDbContext(options);
+        await database.Database.EnsureCreatedAsync();
+        var workflowId = Guid.NewGuid();
+        var initialService = CreateService(database);
+        var draft = await initialService.CreateDraftAsync(
+            CreateValidWorkflow(workflowId),
+            "planner-1",
+            CancellationToken.None);
+        Assert.True((await initialService.ValidateVersionAsync(
+            workflowId,
+            draft.Version,
+            CancellationToken.None)).IsValid);
+
+        var profile = ProfileConfiguration.Default;
+        var changedProfile = profile with
+        {
+            Stations = profile.Stations.Select(station => station.StationId == "SAMPLE_01"
+                ? station with { Enabled = false }
+                : station).ToArray()
+        };
+        var changedService = CreateService(database, publicationProfile: changedProfile);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            changedService.PublishAsync(workflowId, draft.Version, "planner-1", CancellationToken.None));
+
+        var stored = await changedService.GetVersionAsync(workflowId, draft.Version, CancellationToken.None);
+        Assert.Equal(WorkflowVersionStatus.Draft, stored!.Status);
+        Assert.Contains(stored.Validation!.Issues, issue =>
+            issue.Code == WorkflowPublicationIssueCodes.StationDisabled &&
+            issue.ConfigurationKey == WorkflowNodeConfigurationKeys.TargetStation);
+        Assert.Contains(database.WorkflowAudits, audit => audit.EventType == "WorkflowPublicationBlocked");
+    }
+
+    [Fact]
+    public async Task Failed_revalidation_returns_an_unpublished_validated_version_to_draft()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<MesDbContext>().UseSqlite(connection).Options;
+        await using var database = new MesDbContext(options);
+        await database.Database.EnsureCreatedAsync();
+        var workflowId = Guid.NewGuid();
+        var initialService = CreateService(database);
+        var draft = await initialService.CreateDraftAsync(
+            CreateValidWorkflow(workflowId),
+            "planner-1",
+            CancellationToken.None);
+        Assert.True((await initialService.ValidateVersionAsync(
+            workflowId,
+            draft.Version,
+            CancellationToken.None)).IsValid);
+        Assert.Equal(
+            WorkflowVersionStatus.Validated,
+            (await initialService.GetVersionAsync(workflowId, draft.Version, CancellationToken.None))!.Status);
+
+        var profile = ProfileConfiguration.Default;
+        var changedProfile = profile with
+        {
+            Stations = profile.Stations.Select(station => station.StationId == "SAMPLE_01"
+                ? station with { Enabled = false }
+                : station).ToArray()
+        };
+        var changedService = CreateService(database, publicationProfile: changedProfile);
+
+        var validation = await changedService.ValidateVersionAsync(
+            workflowId,
+            draft.Version,
+            CancellationToken.None);
+        var stored = await changedService.GetVersionAsync(workflowId, draft.Version, CancellationToken.None);
+
+        Assert.False(validation.IsValid);
+        Assert.Equal(WorkflowVersionStatus.Draft, stored!.Status);
+        Assert.Contains(validation.Issues, issue =>
+            issue.Code == WorkflowPublicationIssueCodes.StationDisabled);
+    }
+
     private static WorkflowApplicationService CreateService(
         MesDbContext database,
-        ProfileConfiguration? profile = null)
+        ProfileConfiguration? runtimeProfile = null,
+        ProfileConfiguration? publicationProfile = null)
     {
-        var validator = new WorkflowValidator();
+        var validator = new WorkflowValidator(
+            publicationContext: WorkflowPublicationContext.FromProfile(
+                publicationProfile ?? ProfileConfiguration.Default));
         var reader = new MesWorkflowVersionReader(database);
-        var activeProfile = profile ?? ProfileConfiguration.Default;
+        var activeProfile = runtimeProfile ?? ProfileConfiguration.Default;
         return new WorkflowApplicationService(
             database,
             reader,
@@ -364,23 +494,12 @@ public sealed class WorkflowRuntimePersistenceTests
             validator);
     }
 
-    private static WorkflowDefinition CreateValidWorkflow(Guid workflowId)
+    private static WorkflowDefinition CreateValidWorkflow(Guid workflowId) =>
+        WorkflowTestDefinitions.CreateMoveWorkflow(workflowId, "SAMPLE_01", "ST_OPEN_01");
+
+    private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web)
     {
-        var start = Guid.NewGuid();
-        var move = Guid.NewGuid();
-        var wait = Guid.NewGuid();
-        var end = Guid.NewGuid();
-        return new WorkflowDefinition
-        {
-            Id = workflowId,
-            Name = "Persisted transport",
-            Nodes =
-            [
-                new WorkflowNode { Id = start, Type = WorkflowNodeType.Start, Name = "Start", Order = 1, NextNodeIds = [move] },
-                new WorkflowNode { Id = move, Type = WorkflowNodeType.Move, Name = "Move", TargetStation = "SAMPLE_01", Order = 2, NextNodeIds = [wait] },
-                new WorkflowNode { Id = wait, Type = WorkflowNodeType.Wait, Name = "Wait", Order = 3, NextNodeIds = [end] },
-                new WorkflowNode { Id = end, Type = WorkflowNodeType.End, Name = "End", Order = 4 }
-            ]
-        };
-    }
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter() }
+    };
 }

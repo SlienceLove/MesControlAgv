@@ -382,7 +382,7 @@ public sealed class WorkflowApplicationService : IWorkflowApplicationService
     {
         ArgumentNullException.ThrowIfNull(definition);
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(_validator.Validate(definition));
+        return Task.FromResult(_validator.ValidateForPublication(definition));
     }
 
     public async Task<WorkflowValidationResult> ValidateVersionAsync(
@@ -392,10 +392,11 @@ public sealed class WorkflowApplicationService : IWorkflowApplicationService
     {
         var record = await FindVersionAsync(workflowId, version, cancellationToken);
         var definition = WorkflowPersistence.DeserializeDefinition(record.DefinitionJson);
-        var result = _validator.Validate(definition);
+        var result = _validator.ValidateForPublication(definition);
         record.ValidationJson = WorkflowPersistence.Serialize(result);
         record.UpdatedAtUtc = _timeProvider.GetUtcNow().UtcDateTime;
-        if (WorkflowPersistence.ParseStatus(record) == WorkflowVersionStatus.Draft)
+        if (WorkflowPersistence.ParseStatus(record) is
+            WorkflowVersionStatus.Draft or WorkflowVersionStatus.Validated)
         {
             record.Status = result.IsValid
                 ? WorkflowVersionStatus.Validated.ToString()
@@ -437,6 +438,25 @@ public sealed class WorkflowApplicationService : IWorkflowApplicationService
             throw new InvalidOperationException("Only a successfully validated workflow version can be published.");
         }
 
+        var definition = WorkflowPersistence.DeserializeDefinition(record.DefinitionJson);
+        var currentValidation = _validator.ValidateForPublication(definition);
+        record.ValidationJson = WorkflowPersistence.Serialize(currentValidation);
+        if (!currentValidation.IsValid)
+        {
+            record.Status = WorkflowVersionStatus.Draft.ToString();
+            record.UpdatedAtUtc = _timeProvider.GetUtcNow().UtcDateTime;
+            AddLifecycleAudit(
+                record,
+                "WorkflowPublicationBlocked",
+                "Invalid",
+                actor,
+                "WORKFLOW_VALIDATION_FAILED",
+                ValidationAuditDetails(currentValidation));
+            await _database.SaveChangesAsync(cancellationToken);
+            throw new InvalidOperationException(
+                "The workflow no longer passes the current publication validation gate.");
+        }
+
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         var priorPublished = await _database.WorkflowVersions
             .Where(item => item.WorkflowId == workflowId &&
@@ -456,7 +476,13 @@ public sealed class WorkflowApplicationService : IWorkflowApplicationService
         record.PublishedBy = RequireActor(actor);
         record.PublishedAtUtc = now;
         record.UpdatedAtUtc = now;
-        AddLifecycleAudit(record, "WorkflowVersionPublished", "Published", actor, null, null);
+        AddLifecycleAudit(
+            record,
+            "WorkflowVersionPublished",
+            "Published",
+            actor,
+            null,
+            ValidationAuditDetails(currentValidation));
         await _database.SaveChangesAsync(cancellationToken);
         return WorkflowPersistence.ToContract(record, version);
     }
@@ -674,6 +700,18 @@ public sealed class WorkflowApplicationService : IWorkflowApplicationService
             OccurredAtUtc = audit.OccurredAt.UtcDateTime
         });
     }
+
+    private static IReadOnlyDictionary<string, string?> ValidationAuditDetails(
+        WorkflowValidationResult validation) => new Dictionary<string, string?>
+    {
+        ["issueCount"] = validation.Issues.Count.ToString(),
+        ["warningCount"] = validation.Issues.Count(issue =>
+            issue.Severity == WorkflowValidationSeverity.Warning).ToString(),
+        ["validatorVersion"] = validation.ValidatorVersion,
+        ["catalogVersion"] = validation.CatalogVersion,
+        ["profileProductId"] = validation.ProfileProductId,
+        ["profileVersion"] = validation.ProfileVersion
+    };
 
     private WorkflowExecutionResult CreateRejection(
         WorkflowExecutionRequest request,

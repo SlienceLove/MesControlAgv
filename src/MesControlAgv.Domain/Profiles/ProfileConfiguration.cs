@@ -8,6 +8,8 @@ public sealed record ProfileConfiguration
     public ProductProfile Product { get; init; } = null!;
     public IReadOnlyList<AgvProfile> Agvs { get; init; } = null!;
     public IReadOnlyList<StationProfile> Stations { get; init; } = null!;
+    public IReadOnlyList<WorkflowDeviceProfile> WorkflowDevices { get; init; } =
+        Array.Empty<WorkflowDeviceProfile>();
     public MapProfile Map { get; init; } = null!;
     public PhysicalAcceptanceProfile? PhysicalAcceptance { get; init; }
     public FeatureFlags Features { get; init; } = null!;

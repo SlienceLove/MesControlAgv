@@ -1,3 +1,5 @@
+using MesControlAgv.Contracts.Workflows;
+
 namespace MesControlAgv.Domain.Profiles;
 
 internal static class ProfileDefaults
@@ -34,6 +36,23 @@ internal static class ProfileDefaults
         }
     ];
 
+    public static IReadOnlyList<WorkflowDeviceProfile> WorkflowDeviceProfiles { get; } =
+    [
+        new()
+        {
+            DeviceId = "CIC-D160-01",
+            DeviceFamily = WorkflowDeviceFamilyIds.IonChromatography,
+            CapabilityIds =
+            [
+                WorkflowCapabilityIds.InstrumentIdentify,
+                WorkflowCapabilityIds.InstrumentReadStatus,
+                WorkflowCapabilityIds.InstrumentWaitUntilStable
+            ],
+            Enabled = true,
+            ControlEnabled = false
+        }
+    ];
+
     public static MapProfile Map { get; } = new()
     {
         StationIds = ["CHARGE_01", "PICK_01", "SAMPLE_01", "ST_OPEN_01", "ST_PREP_01", "ST_INJECT_01", "DROP_01"],
@@ -57,6 +76,7 @@ internal static class ProfileDefaults
         Product = Product,
         Agvs = AgvProfiles.ToArray(),
         Stations = StationProfiles.ToArray(),
+        WorkflowDevices = WorkflowDeviceProfiles.ToArray(),
         Map = Map,
         Features = Features,
         Timeouts = Timeouts

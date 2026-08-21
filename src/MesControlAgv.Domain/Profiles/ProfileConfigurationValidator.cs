@@ -14,11 +14,45 @@ public sealed class ProfileConfigurationValidator : IProfileConfigurationValidat
         ValidateProduct(configuration.Product, errors);
         ValidateStations(configuration.Stations, errors);
         ValidateAgvs(configuration.Agvs, configuration.Stations, errors);
+        ValidateWorkflowDevices(configuration.WorkflowDevices, configuration.Agvs, errors);
         ValidateMap(configuration.Map, configuration.Stations, errors);
         ValidateFeatures(configuration.Features, errors);
         ValidateTimeouts(configuration.Timeouts, errors);
         ValidatePhysicalAcceptance(configuration, errors);
         return new ProfileValidationResult(errors);
+    }
+
+    private static void ValidateWorkflowDevices(
+        IReadOnlyList<WorkflowDeviceProfile>? devices,
+        IReadOnlyList<AgvProfile>? agvs,
+        ICollection<ProfileValidationError> errors)
+    {
+        var deviceIds = (agvs ?? [])
+            .Where(agv => !string.IsNullOrWhiteSpace(agv.AgvId))
+            .Select(agv => agv.AgvId)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < (devices?.Count ?? 0); index++)
+        {
+            var device = devices![index];
+            var path = $"workflowDevices[{index}]";
+            RequireText(device.DeviceId, $"{path}.deviceId", "Workflow device id is required.", errors);
+            RequireText(device.DeviceFamily, $"{path}.deviceFamily", "Workflow device family is required.", errors);
+            if (!string.IsNullOrWhiteSpace(device.DeviceId) && !deviceIds.Add(device.DeviceId))
+                errors.Add(new($"{path}.deviceId", $"Workflow device id '{device.DeviceId}' is duplicated."));
+
+            var capabilityIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            for (var capabilityIndex = 0; capabilityIndex < (device.CapabilityIds?.Count ?? 0); capabilityIndex++)
+            {
+                var capabilityId = device.CapabilityIds![capabilityIndex];
+                var capabilityPath = $"{path}.capabilityIds[{capabilityIndex}]";
+                RequireText(capabilityId, capabilityPath, "Workflow capability id is required.", errors);
+                if (!string.IsNullOrWhiteSpace(capabilityId) && !capabilityIds.Add(capabilityId))
+                    errors.Add(new(capabilityPath, $"Workflow capability id '{capabilityId}' is duplicated."));
+            }
+
+            if (device.ControlEnabled && !device.Enabled)
+                errors.Add(new($"{path}.controlEnabled", "A disabled workflow device cannot enable control."));
+        }
     }
 
     private static void ValidateProduct(ProductProfile? product, ICollection<ProfileValidationError> errors)

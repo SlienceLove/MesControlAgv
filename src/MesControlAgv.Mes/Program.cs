@@ -12,6 +12,8 @@ var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("Mes") ?? "Data Source=data/mes.db";
 var profile = BindProfile(builder.Configuration);
 var map = AgvMap.FromProfile(profile.Map);
+var workflowCatalogs = BuiltInWorkflowCatalog.Create();
+var workflowPublicationContext = WorkflowPublicationContext.FromProfile(profile);
 
 builder.Services.AddDbContext<MesDbContext>(options => options.UseSqlite(connectionString));
 builder.Services.AddHttpClient<IAgvGateway, AdapterClient>(client =>
@@ -25,6 +27,8 @@ builder.Services.AddHttpClient<IIonChromatographyStatusReader, IonChromatography
         builder.Configuration["IonChromatographyGateway:BaseUrl"] ?? "http://127.0.0.1:5190/"));
 builder.Services.AddSingleton(profile);
 builder.Services.AddSingleton(map);
+builder.Services.AddSingleton(workflowCatalogs);
+builder.Services.AddSingleton(workflowPublicationContext);
 builder.Services.AddSingleton(new PathPlanner(map));
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton(builder.Configuration

@@ -11,6 +11,23 @@ public sealed class WorkflowValidator
 {
     public const string ValidatorVersion = "workflow-contract-v1";
 
+    public const string PublicationValidatorVersion = "workflow-publication-v2";
+
+    private readonly WorkflowCatalogSet _catalogs;
+    private readonly WorkflowPublicationContext _publicationContext;
+    private readonly TimeProvider _timeProvider;
+
+    public WorkflowValidator(
+        WorkflowCatalogSet? catalogs = null,
+        WorkflowPublicationContext? publicationContext = null,
+        TimeProvider? timeProvider = null)
+    {
+        _catalogs = catalogs ?? BuiltInWorkflowCatalog.Create();
+        _publicationContext = publicationContext ?? WorkflowPublicationContext.FromProfile(
+            MesControlAgv.Domain.Profiles.ProfileConfiguration.Default);
+        _timeProvider = timeProvider ?? TimeProvider.System;
+    }
+
     public WorkflowValidationResult Validate(WorkflowDefinition definition)
     {
         ArgumentNullException.ThrowIfNull(definition);
@@ -36,7 +53,28 @@ public sealed class WorkflowValidator
         {
             Issues = issues,
             ValidatorVersion = ValidatorVersion,
-            ValidatedAt = DateTimeOffset.UtcNow
+            ValidatedAt = _timeProvider.GetUtcNow()
+        };
+    }
+
+    /// <summary>
+    /// Strict publication validation. Runtime callers continue to use Validate so
+    /// previously published v1 definitions retain their original interpretation.
+    /// </summary>
+    public WorkflowValidationResult ValidateForPublication(WorkflowDefinition definition)
+    {
+        ArgumentNullException.ThrowIfNull(definition);
+
+        var issues = Validate(definition).Issues.ToList();
+        WorkflowPublicationRules.Validate(definition, _catalogs, _publicationContext, issues);
+        return new WorkflowValidationResult
+        {
+            Issues = issues,
+            ValidatorVersion = PublicationValidatorVersion,
+            CatalogVersion = _catalogs.NodeTypes.CatalogVersion,
+            ProfileProductId = _publicationContext.ProductId,
+            ProfileVersion = _publicationContext.ProfileVersion,
+            ValidatedAt = _timeProvider.GetUtcNow()
         };
     }
 

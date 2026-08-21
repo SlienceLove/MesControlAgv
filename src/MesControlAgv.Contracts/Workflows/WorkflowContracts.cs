@@ -127,6 +127,10 @@ public sealed record WorkflowValidationIssue
     public string Message { get; init; } = string.Empty;
     public WorkflowValidationSeverity Severity { get; init; } = WorkflowValidationSeverity.Error;
     public Guid? NodeId { get; init; }
+    /// <summary>Identifies an explicit graph edge without changing legacy node issue payloads.</summary>
+    public Guid? EdgeId { get; init; }
+    /// <summary>Stable schema configuration key for typed node field issues.</summary>
+    public string? ConfigurationKey { get; init; }
     public string? ParameterName { get; init; }
 }
 
@@ -141,6 +145,9 @@ public sealed record WorkflowValidationResult
     public IReadOnlyList<WorkflowValidationIssue> Issues { get; init; } = Array.Empty<WorkflowValidationIssue>();
     public DateTimeOffset ValidatedAt { get; init; } = DateTimeOffset.UtcNow;
     public string? ValidatorVersion { get; init; }
+    public string? CatalogVersion { get; init; }
+    public string? ProfileProductId { get; init; }
+    public string? ProfileVersion { get; init; }
 
     public static WorkflowValidationResult Valid(string? validatorVersion = null) => new()
     {
