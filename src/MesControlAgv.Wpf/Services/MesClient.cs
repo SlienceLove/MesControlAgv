@@ -1,6 +1,7 @@
 ﻿using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Text.Json;
 using MesControlAgv.Contracts;
 using MesControlAgv.Contracts.Workflows;
 using ContractAgvSnapshot = MesControlAgv.Contracts.AgvSnapshotResponse;
@@ -363,6 +364,81 @@ public sealed class MesClient(HttpClient client) : IMesClient
         await client.GetFromJsonAsync<IReadOnlyList<WorkflowRunTimelineEntry>>(
             $"api/workflow-runs/{workflowRunId}/timeline?limit={Math.Clamp(limit, 1, 500)}",
             cancellationToken) ?? [];
+
+    public async Task<WorkflowRunControlPermissionsSnapshot> GetWorkflowRunControlPermissionsAsync(
+        string actor,
+        CancellationToken cancellationToken) =>
+        await client.GetFromJsonAsync<WorkflowRunControlPermissionsSnapshot>(
+            $"api/workflow-run-controls/permissions?actor={Uri.EscapeDataString(actor)}",
+            cancellationToken) ?? new WorkflowRunControlPermissionsSnapshot { Actor = actor };
+
+    public Task<WorkflowRunControlResult> PauseWorkflowRunAsync(
+        Guid workflowRunId,
+        WorkflowRunControlRequest request,
+        CancellationToken cancellationToken) =>
+        PostWorkflowRunControlAsync(
+            $"api/workflow-runs/{workflowRunId}/pause",
+            request,
+            cancellationToken);
+
+    public Task<WorkflowRunControlResult> ResumeWorkflowRunAsync(
+        Guid workflowRunId,
+        WorkflowRunControlRequest request,
+        CancellationToken cancellationToken) =>
+        PostWorkflowRunControlAsync(
+            $"api/workflow-runs/{workflowRunId}/resume",
+            request,
+            cancellationToken);
+
+    public Task<WorkflowRunControlResult> CancelWorkflowRunAsync(
+        Guid workflowRunId,
+        WorkflowRunControlRequest request,
+        CancellationToken cancellationToken) =>
+        PostWorkflowRunControlAsync(
+            $"api/workflow-runs/{workflowRunId}/cancel",
+            request,
+            cancellationToken);
+
+    public Task<WorkflowRunControlResult> ResolveWorkflowRunUnknownAsync(
+        Guid workflowRunId,
+        WorkflowUnknownResolutionRequest request,
+        CancellationToken cancellationToken) =>
+        PostWorkflowRunControlAsync(
+            $"api/workflow-runs/{workflowRunId}/unknown-resolution",
+            request,
+            cancellationToken);
+
+    private async Task<WorkflowRunControlResult> PostWorkflowRunControlAsync<TRequest>(
+        string route,
+        TRequest request,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.PostAsJsonAsync(route, request, cancellationToken);
+        if (response.IsSuccessStatusCode)
+        {
+            return await response.Content.ReadFromJsonAsync<WorkflowRunControlResult>(cancellationToken) ??
+                   throw new InvalidOperationException("MES returned no workflow run control result.");
+        }
+
+        string? detail = null;
+        try
+        {
+            using var document = await JsonDocument.ParseAsync(
+                await response.Content.ReadAsStreamAsync(cancellationToken),
+                cancellationToken: cancellationToken);
+            if (document.RootElement.TryGetProperty("detail", out var detailElement))
+                detail = detailElement.GetString();
+        }
+        catch (JsonException)
+        {
+            // Preserve the status-based fallback when MES returns a non-JSON proxy response.
+        }
+
+        throw new InvalidOperationException(
+            string.IsNullOrWhiteSpace(detail)
+                ? $"MES rejected the workflow run control request ({(int)response.StatusCode})."
+                : detail);
+    }
 
     public async Task<IReadOnlyList<WorkflowAuditResponse>> GetWorkflowAuditsAsync(
         Guid workflowId,

@@ -76,7 +76,7 @@ public sealed class WorkflowRunMonitorViewModelTests
     }
 
     [Fact]
-    public async Task Unknown_node_and_device_evidence_remain_distinct_and_never_expose_an_action()
+    public async Task Unknown_node_and_device_evidence_remain_distinct_and_never_expose_a_retry_action()
     {
         var fixture = WorkflowRunMonitorFixture.Create();
         var client = new WorkflowRunMonitorClientStub(fixture)
@@ -103,9 +103,77 @@ public sealed class WorkflowRunMonitorViewModelTests
         Assert.Equal("#A30D5D", monitor.SelectedNode.StatusBrush);
         Assert.Equal("Unknown", monitor.CanvasViewModel!.Nodes.Single(node => node.Id == fixture.MoveNodeId).RuntimeState);
         Assert.Contains("禁止自动重试", monitor.UnknownWarning, StringComparison.Ordinal);
-        var commandProperty = Assert.Single(monitor.GetType().GetProperties()
-            .Where(property => typeof(ICommand).IsAssignableFrom(property.PropertyType)));
-        Assert.Equal(nameof(WorkflowRunMonitorViewModel.RefreshCommand), commandProperty.Name);
+        var commandProperties = monitor.GetType().GetProperties()
+            .Where(property => typeof(ICommand).IsAssignableFrom(property.PropertyType))
+            .Select(property => property.Name)
+            .ToArray();
+        Assert.DoesNotContain(commandProperties, name => name.Contains("Retry", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(nameof(WorkflowRunMonitorViewModel.ResolveUnknownSucceededCommand), commandProperties);
+        Assert.Contains(nameof(WorkflowRunMonitorViewModel.ResolveUnknownFailedCommand), commandProperties);
+        Assert.False(monitor.CanResolveUnknown);
+        Assert.Contains(WorkflowRunControlPermissions.ResolveUnknown, monitor.UnknownResolutionUnavailableReason);
+    }
+
+    [Fact]
+    public async Task Pause_requires_server_permission_reason_and_confirmation_and_explains_active_device_semantics()
+    {
+        var fixture = WorkflowRunMonitorFixture.Create();
+        var client = new WorkflowRunMonitorClientStub(fixture)
+        {
+            GrantedPermissions =
+            [
+                WorkflowRunControlPermissions.Pause,
+                WorkflowRunControlPermissions.Cancel
+            ]
+        };
+        var confirmation = new WorkflowRunControlConfirmationStub();
+        var monitor = new WorkflowRunMonitorViewModel(client, confirmation);
+        await monitor.LoadAsync(fixture.Run.ExecutionId);
+
+        Assert.False(monitor.CanPause);
+        Assert.Contains("原因", monitor.PauseUnavailableReason, StringComparison.Ordinal);
+        monitor.ControlReason = "Hold before the next node";
+
+        Assert.True(monitor.CanPause);
+        Assert.False(monitor.CanCancel);
+        Assert.Contains("仅静止", monitor.CancelUnavailableReason, StringComparison.Ordinal);
+        monitor.PauseCommand.Execute(null);
+        await WaitUntilAsync(() => client.PauseRequests.Count == 1 && !monitor.IsBusy);
+
+        var request = Assert.Single(client.PauseRequests);
+        Assert.Equal("local-operator", request.Actor);
+        Assert.Equal("Hold before the next node", request.Reason);
+        Assert.Contains("不会向设备发送暂停命令", Assert.Single(confirmation.Messages), StringComparison.Ordinal);
+        Assert.Equal(WorkflowRuntimeStatus.Paused, monitor.Run!.RuntimeStatus);
+        Assert.Empty(monitor.ControlReason);
+    }
+
+    [Fact]
+    public async Task Unknown_resolution_has_two_explicit_conclusions_and_confirmed_success_never_calls_retry()
+    {
+        var fixture = WorkflowRunMonitorFixture.Create();
+        var client = new WorkflowRunMonitorClientStub(fixture)
+        {
+            Run = fixture.Run with { RuntimeStatus = WorkflowRuntimeStatus.Unknown },
+            Nodes = [fixture.NodeExecution with { Status = WorkflowNodeExecutionStatus.Unknown }],
+            DeviceOperations = [fixture.DeviceOperation with { Status = WorkflowDeviceOperationStatus.Unknown }],
+            GrantedPermissions = [WorkflowRunControlPermissions.ResolveUnknown]
+        };
+        var confirmation = new WorkflowRunControlConfirmationStub();
+        var monitor = new WorkflowRunMonitorViewModel(client, confirmation);
+        await monitor.LoadAsync(fixture.Run.ExecutionId);
+        monitor.ControlReason = "Field log confirms arrival";
+
+        Assert.True(monitor.CanResolveUnknown);
+        monitor.ResolveUnknownSucceededCommand.Execute(null);
+        await WaitUntilAsync(() => client.UnknownResolutionRequests.Count == 1 && !monitor.IsBusy);
+
+        var request = Assert.Single(client.UnknownResolutionRequests);
+        Assert.Equal(fixture.NodeExecution.Id, request.NodeExecutionId);
+        Assert.Equal(WorkflowUnknownResolutionOutcome.ConfirmedSucceeded, request.Outcome);
+        Assert.Contains("不会重发设备命令", Assert.Single(confirmation.Messages), StringComparison.Ordinal);
+        Assert.Equal(WorkflowRuntimeStatus.Prepared, monitor.Run!.RuntimeStatus);
+        Assert.Single(monitor.DeviceOperations);
     }
 
     [Fact]
@@ -205,6 +273,14 @@ public sealed class WorkflowRunMonitorViewModelTests
         Assert.Equal(secondNode.Id, monitor.SelectedNode!.Id);
         Assert.Equal(fixture.EndNodeId, monitor.CanvasViewModel.SelectedNode!.Id);
     }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(3);
+        while (!condition() && DateTime.UtcNow < deadline)
+            await Task.Delay(10);
+        Assert.True(condition(), "The workflow run control command did not complete in time.");
+    }
 }
 
 internal sealed class WorkflowRunMonitorClientStub : IMesClient
@@ -224,6 +300,11 @@ internal sealed class WorkflowRunMonitorClientStub : IMesClient
     public IReadOnlyList<WorkflowNodeExecutionSnapshot> Nodes { get; set; }
     public IReadOnlyList<WorkflowDeviceOperationSnapshot> DeviceOperations { get; set; }
     public IReadOnlyList<WorkflowRunTimelineEntry> Timeline { get; set; }
+    public IReadOnlyList<string> GrantedPermissions { get; set; } = [];
+    public List<WorkflowRunControlRequest> PauseRequests { get; } = [];
+    public List<WorkflowRunControlRequest> ResumeRequests { get; } = [];
+    public List<WorkflowRunControlRequest> CancelRequests { get; } = [];
+    public List<WorkflowUnknownResolutionRequest> UnknownResolutionRequests { get; } = [];
 
     public Task<WorkflowExecutionSnapshot?> GetWorkflowExecutionAsync(Guid executionId, CancellationToken cancellationToken) =>
         Task.FromResult(Run);
@@ -243,6 +324,68 @@ internal sealed class WorkflowRunMonitorClientStub : IMesClient
         Guid workflowRunId,
         int limit,
         CancellationToken cancellationToken) => Task.FromResult(Timeline);
+
+    public Task<WorkflowRunControlPermissionsSnapshot> GetWorkflowRunControlPermissionsAsync(
+        string actor,
+        CancellationToken cancellationToken) => Task.FromResult(new WorkflowRunControlPermissionsSnapshot
+    {
+        Actor = actor,
+        Permissions = GrantedPermissions
+    });
+
+    public Task<WorkflowRunControlResult> PauseWorkflowRunAsync(
+        Guid workflowRunId,
+        WorkflowRunControlRequest request,
+        CancellationToken cancellationToken)
+    {
+        PauseRequests.Add(request);
+        Run = Run! with { RuntimeStatus = WorkflowRuntimeStatus.Paused };
+        return Task.FromResult(ControlResult(request.RequestId, WorkflowRunControlAction.Pause));
+    }
+
+    public Task<WorkflowRunControlResult> ResumeWorkflowRunAsync(
+        Guid workflowRunId,
+        WorkflowRunControlRequest request,
+        CancellationToken cancellationToken)
+    {
+        ResumeRequests.Add(request);
+        Run = Run! with { RuntimeStatus = WorkflowRuntimeStatus.Prepared };
+        return Task.FromResult(ControlResult(request.RequestId, WorkflowRunControlAction.Resume));
+    }
+
+    public Task<WorkflowRunControlResult> CancelWorkflowRunAsync(
+        Guid workflowRunId,
+        WorkflowRunControlRequest request,
+        CancellationToken cancellationToken)
+    {
+        CancelRequests.Add(request);
+        Run = Run! with { RuntimeStatus = WorkflowRuntimeStatus.Cancelled };
+        return Task.FromResult(ControlResult(request.RequestId, WorkflowRunControlAction.Cancel));
+    }
+
+    public Task<WorkflowRunControlResult> ResolveWorkflowRunUnknownAsync(
+        Guid workflowRunId,
+        WorkflowUnknownResolutionRequest request,
+        CancellationToken cancellationToken)
+    {
+        UnknownResolutionRequests.Add(request);
+        Run = Run! with { RuntimeStatus = WorkflowRuntimeStatus.Prepared };
+        Nodes = Nodes.Select(node => node.Id == request.NodeExecutionId
+            ? node with { Status = WorkflowNodeExecutionStatus.Succeeded }
+            : node).ToArray();
+        DeviceOperations = DeviceOperations.Select(operation => operation.NodeExecutionId == request.NodeExecutionId
+            ? operation with { Status = WorkflowDeviceOperationStatus.Succeeded }
+            : operation).ToArray();
+        return Task.FromResult(ControlResult(request.RequestId, WorkflowRunControlAction.ResolveUnknown));
+    }
+
+    private WorkflowRunControlResult ControlResult(Guid requestId, WorkflowRunControlAction action) => new()
+    {
+        RequestId = requestId,
+        WorkflowRunId = Run!.ExecutionId,
+        Action = action,
+        Run = Run
+    };
 
     public Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<DashboardTask>>([]);
@@ -281,6 +424,17 @@ internal sealed class WorkflowRunMonitorClientStub : IMesClient
 
     private static Task<DashboardTask> UnsupportedTask() =>
         Task.FromException<DashboardTask>(new NotSupportedException());
+}
+
+internal sealed class WorkflowRunControlConfirmationStub(bool result = true) : IWorkflowRunControlConfirmation
+{
+    public List<string> Messages { get; } = [];
+
+    public bool Confirm(string title, string message)
+    {
+        Messages.Add(message);
+        return result;
+    }
 }
 
 internal sealed record WorkflowRunMonitorFixture(

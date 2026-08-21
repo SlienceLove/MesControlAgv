@@ -99,6 +99,30 @@ public interface IWorkflowApplicationService : IWorkflowVersionReader, IWorkflow
         string? error,
         CancellationToken cancellationToken);
 
+    /// <summary>Stops future node claims without issuing a device pause command.</summary>
+    Task<WorkflowRunControlResult> PauseRunAsync(
+        Guid workflowRunId,
+        WorkflowRunControlRequest request,
+        CancellationToken cancellationToken);
+
+    /// <summary>Re-enables node claims after an operator pause.</summary>
+    Task<WorkflowRunControlResult> ResumeRunAsync(
+        Guid workflowRunId,
+        WorkflowRunControlRequest request,
+        CancellationToken cancellationToken);
+
+    /// <summary>Cancels a run only when no node or device operation is active or unknown.</summary>
+    Task<WorkflowRunControlResult> CancelRunAsync(
+        Guid workflowRunId,
+        WorkflowRunControlRequest request,
+        CancellationToken cancellationToken);
+
+    /// <summary>Records an explicit human conclusion for one Unknown node attempt.</summary>
+    Task<WorkflowRunControlResult> ResolveUnknownAsync(
+        Guid workflowRunId,
+        WorkflowUnknownResolutionRequest request,
+        CancellationToken cancellationToken);
+
     /// <summary>
     /// Atomically reserves the pending step's stable Adapter operation id.
     /// It never writes to an Adapter or device.

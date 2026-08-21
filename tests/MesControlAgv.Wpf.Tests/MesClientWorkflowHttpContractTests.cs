@@ -261,6 +261,92 @@ public sealed class MesClientWorkflowHttpContractTests
         Assert.Equal($"/api/workflow-executions/by-request/{requestId}", handler.Requests[1].Uri.AbsolutePath);
     }
 
+    [Fact]
+    public async Task Workflow_run_controls_use_expected_routes_and_never_send_permissions_in_action_payloads()
+    {
+        var runId = Guid.NewGuid();
+        var nodeExecutionId = Guid.NewGuid();
+        var request = new WorkflowRunControlRequest
+        {
+            RequestId = Guid.NewGuid(),
+            Actor = "local operator",
+            Reason = "Verify sample"
+        };
+        var run = new WorkflowExecutionSnapshot
+        {
+            ExecutionId = runId,
+            RuntimeStatus = WorkflowRuntimeStatus.Paused
+        };
+        var handler = new RecordingHandler(message =>
+        {
+            if (message.Method == HttpMethod.Get)
+            {
+                return JsonResponse(new WorkflowRunControlPermissionsSnapshot
+                {
+                    Actor = "local operator",
+                    Permissions =
+                    [
+                        WorkflowRunControlPermissions.Pause,
+                        WorkflowRunControlPermissions.Cancel,
+                        WorkflowRunControlPermissions.ResolveUnknown
+                    ]
+                });
+            }
+
+            var action = message.RequestUri!.AbsolutePath.EndsWith("/resume", StringComparison.Ordinal)
+                ? WorkflowRunControlAction.Resume
+                : message.RequestUri.AbsolutePath.EndsWith("/cancel", StringComparison.Ordinal)
+                    ? WorkflowRunControlAction.Cancel
+                    : message.RequestUri.AbsolutePath.EndsWith("/unknown-resolution", StringComparison.Ordinal)
+                        ? WorkflowRunControlAction.ResolveUnknown
+                        : WorkflowRunControlAction.Pause;
+            return JsonResponse(new WorkflowRunControlResult
+            {
+                RequestId = request.RequestId,
+                WorkflowRunId = runId,
+                Action = action,
+                Run = run
+            });
+        });
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://mes.local/") };
+        var client = new MesClient(httpClient);
+
+        var permissions = await client.GetWorkflowRunControlPermissionsAsync("local operator", CancellationToken.None);
+        await client.PauseWorkflowRunAsync(runId, request, CancellationToken.None);
+        await client.ResumeWorkflowRunAsync(runId, request, CancellationToken.None);
+        await client.CancelWorkflowRunAsync(runId, request, CancellationToken.None);
+        await client.ResolveWorkflowRunUnknownAsync(
+            runId,
+            new WorkflowUnknownResolutionRequest
+            {
+                RequestId = request.RequestId,
+                Actor = request.Actor,
+                Reason = request.Reason,
+                NodeExecutionId = nodeExecutionId,
+                Outcome = WorkflowUnknownResolutionOutcome.ConfirmedSucceeded
+            },
+            CancellationToken.None);
+
+        Assert.Contains(WorkflowRunControlPermissions.ResolveUnknown, permissions.Permissions);
+        Assert.Equal("actor=local%20operator", handler.Requests[0].Uri.Query.TrimStart('?'));
+        Assert.Equal($"/api/workflow-runs/{runId}/pause", handler.Requests[1].Uri.AbsolutePath);
+        Assert.Equal($"/api/workflow-runs/{runId}/resume", handler.Requests[2].Uri.AbsolutePath);
+        Assert.Equal($"/api/workflow-runs/{runId}/cancel", handler.Requests[3].Uri.AbsolutePath);
+        Assert.Equal($"/api/workflow-runs/{runId}/unknown-resolution", handler.Requests[4].Uri.AbsolutePath);
+        Assert.All(handler.Requests.Skip(1), captured =>
+        {
+            using var body = JsonDocument.Parse(captured.Body!);
+            Assert.False(body.RootElement.TryGetProperty("permissions", out _));
+            Assert.Equal("local operator", body.RootElement.GetProperty("actor").GetString());
+            Assert.Equal("Verify sample", body.RootElement.GetProperty("reason").GetString());
+        });
+        using var resolutionBody = JsonDocument.Parse(handler.Requests[4].Body!);
+        Assert.Equal(nodeExecutionId, resolutionBody.RootElement.GetProperty("nodeExecutionId").GetGuid());
+        Assert.Equal(
+            (int)WorkflowUnknownResolutionOutcome.ConfirmedSucceeded,
+            resolutionBody.RootElement.GetProperty("outcome").GetInt32());
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.NotFound, "WORKFLOW_VERSION_NOT_FOUND")]
     [InlineData(HttpStatusCode.Conflict, "WORKFLOW_REQUEST_ID_REUSED")]

@@ -184,6 +184,35 @@ public interface IMesClient
         CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<WorkflowRunTimelineEntry>>([]);
 
+    Task<WorkflowRunControlPermissionsSnapshot> GetWorkflowRunControlPermissionsAsync(
+        string actor,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(new WorkflowRunControlPermissionsSnapshot { Actor = actor });
+
+    Task<WorkflowRunControlResult> PauseWorkflowRunAsync(
+        Guid workflowRunId,
+        WorkflowRunControlRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<WorkflowRunControlResult>(new NotSupportedException("Workflow run controls are not supported by this MES client."));
+
+    Task<WorkflowRunControlResult> ResumeWorkflowRunAsync(
+        Guid workflowRunId,
+        WorkflowRunControlRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<WorkflowRunControlResult>(new NotSupportedException("Workflow run controls are not supported by this MES client."));
+
+    Task<WorkflowRunControlResult> CancelWorkflowRunAsync(
+        Guid workflowRunId,
+        WorkflowRunControlRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<WorkflowRunControlResult>(new NotSupportedException("Workflow run controls are not supported by this MES client."));
+
+    Task<WorkflowRunControlResult> ResolveWorkflowRunUnknownAsync(
+        Guid workflowRunId,
+        WorkflowUnknownResolutionRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<WorkflowRunControlResult>(new NotSupportedException("Workflow run controls are not supported by this MES client."));
+
     Task<IReadOnlyList<WorkflowAuditResponse>> GetWorkflowAuditsAsync(
         Guid workflowId,
         int? version,

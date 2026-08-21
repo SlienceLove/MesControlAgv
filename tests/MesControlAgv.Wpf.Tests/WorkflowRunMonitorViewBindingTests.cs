@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Threading;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Wpf.ViewModels;
@@ -39,6 +40,18 @@ public sealed class WorkflowRunMonitorViewBindingTests
                 Assert.False(monitor.CanvasViewModel.IsEditing);
                 Assert.True(surface.ActualWidth > 0);
                 Assert.True(surface.ActualHeight > 0);
+                var pause = Assert.IsType<Button>(view.FindName("PauseRunButton"));
+                var resume = Assert.IsType<Button>(view.FindName("ResumeRunButton"));
+                var cancel = Assert.IsType<Button>(view.FindName("CancelRunButton"));
+                var resolveSucceeded = Assert.IsType<Button>(view.FindName("ResolveUnknownSucceededButton"));
+                var resolveFailed = Assert.IsType<Button>(view.FindName("ResolveUnknownFailedButton"));
+                Assert.Same(monitor.PauseCommand, pause.Command);
+                Assert.Same(monitor.ResumeCommand, resume.Command);
+                Assert.Same(monitor.CancelCommand, cancel.Command);
+                Assert.Same(monitor.ResolveUnknownSucceededCommand, resolveSucceeded.Command);
+                Assert.Same(monitor.ResolveUnknownFailedCommand, resolveFailed.Command);
+                Assert.DoesNotContain("重试", resolveSucceeded.Content.ToString(), StringComparison.Ordinal);
+                Assert.DoesNotContain("重试", resolveFailed.Content.ToString(), StringComparison.Ordinal);
                 window.Close();
             }
             catch (Exception exception)

@@ -53,19 +53,24 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
     private readonly WorkflowRuntimeExecutor _runtimeExecutor;
     private readonly WorkflowValidator _validator;
     private readonly TimeProvider _timeProvider;
+    private readonly IWorkflowRunControlAuthorizer _controlAuthorizer;
 
     public WorkflowApplicationService(
         MesDbContext database,
         IWorkflowVersionReader versionReader,
         WorkflowRuntimeExecutor runtimeExecutor,
         WorkflowValidator validator,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IWorkflowRunControlAuthorizer? controlAuthorizer = null)
     {
         _database = database;
         _versionReader = versionReader;
         _runtimeExecutor = runtimeExecutor;
         _validator = validator;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _controlAuthorizer = controlAuthorizer ??
+            new ConfiguredWorkflowRunControlAuthorizer(
+                Microsoft.Extensions.Options.Options.Create(new WorkflowRunControlAuthorizationOptions()));
     }
 
     public async Task<IReadOnlyList<WorkflowDefinition>> ListAsync(CancellationToken cancellationToken)
@@ -257,7 +262,8 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
         ArgumentNullException.ThrowIfNull(completion);
         var record = await FindExecutionAsync(executionId, cancellationToken);
         var snapshot = WorkflowPersistence.ToExecutionSnapshot(record);
-        if (snapshot.RuntimeStatus != WorkflowRuntimeStatus.Running ||
+        var preservePause = snapshot.RuntimeStatus == WorkflowRuntimeStatus.Paused;
+        if (snapshot.RuntimeStatus is not (WorkflowRuntimeStatus.Running or WorkflowRuntimeStatus.Paused) ||
             record.TransportOperationId is null ||
             completion.TransportOperationId == Guid.Empty ||
             record.TransportOperationId != completion.TransportOperationId)
@@ -279,7 +285,9 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
             record.LastError = null;
             record.RuntimeStatus = (nextStep is null
                 ? WorkflowRuntimeStatus.Completed
-                : WorkflowRuntimeStatus.Prepared).ToString();
+                : preservePause
+                    ? WorkflowRuntimeStatus.Paused
+                    : WorkflowRuntimeStatus.Prepared).ToString();
         }
         else
         {

@@ -34,6 +34,9 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton(builder.Configuration
     .GetSection("WorkflowSimulatorWorker")
     .Get<WorkflowSimulatorWorkerOptions>() ?? new WorkflowSimulatorWorkerOptions());
+builder.Services.Configure<WorkflowRunControlAuthorizationOptions>(
+    builder.Configuration.GetSection("WorkflowRunControl"));
+builder.Services.AddSingleton<IWorkflowRunControlAuthorizer, ConfiguredWorkflowRunControlAuthorizer>();
 builder.Services.AddSingleton<WorkflowValidator>();
 builder.Services.AddSingleton<IWorkflowRuntimeAdmissionPolicy, ActiveProfileWorkflowAdmissionPolicy>();
 builder.Services.AddScoped<MesWorkflowVersionReader>();
@@ -403,6 +406,52 @@ app.MapGet("/api/workflow-runs/{workflowRunId:guid}/timeline", async (
         cancellationToken));
 });
 
+app.MapGet("/api/workflow-run-controls/permissions", (
+    string actor,
+    IWorkflowRunControlAuthorizer authorizer) =>
+{
+    try
+    {
+        return Results.Ok(authorizer.GetPermissions(actor));
+    }
+    catch (ArgumentException exception)
+    {
+        return Results.BadRequest(new { detail = exception.Message });
+    }
+});
+
+app.MapPost("/api/workflow-runs/{workflowRunId:guid}/pause", async (
+    Guid workflowRunId,
+    WorkflowRunControlRequest request,
+    IWorkflowApplicationService service,
+    CancellationToken cancellationToken) =>
+    await ExecuteWorkflowRunControlAsync(
+        () => service.PauseRunAsync(workflowRunId, request, cancellationToken)));
+
+app.MapPost("/api/workflow-runs/{workflowRunId:guid}/resume", async (
+    Guid workflowRunId,
+    WorkflowRunControlRequest request,
+    IWorkflowApplicationService service,
+    CancellationToken cancellationToken) =>
+    await ExecuteWorkflowRunControlAsync(
+        () => service.ResumeRunAsync(workflowRunId, request, cancellationToken)));
+
+app.MapPost("/api/workflow-runs/{workflowRunId:guid}/cancel", async (
+    Guid workflowRunId,
+    WorkflowRunControlRequest request,
+    IWorkflowApplicationService service,
+    CancellationToken cancellationToken) =>
+    await ExecuteWorkflowRunControlAsync(
+        () => service.CancelRunAsync(workflowRunId, request, cancellationToken)));
+
+app.MapPost("/api/workflow-runs/{workflowRunId:guid}/unknown-resolution", async (
+    Guid workflowRunId,
+    WorkflowUnknownResolutionRequest request,
+    IWorkflowApplicationService service,
+    CancellationToken cancellationToken) =>
+    await ExecuteWorkflowRunControlAsync(
+        () => service.ResolveUnknownAsync(workflowRunId, request, cancellationToken)));
+
 app.MapPost("/api/field-navigation-acceptances", async (
     CreateFieldNavigationAcceptanceRequest request,
     IFieldNavigationAcceptanceApplicationService service,
@@ -663,6 +712,37 @@ app.MapGet("/api/tasks/{taskId:guid}", async (
     var task = await service.GetDetailAsync(taskId, cancellationToken);
     return task is null ? Results.NotFound() : Results.Ok(task);
 });
+
+static async Task<IResult> ExecuteWorkflowRunControlAsync(
+    Func<Task<WorkflowRunControlResult>> action)
+{
+    try
+    {
+        return Results.Ok(await action());
+    }
+    catch (ArgumentException exception)
+    {
+        return Results.BadRequest(new { detail = exception.Message });
+    }
+    catch (WorkflowRunControlForbiddenException exception)
+    {
+        return Results.Problem(
+            detail: exception.Message,
+            statusCode: StatusCodes.Status403Forbidden);
+    }
+    catch (KeyNotFoundException exception)
+    {
+        return Results.NotFound(new { detail = exception.Message });
+    }
+    catch (WorkflowRunControlConflictException exception)
+    {
+        return Results.Conflict(new { detail = exception.Message });
+    }
+    catch (InvalidOperationException exception)
+    {
+        return Results.Conflict(new { detail = exception.Message });
+    }
+}
 
 static async Task EnsureTaskColumnsAsync(MesDbContext database)
 {

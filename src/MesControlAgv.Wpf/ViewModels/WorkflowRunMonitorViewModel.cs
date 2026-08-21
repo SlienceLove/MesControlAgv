@@ -9,13 +9,20 @@ using MesControlAgv.Wpf.Services;
 namespace MesControlAgv.Wpf.ViewModels;
 
 /// <summary>
-/// Read-only projection of one pinned workflow run. It only consumes MES read
-/// APIs and never exposes an execution or device command.
+/// Read-only projection of one pinned workflow graph plus audited run-state
+/// controls. These controls never issue a device command.
 /// </summary>
 public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
 {
     private readonly IMesClient _mes;
+    private readonly IWorkflowRunControlConfirmation _confirmation;
     private readonly AsyncCommand _refreshCommand;
+    private readonly AsyncCommand _checkPermissionsCommand;
+    private readonly AsyncCommand _pauseCommand;
+    private readonly AsyncCommand _resumeCommand;
+    private readonly AsyncCommand _cancelCommand;
+    private readonly AsyncCommand _resolveSucceededCommand;
+    private readonly AsyncCommand _resolveFailedCommand;
     private string _runIdText = string.Empty;
     private WorkflowExecutionSnapshot? _run;
     private WorkflowVersion? _version;
@@ -30,12 +37,36 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
     private bool _isBusy;
     private bool _synchronizingSelection;
     private DateTimeOffset? _refreshedAt;
+    private string _operatorName = Environment.GetEnvironmentVariable("WORKFLOW_OPERATOR") ?? "local-operator";
+    private string _controlReason = string.Empty;
+    private string? _permissionActor;
+    private IReadOnlyList<string> _grantedPermissions = [];
+    private string _permissionStatus = "权限尚未校验。";
 
-    public WorkflowRunMonitorViewModel(IMesClient mes)
+    public WorkflowRunMonitorViewModel(
+        IMesClient mes,
+        IWorkflowRunControlConfirmation? confirmation = null)
     {
         _mes = mes ?? throw new ArgumentNullException(nameof(mes));
+        _confirmation = confirmation ?? MessageBoxWorkflowRunControlConfirmation.Instance;
         _refreshCommand = new AsyncCommand(RefreshFromInputAsync, CanRefresh);
+        _checkPermissionsCommand = new AsyncCommand(CheckPermissionsAsync, CanCheckPermissions);
+        _pauseCommand = new AsyncCommand(PauseAsync, () => CanPause);
+        _resumeCommand = new AsyncCommand(ResumeAsync, () => CanResume);
+        _cancelCommand = new AsyncCommand(CancelAsync, () => CanCancel);
+        _resolveSucceededCommand = new AsyncCommand(
+            () => ResolveUnknownAsync(WorkflowUnknownResolutionOutcome.ConfirmedSucceeded),
+            () => CanResolveUnknown);
+        _resolveFailedCommand = new AsyncCommand(
+            () => ResolveUnknownAsync(WorkflowUnknownResolutionOutcome.ConfirmedFailed),
+            () => CanResolveUnknown);
         RefreshCommand = _refreshCommand;
+        CheckPermissionsCommand = _checkPermissionsCommand;
+        PauseCommand = _pauseCommand;
+        ResumeCommand = _resumeCommand;
+        CancelCommand = _cancelCommand;
+        ResolveUnknownSucceededCommand = _resolveSucceededCommand;
+        ResolveUnknownFailedCommand = _resolveFailedCommand;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -51,6 +82,46 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
     }
 
     public ICommand RefreshCommand { get; }
+    public ICommand CheckPermissionsCommand { get; }
+    public ICommand PauseCommand { get; }
+    public ICommand ResumeCommand { get; }
+    public ICommand CancelCommand { get; }
+    public ICommand ResolveUnknownSucceededCommand { get; }
+    public ICommand ResolveUnknownFailedCommand { get; }
+
+    public string OperatorName
+    {
+        get => _operatorName;
+        set
+        {
+            if (!SetField(ref _operatorName, value ?? string.Empty)) return;
+            _permissionActor = null;
+            _grantedPermissions = [];
+            PermissionStatus = "操作者已更改，请重新校验权限。";
+            OnPropertyChanged(nameof(GrantedPermissionsDisplay));
+            RaiseControlStateChanged();
+        }
+    }
+
+    public string ControlReason
+    {
+        get => _controlReason;
+        set
+        {
+            if (!SetField(ref _controlReason, value ?? string.Empty)) return;
+            RaiseControlStateChanged();
+        }
+    }
+
+    public string PermissionStatus
+    {
+        get => _permissionStatus;
+        private set => SetField(ref _permissionStatus, value);
+    }
+
+    public string GrantedPermissionsDisplay => _grantedPermissions.Count == 0
+        ? "无运行控制权限"
+        : string.Join("  /  ", _grantedPermissions);
 
     public WorkflowExecutionSnapshot? Run => _run;
 
@@ -114,6 +185,8 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
             {
                 SelectedDeviceOperation = value.DeviceOperations.LastOrDefault();
             }
+
+            RaiseControlStateChanged();
         }
     }
 
@@ -160,6 +233,7 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
         {
             if (!SetField(ref _isBusy, value)) return;
             _refreshCommand.RaiseCanExecuteChanged();
+            RaiseControlStateChanged();
         }
     }
 
@@ -175,6 +249,60 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
         Run?.RuntimeStatus == WorkflowRuntimeStatus.Unknown ||
         Nodes.Any(node => node.Status == WorkflowNodeExecutionStatus.Unknown) ||
         DeviceOperations.Any(operation => operation.Status == WorkflowDeviceOperationStatus.Unknown);
+
+    public bool CanPause => string.IsNullOrEmpty(PauseUnavailableReason);
+
+    public bool CanResume => string.IsNullOrEmpty(ResumeUnavailableReason);
+
+    public bool CanCancel => string.IsNullOrEmpty(CancelUnavailableReason);
+
+    public bool CanResolveUnknown => string.IsNullOrEmpty(UnknownResolutionUnavailableReason);
+
+    public string PauseUnavailableReason => GetControlUnavailableReason(
+        WorkflowRunControlPermissions.Pause,
+        Run?.RuntimeStatus is WorkflowRuntimeStatus.Prepared or WorkflowRuntimeStatus.Running,
+        "仅等待执行或运行中的流程可以暂停。");
+
+    public string ResumeUnavailableReason => GetControlUnavailableReason(
+        WorkflowRunControlPermissions.Pause,
+        Run?.RuntimeStatus == WorkflowRuntimeStatus.Paused,
+        "仅已暂停的流程可以恢复。");
+
+    public string CancelUnavailableReason
+    {
+        get
+        {
+            var baseReason = GetControlUnavailableReason(
+                WorkflowRunControlPermissions.Cancel,
+                Run?.RuntimeStatus is WorkflowRuntimeStatus.Prepared or WorkflowRuntimeStatus.Paused,
+                Run?.RuntimeStatus == WorkflowRuntimeStatus.Unknown
+                    ? "Unknown 必须先完成独立处置。"
+                    : "仅静止的等待执行或已暂停流程可以取消。");
+            if (!string.IsNullOrEmpty(baseReason)) return baseReason;
+            return HasUnsafeCancellationEvidence
+                ? "仍有运行中或 Unknown 的节点/设备证据，不能直接取消。"
+                : string.Empty;
+        }
+    }
+
+    public string UnknownResolutionUnavailableReason
+    {
+        get
+        {
+            var baseReason = GetControlUnavailableReason(
+                WorkflowRunControlPermissions.ResolveUnknown,
+                Run?.RuntimeStatus == WorkflowRuntimeStatus.Unknown,
+                "仅结果未知的流程可以进行人工裁决。");
+            if (!string.IsNullOrEmpty(baseReason)) return baseReason;
+            return SelectedNode?.Status == WorkflowNodeExecutionStatus.Unknown
+                ? string.Empty
+                : "请选择状态为 Unknown 的节点执行记录。";
+        }
+    }
+
+    public string UnknownResolutionContext => SelectedNode?.Status == WorkflowNodeExecutionStatus.Unknown
+        ? $"待处置节点：{SelectedNode.NodeName} / 尝试 {SelectedNode.Attempt} / {SelectedNode.Id:D}"
+        : "请选择 Unknown 节点并核对设备操作与时间线证据。";
 
     public string RunTitle => Version?.Definition.Name ?? "流程运行监控";
 
@@ -228,6 +356,7 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
             var timeline = await timelineTask;
             ValidateReadModel(run, version, nodes, operations, timeline);
             ApplyReadModel(run, version, nodes, operations, timeline);
+            await RefreshPermissionsAsync(cancellationToken, reportFailure: false);
             RefreshedAt = DateTimeOffset.Now;
             StatusMessage = $"已读取 {Nodes.Count} 次节点执行、{DeviceOperations.Count} 次设备操作和 {Timeline.Count} 条时间线记录。";
         }
@@ -255,6 +384,179 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
         catch (Exception exception)
         {
             StatusMessage = $"运行记录读取失败：{exception.Message}";
+        }
+    }
+
+    private bool CanCheckPermissions() =>
+        !IsBusy && !string.IsNullOrWhiteSpace(OperatorName);
+
+    private async Task CheckPermissionsAsync()
+    {
+        await RefreshPermissionsAsync(CancellationToken.None, reportFailure: true);
+    }
+
+    private async Task RefreshPermissionsAsync(
+        CancellationToken cancellationToken,
+        bool reportFailure)
+    {
+        if (string.IsNullOrWhiteSpace(OperatorName))
+        {
+            _permissionActor = null;
+            _grantedPermissions = [];
+            PermissionStatus = "请输入操作者身份。";
+            OnPropertyChanged(nameof(GrantedPermissionsDisplay));
+            RaiseControlStateChanged();
+            return;
+        }
+
+        var actor = OperatorName.Trim();
+        try
+        {
+            var snapshot = await _mes.GetWorkflowRunControlPermissionsAsync(actor, cancellationToken);
+            if (!string.Equals(snapshot.Actor, actor, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("MES returned permissions for a different operator.");
+            _permissionActor = snapshot.Actor;
+            _grantedPermissions = snapshot.Permissions
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(permission => permission, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            PermissionStatus = _grantedPermissions.Count == 0
+                ? $"操作者 {snapshot.Actor} 没有运行控制权限。"
+                : $"已由 MES 校验操作者 {snapshot.Actor} 的权限。";
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _permissionActor = null;
+            _grantedPermissions = [];
+            PermissionStatus = reportFailure
+                ? $"权限校验失败：{exception.Message}"
+                : "MES 权限接口不可用，运行监控保持只读。";
+        }
+
+        OnPropertyChanged(nameof(GrantedPermissionsDisplay));
+        RaiseControlStateChanged();
+    }
+
+    private async Task PauseAsync()
+    {
+        if (!_confirmation.Confirm(
+                "确认暂停流程",
+                "暂停只阻止后续节点调度，不会向设备发送暂停命令。当前设备动作仍会继续对账。是否继续？"))
+        {
+            return;
+        }
+
+        await ExecuteControlAsync(
+            "暂停",
+            (runId, request, cancellationToken) =>
+                _mes.PauseWorkflowRunAsync(runId, request, cancellationToken));
+    }
+
+    private async Task ResumeAsync()
+    {
+        if (!_confirmation.Confirm(
+                "确认恢复流程",
+                "恢复后 MES 将重新允许后续节点声明。是否继续？"))
+        {
+            return;
+        }
+
+        await ExecuteControlAsync(
+            "恢复",
+            (runId, request, cancellationToken) =>
+                _mes.ResumeWorkflowRunAsync(runId, request, cancellationToken));
+    }
+
+    private async Task CancelAsync()
+    {
+        if (!_confirmation.Confirm(
+                "确认取消流程",
+                "取消会终止当前流程运行，且不会向实体设备发送取消命令。此操作不可撤销。是否继续？"))
+        {
+            return;
+        }
+
+        await ExecuteControlAsync(
+            "取消",
+            (runId, request, cancellationToken) =>
+                _mes.CancelWorkflowRunAsync(runId, request, cancellationToken));
+    }
+
+    private async Task ResolveUnknownAsync(WorkflowUnknownResolutionOutcome outcome)
+    {
+        if (Run is null || SelectedNode is null) return;
+        var confirmedSuccess = outcome == WorkflowUnknownResolutionOutcome.ConfirmedSucceeded;
+        var title = confirmedSuccess ? "确认现场结果为成功" : "确认失败并终止流程";
+        var message = confirmedSuccess
+            ? "此操作会把选中的 Unknown 节点记录为现场确认成功，并按已发布流程推进。不会重发设备命令。是否继续？"
+            : "此操作会把选中的 Unknown 节点记录为失败并终止流程。不会重发设备命令。是否继续？";
+        if (!_confirmation.Confirm(title, message)) return;
+
+        var runId = Run.ExecutionId;
+        var actor = OperatorName.Trim();
+        var reason = ControlReason.Trim();
+        var nodeExecutionId = SelectedNode.Id;
+        IsBusy = true;
+        try
+        {
+            var result = await _mes.ResolveWorkflowRunUnknownAsync(
+                runId,
+                new WorkflowUnknownResolutionRequest
+                {
+                    RequestId = Guid.NewGuid(),
+                    Actor = actor,
+                    Reason = reason,
+                    NodeExecutionId = nodeExecutionId,
+                    Outcome = outcome
+                },
+                CancellationToken.None);
+            ControlReason = string.Empty;
+            await LoadAsync(runId);
+            StatusMessage = result.IsIdempotentReplay
+                ? "Unknown 处置请求已按原结果重放。"
+                : confirmedSuccess
+                    ? "已记录现场确认成功；未重发设备命令。"
+                    : "已记录现场确认失败并终止流程；未重发设备命令。";
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = $"Unknown 处置失败：{exception.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private async Task ExecuteControlAsync(
+        string actionName,
+        Func<Guid, WorkflowRunControlRequest, CancellationToken, Task<WorkflowRunControlResult>> execute)
+    {
+        if (Run is null) return;
+        var runId = Run.ExecutionId;
+        var request = new WorkflowRunControlRequest
+        {
+            RequestId = Guid.NewGuid(),
+            Actor = OperatorName.Trim(),
+            Reason = ControlReason.Trim()
+        };
+        IsBusy = true;
+        try
+        {
+            var result = await execute(runId, request, CancellationToken.None);
+            ControlReason = string.Empty;
+            await LoadAsync(runId);
+            StatusMessage = result.IsIdempotentReplay
+                ? $"{actionName}请求已按原结果重放。"
+                : $"流程已{actionName}，操作者和理由已写入审计。";
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = $"流程{actionName}失败：{exception.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
         }
     }
 
@@ -418,6 +720,49 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(RunStatusBrush));
         OnPropertyChanged(nameof(RunTimeSummary));
         OnPropertyChanged(nameof(UnknownWarning));
+        OnPropertyChanged(nameof(UnknownResolutionContext));
+        RaiseControlStateChanged();
+    }
+
+    private bool HasUnsafeCancellationEvidence =>
+        Nodes.Any(node => node.Status is WorkflowNodeExecutionStatus.Claimed or
+            WorkflowNodeExecutionStatus.Running or WorkflowNodeExecutionStatus.Unknown) ||
+        DeviceOperations.Any(operation => operation.Status is WorkflowDeviceOperationStatus.Accepted or
+            WorkflowDeviceOperationStatus.Running or WorkflowDeviceOperationStatus.Unknown);
+
+    private string GetControlUnavailableReason(
+        string permission,
+        bool allowedState,
+        string stateReason)
+    {
+        if (IsBusy) return "正在处理其他运行请求。";
+        if (Run is null) return "请先加载流程运行。";
+        if (string.IsNullOrWhiteSpace(OperatorName)) return "请输入操作者身份。";
+        if (!string.Equals(_permissionActor, OperatorName.Trim(), StringComparison.OrdinalIgnoreCase))
+            return "请先由 MES 校验当前操作者权限。";
+        if (!_grantedPermissions.Contains(permission, StringComparer.OrdinalIgnoreCase))
+            return $"需要 {permission} 权限。";
+        if (string.IsNullOrWhiteSpace(ControlReason)) return "请输入本次操作原因。";
+        return allowedState ? string.Empty : stateReason;
+    }
+
+    private void RaiseControlStateChanged()
+    {
+        _checkPermissionsCommand.RaiseCanExecuteChanged();
+        _pauseCommand.RaiseCanExecuteChanged();
+        _resumeCommand.RaiseCanExecuteChanged();
+        _cancelCommand.RaiseCanExecuteChanged();
+        _resolveSucceededCommand.RaiseCanExecuteChanged();
+        _resolveFailedCommand.RaiseCanExecuteChanged();
+        OnPropertyChanged(nameof(CanPause));
+        OnPropertyChanged(nameof(CanResume));
+        OnPropertyChanged(nameof(CanCancel));
+        OnPropertyChanged(nameof(CanResolveUnknown));
+        OnPropertyChanged(nameof(PauseUnavailableReason));
+        OnPropertyChanged(nameof(ResumeUnavailableReason));
+        OnPropertyChanged(nameof(CancelUnavailableReason));
+        OnPropertyChanged(nameof(UnknownResolutionUnavailableReason));
+        OnPropertyChanged(nameof(UnknownResolutionContext));
     }
 
     private static void ValidateReadModel(

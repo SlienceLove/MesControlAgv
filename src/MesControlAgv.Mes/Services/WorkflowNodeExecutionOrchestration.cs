@@ -10,12 +10,17 @@ public sealed partial class WorkflowApplicationService
         CancellationToken cancellationToken)
     {
         await EnsureLegacySimulatorRuntimeRecordsAsync(cancellationToken);
-        var records = await _database.WorkflowNodeExecutions
-            .AsNoTracking()
-            .Where(item => item.Status == WorkflowNodeExecutionStatus.Ready.ToString() &&
-                           (item.NodeTypeId == WorkflowGraphNodeTypeIds.Move ||
-                            item.NodeTypeId == WorkflowGraphNodeTypeIds.TimedWait ||
-                            item.NodeTypeId == WorkflowGraphNodeTypeIds.Wait))
+        var records = await (
+                from node in _database.WorkflowNodeExecutions.AsNoTracking()
+                join run in _database.WorkflowExecutions.AsNoTracking()
+                    on node.WorkflowRunId equals run.ExecutionId
+                where (run.RuntimeStatus == WorkflowRuntimeStatus.Prepared.ToString() ||
+                       run.RuntimeStatus == WorkflowRuntimeStatus.Running.ToString()) &&
+                      node.Status == WorkflowNodeExecutionStatus.Ready.ToString() &&
+                      (node.NodeTypeId == WorkflowGraphNodeTypeIds.Move ||
+                       node.NodeTypeId == WorkflowGraphNodeTypeIds.TimedWait ||
+                       node.NodeTypeId == WorkflowGraphNodeTypeIds.Wait)
+                select node)
             .OrderBy(item => item.CreatedAtUtc)
             .ThenBy(item => item.Id)
             .ToListAsync(cancellationToken);
@@ -64,6 +69,14 @@ public sealed partial class WorkflowApplicationService
             throw new InvalidOperationException("The node execution is not a supported Simulator Move or Timed Wait.");
         }
 
+        var run = await FindExecutionAsync(node.WorkflowRunId, cancellationToken);
+        var runStatus = WorkflowPersistence.ToExecutionSnapshot(run).RuntimeStatus;
+        if (runStatus is not (WorkflowRuntimeStatus.Prepared or WorkflowRuntimeStatus.Running))
+        {
+            throw new InvalidOperationException(
+                $"A workflow run in '{runStatus}' state cannot claim a ready node.");
+        }
+
         if (await _database.WorkflowNodeExecutions.AnyAsync(
                 item => item.WorkflowRunId == node.WorkflowRunId &&
                         item.Id != node.Id &&
@@ -73,7 +86,6 @@ public sealed partial class WorkflowApplicationService
             throw new InvalidOperationException("The workflow run already has a running node execution.");
         }
 
-        var run = await FindExecutionAsync(node.WorkflowRunId, cancellationToken);
         var step = CreateStepRequest(run, node);
         run.CurrentNodeId = node.NodeId;
         run.PendingStepJson = WorkflowPersistence.Serialize(step);
@@ -133,9 +145,15 @@ public sealed partial class WorkflowApplicationService
             throw new InvalidOperationException("The node execution is not supported by the Simulator worker.");
         }
 
+        var preservePause = string.Equals(
+            run.RuntimeStatus,
+            WorkflowRuntimeStatus.Paused.ToString(),
+            StringComparison.Ordinal);
         run.CurrentNodeId = node.NodeId;
         run.PendingStepJson = WorkflowPersistence.Serialize(step);
-        run.RuntimeStatus = WorkflowRuntimeStatus.Running.ToString();
+        run.RuntimeStatus = (preservePause
+            ? WorkflowRuntimeStatus.Paused
+            : WorkflowRuntimeStatus.Running).ToString();
         run.TransportOperationId = compatibilityOperationId;
         run.Attempt = node.Attempt;
         run.LastError = null;

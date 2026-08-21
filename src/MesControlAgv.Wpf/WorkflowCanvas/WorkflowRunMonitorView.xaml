@@ -51,16 +51,137 @@
             </StackPanel>
         </Grid>
 
-        <Border Grid.Row="1"
-                Margin="0,0,0,10"
-                Padding="10,7"
-                Background="#FCE7F3"
-                BorderBrush="#A30D5D"
-                BorderThickness="1"
-                CornerRadius="4"
-                Visibility="{Binding HasUnknownState, Converter={StaticResource BooleanToVisibilityConverter}}">
-            <TextBlock Foreground="#831843" FontWeight="SemiBold" Text="{Binding UnknownWarning}" />
-        </Border>
+        <StackPanel Grid.Row="1" Margin="0,0,0,10">
+            <Border Padding="10,8"
+                    Background="#F8FAFC"
+                    BorderBrush="#D0D5DD"
+                    BorderThickness="1"
+                    CornerRadius="4">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="180" />
+                        <ColumnDefinition Width="300" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Margin="0,0,12,0">
+                        <TextBlock Margin="0,0,0,3" FontSize="11" Foreground="#475467" Text="操作者" />
+                        <TextBox MinHeight="30"
+                                 AutomationProperties.AutomationId="WorkflowRunOperatorInput"
+                                 Text="{Binding OperatorName, UpdateSourceTrigger=PropertyChanged}" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1" Margin="0,0,12,0">
+                        <TextBlock Margin="0,0,0,3" FontSize="11" Foreground="#475467" Text="操作原因（必填）" />
+                        <TextBox MinHeight="30"
+                                 MaxLength="2048"
+                                 AutomationProperties.AutomationId="WorkflowRunControlReasonInput"
+                                 Text="{Binding ControlReason, UpdateSourceTrigger=PropertyChanged}" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="2" Margin="0,0,12,0" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <Button MinWidth="88"
+                                    MinHeight="30"
+                                    Padding="10,4"
+                                    AutomationProperties.AutomationId="WorkflowRunPermissionCheckButton"
+                                    Command="{Binding CheckPermissionsCommand}"
+                                    Content="校验权限" />
+                            <TextBlock Margin="10,0,0,0"
+                                       VerticalAlignment="Center"
+                                       Foreground="#475467"
+                                       Text="{Binding PermissionStatus}"
+                                       TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                        <TextBlock Margin="0,4,0,0"
+                                   FontSize="11"
+                                   Foreground="#667085"
+                                   Text="{Binding GrantedPermissionsDisplay}"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button x:Name="PauseRunButton"
+                                MinWidth="72"
+                                MinHeight="32"
+                                Margin="0,0,6,0"
+                                Padding="10,4"
+                                AutomationProperties.AutomationId="WorkflowRunPauseButton"
+                                Command="{Binding PauseCommand}"
+                                Content="暂停"
+                                ToolTip="{Binding PauseUnavailableReason}"
+                                ToolTipService.ShowOnDisabled="True" />
+                        <Button x:Name="ResumeRunButton"
+                                MinWidth="72"
+                                MinHeight="32"
+                                Margin="0,0,6,0"
+                                Padding="10,4"
+                                AutomationProperties.AutomationId="WorkflowRunResumeButton"
+                                Command="{Binding ResumeCommand}"
+                                Content="恢复"
+                                ToolTip="{Binding ResumeUnavailableReason}"
+                                ToolTipService.ShowOnDisabled="True" />
+                        <Button x:Name="CancelRunButton"
+                                MinWidth="84"
+                                MinHeight="32"
+                                Padding="10,4"
+                                Background="#B42318"
+                                Foreground="White"
+                                AutomationProperties.AutomationId="WorkflowRunCancelButton"
+                                Command="{Binding CancelCommand}"
+                                Content="取消流程"
+                                ToolTip="{Binding CancelUnavailableReason}"
+                                ToolTipService.ShowOnDisabled="True" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Border Margin="0,8,0,0"
+                    Padding="10,8"
+                    Background="#FCE7F3"
+                    BorderBrush="#A30D5D"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Visibility="{Binding HasUnknownState, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Foreground="#831843" FontWeight="SemiBold" Text="{Binding UnknownWarning}" />
+                        <TextBlock Margin="0,3,0,0"
+                                   Foreground="#831843"
+                                   Text="{Binding UnknownResolutionContext}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Margin="12,0,0,0" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button x:Name="ResolveUnknownSucceededButton"
+                                MinWidth="132"
+                                MinHeight="32"
+                                Margin="0,0,8,0"
+                                Padding="10,4"
+                                AutomationProperties.AutomationId="WorkflowUnknownConfirmSucceededButton"
+                                Command="{Binding ResolveUnknownSucceededCommand}"
+                                Content="记录现场已成功"
+                                ToolTip="{Binding UnknownResolutionUnavailableReason}"
+                                ToolTipService.ShowOnDisabled="True" />
+                        <Button x:Name="ResolveUnknownFailedButton"
+                                MinWidth="148"
+                                MinHeight="32"
+                                Padding="10,4"
+                                Background="#831843"
+                                Foreground="White"
+                                AutomationProperties.AutomationId="WorkflowUnknownConfirmFailedButton"
+                                Command="{Binding ResolveUnknownFailedCommand}"
+                                Content="确认失败并终止"
+                                ToolTip="{Binding UnknownResolutionUnavailableReason}"
+                                ToolTipService.ShowOnDisabled="True" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </StackPanel>
 
         <Grid Grid.Row="2" MinHeight="0">
             <Grid.ColumnDefinitions>

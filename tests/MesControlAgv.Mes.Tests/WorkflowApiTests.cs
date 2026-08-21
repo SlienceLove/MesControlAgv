@@ -314,4 +314,115 @@ public sealed class WorkflowApiTests : IClassFixture<MesWebApplicationFactory>
             content: null);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, publish.StatusCode);
     }
+
+    [Fact]
+    public async Task Workflow_run_control_endpoints_enforce_configured_permissions_reason_idempotency_and_audit()
+    {
+        var permissions = await _client.GetFromJsonAsync<WorkflowRunControlPermissionsSnapshot>(
+            "/api/workflow-run-controls/permissions?actor=local-operator");
+        Assert.NotNull(permissions);
+        Assert.Contains(WorkflowRunControlPermissions.Pause, permissions!.Permissions);
+        Assert.Contains(WorkflowRunControlPermissions.Cancel, permissions.Permissions);
+        Assert.Contains(WorkflowRunControlPermissions.ResolveUnknown, permissions.Permissions);
+
+        var definition = WorkflowTestDefinitions.CreateMoveWorkflow();
+        var create = await _client.PostAsJsonAsync("/api/workflows?actor=run-control-api", definition);
+        var draft = await create.Content.ReadFromJsonAsync<WorkflowVersion>();
+        Assert.NotNull(draft);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await _client.PostAsync(
+                $"/api/workflows/{draft!.WorkflowId}/versions/{draft.Version}/validate",
+                content: null)).StatusCode);
+        Assert.Equal(
+            HttpStatusCode.OK,
+            (await _client.PostAsync(
+                $"/api/workflows/{draft.WorkflowId}/versions/{draft.Version}/publish?actor=run-control-api",
+                content: null)).StatusCode);
+        var executionResponse = await _client.PostAsJsonAsync("/api/workflows/execute", new WorkflowExecutionRequest
+        {
+            WorkflowId = draft.WorkflowId,
+            Version = draft.Version,
+            RequestId = Guid.NewGuid(),
+            RequestedBy = "run-control-api"
+        });
+        Assert.Equal(HttpStatusCode.Accepted, executionResponse.StatusCode);
+        var execution = await executionResponse.Content.ReadFromJsonAsync<WorkflowExecutionResult>();
+        Assert.NotNull(execution);
+
+        var forbidden = await _client.PostAsJsonAsync(
+            $"/api/workflow-runs/{execution!.ExecutionId}/pause",
+            new WorkflowRunControlRequest
+            {
+                RequestId = Guid.NewGuid(),
+                Actor = "unconfigured-operator",
+                Reason = "This actor must not self-authorize"
+            });
+        Assert.Equal(HttpStatusCode.Forbidden, forbidden.StatusCode);
+
+        var pauseRequest = new WorkflowRunControlRequest
+        {
+            RequestId = Guid.NewGuid(),
+            Actor = "local-operator",
+            Reason = "Verify sample identity"
+        };
+        var pause = await _client.PostAsJsonAsync(
+            $"/api/workflow-runs/{execution.ExecutionId}/pause",
+            pauseRequest);
+        var pauseReplay = await _client.PostAsJsonAsync(
+            $"/api/workflow-runs/{execution.ExecutionId}/pause",
+            pauseRequest);
+        Assert.Equal(HttpStatusCode.OK, pause.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, pauseReplay.StatusCode);
+        Assert.Equal(
+            WorkflowRuntimeStatus.Paused,
+            (await pause.Content.ReadFromJsonAsync<WorkflowRunControlResult>())!.Run.RuntimeStatus);
+        Assert.True((await pauseReplay.Content.ReadFromJsonAsync<WorkflowRunControlResult>())!.IsIdempotentReplay);
+
+        var resume = await _client.PostAsJsonAsync(
+            $"/api/workflow-runs/{execution.ExecutionId}/resume",
+            new WorkflowRunControlRequest
+            {
+                RequestId = Guid.NewGuid(),
+                Actor = "local-operator",
+                Reason = "Sample identity verified"
+            });
+        Assert.Equal(HttpStatusCode.OK, resume.StatusCode);
+        Assert.Equal(
+            WorkflowRuntimeStatus.Prepared,
+            (await resume.Content.ReadFromJsonAsync<WorkflowRunControlResult>())!.Run.RuntimeStatus);
+
+        var cancel = await _client.PostAsJsonAsync(
+            $"/api/workflow-runs/{execution.ExecutionId}/cancel",
+            new WorkflowRunControlRequest
+            {
+                RequestId = Guid.NewGuid(),
+                Actor = "local-operator",
+                Reason = "Experiment withdrawn"
+            });
+        Assert.Equal(HttpStatusCode.OK, cancel.StatusCode);
+        Assert.Equal(
+            WorkflowRuntimeStatus.Cancelled,
+            (await cancel.Content.ReadFromJsonAsync<WorkflowRunControlResult>())!.Run.RuntimeStatus);
+
+        var invalidRepeat = await _client.PostAsJsonAsync(
+            $"/api/workflow-runs/{execution.ExecutionId}/cancel",
+            new WorkflowRunControlRequest
+            {
+                RequestId = Guid.NewGuid(),
+                Actor = "local-operator",
+                Reason = "A terminal run cannot be cancelled again"
+            });
+        Assert.Equal(HttpStatusCode.Conflict, invalidRepeat.StatusCode);
+
+        var timeline = await _client.GetFromJsonAsync<IReadOnlyList<WorkflowRunTimelineEntry>>(
+            $"/api/workflow-runs/{execution.ExecutionId}/timeline");
+        Assert.Contains(timeline!, item =>
+            item.EventType == "WorkflowRunPaused" &&
+            item.Actor == "local-operator" &&
+            item.Reason == "Verify sample identity" &&
+            item.Details.GetValueOrDefault("requestId") == pauseRequest.RequestId.ToString());
+        Assert.Contains(timeline!, item => item.EventType == "WorkflowRunResumed");
+        Assert.Contains(timeline!, item => item.EventType == "WorkflowRunCancelled");
+    }
 }
