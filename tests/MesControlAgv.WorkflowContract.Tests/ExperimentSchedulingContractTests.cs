@@ -78,4 +78,46 @@ public sealed class ExperimentSchedulingContractTests
         Assert.Throws<ArgumentException>(() => ExperimentResourceKeys.Create("", "AGV-01"));
         Assert.Throws<ArgumentException>(() => ExperimentResourceKeys.Create("agv", " "));
     }
+
+    [Fact]
+    public void Admission_result_links_job_run_and_runtime_lease_without_changing_reservation_identity()
+    {
+        var requestId = Guid.NewGuid();
+        var jobId = Guid.NewGuid();
+        var runId = Guid.NewGuid();
+        var scheduleEntryId = Guid.NewGuid();
+        var result = new ExperimentJobAdmissionResult
+        {
+            RequestId = requestId,
+            Status = ExperimentJobAdmissionStatus.Admitted,
+            WorkflowRunId = runId,
+            Job = new ExperimentJob
+            {
+                JobId = jobId,
+                WorkflowRunId = runId,
+                Status = ExperimentJobStatus.Admitted
+            },
+            ScheduleEntry = new ScheduleEntry
+            {
+                ScheduleEntryId = scheduleEntryId,
+                ExperimentJobId = jobId,
+                Status = ScheduleEntryStatus.Admitted
+            },
+            Leases =
+            [
+                new ResourceLease
+                {
+                    LeaseId = Guid.NewGuid(),
+                    ScheduleEntryId = scheduleEntryId,
+                    WorkflowRunId = runId,
+                    Status = ResourceLeaseStatus.Active
+                }
+            ]
+        };
+
+        Assert.True(result.IsAdmitted);
+        Assert.False(result.IsRejected);
+        Assert.Equal(result.Job.WorkflowRunId, result.WorkflowRunId);
+        Assert.Equal(result.ScheduleEntry.ScheduleEntryId, Assert.Single(result.Leases).ScheduleEntryId);
+    }
 }

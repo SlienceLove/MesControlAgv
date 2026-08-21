@@ -50,12 +50,18 @@ builder.Services.AddScoped<WorkflowApplicationService>();
 builder.Services.AddScoped<IWorkflowApplicationService>(services => services.GetRequiredService<WorkflowApplicationService>());
 builder.Services.AddScoped<IExperimentSchedulingQueryService, ExperimentSchedulingQueryService>();
 builder.Services.AddScoped<IExperimentSchedulingCommandService, ExperimentSchedulingCommandService>();
+builder.Services.AddScoped<ExperimentRuntimeLeaseLifecycle>();
+builder.Services.AddScoped<ExperimentRuntimeAdmissionService>();
+builder.Services.AddScoped<IExperimentRuntimeAdmissionService>(services =>
+    services.GetRequiredService<ExperimentRuntimeAdmissionService>());
+builder.Services.AddScoped<ExperimentRuntimeRecoveryCoordinator>();
 builder.Services.AddScoped<FieldNavigationAcceptanceRepository>();
 builder.Services.AddScoped<IFieldNavigationAcceptanceApplicationService, FieldNavigationAcceptanceService>();
 builder.Services.AddScoped<TaskRepository>();
 builder.Services.AddScoped<ITaskApplicationService, TaskService>();
 builder.Services.AddScoped<IKpiDashboardApplicationService, KpiDashboardService>();
 builder.Services.AddHostedService<RecoveryService>();
+builder.Services.AddHostedService<ExperimentRuntimeRecoveryService>();
 builder.Services.AddHostedService<WorkflowRecoveryService>();
 builder.Services.AddHostedService<WorkflowSimulatorWorker>();
 
@@ -563,6 +569,14 @@ app.MapPut("/api/experiment-jobs/{jobId:guid}/schedule", async (
         () => service.ScheduleJobAsync(jobId, request, cancellationToken),
         Results.Ok));
 
+app.MapPost("/api/experiment-jobs/{jobId:guid}/admit", async (
+    Guid jobId,
+    AdmitExperimentJobRequest request,
+    IExperimentRuntimeAdmissionService service,
+    CancellationToken cancellationToken) =>
+    await ExecuteExperimentAdmissionAsync(
+        () => service.AdmitJobAsync(jobId, request, cancellationToken)));
+
 app.MapPost("/api/experiment-jobs/{jobId:guid}/unschedule", async (
     Guid jobId,
     ExperimentSchedulingActionRequest request,
@@ -954,7 +968,42 @@ static async Task<IResult> ExecuteExperimentSchedulingCommandAsync<T>(
     }
     catch (ExperimentSchedulingConflictException exception)
     {
-        return Results.Conflict(new { detail = exception.Message });
+        return Results.Conflict(new { detail = exception.Message, code = exception.Code });
+    }
+}
+
+static async Task<IResult> ExecuteExperimentAdmissionAsync(
+    Func<Task<ExperimentJobAdmissionResult>> action)
+{
+    try
+    {
+        var result = await action();
+        if (result.IsAdmitted)
+        {
+            return Results.Json(
+                result,
+                statusCode: result.IsIdempotentReplay
+                    ? StatusCodes.Status200OK
+                    : StatusCodes.Status202Accepted);
+        }
+
+        return Results.Json(
+            result,
+            statusCode: result.RejectionCode == ExperimentSchedulingIssueCodes.WorkflowAdmissionRejected
+                ? StatusCodes.Status422UnprocessableEntity
+                : StatusCodes.Status409Conflict);
+    }
+    catch (ArgumentException exception)
+    {
+        return Results.BadRequest(new { detail = exception.Message });
+    }
+    catch (KeyNotFoundException exception)
+    {
+        return Results.NotFound(new { detail = exception.Message });
+    }
+    catch (ExperimentSchedulingConflictException exception)
+    {
+        return Results.Conflict(new { detail = exception.Message, code = exception.Code });
     }
 }
 

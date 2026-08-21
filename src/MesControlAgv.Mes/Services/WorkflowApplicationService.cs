@@ -54,6 +54,7 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
     private readonly WorkflowValidator _validator;
     private readonly TimeProvider _timeProvider;
     private readonly IWorkflowRunControlAuthorizer _controlAuthorizer;
+    private readonly ExperimentRuntimeLeaseLifecycle _experimentRuntimeLeaseLifecycle;
 
     public WorkflowApplicationService(
         MesDbContext database,
@@ -61,7 +62,8 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
         WorkflowRuntimeExecutor runtimeExecutor,
         WorkflowValidator validator,
         TimeProvider? timeProvider = null,
-        IWorkflowRunControlAuthorizer? controlAuthorizer = null)
+        IWorkflowRunControlAuthorizer? controlAuthorizer = null,
+        ExperimentRuntimeLeaseLifecycle? experimentRuntimeLeaseLifecycle = null)
     {
         _database = database;
         _versionReader = versionReader;
@@ -71,6 +73,8 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
         _controlAuthorizer = controlAuthorizer ??
             new ConfiguredWorkflowRunControlAuthorizer(
                 Microsoft.Extensions.Options.Options.Create(new WorkflowRunControlAuthorizationOptions()));
+        _experimentRuntimeLeaseLifecycle = experimentRuntimeLeaseLifecycle ??
+            new ExperimentRuntimeLeaseLifecycle(database, _timeProvider);
     }
 
     public async Task<IReadOnlyList<WorkflowDefinition>> ListAsync(CancellationToken cancellationToken)
@@ -250,6 +254,11 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
             ["deviceOperationId"] = runtimeRecords.Device?.OperationId.ToString(),
             ["attempt"] = attempt.ToString()
         });
+        await _experimentRuntimeLeaseLifecycle.SynchronizeRunStateAsync(
+            record,
+            "workflow-runtime",
+            "Workflow node execution started.",
+            cancellationToken);
         await _database.SaveChangesAsync(cancellationToken);
         return WorkflowPersistence.ToExecutionSnapshot(record);
     }
@@ -328,6 +337,11 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
             AddRuntimeAudit(record, "WorkflowStepReconciled", record.RuntimeStatus, record.LastError, auditDetails);
         }
 
+        await _experimentRuntimeLeaseLifecycle.SynchronizeRunStateAsync(
+            record,
+            "workflow-runtime",
+            record.LastError ?? $"Workflow step completed with outcome '{completion.Outcome}'.",
+            cancellationToken);
         await _database.SaveChangesAsync(cancellationToken);
         return WorkflowPersistence.ToExecutionSnapshot(record);
     }

@@ -2,6 +2,13 @@ namespace MesControlAgv.Contracts.Experiments;
 
 public static class ExperimentSchedulingIssueCodes
 {
+    public const string AdmissionRequestIdReused = "EXP-ADMISSION-REQUEST-ID-REUSED";
+    public const string JobNotScheduled = "EXP-JOB-NOT-SCHEDULED";
+    public const string ScheduleNotReady = "EXP-SCHEDULE-NOT-READY";
+    public const string PlanVersionNotPublished = "EXP-PLAN-VERSION-NOT-PUBLISHED";
+    public const string ReservationMismatch = "EXP-RESERVATION-MISMATCH";
+    public const string WorkflowAdmissionRejected = "EXP-WORKFLOW-ADMISSION-REJECTED";
+    public const string RuntimeRecoveryFailed = "EXP-RUNTIME-RECOVERY-FAILED";
     public const string PlanNameRequired = "EXP-PLAN-NAME-REQUIRED";
     public const string WorkflowReferenceRequired = "EXP-WORKFLOW-REFERENCE-REQUIRED";
     public const string WorkflowVersionNotFound = "EXP-WORKFLOW-VERSION-NOT-FOUND";
@@ -104,6 +111,44 @@ public sealed record ScheduleExperimentJobRequest
     public DateTimeOffset PlannedEnd { get; init; }
     public int Priority { get; init; }
     public IReadOnlyList<ExperimentResourceReference> Resources { get; init; } =
+        Array.Empty<ExperimentResourceReference>();
+}
+
+/// <summary>
+/// Admits one manually scheduled job into its pinned workflow version. Admission
+/// creates no device operation and requires explicit operator evidence.
+/// </summary>
+public sealed record AdmitExperimentJobRequest
+{
+    public Guid RequestId { get; init; }
+    public string Actor { get; init; } = string.Empty;
+    public string Reason { get; init; } = string.Empty;
+}
+
+public enum ExperimentJobAdmissionStatus
+{
+    Rejected,
+    Admitted
+}
+
+/// <summary>
+/// Durable outcome of scheduled-job admission. A rejected outcome never leaves
+/// a workflow run or runtime lease behind.
+/// </summary>
+public sealed record ExperimentJobAdmissionResult
+{
+    public Guid RequestId { get; init; }
+    public ExperimentJobAdmissionStatus Status { get; init; }
+    public bool IsAdmitted => Status == ExperimentJobAdmissionStatus.Admitted;
+    public bool IsRejected => Status == ExperimentJobAdmissionStatus.Rejected;
+    public bool IsIdempotentReplay { get; init; }
+    public Guid? WorkflowRunId { get; init; }
+    public ExperimentJob? Job { get; init; }
+    public ScheduleEntry? ScheduleEntry { get; init; }
+    public IReadOnlyList<ResourceLease> Leases { get; init; } = Array.Empty<ResourceLease>();
+    public string? RejectionCode { get; init; }
+    public string? RejectionReason { get; init; }
+    public IReadOnlyList<ExperimentResourceReference> ConflictingResources { get; init; } =
         Array.Empty<ExperimentResourceReference>();
 }
 

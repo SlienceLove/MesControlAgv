@@ -96,3 +96,15 @@ public interface IExperimentSchedulingCommandService
         ExperimentSchedulingActionRequest request,
         CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// G5-C boundary for turning an already scheduled experiment job into a pinned
+/// workflow run with atomic runtime leases. It never contacts a device adapter.
+/// </summary>
+public interface IExperimentRuntimeAdmissionService
+{
+    Task<ExperimentJobAdmissionResult> AdmitJobAsync(
+        Guid experimentJobId,
+        AdmitExperimentJobRequest request,
+        CancellationToken cancellationToken);
+}

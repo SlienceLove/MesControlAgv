@@ -211,6 +211,11 @@ public sealed partial class WorkflowApplicationService
                 ["previousRuntimeStatus"] = current.ToString(),
                 ["cancelledNodeCount"] = cancellableNodes.Count.ToString()
             });
+        await _experimentRuntimeLeaseLifecycle.SynchronizeRunStateAsync(
+            run,
+            normalized.Actor,
+            normalized.Reason,
+            cancellationToken);
         await _database.SaveChangesAsync(cancellationToken);
         return CreateControlResult(run, normalized.RequestId, WorkflowRunControlAction.Cancel);
     }
@@ -364,6 +369,11 @@ public sealed partial class WorkflowApplicationService
                 ["resolution"] = request.Outcome.ToString(),
                 ["nextNodeId"] = nextStep?.NodeId.ToString()
             });
+        await _experimentRuntimeLeaseLifecycle.SynchronizeRunStateAsync(
+            run,
+            normalized.Actor,
+            normalized.Reason,
+            cancellationToken);
         await _database.SaveChangesAsync(cancellationToken);
         return CreateControlResult(run, normalized.RequestId, WorkflowRunControlAction.ResolveUnknown);
     }
