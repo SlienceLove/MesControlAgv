@@ -14,33 +14,42 @@ Active branch: `docs/experiment-workflow-architecture-plan`
   read-only APIs are implemented and have passed the automated gate.
 - G4-B has migrated Simulator Move and Timed Wait dispatch/recovery to durable
   node execution records while retaining legacy run-level compatibility APIs.
-- **G4-C has not started.** Read-only runtime visualization remains the next
-  gate and must use the existing G4 records and APIs.
+- G4-C now provides an independent read-only runtime monitor over the existing
+  G4 records and APIs. It is ready for user acceptance before G4-D begins.
 
 The AGV MVP remains in frozen maintenance mode. Production, unattended,
 automatic/batch dispatch, and Push are **NO-GO**. G4-A/B add durable records and
-migrate only the existing Simulator worker; they do not authorize new device
-commands, serial access from WPF/MES, protocol/register fields in workflow
-nodes, or any CIC-D160+ write path.
+migrate only the existing Simulator worker; G4-C is read-only. These changes do
+not authorize new device commands, serial access from WPF/MES,
+protocol/register fields in workflow nodes, or any CIC-D160+ write path.
 
 ## Latest verification
 
-The G4-B Release gate completed on 2026-08-21:
+The G4-C Release gate completed on 2026-08-21:
 
 - Full solution build: **0 warnings / 0 errors**.
-- Full test suite: **629 passed / 5 existing E2E skipped / 0 failed**.
-- Breakdown: Domain 39, Workflow Contract 54, MES 83, WPF 203, Adapter 176,
+- Full test suite: **635 passed / 5 existing E2E skipped / 0 failed**.
+- Breakdown: Domain 39, Workflow Contract 54, MES 83, WPF 209, Adapter 176,
   Instrument Gateway 50, Simulator 5, and E2E 19 passed plus 5 skipped.
-- MES coverage verifies node-driven Move/Timed Wait dispatch, persisted adapter
-  progress, exact node-operation completion matching, and no wait-device record.
-- Restart coverage recreates the DbContext, application service, dispatcher,
-  and adapter before reconciling from persisted node and device evidence.
-- Compatibility coverage verifies pre-G4 backfill and proves conflicting legacy
-  mirrors cannot create duplicate operations or replace active node records.
-- Verification did not start services or call device, serial, or D160 write
-  endpoints.
+- G4-C coverage verifies pinned graph projection, viewport-preserving refresh,
+  Unknown presentation, evidence isolation, selection navigation, and WPF
+  binding/layout.
+- A real WPF process opened the monitor tab through UI Automation; its run ID
+  input and canvas both had non-zero layout. Local service management was
+  disabled, and no device, serial, or D160 write endpoint was called.
 
 ## Recent changes
+
+### 2026-08-21 - G4-C read-only runtime monitor
+
+- Added an independent monitor tab that loads a run's pinned workflow version,
+  node attempts, device operations, and audit timeline by run ID.
+- Reused the Nodify Runtime surface without mutating the published definition;
+  same-run refresh preserves the canvas instance and user viewport.
+- Added current-node input/output details, device evidence, and linked read-only
+  tables. Cross-run, cross-version, and unlinked evidence is rejected.
+- Unknown remains visually distinct and explicitly forbids automatic retry.
+  The only exposed command is load/refresh; G4-D actions are not implemented.
 
 ### 2026-08-21 - G4-B node-driven Simulator worker
 
@@ -102,10 +111,10 @@ The G4-B Release gate completed on 2026-08-21:
 
 ## Next gate
 
-1. Review G4-B node-driven dispatch, persisted progress, restart recovery, and
-   legacy compatibility evidence.
-2. G4-C may then add read-only runtime visualization and node/device evidence
-   details using the existing G4 contracts and APIs.
+1. Load a known Simulator workflow run in `流程运行监控` and verify the pinned
+   graph, current node, device evidence, and timeline against the G4 APIs.
+2. Confirm G4-C acceptance before G4-D adds pause/resume/cancel and controlled
+   Unknown-resolution entry points with authorization, reason, and audit.
 3. Physical device commands, serial control, and D160 writes remain outside the
    authorized scope throughout G4.
 

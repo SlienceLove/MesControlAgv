@@ -891,6 +891,12 @@
             </Border>
         </Grid>
     </TabItem>
+        <TabItem AutomationProperties.AutomationId="WorkflowRunMonitorTab"
+                 Header="流程运行监控"
+                 HorizontalContentAlignment="Stretch"
+                 VerticalContentAlignment="Stretch">
+            <workflowCanvas:WorkflowRunMonitorView DataContext="{Binding WorkflowRunMonitor}" />
+        </TabItem>
         <TabItem Header="就绪 / 地图 / 审计" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
             <Grid Margin="0,12,0,0">
                 <Grid.RowDefinitions>

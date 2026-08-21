@@ -53,6 +53,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _commands = new ControlCenterCommandCoordinator(mes, simulator);
         ModuleRegistry = moduleRegistry ?? ControlCenterModuleRegistry.CreateStandard();
         WorkflowEditor = new WorkflowEditorViewModel(workflowStore ?? new WorkflowStore(), _mes, () => OperatorName);
+        WorkflowRunMonitor = new WorkflowRunMonitorViewModel(_mes);
         Readiness = new ReadinessViewModel(_mes, mapLayoutSource);
         IonChromatography = new IonChromatographyViewModel(_mes);
         _modules = new ControlCenterViewModel(WorkflowEditor, ModuleRegistry);
@@ -95,6 +96,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ObservableCollection<string> BatchImportIssues => _modules.BatchImport.BatchImportIssues;
     public ObservableCollection<DashboardStation> AvailableStations { get; } = [];
     public WorkflowEditorViewModel WorkflowEditor { get; }
+    public WorkflowRunMonitorViewModel WorkflowRunMonitor { get; }
     public ReadinessViewModel Readiness { get; }
     public IonChromatographyViewModel IonChromatography { get; }
     public KpiDashboardViewModel Kpi { get; }
