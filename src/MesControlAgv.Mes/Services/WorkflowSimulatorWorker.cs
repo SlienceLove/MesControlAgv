@@ -17,9 +17,9 @@ public sealed class WorkflowSimulatorWorkerOptions
 }
 
 /// <summary>
-/// Executes the narrow Simulator-only bridge from a durable workflow claim to
-/// the Adapter. The operation is claimed before dispatch, and every ambiguous
-/// adapter outcome is persisted as Unknown rather than retried.
+/// Executes the narrow Simulator-only bridge from durable node work items to
+/// the Adapter. The node and operation are persisted before dispatch, and every
+/// ambiguous adapter outcome is persisted as Unknown rather than retried.
 /// </summary>
 public sealed class WorkflowSimulatorDispatcher(
     IWorkflowApplicationService workflows,
@@ -32,20 +32,37 @@ public sealed class WorkflowSimulatorDispatcher(
 
     public async Task ProcessAsync(CancellationToken cancellationToken)
     {
-        if (!options.Enabled || !profile.Features.UseSimulator)
+        if (!await CanUseSimulatorAdapterAsync(cancellationToken)) return;
+
+        foreach (var workItem in await workflows.ListSimulatorDispatchableNodesAsync(cancellationToken))
         {
-            return;
+            var claimed = await workflows.ClaimNodeExecutionAsync(
+                workItem.NodeExecution.Id,
+                cancellationToken);
+            await ExecuteClaimedNodeAsync(claimed, cancellationToken);
         }
 
-        if (adapter is not IAdapterRuntimeIdentityGateway identityGateway)
+        await RecoverRunningNodesAsync(cancellationToken);
+    }
+
+    public async Task RecoverAsync(CancellationToken cancellationToken)
+    {
+        if (!await CanUseSimulatorAdapterAsync(cancellationToken)) return;
+        await RecoverRunningNodesAsync(cancellationToken);
+    }
+
+    private async Task<bool> CanUseSimulatorAdapterAsync(CancellationToken cancellationToken)
+    {
+        if (!options.Enabled || !profile.Features.UseSimulator ||
+            adapter is not IAdapterRuntimeIdentityGateway identityGateway)
         {
-            return;
+            return false;
         }
 
-        AdapterRuntimeIdentityResponse identity;
         try
         {
-            identity = await identityGateway.GetRuntimeIdentityAsync(cancellationToken);
+            var identity = await identityGateway.GetRuntimeIdentityAsync(cancellationToken);
+            return string.Equals(identity.Driver, "simulator", StringComparison.OrdinalIgnoreCase);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -53,62 +70,28 @@ public sealed class WorkflowSimulatorDispatcher(
         }
         catch (Exception)
         {
-            return;
-        }
-
-        if (!string.Equals(identity.Driver, "simulator", StringComparison.OrdinalIgnoreCase))
-        {
-            return;
-        }
-
-        foreach (var execution in await workflows.ListSimulatorDispatchableExecutionsAsync(cancellationToken))
-        {
-            if (!CanExecutePreparedStep(execution.PendingStepRequest))
-            {
-                continue;
-            }
-
-            var claimed = await workflows.ClaimNextStepAsync(execution.ExecutionId, cancellationToken);
-            await ExecuteClaimedStepAsync(claimed, cancellationToken);
-        }
-
-        foreach (var execution in await workflows.ListRecoverableExecutionsAsync(cancellationToken))
-        {
-            if (execution.RuntimeStatus == WorkflowRuntimeStatus.Running &&
-                execution.TransportOperationId is not null)
-            {
-                await ReconcileClaimedStepAsync(execution, cancellationToken);
-            }
+            return false;
         }
     }
 
-    private static bool CanExecutePreparedStep(WorkflowNextStepRequest? step) =>
-        step is not null &&
-        (step.NodeType == WorkflowNodeType.Move ||
-         (step.NodeType == WorkflowNodeType.Wait && TryGetWaitDuration(step, out _)));
-
-    private Task ExecuteClaimedStepAsync(
-        WorkflowExecutionSnapshot claimed,
+    private Task ExecuteClaimedNodeAsync(
+        WorkflowNodeExecutionWorkItem workItem,
         CancellationToken cancellationToken) =>
-        claimed.PendingStepRequest?.NodeType switch
-        {
-            WorkflowNodeType.Move => DispatchClaimedMoveAsync(claimed, cancellationToken),
-            WorkflowNodeType.Wait => CompleteWaitWhenElapsedAsync(claimed, cancellationToken),
-            _ => Task.CompletedTask
-        };
+        IsNodeType(workItem, WorkflowGraphNodeTypeIds.Move)
+            ? DispatchClaimedMoveAsync(workItem, cancellationToken)
+            : IsTimedWait(workItem)
+                ? CompleteWaitWhenElapsedAsync(workItem, cancellationToken)
+                : Task.CompletedTask;
 
     private async Task DispatchClaimedMoveAsync(
-        WorkflowExecutionSnapshot claimed,
+        WorkflowNodeExecutionWorkItem workItem,
         CancellationToken cancellationToken)
     {
-        var step = claimed.PendingStepRequest;
-        var operationId = claimed.TransportOperationId;
-        if (step is null || operationId is null)
-        {
-            return;
-        }
-
-        if (step.NodeType != WorkflowNodeType.Move || string.IsNullOrWhiteSpace(step.TargetStation))
+        var node = workItem.NodeExecution;
+        var operation = workItem.DeviceOperation;
+        if (operation is null ||
+            !node.Inputs.TryGetValue(WorkflowNodeConfigurationKeys.TargetStation, out var targetStation) ||
+            string.IsNullOrWhiteSpace(targetStation))
         {
             return;
         }
@@ -116,10 +99,10 @@ public sealed class WorkflowSimulatorDispatcher(
         try
         {
             var response = await adapter.DispatchAsync(
-                operationId.Value,
-                step.TargetStation.Trim(),
+                operation.OperationId,
+                targetStation.Trim(),
                 cancellationToken);
-            await ApplyAdapterResponseAsync(claimed.ExecutionId, operationId.Value, response, cancellationToken);
+            await ApplyAdapterResponseAsync(workItem, response, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -130,48 +113,51 @@ public sealed class WorkflowSimulatorDispatcher(
             // The Adapter may have accepted the command before the response was
             // lost. Never retry a claimed operation after an ambiguous write.
             await CompleteAsync(
-                claimed.ExecutionId,
-                operationId.Value,
+                workItem,
                 WorkflowStepCompletionOutcome.Unknown,
                 exception.Message,
                 cancellationToken);
         }
     }
 
-    private async Task ReconcileClaimedStepAsync(
-        WorkflowExecutionSnapshot execution,
+    private async Task RecoverRunningNodesAsync(CancellationToken cancellationToken)
+    {
+        foreach (var workItem in await workflows.ListSimulatorRecoverableNodesAsync(cancellationToken))
+        {
+            await ReconcileClaimedNodeAsync(workItem, cancellationToken);
+        }
+    }
+
+    private async Task ReconcileClaimedNodeAsync(
+        WorkflowNodeExecutionWorkItem workItem,
         CancellationToken cancellationToken)
     {
-        if (execution.PendingStepRequest?.NodeType == WorkflowNodeType.Wait)
+        if (IsTimedWait(workItem))
         {
-            await CompleteWaitWhenElapsedAsync(execution, cancellationToken);
+            await CompleteWaitWhenElapsedAsync(workItem, cancellationToken);
             return;
         }
 
-        if (execution.PendingStepRequest?.NodeType != WorkflowNodeType.Move)
+        if (!IsNodeType(workItem, WorkflowGraphNodeTypeIds.Move) ||
+            workItem.DeviceOperation is not { } operation)
         {
             return;
         }
 
         try
         {
-            var response = await adapter.GetTaskAsync(execution.TransportOperationId!.Value, cancellationToken);
+            var response = await adapter.GetTaskAsync(operation.OperationId, cancellationToken);
             if (response is null)
             {
                 await CompleteAsync(
-                    execution.ExecutionId,
-                    execution.TransportOperationId.Value,
+                    workItem,
                     WorkflowStepCompletionOutcome.Unknown,
                     "adapter_task_not_found_during_simulator_reconciliation",
                     cancellationToken);
                 return;
             }
 
-            await ApplyAdapterResponseAsync(
-                execution.ExecutionId,
-                execution.TransportOperationId.Value,
-                response,
-                cancellationToken);
+            await ApplyAdapterResponseAsync(workItem, response, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -180,8 +166,7 @@ public sealed class WorkflowSimulatorDispatcher(
         catch (Exception exception)
         {
             await CompleteAsync(
-                execution.ExecutionId,
-                execution.TransportOperationId!.Value,
+                workItem,
                 WorkflowStepCompletionOutcome.Unknown,
                 exception.Message,
                 cancellationToken);
@@ -189,30 +174,29 @@ public sealed class WorkflowSimulatorDispatcher(
     }
 
     private Task CompleteWaitWhenElapsedAsync(
-        WorkflowExecutionSnapshot execution,
+        WorkflowNodeExecutionWorkItem workItem,
         CancellationToken cancellationToken)
     {
-        if (execution.PendingStepRequest is not { NodeType: WorkflowNodeType.Wait } step ||
-            execution.TransportOperationId is not { } operationId ||
-            !TryGetWaitDuration(step, out var duration) ||
-            _timeProvider.GetUtcNow() - execution.UpdatedAt < duration)
+        var node = workItem.NodeExecution;
+        if (node.StartedAt is not { } startedAt ||
+            !TryGetWaitDuration(node.Inputs, out var duration) ||
+            _timeProvider.GetUtcNow() - startedAt < duration)
         {
             return Task.CompletedTask;
         }
 
         return CompleteAsync(
-            execution.ExecutionId,
-            operationId,
+            workItem,
             WorkflowStepCompletionOutcome.Succeeded,
             null,
             cancellationToken);
     }
 
     private static bool TryGetWaitDuration(
-        WorkflowNextStepRequest step,
+        IReadOnlyDictionary<string, string?> inputs,
         out TimeSpan duration)
     {
-        var value = step.Parameters.FirstOrDefault(parameter =>
+        var value = inputs.FirstOrDefault(parameter =>
             StringComparer.OrdinalIgnoreCase.Equals(
                 parameter.Key,
                 WorkflowRuntimeParameterNames.WaitDurationSeconds)).Value;
@@ -233,34 +217,66 @@ public sealed class WorkflowSimulatorDispatcher(
     }
 
     private Task ApplyAdapterResponseAsync(
-        Guid executionId,
-        Guid operationId,
+        WorkflowNodeExecutionWorkItem workItem,
         AgvTaskResponse response,
         CancellationToken cancellationToken)
     {
         var state = response.State?.Trim().ToLowerInvariant();
         return state switch
         {
-            "arrived" or "completed" => CompleteAsync(executionId, operationId, WorkflowStepCompletionOutcome.Succeeded, null, cancellationToken),
-            "failed" => CompleteAsync(executionId, operationId, WorkflowStepCompletionOutcome.Failed, response.LastError, cancellationToken),
-            "cancelled" => CompleteAsync(executionId, operationId, WorkflowStepCompletionOutcome.Cancelled, response.LastError, cancellationToken),
-            "unknown" => CompleteAsync(executionId, operationId, WorkflowStepCompletionOutcome.Unknown, response.LastError, cancellationToken),
+            "arrived" or "completed" => CompleteAsync(workItem, WorkflowStepCompletionOutcome.Succeeded, null, cancellationToken),
+            "failed" => CompleteAsync(workItem, WorkflowStepCompletionOutcome.Failed, response.LastError, cancellationToken),
+            "cancelled" => CompleteAsync(workItem, WorkflowStepCompletionOutcome.Cancelled, response.LastError, cancellationToken),
+            "unknown" => CompleteAsync(workItem, WorkflowStepCompletionOutcome.Unknown, response.LastError, cancellationToken),
+            "created" or "queued" or "accepted" => RecordProgressAsync(
+                workItem,
+                WorkflowDeviceOperationStatus.Accepted,
+                response.LastError,
+                cancellationToken),
+            "moving" or "running" => RecordProgressAsync(
+                workItem,
+                WorkflowDeviceOperationStatus.Running,
+                response.LastError,
+                cancellationToken),
             _ => Task.CompletedTask
         };
     }
 
+    private Task RecordProgressAsync(
+        WorkflowNodeExecutionWorkItem workItem,
+        WorkflowDeviceOperationStatus status,
+        string? error,
+        CancellationToken cancellationToken) =>
+        workItem.DeviceOperation is not { } operation
+            ? Task.CompletedTask
+            : workflows.RecordDeviceOperationProgressAsync(
+                workItem.NodeExecution.Id,
+                operation.OperationId,
+                status,
+                error,
+                cancellationToken);
+
     private Task CompleteAsync(
-        Guid executionId,
-        Guid operationId,
+        WorkflowNodeExecutionWorkItem workItem,
         WorkflowStepCompletionOutcome outcome,
         string? error,
         CancellationToken cancellationToken) =>
-        workflows.CompleteClaimedStepAsync(executionId, new WorkflowStepCompletionRequest
+        workflows.CompleteNodeExecutionAsync(workItem.NodeExecution.Id, new WorkflowNodeExecutionCompletionRequest
         {
-            TransportOperationId = operationId,
+            DeviceOperationId = workItem.DeviceOperation?.OperationId,
             Outcome = outcome,
             Error = error
         }, cancellationToken);
+
+    private static bool IsNodeType(WorkflowNodeExecutionWorkItem workItem, string nodeTypeId) =>
+        string.Equals(
+            workItem.NodeExecution.NodeTypeId,
+            nodeTypeId,
+            StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsTimedWait(WorkflowNodeExecutionWorkItem workItem) =>
+        IsNodeType(workItem, WorkflowGraphNodeTypeIds.TimedWait) ||
+        IsNodeType(workItem, WorkflowGraphNodeTypeIds.Wait);
 }
 
 /// <summary>

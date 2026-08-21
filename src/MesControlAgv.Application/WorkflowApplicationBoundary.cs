@@ -72,6 +72,33 @@ public interface IWorkflowApplicationService : IWorkflowVersionReader, IWorkflow
         int limit,
         CancellationToken cancellationToken);
 
+    /// <summary>Returns ready Simulator Move/Timed Wait node records.</summary>
+    Task<IReadOnlyList<WorkflowNodeExecutionWorkItem>> ListSimulatorDispatchableNodesAsync(
+        CancellationToken cancellationToken);
+
+    /// <summary>Returns running Simulator Move/Timed Wait node records for reconciliation.</summary>
+    Task<IReadOnlyList<WorkflowNodeExecutionWorkItem>> ListSimulatorRecoverableNodesAsync(
+        CancellationToken cancellationToken);
+
+    /// <summary>Claims one durable node attempt without contacting a device.</summary>
+    Task<WorkflowNodeExecutionWorkItem> ClaimNodeExecutionAsync(
+        Guid nodeExecutionId,
+        CancellationToken cancellationToken);
+
+    /// <summary>Completes a durable node attempt using normalized worker evidence.</summary>
+    Task<WorkflowExecutionSnapshot> CompleteNodeExecutionAsync(
+        Guid nodeExecutionId,
+        WorkflowNodeExecutionCompletionRequest completion,
+        CancellationToken cancellationToken);
+
+    /// <summary>Persists a non-terminal device-operation state observed by a worker.</summary>
+    Task RecordDeviceOperationProgressAsync(
+        Guid nodeExecutionId,
+        Guid deviceOperationId,
+        WorkflowDeviceOperationStatus status,
+        string? error,
+        CancellationToken cancellationToken);
+
     /// <summary>
     /// Atomically reserves the pending step's stable Adapter operation id.
     /// It never writes to an Adapter or device.
@@ -86,11 +113,11 @@ public interface IWorkflowApplicationService : IWorkflowVersionReader, IWorkflow
         WorkflowStepCompletionRequest completion,
         CancellationToken cancellationToken);
 
-    /// <summary>Returns non-dry-run Move and explicitly timed Wait steps that the Simulator worker may claim.</summary>
+    /// <summary>Legacy run-level compatibility projection for dispatchable steps.</summary>
     Task<IReadOnlyList<WorkflowExecutionSnapshot>> ListSimulatorDispatchableExecutionsAsync(
         CancellationToken cancellationToken);
 
-    /// <summary>Returns claimed executions that need read-only reconciliation after restart.</summary>
+    /// <summary>Legacy run-level compatibility projection for recoverable executions.</summary>
     Task<IReadOnlyList<WorkflowExecutionSnapshot>> ListRecoverableExecutionsAsync(
         CancellationToken cancellationToken);
 

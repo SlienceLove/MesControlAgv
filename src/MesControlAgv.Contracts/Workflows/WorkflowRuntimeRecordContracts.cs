@@ -102,3 +102,25 @@ public sealed record WorkflowRunTimelineEntry
         new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
     public DateTimeOffset OccurredAt { get; init; }
 }
+
+/// <summary>
+/// Durable work item consumed by trusted runtime workers. The node execution is
+/// the orchestration source; a device operation is present only for nodes that
+/// actually cross a device boundary.
+/// </summary>
+public sealed record WorkflowNodeExecutionWorkItem
+{
+    public WorkflowNodeExecutionSnapshot NodeExecution { get; init; } = new();
+    public WorkflowDeviceOperationSnapshot? DeviceOperation { get; init; }
+}
+
+/// <summary>
+/// Normalized completion evidence for a node work item. Timed waits leave
+/// DeviceOperationId null because they do not perform device I/O.
+/// </summary>
+public sealed record WorkflowNodeExecutionCompletionRequest
+{
+    public Guid? DeviceOperationId { get; init; }
+    public WorkflowStepCompletionOutcome Outcome { get; init; }
+    public string? Error { get; init; }
+}

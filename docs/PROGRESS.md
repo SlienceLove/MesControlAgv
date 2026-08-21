@@ -12,30 +12,49 @@ Active branch: `docs/experiment-workflow-architecture-plan`
 - Experiment workflow G2 and G3 have passed overall acceptance.
 - G4-A runtime record contracts, SQLite tables, compatibility dual writes, and
   read-only APIs are implemented and have passed the automated gate.
-- **G4-B worker migration has not started.** Existing `PendingStep` behavior
-  remains the execution source until that gate is implemented and verified.
+- G4-B has migrated Simulator Move and Timed Wait dispatch/recovery to durable
+  node execution records while retaining legacy run-level compatibility APIs.
+- **G4-C has not started.** Read-only runtime visualization remains the next
+  gate and must use the existing G4 records and APIs.
 
 The AGV MVP remains in frozen maintenance mode. Production, unattended,
-automatic/batch dispatch, and Push are **NO-GO**. G4-A adds records and reads;
-it does not authorize new device commands, serial access from WPF/MES,
-protocol/register fields in workflow nodes, or any CIC-D160+ write path.
+automatic/batch dispatch, and Push are **NO-GO**. G4-A/B add durable records and
+migrate only the existing Simulator worker; they do not authorize new device
+commands, serial access from WPF/MES, protocol/register fields in workflow
+nodes, or any CIC-D160+ write path.
 
 ## Latest verification
 
-The G4-A Release gate completed on 2026-08-21:
+The G4-B Release gate completed on 2026-08-21:
 
 - Full solution build: **0 warnings / 0 errors**.
-- Full test suite: **626 passed / 5 existing E2E skipped / 0 failed**.
-- Breakdown: Domain 39, Workflow Contract 54, MES 80, WPF 203, Adapter 176,
+- Full test suite: **629 passed / 5 existing E2E skipped / 0 failed**.
+- Breakdown: Domain 39, Workflow Contract 54, MES 83, WPF 203, Adapter 176,
   Instrument Gateway 50, Simulator 5, and E2E 19 passed plus 5 skipped.
-- Upgrade coverage starts MES against an existing G3 SQLite schema and verifies
-  both runtime tables and indexes are added without recreating prior tables.
-- Persistence coverage verifies restart reads, stable legacy backfill IDs,
-  attempts, device evidence, timeline links, and unchanged legacy reads.
+- MES coverage verifies node-driven Move/Timed Wait dispatch, persisted adapter
+  progress, exact node-operation completion matching, and no wait-device record.
+- Restart coverage recreates the DbContext, application service, dispatcher,
+  and adapter before reconciling from persisted node and device evidence.
+- Compatibility coverage verifies pre-G4 backfill and proves conflicting legacy
+  mirrors cannot create duplicate operations or replace active node records.
 - Verification did not start services or call device, serial, or D160 write
   endpoints.
 
 ## Recent changes
+
+### 2026-08-21 - G4-B node-driven Simulator worker
+
+- Added durable node work-item and completion boundaries for trusted runtime
+  workers; legacy execution-level methods remain available for compatibility.
+- Migrated existing Simulator Move and Timed Wait processing and startup
+  recovery from `PendingStep` to `NodeExecution` plus `DeviceOperation`.
+- Move dispatch reuses its persisted operation ID and records Accepted/Running
+  evidence without duplicate audits. Timed Wait uses persisted `StartedAt` and
+  never creates a device operation.
+- Existing G3 runs are backfilled only when no active node record exists;
+  conflicting legacy mirrors are ignored once G4 records are present.
+- No Adapter command, physical-device path, serial access, or D160 write was
+  added.
 
 ### 2026-08-21 - G4-A runtime records and read APIs
 
@@ -83,9 +102,10 @@ The G4-A Release gate completed on 2026-08-21:
 
 ## Next gate
 
-1. Review G4-A contracts, upgrade behavior, dual-write evidence, and read APIs.
-2. G4-B may then migrate Simulator Move and Timed Wait to use node execution
-   records as the execution and restart-recovery source.
+1. Review G4-B node-driven dispatch, persisted progress, restart recovery, and
+   legacy compatibility evidence.
+2. G4-C may then add read-only runtime visualization and node/device evidence
+   details using the existing G4 contracts and APIs.
 3. Physical device commands, serial control, and D160 writes remain outside the
    authorized scope throughout G4.
 

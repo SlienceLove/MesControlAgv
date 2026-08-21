@@ -1,82 +1,28 @@
 using MesControlAgv.Application;
-using MesControlAgv.Contracts;
-using MesControlAgv.Contracts.Workflows;
+using MesControlAgv.Domain.Profiles;
 
 namespace MesControlAgv.Mes.Services;
 
 /// <summary>
-/// Reconciles only a previously claimed Adapter operation after MES restart.
-/// It never dispatches, retries, or creates an operation id, so an uncertain
-/// device write remains UNKNOWN instead of being duplicated.
+/// Runs one Simulator-only node-record reconciliation pass after MES restart.
+/// It never dispatches a ready node; the periodic worker owns new dispatches.
 /// </summary>
-public sealed class WorkflowRecoveryService(IServiceScopeFactory scopeFactory) : BackgroundService
+public sealed class WorkflowRecoveryService(
+    IServiceScopeFactory scopeFactory,
+    ProfileConfiguration profile,
+    WorkflowSimulatorWorkerOptions options,
+    TimeProvider timeProvider) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await ReconcileAsync(stoppingToken);
-    }
-
-    private async Task ReconcileAsync(CancellationToken cancellationToken)
-    {
+        if (!options.Enabled || !profile.Features.UseSimulator) return;
         using var scope = scopeFactory.CreateScope();
-        var workflows = scope.ServiceProvider.GetRequiredService<IWorkflowApplicationService>();
-        var adapter = scope.ServiceProvider.GetRequiredService<IAgvGateway>();
-        foreach (var execution in await workflows.ListRecoverableExecutionsAsync(cancellationToken))
-        {
-            if (execution.RuntimeStatus != WorkflowRuntimeStatus.Running ||
-                execution.TransportOperationId is null ||
-                execution.PendingStepRequest?.NodeType != WorkflowNodeType.Move)
-            {
-                continue;
-            }
-
-            WorkflowStepCompletionOutcome? outcome = null;
-            string? error = null;
-            try
-            {
-                var device = await adapter.GetTaskAsync(execution.TransportOperationId.Value, cancellationToken);
-                switch (device?.State)
-                {
-                    case "arrived":
-                    case "completed":
-                        outcome = WorkflowStepCompletionOutcome.Succeeded;
-                        break;
-                    case "failed":
-                        outcome = WorkflowStepCompletionOutcome.Failed;
-                        error = device.LastError;
-                        break;
-                    case "cancelled":
-                        outcome = WorkflowStepCompletionOutcome.Cancelled;
-                        error = device.LastError;
-                        break;
-                    case null:
-                        outcome = WorkflowStepCompletionOutcome.Unknown;
-                        error = "adapter_task_not_found_after_restart";
-                        break;
-                }
-            }
-            catch (HttpRequestException exception)
-            {
-                outcome = WorkflowStepCompletionOutcome.Unknown;
-                error = exception.Message;
-            }
-            catch (TimeoutException exception)
-            {
-                outcome = WorkflowStepCompletionOutcome.Unknown;
-                error = exception.Message;
-            }
-
-            if (outcome is null)
-            {
-                continue;
-            }
-
-            await workflows.CompleteClaimedStepAsync(execution.ExecutionId, new WorkflowStepCompletionRequest
-            {
-                TransportOperationId = execution.TransportOperationId.Value,
-                Outcome = outcome.Value,
-                Error = error
-            }, cancellationToken);
-        }
+        var dispatcher = new WorkflowSimulatorDispatcher(
+            scope.ServiceProvider.GetRequiredService<IWorkflowApplicationService>(),
+            scope.ServiceProvider.GetRequiredService<IAgvGateway>(),
+            profile,
+            options,
+            timeProvider);
+        await dispatcher.RecoverAsync(stoppingToken);
     }
 }
