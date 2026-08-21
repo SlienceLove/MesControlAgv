@@ -13,8 +13,8 @@ Active branch: `docs/experiment-workflow-architecture-plan`
 - G5-A contracts, additive SQLite storage, and read-only scheduling projections
   have passed project acceptance.
 - G5-B manual planning, deterministic conflicts, blocking reasons, and audit are
-  implemented and verified, pending project acceptance. G5-C runtime leases and
-  G5-D WPF pages have not started.
+  accepted. G5-C runtime admission and lease lifecycle are active; G5-D WPF
+  pages have not started.
 
 The AGV MVP remains in frozen maintenance mode. Production, unattended,
 automatic/batch dispatch, and Push are **NO-GO**. G4-D controls MES scheduling
@@ -44,7 +44,7 @@ The G5-B Release gate completed on 2026-08-21:
   Profile-backed resources, peak-capacity conflicts, and stable blocking reasons.
 - Added request-ID idempotency, append-only audits, resource availability, and
   in-place G5-A schema upgrades without runtime admission or device behavior.
-- Implementation commit: `2e5ef8f`; project acceptance is pending.
+- Implementation commit: `2e5ef8f`; project acceptance passed.
 
 ### 2026-08-21 - G5-A planning record foundation
 
@@ -105,8 +105,8 @@ The G5-B Release gate completed on 2026-08-21:
 
 ## Next gate
 
-1. Obtain project acceptance for the completed G5-B backend slice.
-2. After acceptance, G5-C may add runtime admission and lease lifecycle only.
+1. Implement G5-C runtime admission and lease lifecycle only.
+2. Prove leases are mutually exclusive and released on terminal/recovery-failure paths.
 3. WPF scheduling pages remain G5-D; physical device commands, serial control,
    protocol fields, and D160 writes remain closed.
 
