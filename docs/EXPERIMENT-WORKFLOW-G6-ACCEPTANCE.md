@@ -1,6 +1,6 @@
 # 实验流程 G6 验收记录
 
-> 状态：G6-A 已通过项目方验收；项目方已授权进入 G6-B。G6 总体尚未验收。
+> 状态：G6-A 已通过项目方验收；G6-B 已完成实现和自动化门禁，待项目方验收。G6 总体尚未验收。
 
 日期：2026-08-24
 
@@ -9,7 +9,7 @@
 | 切片 | 责任 | 当前状态 |
 | --- | --- | --- |
 | G6-A | 高级流程版本化契约、目录元数据和确定性发布校验 | 已通过验收 |
-| G6-B | 条件、外部信号和人工确认的持久化、可追溯运行语义 | 已授权，待实施 |
+| G6-B | 条件、外部信号和人工确认的持久化、可追溯运行语义 | 已实现，待验收 |
 | G6-C | 并行分叉/汇合、固定版本子流程和显式补偿运行语义 | 未开始 |
 | G6-D | 高级流程设计与运行监控交互、G6 总体验收 | 未开始 |
 
@@ -32,7 +32,31 @@ CIC-D160+ 写入仍需设备级独立安全门禁与现场验收。
 G6-A 没有修改 Worker、数据库、节点推进或设备网关，也没有新增实体设备命令、串口、
 协议/寄存器字段或 D160 写入路径。
 
-## 3. 自动化验证
+## 3. G6-B 交付
+
+实现提交：`e749489 feat(workflows): add G6 durable interaction runtime`
+
+- 目录版本升级到 `1.2`，开放结构化条件和外部信号节点；人工确认进入服务端运行时。并行分叉/汇合、
+  固定版本子流程和补偿仍保持禁用，发布及执行会继续被目录门禁阻止。
+- 条件只读取固定运行输入或状态为 `Succeeded` 的持久化节点输出，按优先级比较类型化常量；判断输入、
+  源值、比较结果、命中边和时间均写入节点执行及审计。`null` 与不存在的值都按显式 `Fail/Wait` 策略处理。
+- 新增 `WorkflowRuntimeInteractions` 及两个查询索引。外部信号先持久化再匹配，因此可早于等待节点到达，
+  MES 重启后仍能按信号名和关联值消费；人工确认保存处理人、理由、结论和备注。
+- 新增信号提交、人工确认和交互证据读取 API，并增加 `workflow.submit-signal`、
+  `workflow.complete-manual-task` 两项服务端权限。请求 ID 相同且载荷相同会稳定重放，变更载荷返回冲突。
+- 人工确认和信号等待使用显式 `Success/Timeout/Cancelled` 路径；超时、暂停、恢复、运行取消和 Unknown
+  人工判定与高级节点推进共享串行边界，避免并发保存覆盖终态。
+- Simulator 的既有 Move/Timed Wait Worker 只补充声明式结果摘要。节点输出同时保存在
+  `NodeExecution` 与既有 `DeviceOperation`；Unknown 人工判定会保留此前证据，供后续条件读取。
+- 后台协调按运行隔离作用域；一个损坏运行不会污染或阻塞其他等待运行。终态仍复用 G5 租约同步，
+  完成、失败和安全取消按既有规则释放资源。
+
+G6-B 没有新增设备执行器、实体设备命令、自动调度、串口访问、协议/寄存器字段或 CIC-D160+ 写入路径。
+外部信号和人工确认只改变 MES 持久化运行状态，不向设备发送暂停或取消命令。
+
+## 4. 自动化验证
+
+### 4.1 G6-A 基线
 
 G6-A Release 门禁于 2026-08-24 执行：
 
@@ -52,18 +76,72 @@ G6-A Release 门禁于 2026-08-24 执行：
 
 一次并行 Debug 构建遇到共享 `obj` DLL 文件锁；串行复跑通过，不属于产品失败。
 
-## 4. 兼容与回退
+### 4.2 G6-B 门禁
+
+G6-B Release 门禁于 2026-08-24 执行：
+
+| 检查 | 结果 |
+| --- | --- |
+| `dotnet build MesControlAgv.sln --configuration Release --nologo` | 0 警告，0 错误 |
+| G6-B MES 聚焦测试 | 11/11 通过 |
+| G6-B Contract 聚焦测试 | 11/11 通过 |
+| Domain | 39/39 通过 |
+| Workflow Contract | 70/70 通过 |
+| MES | 120/120 通过 |
+| WPF | 226/226 通过 |
+| Adapter | 176/176 通过 |
+| Instrument Gateway | 50/50 通过 |
+| Simulator | 5/5 通过 |
+| E2E | 19 通过，5 个既有用例跳过，0 失败 |
+| 全方案合计 | **705 通过，5 跳过，0 失败** |
+
+聚焦覆盖包括：条件命中/默认边、运行输入/节点输出、缺失值失败/等待、人工备注门禁与取消、早到信号、
+精确关联、相同请求重放/变更载荷冲突、暂停与运行取消、超时边、Unknown 后续接管、服务重启消费、
+HTTP 状态映射、SQLite 原位升级、输出证据保留，以及高级节点不创建设备操作。
+
+## 5. 兼容与回退
 
 - v2 已发布流程和既有运行记录无需迁移即可继续读取和执行。
-- v3 仅扩展 JSON 契约；回退到 G5/G6-A 之前代码时，先停止创建 v3 草稿，已有数据不应删除。
-- 未授权高级节点的稳定禁用原因是
-  `Advanced flow semantics are contract-only in G6-A; runtime orchestration is not enabled.`
-- G6-B 只能开放条件、外部信号和人工确认所需的服务端运行语义；并行、子流程、补偿及设备写能力
-  必须继续关闭。
+- `NodeTypeId` 和完成输出是向后兼容字段；既有 v1/v2 顺序路径、请求指纹和节点记录无需重写。
+- `WorkflowRuntimeInteractions` 通过 `CREATE TABLE/INDEX IF NOT EXISTS` 原位增加，不删除或改写既有表。
+- 回退到 G6-A 时，先停止新的 G6-B 交互并处理活动等待运行；可回退代码但保留新增表和证据。
+  已发布的条件/信号 v3 版本在旧目录下会重新被阻止，不应降级或删除其定义。
+- 待处理信号是审计证据；即使运行取消或代码回退也不应直接删除。
+- 并行、子流程和补偿的稳定禁用原因为
+  `Parallel, subflow, and compensation semantics remain contract-only until G6-C.`
+- 设备写能力仍需独立设备级安全门禁，不能随 G6-B 或后续 G6 切片默认开启。
 
-## 5. 验收结论与下一门禁
+## 6. 手工验收步骤
+
+手工验收使用 Simulator Profile，不连接实体设备：
+
+1. 发布 `Start -> Condition -> End` 的 v3 流程，条件读取运行输入并配置命中边与默认边。分别以命中值和
+   未命中值执行。预期两个运行均完成，条件节点的输入/输出记录源值、判断结果和不同的 `matchedEdgeId`，
+   `device-operations` 为空。
+2. 发布包含人工确认的流程。执行后预期运行是 `Running`、节点是 `WaitingForSignal`。对要求备注的节点
+   先提交空备注，预期返回 `409` 和 `WORKFLOW_MANUAL_COMMENT_REQUIRED`；补充备注后返回 `200` 并沿
+   `Success` 边推进。原请求重放仍返回 `200` 且 `IsIdempotentReplay=true`，改变载荷返回 `409`。
+3. 发布 `Move -> Signal Wait -> End`，在 Move 完成前提交匹配信号。预期先返回 `202/Pending`。重启 MES
+   后在 Simulator 完成 Move，预期同一信号变为 `Applied` 并推进流程；只存在 Move 的既有设备操作，
+   信号节点不创建设备操作。
+4. 对人工/信号等待验证短超时、Pause/Resume 和安全 Cancel。预期超时沿 `Timeout` 边；暂停只阻止后续
+   调度，不发送设备命令；静止等待可安全取消，活动或 Unknown 设备工作仍按 G4 规则拒绝取消。
+5. 查询 `/api/workflow-runs/{runId}/interactions` 和运行时间线。预期可看到请求 ID、处理人、理由、信号名、
+   关联值、接收/应用时间和节点执行 ID。确认并行、子流程、补偿仍显示禁用，且无串口或 D160 写入口。
+
+自动化复现命令：
+
+```powershell
+dotnet test tests/MesControlAgv.Mes.Tests/MesControlAgv.Mes.Tests.csproj `
+  --configuration Release --no-build --nologo `
+  --filter "FullyQualifiedName~WorkflowAdvancedRuntime|FullyQualifiedName~WorkflowApiTests.G6B|FullyQualifiedName~WorkflowRuntimeSchemaUpgradeTests.Existing_g3"
+```
+
+预期：11/11 通过。
+
+## 7. 验收结论与下一门禁
 
 项目方于 2026-08-24 确认 G6-A 验收通过，并授权进入 G6-B。
 
-G6-B 的完成门禁是：输入、判断、信号和人工处理人均具有持久化证据；重放、超时、暂停、取消和
-重启恢复保持确定性；不解释自由文本条件，不推进 G6-C 节点，也不调用任何新增设备控制路径。
+G6-B 已满足实现与自动化门禁，当前等待项目方按第 6 节确认“通过”或提出修改。项目方明确确认前，
+只修复 G6-B 问题，不开始 G6-C；G6 总体验收仍未通过。

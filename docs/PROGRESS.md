@@ -16,27 +16,38 @@ Active branch: `docs/experiment-workflow-architecture-plan`
   planning/scheduling pages have passed project acceptance. G5 overall
   acceptance passed on 2026-08-24; the project authorized entry into G6.
 - G6-A versioned advanced-flow contracts and deterministic static publication
-  gates have passed project acceptance. G6-B is authorized next.
+  gates have passed project acceptance. G6-B durable conditions, external
+  signals, and manual confirmations are implemented and await project acceptance.
 
 The AGV MVP remains in frozen maintenance mode. Production, unattended,
-automatic/batch dispatch, and Push are **NO-GO**. G4-D controls MES scheduling
-state only: it does not send pause/cancel commands to devices, retry Unknown
-operations, add serial access, expose protocol/register fields, or enable any
-CIC-D160+ write path.
+automatic/batch dispatch, and Push are **NO-GO**. G6-B changes MES workflow state
+only: it does not send pause/cancel commands to devices, retry Unknown operations,
+add serial access, expose protocol/register fields, or enable any CIC-D160+ write
+path.
 
 ## Latest verification
 
-The G6-A Release gate completed on 2026-08-24:
+The G6-B Release gate completed on 2026-08-24:
 
 - Full solution build: **0 warnings / 0 errors**.
-- Full test suite: **695 passed / 5 existing E2E skipped / 0 failed**.
-- Breakdown: Domain 39, Workflow Contract 69, MES 111, WPF 226, Adapter 176,
+- Full test suite: **705 passed / 5 existing E2E skipped / 0 failed**.
+- Breakdown: Domain 39, Workflow Contract 70, MES 120, WPF 226, Adapter 176,
   Instrument Gateway 50, Simulator 5, and E2E 19 passed plus 5 skipped.
-- G6-A focused coverage: **15/15 passed**. It covers schema compatibility,
-  typed conditions, signal/parallel/subflow/compensation publication rules,
-  catalog gates, copy/paste remapping, import behavior, and MES round trips.
+- G6-B focused coverage: **22/22 passed**. It covers typed decisions, durable
+  interaction replay, timeout, pause/cancel, Unknown continuation, restart
+  recovery, HTTP mappings, additive schema upgrade, and absence of advanced-node
+  device operations.
 
 ## Recent changes
+
+### 2026-08-24 - G6-B durable interaction runtime
+
+- Enabled server-side typed conditions, durable early external signals, and
+  audited manual outcomes with explicit success/timeout/cancelled paths.
+- Added additive interaction storage, restart-safe matching, serialized controls,
+  output evidence retention, and isolated background recovery. Parallel, subflow,
+  compensation, automatic scheduling, device control, serial, and D160 writes stay closed.
+- Implementation commit: `e749489`; project acceptance is pending.
 
 ### 2026-08-24 - G6-A advanced-flow contracts
 
@@ -44,7 +55,7 @@ The G6-A Release gate completed on 2026-08-24:
   legacy free-form conditions as unpublishable compatibility data.
 - Added typed condition, signal wait, parallel, pinned subflow, and compensation
   contracts with deterministic publication rules. All advanced nodes remain
-  runtime-disabled at this gate.
+  runtime-disabled in the G6-A baseline.
 - Implementation commit: `3f184d7`; project acceptance passed on 2026-08-24.
 
 ### 2026-08-24 - G5-D planning and scheduling UI
@@ -57,31 +68,12 @@ The G6-A Release gate completed on 2026-08-24:
 - Implementation commit: `27d63c8`; final header alignment: `858d3bd`; project
   acceptance and G5 overall acceptance passed on 2026-08-24.
 
-### 2026-08-22 to 2026-08-24 - G5-C runtime admission
-
-- Added explicit scheduled-job admission with pinned plan/workflow checks and a
-  single transaction for workflow run, reservation conversion, leases, linkage,
-  state projection, and audit.
-- Made `ActiveResourceKey` the database mutex; runtime rejection and lease
-  conflict leave no partial run or lease, while request replay stays durable.
-- Added terminal release and startup reconciliation. Paused, unresolved Unknown,
-  and expired non-terminal runs keep leases; recovery performs no device calls.
-- Implementation commit: `75655cd`; project acceptance passed on 2026-08-24.
-
-### 2026-08-21 - G5-B manual experiment scheduling
-
-- Added draft validation/publication/version-copy commands and published-plan
-  job creation with immutable plan/workflow references.
-- Added manual schedule, reschedule, unschedule, and cancel behavior with
-  Profile-backed resources, peak-capacity conflicts, and stable blocking reasons.
-- Added request-ID idempotency, append-only audits, resource availability, and
-  in-place G5-A schema upgrades without runtime admission or device behavior.
-- Implementation commit: `2e5ef8f`; project acceptance passed.
-
 ## Historical trace
 
 | Date | Retained trace |
 | --- | --- |
+| 2026-08-22 to 2026-08-24 | G5-C transactional runtime admission, active lease mutex and restart reconciliation passed; implementation `75655cd`. See [G5 acceptance](EXPERIMENT-WORKFLOW-G5-ACCEPTANCE.md). |
+| 2026-08-21 | G5-B manual planning, scheduling, idempotent commands and additive upgrade passed; implementation `2e5ef8f`. See [G5 acceptance](EXPERIMENT-WORKFLOW-G5-ACCEPTANCE.md). |
 | 2026-08-21 | G4-D audited pause/resume, cancellation and Unknown resolution passed; implementation `379fd59`. See [G4 acceptance](EXPERIMENT-WORKFLOW-G4-ACCEPTANCE.md). |
 | 2026-08-21 | G5-A planning foundation passed: immutable plan/workflow references, additive storage, and read-only projections. Implementation `b690289`; see [G5 acceptance](EXPERIMENT-WORKFLOW-G5-ACCEPTANCE.md). |
 | 2026-08-21 | G4 overall acceptance: durable runtime evidence, Simulator-only node execution, monitoring, and audited controls. See [G4 acceptance](EXPERIMENT-WORKFLOW-G4-ACCEPTANCE.md). |
@@ -102,9 +94,9 @@ The G6-A Release gate completed on 2026-08-24:
 
 ## Next gate
 
-1. Implement G6-B durable condition, external-signal, and manual-confirmation
-   runtime semantics with deterministic replay, timeout, pause/cancel, recovery,
-   and audit behavior. Do not begin parallel, subflow, or compensation runtime.
+1. Complete project acceptance for G6-B using the reproducible service/API steps
+   in the G6 acceptance record. Until confirmation, fix G6-B only and do not begin
+   parallel, subflow, or compensation runtime.
 2. Keep automatic scheduling, physical device commands, serial control,
    protocol/register fields, and D160 writes closed unless separately authorized
    by a later device-specific safety gate.
