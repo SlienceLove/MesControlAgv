@@ -12,10 +12,9 @@ Active branch: `docs/experiment-workflow-architecture-plan`
 - Experiment workflow G2, G3, and G4 have passed overall acceptance.
 - G5-A contracts, additive SQLite storage, and read-only scheduling projections
   have passed project acceptance.
-- G5-B manual planning and G5-C runtime admission have passed project
-  acceptance. G5-D independent WPF experiment-plan and task-scheduling pages,
-  manual operations, resource swimlanes, and blocking explanations are
-  implemented and await project acceptance.
+- G5-B manual planning, G5-C runtime admission, and G5-D independent WPF
+  planning/scheduling pages have passed project acceptance. G5 overall
+  acceptance passed on 2026-08-24; the project authorized entry into G6.
 
 The AGV MVP remains in frozen maintenance mode. Production, unattended,
 automatic/batch dispatch, and Push are **NO-GO**. G4-D controls MES scheduling
@@ -44,7 +43,8 @@ The G5-D Release gate completed on 2026-08-24:
 - Added manual job creation, schedule/reschedule, unschedule, cancel, and explicit
   admission against existing G5 APIs. No scheduler optimization, node advance,
   device command, serial access, or D160 write path was added.
-- Implementation commit: `27d63c8`; project acceptance is pending.
+- Implementation commit: `27d63c8`; final header alignment: `858d3bd`; project
+  acceptance and G5 overall acceptance passed on 2026-08-24.
 
 ### 2026-08-22 to 2026-08-24 - G5-C runtime admission
 
@@ -103,12 +103,11 @@ The G5-D Release gate completed on 2026-08-24:
 
 ## Next gate
 
-1. Complete G5-D project acceptance using the WPF workflow in the G5 record.
-2. Confirm G5 overall acceptance only after the plan, scheduling, blocker,
-   resource-load, and admission views match project expectations.
-3. Do not enter G6 before explicit approval; automatic
-   scheduling, physical device commands, serial control, protocol fields, and
-   D160 writes remain closed.
+1. Start G6-A with versioned advanced-flow contracts and deterministic static
+   publication validation; do not change runtime execution behavior.
+2. Keep automatic scheduling, physical device commands, serial control,
+   protocol/register fields, and D160 writes closed unless separately authorized
+   by a later device-specific safety gate.
 
 ## Planning and evidence
 
