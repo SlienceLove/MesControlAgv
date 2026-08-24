@@ -13,8 +13,9 @@ Active branch: `docs/experiment-workflow-architecture-plan`
 - G5-A contracts, additive SQLite storage, and read-only scheduling projections
   have passed project acceptance.
 - G5-B manual planning and G5-C runtime admission have passed project
-  acceptance. G5-D independent WPF experiment-plan and task-scheduling pages
-  are now in progress.
+  acceptance. G5-D independent WPF experiment-plan and task-scheduling pages,
+  manual operations, resource swimlanes, and blocking explanations are
+  implemented and await project acceptance.
 
 The AGV MVP remains in frozen maintenance mode. Production, unattended,
 automatic/batch dispatch, and Push are **NO-GO**. G4-D controls MES scheduling
@@ -24,26 +25,28 @@ CIC-D160+ write path.
 
 ## Latest verification
 
-The G5-C Release gate completed on 2026-08-22:
+The G5-D Release gate completed on 2026-08-24:
 
 - Full solution build: **0 warnings / 0 errors**.
-- Full test suite: **669 passed / 5 existing E2E skipped / 0 failed**.
-- Breakdown: Domain 39, Workflow Contract 58, MES 110, WPF 212, Adapter 176,
+- Full test suite: **682 passed / 5 existing E2E skipped / 0 failed**.
+- Breakdown: Domain 39, Workflow Contract 58, MES 110, WPF 225, Adapter 176,
   Instrument Gateway 50, Simulator 5, and E2E 19 passed plus 5 skipped.
-- G5-C focused coverage: **6/6 passed**. It proves atomic admission and rollback,
-  idempotent replay, one-winner resource exclusion, terminal/recovery release,
-  Paused/Unknown retention, and legacy direct-execute compatibility.
+- G5-D focused coverage: **13/13 passed**. It covers G5 HTTP contracts, plan
+  lifecycle, manual scheduling, deterministic blockers, swimlane geometry,
+  active leases, page bindings, and the no-node/no-device boundary.
 
 ## Recent changes
 
-### 2026-08-24 - G5-C project acceptance
+### 2026-08-24 - G5-D planning and scheduling UI
 
-- Project acceptance passed for atomic admission, one-winner runtime leases,
-  terminal release, and device-free recovery.
-- G5-D was authorized. Its scope remains independent WPF plan/scheduling pages,
-  manual scheduling, resource load, and blocking explanations.
+- Added separate experiment-plan and task-scheduling pages with structured plan
+  editing, completeness issues, task pool, resource timeline, and audit detail.
+- Added manual job creation, schedule/reschedule, unschedule, cancel, and explicit
+  admission against existing G5 APIs. No scheduler optimization, node advance,
+  device command, serial access, or D160 write path was added.
+- Implementation commit: `27d63c8`; project acceptance is pending.
 
-### 2026-08-22 - G5-C runtime admission and lease lifecycle
+### 2026-08-22 to 2026-08-24 - G5-C runtime admission
 
 - Added explicit scheduled-job admission with pinned plan/workflow checks and a
   single transaction for workflow run, reservation conversion, leases, linkage,
@@ -52,7 +55,7 @@ The G5-C Release gate completed on 2026-08-22:
   conflict leave no partial run or lease, while request replay stays durable.
 - Added terminal release and startup reconciliation. Paused, unresolved Unknown,
   and expired non-terminal runs keep leases; recovery performs no device calls.
-- Implementation commit: `75655cd`; project acceptance passed.
+- Implementation commit: `75655cd`; project acceptance passed on 2026-08-24.
 
 ### 2026-08-21 - G5-B manual experiment scheduling
 
@@ -63,15 +66,6 @@ The G5-C Release gate completed on 2026-08-22:
 - Added request-ID idempotency, append-only audits, resource availability, and
   in-place G5-A schema upgrades without runtime admission or device behavior.
 - Implementation commit: `2e5ef8f`; project acceptance passed.
-
-### 2026-08-21 - G5-A planning record foundation
-
-- Added separate plan, job, schedule-entry, reservation, and runtime-lease
-  contracts with immutable plan/workflow version references.
-- Added five additive SQLite tables and read-only plan, job, and schedule APIs.
-- Kept legacy transport tasks and direct workflow admission unchanged; no
-  scheduling command, lease acquisition, UI, or device behavior was added.
-- Implementation commit: `b690289`.
 
 ### 2026-08-21 - G4-D audited run controls
 
@@ -90,6 +84,7 @@ The G5-C Release gate completed on 2026-08-22:
 
 | Date | Retained trace |
 | --- | --- |
+| 2026-08-21 | G5-A planning foundation passed: immutable plan/workflow references, additive storage, and read-only projections. Implementation `b690289`; see [G5 acceptance](EXPERIMENT-WORKFLOW-G5-ACCEPTANCE.md). |
 | 2026-08-21 | G4 overall acceptance: durable runtime evidence, Simulator-only node execution, monitoring, and audited controls. See [G4 acceptance](EXPERIMENT-WORKFLOW-G4-ACCEPTANCE.md). |
 | 2026-08-21 | G3 overall acceptance: typed catalog, strict publication gate, schema-driven inspector, and issue navigation. See [G3 acceptance](EXPERIMENT-WORKFLOW-G3-ACCEPTANCE.md). |
 | 2026-08-20 | G2 overall acceptance: one canonical v2 graph editor, Nodify canvas, compatibility importer, and lossless MES lifecycle. See [G2 acceptance](EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md). |
@@ -108,10 +103,10 @@ The G5-C Release gate completed on 2026-08-22:
 
 ## Next gate
 
-1. Implement the independent G5-D experiment-plan and task-scheduling pages.
-2. Verify plan lifecycle, manual scheduling, resource swimlanes, stable blocking
-   explanations, and strict separation from workflow-node execution.
-3. Stop at the G5-D/G5 overall project acceptance gate; G6, automatic
+1. Complete G5-D project acceptance using the WPF workflow in the G5 record.
+2. Confirm G5 overall acceptance only after the plan, scheduling, blocker,
+   resource-load, and admission views match project expectations.
+3. Do not enter G6 before explicit approval; automatic
    scheduling, physical device commands, serial control, protocol fields, and
    D160 writes remain closed.
 
