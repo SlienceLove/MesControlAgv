@@ -7,6 +7,15 @@ linked acceptance documents.
 
 ## Current focus
 
+### P0 - 离子色谱 ShineLab CSV 导入 RPA POC（2026-08-24）
+
+- 已在真实 ShineLab 界面确认分析控制的样品任务表存在“导出CSV”和“从CSV导入”。
+- 已用 `ExportData.csv` 验证导入会追加 7 条任务，不会覆盖原任务；重复导入存在重复任务风险。
+- 当前进入 RPA 模拟开发：只自动导入和校验任务，不自动点击“运行”，也不改变既有 D160+ 串口只读安全边界。
+- 实现入口：[ShineLab CSV 导入 RPA POC](ION-CHROMATOGRAPHY-RPA-POC.md)。
+
+### P1 - 实验流程
+
 Active branch: `docs/experiment-workflow-architecture-plan`
 
 - Experiment workflow G2, G3, and G4 have passed overall acceptance.
@@ -17,7 +26,9 @@ Active branch: `docs/experiment-workflow-architecture-plan`
   acceptance passed on 2026-08-24; the project authorized entry into G6.
 - G6-A versioned advanced-flow contracts and deterministic static publication
   gates have passed project acceptance. G6-B durable conditions, external
-  signals, and manual confirmations are implemented and await project acceptance.
+  signals, and manual confirmations are implemented; all automated gates pass.
+- Experiment workflow work is paused at the G6-B project-acceptance gate while
+  the P0 ion-chromatography import work is active. G6-C has not started.
 
 The AGV MVP remains in frozen maintenance mode. Production, unattended,
 automatic/batch dispatch, and Push are **NO-GO**. G6-B changes MES workflow state
@@ -39,6 +50,13 @@ The G6-B Release gate completed on 2026-08-24:
   device operations.
 
 ## Recent changes
+
+### 2026-08-24 - Priority adjustment
+
+- Set ion-chromatography ShineLab CSV task import to P0, including RPA simulation,
+  duplicate-import protection, and post-import verification. Automatic “Run” stays closed.
+- Moved experiment workflow to P1 and deferred G6-B project acceptance. G6-C
+  remains closed until G6-B is explicitly accepted after the P0 work.
 
 ### 2026-08-24 - G6-B durable interaction runtime
 
@@ -94,10 +112,12 @@ The G6-B Release gate completed on 2026-08-24:
 
 ## Next gate
 
-1. Complete project acceptance for G6-B using the reproducible service/API steps
-   in the G6 acceptance record. Until confirmation, fix G6-B only and do not begin
-   parallel, subflow, or compensation runtime.
-2. Keep automatic scheduling, physical device commands, serial control,
+1. Complete the P0 ShineLab CSV task-import RPA simulation, duplicate-import
+   protection, and post-import verification. The RPA must not click “Run”.
+2. After the P0 import gate, resume project acceptance for G6-B using the
+   reproducible service/API steps in the G6 acceptance record. Until explicit
+   confirmation, do not begin G6-C parallel, subflow, or compensation runtime.
+3. Keep automatic scheduling, physical device commands, serial control,
    protocol/register fields, and D160 writes closed unless separately authorized
    by a later device-specific safety gate.
 
@@ -111,6 +131,7 @@ The G6-B Release gate completed on 2026-08-24:
 - [Experiment workflow UI design](EXPERIMENT-WORKFLOW-UI-DESIGN.md)
 - [Experiment workflow implementation plan](EXPERIMENT-WORKFLOW-IMPLEMENTATION-PLAN.md)
 - [Physical acceptance index](physical-acceptance/README.md)
+- [Ion chromatography task-import RPA POC](ION-CHROMATOGRAPHY-RPA-POC.md)
 - [Ion chromatography protocol verification](ION-CHROMATOGRAPHY-D160-PROTOCOL-VERIFICATION.md)
 
 ## Maintenance rule
