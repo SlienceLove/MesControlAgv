@@ -208,6 +208,8 @@ public sealed record WorkflowNextStepRequest
     public int Version { get; init; }
     public Guid NodeId { get; init; }
     public WorkflowNodeType NodeType { get; init; }
+    /// <summary>Stable catalog id for node types not represented by the legacy enum.</summary>
+    public string NodeTypeId { get; init; } = string.Empty;
     public string NodeName { get; init; } = string.Empty;
     public string? TargetStation { get; init; }
     public bool DryRun { get; init; }
@@ -300,6 +302,8 @@ public sealed record WorkflowStepCompletionRequest
     public Guid TransportOperationId { get; init; }
     public WorkflowStepCompletionOutcome Outcome { get; init; }
     public string? Error { get; init; }
+    public IReadOnlyDictionary<string, string?> Outputs { get; init; } =
+        new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 }
 
 /// <summary>

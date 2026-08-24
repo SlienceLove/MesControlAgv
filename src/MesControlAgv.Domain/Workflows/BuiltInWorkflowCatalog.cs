@@ -8,11 +8,11 @@ namespace MesControlAgv.Domain.Workflows;
 /// </summary>
 public static class BuiltInWorkflowCatalog
 {
-    public const string CurrentCatalogVersion = "1.1";
+    public const string CurrentCatalogVersion = "1.2";
     public const string CurrentSchemaVersion = "1.0";
     public const string CurrentProductId = "MES-AGV";
     public const string AdvancedFlowContractOnlyReason =
-        "Advanced flow semantics are contract-only in G6-A; runtime orchestration is not enabled.";
+        "Parallel, subflow, and compensation semantics remain contract-only until G6-C.";
     public const string RestrictedInstrumentWriteReason =
         "Instrument write capability is not authorized by the current read-only safety gate.";
 
@@ -167,9 +167,7 @@ public static class BuiltInWorkflowCatalog
             ],
             ExecutionMode = WorkflowExecutionMode.Immediate,
             SafetyClassification = WorkflowSafetyClassification.None,
-            ProfileSupport = ProfileIndependent(),
-            Enabled = false,
-            UnavailableReason = AdvancedFlowContractOnlyReason
+            ProfileSupport = ProfileIndependent()
         },
         new()
         {
@@ -205,9 +203,7 @@ public static class BuiltInWorkflowCatalog
             Ports = [ControlInput(), SuccessOutput(), TimeoutOutput(), CancelledOutput()],
             ExecutionMode = WorkflowExecutionMode.ManualSignal,
             SafetyClassification = WorkflowSafetyClassification.None,
-            ProfileSupport = ProfileIndependent(),
-            Enabled = false,
-            UnavailableReason = AdvancedFlowContractOnlyReason
+            ProfileSupport = ProfileIndependent()
         },
         new()
         {

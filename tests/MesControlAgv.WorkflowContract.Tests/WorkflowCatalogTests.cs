@@ -40,20 +40,34 @@ public sealed class WorkflowCatalogTests
     }
 
     [Fact]
-    public void G6_advanced_nodes_are_typed_but_blocked_until_runtime_orchestration_exists()
+    public void G6B_enables_condition_and_signal_while_later_advanced_nodes_remain_blocked()
     {
         var catalog = BuiltInWorkflowCatalog.Create().NodeTypes;
-        var advancedIds = new[]
+        var enabledIds = new[]
         {
             WorkflowGraphNodeTypeIds.Condition,
-            WorkflowGraphNodeTypeIds.SignalWait,
+            WorkflowGraphNodeTypeIds.SignalWait
+        };
+        var blockedIds = new[]
+        {
             WorkflowGraphNodeTypeIds.ParallelFork,
             WorkflowGraphNodeTypeIds.ParallelJoin,
             WorkflowGraphNodeTypeIds.Subflow,
             WorkflowGraphNodeTypeIds.CompensationStart
         };
 
-        foreach (var nodeTypeId in advancedIds)
+        foreach (var nodeTypeId in enabledIds)
+        {
+            var definition = GetNode(catalog, nodeTypeId);
+            Assert.True(definition.Enabled);
+            Assert.Null(definition.UnavailableReason);
+            Assert.Empty(definition.RequiredCapabilityIds);
+            Assert.Equal(
+                WorkflowCatalogPublishDisposition.EligibleForValidation,
+                catalog.Resolve(nodeTypeId, definition.SchemaVersion).PublishDisposition);
+        }
+
+        foreach (var nodeTypeId in blockedIds)
         {
             var definition = GetNode(catalog, nodeTypeId);
             Assert.False(definition.Enabled);

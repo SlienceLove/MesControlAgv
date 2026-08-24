@@ -5,6 +5,8 @@ public static class WorkflowRunControlPermissions
     public const string Pause = "workflow.pause";
     public const string Cancel = "workflow.cancel";
     public const string ResolveUnknown = "workflow.resolve-unknown";
+    public const string SubmitSignal = "workflow.submit-signal";
+    public const string CompleteManualTask = "workflow.complete-manual-task";
 }
 
 public enum WorkflowRunControlAction

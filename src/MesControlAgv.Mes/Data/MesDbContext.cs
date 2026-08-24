@@ -22,6 +22,9 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
 
     public DbSet<WorkflowAuditRecord> WorkflowAudits => Set<WorkflowAuditRecord>();
 
+    public DbSet<WorkflowRuntimeInteractionRecord> WorkflowRuntimeInteractions =>
+        Set<WorkflowRuntimeInteractionRecord>();
+
     public DbSet<ExperimentPlanRecord> ExperimentPlans => Set<ExperimentPlanRecord>();
 
     public DbSet<ExperimentJobRecord> ExperimentJobs => Set<ExperimentJobRecord>();
@@ -136,6 +139,34 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.Property(audit => audit.DetailsJson).HasMaxLength(8192);
             entity.HasIndex(audit => new { audit.WorkflowId, audit.Version, audit.OccurredAtUtc });
             entity.HasIndex(audit => audit.RequestId);
+        });
+
+        modelBuilder.Entity<WorkflowRuntimeInteractionRecord>(entity =>
+        {
+            entity.HasKey(interaction => interaction.RequestId);
+            entity.Property(interaction => interaction.Fingerprint).HasMaxLength(8192);
+            entity.Property(interaction => interaction.InteractionType).HasMaxLength(64);
+            entity.Property(interaction => interaction.Status).HasMaxLength(32);
+            entity.Property(interaction => interaction.SignalName).HasMaxLength(128);
+            entity.Property(interaction => interaction.CorrelationValue).HasMaxLength(256);
+            entity.Property(interaction => interaction.Actor).HasMaxLength(256);
+            entity.Property(interaction => interaction.Reason).HasMaxLength(2048);
+            entity.Property(interaction => interaction.RequestJson).HasMaxLength(16384);
+            entity.Property(interaction => interaction.DataJson).HasMaxLength(16384);
+            entity.HasIndex(interaction => new
+            {
+                interaction.WorkflowRunId,
+                interaction.InteractionType,
+                interaction.Status,
+                interaction.ReceivedAtUtc
+            });
+            entity.HasIndex(interaction => new
+            {
+                interaction.WorkflowRunId,
+                interaction.SignalName,
+                interaction.CorrelationValue,
+                interaction.Status
+            });
         });
 
         modelBuilder.Entity<ExperimentPlanRecord>(entity =>

@@ -34,6 +34,7 @@ internal static class WorkflowAdvancedPublicationRules
         ValidateSchemaBoundary(workflow.SchemaVersion, nodes, edges, issues);
         ValidateConditionGateways(nodes, edges, nodesById, catalogs, issues);
         ValidateSignalWaits(nodes, issues);
+        ValidateInteractionOutcomePaths(nodes, edges, issues);
         ValidateParallelGateways(nodes, edges, issues);
         ValidateSubflows(workflow.Id, nodes, issues);
         ValidateCompensationPaths(nodes, edges, nodesById, issues);
@@ -309,6 +310,33 @@ internal static class WorkflowAdvancedPublicationRules
                 "Signal correlation input key",
                 WorkflowPublicationIssueCodes.SignalReferenceInvalid,
                 issues);
+        }
+    }
+
+    private static void ValidateInteractionOutcomePaths(
+        IReadOnlyList<WorkflowNode> nodes,
+        IReadOnlyList<WorkflowEdgeDefinition> edges,
+        ICollection<WorkflowValidationIssue> issues)
+    {
+        foreach (var node in nodes.Where(node =>
+                     IsNodeType(node, WorkflowGraphNodeTypeIds.ManualConfirmation) ||
+                     IsNodeType(node, WorkflowGraphNodeTypeIds.SignalWait)))
+        {
+            var outgoing = edges.Where(edge => edge.SourceNodeId == node.Id).ToArray();
+            foreach (var kind in new[]
+                     {
+                         WorkflowEdgeKind.Success,
+                         WorkflowEdgeKind.Timeout,
+                         WorkflowEdgeKind.Cancelled
+                     })
+            {
+                var count = outgoing.Count(edge => edge.Kind == kind);
+                if (count == 1) continue;
+                issues.Add(NodeError(
+                    WorkflowPublicationIssueCodes.InteractionOutcomePathInvalid,
+                    $"Node type '{node.NodeTypeId}' requires exactly one '{kind}' outcome edge; found {count}.",
+                    node.Id));
+            }
         }
     }
 

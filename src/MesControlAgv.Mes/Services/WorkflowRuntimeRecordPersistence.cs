@@ -226,9 +226,14 @@ public sealed partial class WorkflowApplicationService
             WorkflowStepCompletionOutcome.Cancelled => WorkflowNodeExecutionStatus.Cancelled.ToString(),
             _ => throw new ArgumentOutOfRangeException(nameof(completion))
         };
-        node.OutputJson = WorkflowPersistence.Serialize(CreateOutcomeSummary(
-            completion.Outcome.ToString(),
-            completion.Error));
+        var outputs = new Dictionary<string, string?>(
+            completion.Outputs ?? new Dictionary<string, string?>(),
+            StringComparer.OrdinalIgnoreCase)
+        {
+            ["outcome"] = completion.Outcome.ToString(),
+            ["error"] = string.IsNullOrWhiteSpace(completion.Error) ? null : completion.Error.Trim()
+        };
+        node.OutputJson = WorkflowPersistence.Serialize(outputs);
         node.LastError = string.IsNullOrWhiteSpace(completion.Error) ? null : completion.Error.Trim();
         node.CompletedAtUtc = completion.Outcome == WorkflowStepCompletionOutcome.Unknown ? null : now;
         node.UpdatedAtUtc = now;
@@ -243,9 +248,7 @@ public sealed partial class WorkflowApplicationService
                 WorkflowStepCompletionOutcome.Cancelled => WorkflowDeviceOperationStatus.Cancelled.ToString(),
                 _ => throw new ArgumentOutOfRangeException(nameof(completion))
             };
-            device.ResultSummaryJson = WorkflowPersistence.Serialize(CreateOutcomeSummary(
-                completion.Outcome.ToString(),
-                completion.Error));
+            device.ResultSummaryJson = WorkflowPersistence.Serialize(outputs);
             device.LastError = node.LastError;
             device.CompletedAtUtc = completion.Outcome == WorkflowStepCompletionOutcome.Unknown ? null : now;
             device.ReconciledAtUtc = now;
@@ -440,6 +443,8 @@ public sealed partial class WorkflowApplicationService
                 .FirstOrDefault(item => item.Id == step.NodeId);
             if (!string.IsNullOrWhiteSpace(node?.NodeTypeId)) return node.NodeTypeId;
         }
+
+        if (!string.IsNullOrWhiteSpace(step.NodeTypeId)) return step.NodeTypeId;
 
         return step.NodeType switch
         {

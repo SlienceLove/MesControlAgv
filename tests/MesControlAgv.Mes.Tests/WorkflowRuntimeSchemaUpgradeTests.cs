@@ -29,6 +29,7 @@ public sealed class WorkflowRuntimeSchemaUpgradeTests
             await using (var setup = new MesDbContext(options))
             {
                 await setup.Database.EnsureCreatedAsync();
+                await setup.Database.ExecuteSqlRawAsync("DROP TABLE WorkflowRuntimeInteractions;");
                 await setup.Database.ExecuteSqlRawAsync("DROP TABLE WorkflowDeviceOperations;");
                 await setup.Database.ExecuteSqlRawAsync("DROP TABLE WorkflowNodeExecutions;");
             }
@@ -53,8 +54,15 @@ public sealed class WorkflowRuntimeSchemaUpgradeTests
                 Assert.Contains("WorkflowAudits", tables);
                 Assert.Contains("WorkflowNodeExecutions", tables);
                 Assert.Contains("WorkflowDeviceOperations", tables);
+                Assert.Contains("WorkflowRuntimeInteractions", tables);
                 Assert.Contains("IX_WorkflowNodeExecutions_StepRequestId", indexes);
                 Assert.Contains("IX_WorkflowDeviceOperations_NodeExecutionId", indexes);
+                Assert.Contains(
+                    "IX_WorkflowRuntimeInteractions_WorkflowRunId_InteractionType_Status_ReceivedAtUtc",
+                    indexes);
+                Assert.Contains(
+                    "IX_WorkflowRuntimeInteractions_WorkflowRunId_SignalName_CorrelationValue_Status",
+                    indexes);
             }
 
             SqliteConnection.ClearAllPools();

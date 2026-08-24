@@ -64,6 +64,7 @@ builder.Services.AddHostedService<RecoveryService>();
 builder.Services.AddHostedService<ExperimentRuntimeRecoveryService>();
 builder.Services.AddHostedService<WorkflowRecoveryService>();
 builder.Services.AddHostedService<WorkflowSimulatorWorker>();
+builder.Services.AddHostedService<WorkflowAdvancedRuntimeWorker>();
 
 var app = builder.Build();
 
@@ -417,6 +418,40 @@ app.MapGet("/api/workflow-runs/{workflowRunId:guid}/timeline", async (
         limit ?? 200,
         cancellationToken));
 });
+
+app.MapGet("/api/workflow-runs/{workflowRunId:guid}/interactions", async (
+    Guid workflowRunId,
+    IWorkflowApplicationService service,
+    CancellationToken cancellationToken) =>
+{
+    if (await service.GetExecutionAsync(workflowRunId, cancellationToken) is null)
+    {
+        return Results.NotFound();
+    }
+
+    return Results.Ok(await service.ListRuntimeInteractionsAsync(workflowRunId, cancellationToken));
+});
+
+app.MapPost("/api/workflow-runs/{workflowRunId:guid}/signals", async (
+    Guid workflowRunId,
+    WorkflowExternalSignalRequest request,
+    IWorkflowApplicationService service,
+    CancellationToken cancellationToken) =>
+    await ExecuteWorkflowInteractionAsync(
+        () => service.SubmitExternalSignalAsync(workflowRunId, request, cancellationToken)));
+
+app.MapPost("/api/workflow-runs/{workflowRunId:guid}/nodes/{nodeExecutionId:guid}/manual-confirmation", async (
+    Guid workflowRunId,
+    Guid nodeExecutionId,
+    WorkflowManualConfirmationRequest request,
+    IWorkflowApplicationService service,
+    CancellationToken cancellationToken) =>
+    await ExecuteWorkflowInteractionAsync(
+        () => service.CompleteManualConfirmationAsync(
+            workflowRunId,
+            nodeExecutionId,
+            request,
+            cancellationToken)));
 
 app.MapGet("/api/workflow-run-controls/permissions", (
     string actor,
@@ -942,6 +977,40 @@ static async Task<IResult> ExecuteWorkflowRunControlAsync(
     }
 }
 
+static async Task<IResult> ExecuteWorkflowInteractionAsync(
+    Func<Task<WorkflowRuntimeInteractionResult>> action)
+{
+    try
+    {
+        var result = await action();
+        return Results.Json(
+            result,
+            statusCode: result.Status == WorkflowRuntimeInteractionStatus.Pending && !result.IsIdempotentReplay
+                ? StatusCodes.Status202Accepted
+                : StatusCodes.Status200OK);
+    }
+    catch (ArgumentException exception)
+    {
+        return Results.BadRequest(new { detail = exception.Message });
+    }
+    catch (WorkflowRunControlForbiddenException exception)
+    {
+        return Results.Problem(detail: exception.Message, statusCode: StatusCodes.Status403Forbidden);
+    }
+    catch (KeyNotFoundException exception)
+    {
+        return Results.NotFound(new { detail = exception.Message });
+    }
+    catch (WorkflowAdvancedRuntimeConflictException exception)
+    {
+        return Results.Conflict(new { code = exception.Code, detail = exception.Message });
+    }
+    catch (InvalidOperationException exception)
+    {
+        return Results.Conflict(new { detail = exception.Message });
+    }
+}
+
 static async Task<IResult> ExecuteExperimentSchedulingCommandAsync<T>(
     Func<Task<T>> action,
     Func<T, IResult> success)
@@ -1128,6 +1197,25 @@ static async Task EnsureWorkflowTablesAsync(MesDbContext database)
         );
         """,
         """
+        CREATE TABLE IF NOT EXISTS WorkflowRuntimeInteractions (
+            RequestId TEXT NOT NULL PRIMARY KEY,
+            Fingerprint TEXT NOT NULL,
+            WorkflowRunId TEXT NOT NULL,
+            NodeExecutionId TEXT NULL,
+            InteractionType TEXT NOT NULL,
+            Status TEXT NOT NULL,
+            SignalName TEXT NULL,
+            CorrelationValue TEXT NULL,
+            Actor TEXT NOT NULL,
+            Reason TEXT NOT NULL,
+            RequestJson TEXT NOT NULL,
+            DataJson TEXT NOT NULL,
+            ReceivedAtUtc TEXT NOT NULL,
+            AppliedAtUtc TEXT NULL,
+            UpdatedAtUtc TEXT NOT NULL
+        );
+        """,
+        """
         CREATE TABLE IF NOT EXISTS WorkflowAudits (
             Id TEXT NOT NULL PRIMARY KEY,
             EventType TEXT NOT NULL,
@@ -1151,6 +1239,8 @@ static async Task EnsureWorkflowTablesAsync(MesDbContext database)
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_WorkflowNodeExecutions_WorkflowRunId_NodeId_Attempt ON WorkflowNodeExecutions (WorkflowRunId, NodeId, Attempt);",
         "CREATE INDEX IF NOT EXISTS IX_WorkflowDeviceOperations_WorkflowRunId_RequestedAtUtc ON WorkflowDeviceOperations (WorkflowRunId, RequestedAtUtc);",
         "CREATE INDEX IF NOT EXISTS IX_WorkflowDeviceOperations_NodeExecutionId ON WorkflowDeviceOperations (NodeExecutionId);",
+        "CREATE INDEX IF NOT EXISTS IX_WorkflowRuntimeInteractions_WorkflowRunId_InteractionType_Status_ReceivedAtUtc ON WorkflowRuntimeInteractions (WorkflowRunId, InteractionType, Status, ReceivedAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_WorkflowRuntimeInteractions_WorkflowRunId_SignalName_CorrelationValue_Status ON WorkflowRuntimeInteractions (WorkflowRunId, SignalName, CorrelationValue, Status);",
         "CREATE INDEX IF NOT EXISTS IX_WorkflowAudits_WorkflowId_Version_OccurredAtUtc ON WorkflowAudits (WorkflowId, Version, OccurredAtUtc);",
         "CREATE INDEX IF NOT EXISTS IX_WorkflowAudits_RequestId ON WorkflowAudits (RequestId);"
     };

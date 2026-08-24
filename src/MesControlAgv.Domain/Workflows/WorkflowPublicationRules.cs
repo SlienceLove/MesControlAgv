@@ -59,6 +59,7 @@ public static class WorkflowPublicationIssueCodes
     public const string ConditionDefaultInvalid = "WF-CONDITION-DEFAULT-INVALID";
     public const string ConditionPriorityInvalid = "WF-CONDITION-PRIORITY-INVALID";
     public const string SignalReferenceInvalid = "WF-SIGNAL-REFERENCE-INVALID";
+    public const string InteractionOutcomePathInvalid = "WF-INTERACTION-OUTCOME-PATH-INVALID";
     public const string ParallelPairInvalid = "WF-PARALLEL-PAIR-INVALID";
     public const string ParallelBranchInvalid = "WF-PARALLEL-BRANCH-INVALID";
     public const string ParallelJoinInvalid = "WF-PARALLEL-JOIN-INVALID";

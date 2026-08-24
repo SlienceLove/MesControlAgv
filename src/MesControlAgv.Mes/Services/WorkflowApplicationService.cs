@@ -263,7 +263,15 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
         return WorkflowPersistence.ToExecutionSnapshot(record);
     }
 
-    public async Task<WorkflowExecutionSnapshot> CompleteClaimedStepAsync(
+    public Task<WorkflowExecutionSnapshot> CompleteClaimedStepAsync(
+        Guid executionId,
+        WorkflowStepCompletionRequest completion,
+        CancellationToken cancellationToken) =>
+        ExecuteAdvancedRuntimeSerializedAsync(
+            () => CompleteClaimedStepCoreAsync(executionId, completion, cancellationToken),
+            cancellationToken);
+
+    private async Task<WorkflowExecutionSnapshot> CompleteClaimedStepCoreAsync(
         Guid executionId,
         WorkflowStepCompletionRequest completion,
         CancellationToken cancellationToken)
@@ -343,6 +351,10 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
             record.LastError ?? $"Workflow step completed with outcome '{completion.Outcome}'.",
             cancellationToken);
         await _database.SaveChangesAsync(cancellationToken);
+        if (completion.Outcome == WorkflowStepCompletionOutcome.Succeeded)
+        {
+            await ProcessAdvancedRunCoreAsync(record.ExecutionId, cancellationToken);
+        }
         return WorkflowPersistence.ToExecutionSnapshot(record);
     }
 
@@ -599,6 +611,10 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
             try
             {
                 await _database.SaveChangesAsync(cancellationToken);
+                if (result is { IsAccepted: true, DryRun: false })
+                {
+                    await ProcessAdvancedRuntimeAsync(result.ExecutionId, cancellationToken);
+                }
                 return result;
             }
             catch (DbUpdateException)
@@ -914,7 +930,9 @@ internal static class WorkflowPersistence
 
     public static WorkflowNextStepRequest? ResolveFollowingStep(
         WorkflowExecutionRecord record,
-        WorkflowNextStepRequest completedStep)
+        WorkflowNextStepRequest completedStep,
+        WorkflowEdgeKind outcomeKind = WorkflowEdgeKind.Success,
+        Guid? selectedEdgeId = null)
     {
         if (string.IsNullOrWhiteSpace(record.DefinitionSnapshotJson))
         {
@@ -932,28 +950,70 @@ internal static class WorkflowPersistence
             throw new InvalidOperationException("The completed workflow node is absent from the immutable definition snapshot.");
         }
 
-        var hasExplicitEdges = nodes.Any(node => node.NextNodeIds is { Count: > 0 });
+        var edges = (definition.Edges ?? Array.Empty<WorkflowEdgeDefinition>()).ToArray();
+        var hasExplicitEdges = edges.Length > 0;
         var visited = new HashSet<Guid> { current.Id };
         while (true)
         {
-            var nextNodeIds = (current.NextNodeIds ?? Array.Empty<Guid>()).ToArray();
-            if (nextNodeIds.Length > 1)
+            WorkflowNode? next = null;
+            if (hasExplicitEdges)
             {
-                throw new InvalidOperationException("Workflow runtime cannot advance an unselected branch.");
+                var outgoing = edges.Where(edge => edge.SourceNodeId == current.Id).ToArray();
+                var candidates = selectedEdgeId is { } edgeId
+                    ? outgoing.Where(edge => edge.Id == edgeId).ToArray()
+                    : outgoing.Where(edge => edge.Kind == outcomeKind).ToArray();
+                if (candidates.Length > 1)
+                {
+                    throw new InvalidOperationException(
+                        $"Workflow outcome '{outcomeKind}' resolves to more than one edge.");
+                }
+
+                if (candidates.Length == 1)
+                {
+                    nodesById.TryGetValue(candidates[0].TargetNodeId, out next);
+                }
+                else if (outgoing.Length > 0)
+                {
+                    throw new InvalidOperationException(
+                        $"Workflow outcome '{outcomeKind}' has no explicit path from node '{current.Id}'.");
+                }
+            }
+            else
+            {
+                var nextNodeIds = (current.NextNodeIds ?? Array.Empty<Guid>()).ToArray();
+                if (nextNodeIds.Length > 1)
+                {
+                    throw new InvalidOperationException("Workflow runtime cannot advance an unselected branch.");
+                }
+
+                if (nextNodeIds.Length == 1)
+                {
+                    nodesById.TryGetValue(nextNodeIds[0], out next);
+                }
+                else
+                {
+                    next = nodes.FirstOrDefault(node => node.Order > current.Order);
+                }
             }
 
-            WorkflowNode? next = null;
-            if (nextNodeIds.Length == 1)
+            if (next is null && (hasExplicitEdges ||
+                                 (current.NextNodeIds ?? Array.Empty<Guid>()).Count > 0))
             {
-                nodesById.TryGetValue(nextNodeIds[0], out next);
-                if (next is null)
+                if (selectedEdgeId is not null)
+                {
+                    throw new InvalidOperationException(
+                        $"Selected workflow edge '{selectedEdgeId}' is unavailable.");
+                }
+
+                if (!hasExplicitEdges)
                 {
                     throw new InvalidOperationException("The workflow path points to a missing node.");
                 }
             }
-            else if (!hasExplicitEdges)
+
+            if (next is not null && !nodesById.ContainsKey(next.Id))
             {
-                next = nodes.FirstOrDefault(node => node.Order > current.Order);
+                throw new InvalidOperationException("The workflow path points to a missing node.");
             }
 
             if (next is null || next.Type == WorkflowNodeType.End)
@@ -967,6 +1027,8 @@ internal static class WorkflowPersistence
             }
 
             current = next;
+            selectedEdgeId = null;
+            outcomeKind = WorkflowEdgeKind.Success;
             if (current.Type == WorkflowNodeType.Start)
             {
                 continue;
@@ -980,6 +1042,7 @@ internal static class WorkflowPersistence
                 Version = record.Version,
                 NodeId = current.Id,
                 NodeType = current.Type,
+                NodeTypeId = current.NodeTypeId,
                 NodeName = current.Name,
                 TargetStation = current.TargetStation,
                 DryRun = request.DryRun,

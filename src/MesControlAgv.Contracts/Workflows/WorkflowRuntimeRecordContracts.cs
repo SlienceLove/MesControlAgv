@@ -123,4 +123,6 @@ public sealed record WorkflowNodeExecutionCompletionRequest
     public Guid? DeviceOperationId { get; init; }
     public WorkflowStepCompletionOutcome Outcome { get; init; }
     public string? Error { get; init; }
+    public IReadOnlyDictionary<string, string?> Outputs { get; init; } =
+        new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 }

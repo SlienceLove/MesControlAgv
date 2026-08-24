@@ -33,17 +33,15 @@ public sealed class WorkflowAdvancedPublicationValidatorTests
     }
 
     [Fact]
-    public void Structured_condition_is_validated_but_remains_blocked_by_the_contract_only_catalog_gate()
+    public void Structured_condition_is_publishable_after_G6B_runtime_gate_opens()
     {
         var graph = ConditionGraph();
 
         var result = new WorkflowValidator().ValidateForPublication(graph);
 
-        Assert.False(result.IsValid);
-        Assert.Contains(result.Issues, issue =>
-            issue.Code == WorkflowPublicationIssueCodes.NodeTypeDisabled &&
-            issue.NodeId == graph.Nodes.Single(node => node.NodeTypeId == WorkflowGraphNodeTypeIds.Condition).Id &&
-            issue.Message == BuiltInWorkflowCatalog.AdvancedFlowContractOnlyReason);
+        Assert.True(result.IsValid);
+        Assert.DoesNotContain(result.Issues, issue =>
+            issue.Code == WorkflowPublicationIssueCodes.NodeTypeDisabled);
         Assert.DoesNotContain(result.Issues, issue => issue.Code.StartsWith("WF-CONDITION-", StringComparison.Ordinal));
     }
 
@@ -143,6 +141,48 @@ public sealed class WorkflowAdvancedPublicationValidatorTests
 
         Assert.Contains(downstreamResult.Issues, issue =>
             issue.Code == WorkflowPublicationIssueCodes.ConditionSourceUnavailable && issue.EdgeId == branch.Id);
+    }
+
+    [Fact]
+    public void Interaction_waits_require_one_success_timeout_and_cancelled_path()
+    {
+        var start = Node(WorkflowGraphNodeTypeIds.Start, "Start", 1);
+        var manual = Node(
+            WorkflowGraphNodeTypeIds.ManualConfirmation,
+            "Manual",
+            2,
+            new Dictionary<string, string?>
+            {
+                [WorkflowNodeConfigurationKeys.Prompt] = "Confirm the sample.",
+                [WorkflowNodeConfigurationKeys.TimeoutSeconds] = "3600",
+                [WorkflowNodeConfigurationKeys.RequireComment] = "false"
+            });
+        var end = Node(WorkflowGraphNodeTypeIds.End, "End", 3);
+        var graph = Workflow(
+            [start, manual, end],
+            [Edge(start, "success", manual), Edge(manual, "success", end)]);
+
+        var invalid = new WorkflowValidator().ValidateForPublication(graph);
+
+        Assert.Equal(2, invalid.Issues.Count(issue =>
+            issue.Code == WorkflowPublicationIssueCodes.InteractionOutcomePathInvalid &&
+            issue.NodeId == manual.Id));
+
+        var valid = Project(graph with
+        {
+            Edges =
+            [
+                .. graph.Edges,
+                Edge(manual, "timeout", end, WorkflowEdgeKind.Timeout),
+                Edge(manual, "cancelled", end, WorkflowEdgeKind.Cancelled)
+            ]
+        });
+
+        var result = new WorkflowValidator().ValidateForPublication(valid);
+
+        Assert.True(result.IsValid);
+        Assert.DoesNotContain(result.Issues, issue =>
+            issue.Code == WorkflowPublicationIssueCodes.InteractionOutcomePathInvalid);
     }
 
     [Fact]

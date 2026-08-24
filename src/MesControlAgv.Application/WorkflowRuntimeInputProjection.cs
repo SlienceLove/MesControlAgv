@@ -43,8 +43,21 @@ public static class WorkflowRuntimeInputProjection
             values[WorkflowRuntimeParameterNames.WaitDurationSeconds] = durationSeconds;
         }
 
+        if (IsServerManagedInteraction(node.NodeTypeId))
+        {
+            foreach (var configuration in node.Configuration ??
+                     new Dictionary<string, string?>())
+            {
+                values[configuration.Key] = configuration.Value;
+            }
+        }
+
         return new ReadOnlyDictionary<string, string?>(values);
     }
+
+    private static bool IsServerManagedInteraction(string? nodeTypeId) =>
+        string.Equals(nodeTypeId, WorkflowGraphNodeTypeIds.ManualConfirmation, StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(nodeTypeId, WorkflowGraphNodeTypeIds.SignalWait, StringComparison.OrdinalIgnoreCase);
 
     private static bool TryGetValue(
         IReadOnlyDictionary<string, string?>? values,

@@ -16,7 +16,15 @@ public sealed partial class WorkflowApplicationService
         "WorkflowUnknownResolved"
     ];
 
-    public async Task<WorkflowRunControlResult> PauseRunAsync(
+    public Task<WorkflowRunControlResult> PauseRunAsync(
+        Guid workflowRunId,
+        WorkflowRunControlRequest request,
+        CancellationToken cancellationToken) =>
+        ExecuteAdvancedRuntimeSerializedAsync(
+            () => PauseRunCoreAsync(workflowRunId, request, cancellationToken),
+            cancellationToken);
+
+    private async Task<WorkflowRunControlResult> PauseRunCoreAsync(
         Guid workflowRunId,
         WorkflowRunControlRequest request,
         CancellationToken cancellationToken)
@@ -64,7 +72,15 @@ public sealed partial class WorkflowApplicationService
         return CreateControlResult(run, normalized.RequestId, WorkflowRunControlAction.Pause);
     }
 
-    public async Task<WorkflowRunControlResult> ResumeRunAsync(
+    public Task<WorkflowRunControlResult> ResumeRunAsync(
+        Guid workflowRunId,
+        WorkflowRunControlRequest request,
+        CancellationToken cancellationToken) =>
+        ExecuteAdvancedRuntimeSerializedAsync(
+            () => ResumeRunCoreAsync(workflowRunId, request, cancellationToken),
+            cancellationToken);
+
+    private async Task<WorkflowRunControlResult> ResumeRunCoreAsync(
         Guid workflowRunId,
         WorkflowRunControlRequest request,
         CancellationToken cancellationToken)
@@ -96,16 +112,19 @@ public sealed partial class WorkflowApplicationService
             .AsNoTracking()
             .Where(item => item.WorkflowRunId == workflowRunId &&
                            (item.Status == WorkflowNodeExecutionStatus.Running.ToString() ||
-                            item.Status == WorkflowNodeExecutionStatus.Ready.ToString()))
+                            item.Status == WorkflowNodeExecutionStatus.Ready.ToString() ||
+                            item.Status == WorkflowNodeExecutionStatus.WaitingForSignal.ToString()))
             .Select(item => item.Status)
             .ToListAsync(cancellationToken);
-        var resumedStatus = activeStatuses.Contains(WorkflowNodeExecutionStatus.Running.ToString(), StringComparer.Ordinal)
-            ? WorkflowRuntimeStatus.Running
-            : activeStatuses.Contains(WorkflowNodeExecutionStatus.Ready.ToString(), StringComparer.Ordinal) ||
-              !string.IsNullOrWhiteSpace(run.PendingStepJson)
-                ? WorkflowRuntimeStatus.Prepared
-                : throw new WorkflowRunControlConflictException(
-                    "The paused workflow run has no active or pending node to resume.");
+        var resumedStatus =
+            activeStatuses.Contains(WorkflowNodeExecutionStatus.Running.ToString(), StringComparer.Ordinal) ||
+            activeStatuses.Contains(WorkflowNodeExecutionStatus.WaitingForSignal.ToString(), StringComparer.Ordinal)
+                ? WorkflowRuntimeStatus.Running
+                : activeStatuses.Contains(WorkflowNodeExecutionStatus.Ready.ToString(), StringComparer.Ordinal) ||
+                  !string.IsNullOrWhiteSpace(run.PendingStepJson)
+                    ? WorkflowRuntimeStatus.Prepared
+                    : throw new WorkflowRunControlConflictException(
+                        "The paused workflow run has no active or pending node to resume.");
 
         run.RuntimeStatus = resumedStatus.ToString();
         run.UpdatedAtUtc = _timeProvider.GetUtcNow().UtcDateTime;
@@ -123,10 +142,19 @@ public sealed partial class WorkflowApplicationService
                 ["resumedRuntimeStatus"] = resumedStatus.ToString()
             });
         await _database.SaveChangesAsync(cancellationToken);
+        await ProcessAdvancedRunCoreAsync(workflowRunId, cancellationToken);
         return CreateControlResult(run, normalized.RequestId, WorkflowRunControlAction.Resume);
     }
 
-    public async Task<WorkflowRunControlResult> CancelRunAsync(
+    public Task<WorkflowRunControlResult> CancelRunAsync(
+        Guid workflowRunId,
+        WorkflowRunControlRequest request,
+        CancellationToken cancellationToken) =>
+        ExecuteAdvancedRuntimeSerializedAsync(
+            () => CancelRunCoreAsync(workflowRunId, request, cancellationToken),
+            cancellationToken);
+
+    private async Task<WorkflowRunControlResult> CancelRunCoreAsync(
         Guid workflowRunId,
         WorkflowRunControlRequest request,
         CancellationToken cancellationToken)
@@ -149,7 +177,9 @@ public sealed partial class WorkflowApplicationService
         await EnsureLegacySimulatorRuntimeRecordsAsync(cancellationToken);
         var run = await FindExecutionAsync(workflowRunId, cancellationToken);
         var current = WorkflowPersistence.ToExecutionSnapshot(run).RuntimeStatus;
-        if (current is not WorkflowRuntimeStatus.Prepared and not WorkflowRuntimeStatus.Paused)
+        if (current is not WorkflowRuntimeStatus.Prepared and
+            not WorkflowRuntimeStatus.Running and
+            not WorkflowRuntimeStatus.Paused)
         {
             throw new WorkflowRunControlConflictException(
                 current == WorkflowRuntimeStatus.Unknown
@@ -220,7 +250,15 @@ public sealed partial class WorkflowApplicationService
         return CreateControlResult(run, normalized.RequestId, WorkflowRunControlAction.Cancel);
     }
 
-    public async Task<WorkflowRunControlResult> ResolveUnknownAsync(
+    public Task<WorkflowRunControlResult> ResolveUnknownAsync(
+        Guid workflowRunId,
+        WorkflowUnknownResolutionRequest request,
+        CancellationToken cancellationToken) =>
+        ExecuteAdvancedRuntimeSerializedAsync(
+            () => ResolveUnknownCoreAsync(workflowRunId, request, cancellationToken),
+            cancellationToken);
+
+    private async Task<WorkflowRunControlResult> ResolveUnknownCoreAsync(
         Guid workflowRunId,
         WorkflowUnknownResolutionRequest request,
         CancellationToken cancellationToken)
@@ -292,6 +330,11 @@ public sealed partial class WorkflowApplicationService
                 "The linked device operation is not Unknown and does not match this resolution request.");
         }
 
+        var retainedNodeOutputs = WorkflowPersistence.DeserializeDetails(node.OutputJson);
+        var retainedOperationOutputs = operation is null
+            ? new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+            : WorkflowPersistence.DeserializeDetails(operation.ResultSummaryJson);
+
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         WorkflowNextStepRequest? nextStep = null;
         WorkflowStepCompletionOutcome completionOutcome;
@@ -334,18 +377,28 @@ public sealed partial class WorkflowApplicationService
             nextStep,
             now,
             cancellationToken);
-        node.OutputJson = WorkflowPersistence.Serialize(new Dictionary<string, string?>
+        node.OutputJson = WorkflowPersistence.Serialize(new Dictionary<string, string?>(
+            retainedNodeOutputs,
+            StringComparer.OrdinalIgnoreCase)
         {
             ["outcome"] = completionOutcome.ToString(),
+            ["error"] = request.Outcome == WorkflowUnknownResolutionOutcome.ConfirmedFailed
+                ? normalized.Reason
+                : null,
             ["resolution"] = request.Outcome.ToString(),
             ["resolvedBy"] = normalized.Actor,
             ["reason"] = normalized.Reason
         });
         if (operation is not null)
         {
-            operation.ResultSummaryJson = WorkflowPersistence.Serialize(new Dictionary<string, string?>
+            operation.ResultSummaryJson = WorkflowPersistence.Serialize(new Dictionary<string, string?>(
+                retainedOperationOutputs,
+                StringComparer.OrdinalIgnoreCase)
             {
                 ["outcome"] = completionOutcome.ToString(),
+                ["error"] = request.Outcome == WorkflowUnknownResolutionOutcome.ConfirmedFailed
+                    ? normalized.Reason
+                    : null,
                 ["resolution"] = request.Outcome.ToString(),
                 ["resolvedBy"] = normalized.Actor,
                 ["reason"] = normalized.Reason
@@ -375,6 +428,10 @@ public sealed partial class WorkflowApplicationService
             normalized.Reason,
             cancellationToken);
         await _database.SaveChangesAsync(cancellationToken);
+        if (completionOutcome == WorkflowStepCompletionOutcome.Succeeded)
+        {
+            await ProcessAdvancedRunCoreAsync(workflowRunId, cancellationToken);
+        }
         return CreateControlResult(run, normalized.RequestId, WorkflowRunControlAction.ResolveUnknown);
     }
 

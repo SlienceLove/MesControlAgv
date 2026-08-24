@@ -1,3 +1,4 @@
+using System.Globalization;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
 using MesControlAgv.Contracts.Workflows;
@@ -189,7 +190,11 @@ public sealed class WorkflowSimulatorDispatcher(
             workItem,
             WorkflowStepCompletionOutcome.Succeeded,
             null,
-            cancellationToken);
+            cancellationToken,
+            new Dictionary<string, string?>
+            {
+                ["completedAtUtc"] = _timeProvider.GetUtcNow().ToString("O", CultureInfo.InvariantCulture)
+            });
     }
 
     private static bool TryGetWaitDuration(
@@ -224,7 +229,12 @@ public sealed class WorkflowSimulatorDispatcher(
         var state = response.State?.Trim().ToLowerInvariant();
         return state switch
         {
-            "arrived" or "completed" => CompleteAsync(workItem, WorkflowStepCompletionOutcome.Succeeded, null, cancellationToken),
+            "arrived" or "completed" => CompleteAsync(
+                workItem,
+                WorkflowStepCompletionOutcome.Succeeded,
+                null,
+                cancellationToken,
+                CreateMoveOutputs(response)),
             "failed" => CompleteAsync(workItem, WorkflowStepCompletionOutcome.Failed, response.LastError, cancellationToken),
             "cancelled" => CompleteAsync(workItem, WorkflowStepCompletionOutcome.Cancelled, response.LastError, cancellationToken),
             "unknown" => CompleteAsync(workItem, WorkflowStepCompletionOutcome.Unknown, response.LastError, cancellationToken),
@@ -260,13 +270,24 @@ public sealed class WorkflowSimulatorDispatcher(
         WorkflowNodeExecutionWorkItem workItem,
         WorkflowStepCompletionOutcome outcome,
         string? error,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string?>? outputs = null) =>
         workflows.CompleteNodeExecutionAsync(workItem.NodeExecution.Id, new WorkflowNodeExecutionCompletionRequest
         {
             DeviceOperationId = workItem.DeviceOperation?.OperationId,
             Outcome = outcome,
-            Error = error
+            Error = error,
+            Outputs = outputs ?? new Dictionary<string, string?>()
         }, cancellationToken);
+
+    private IReadOnlyDictionary<string, string?> CreateMoveOutputs(AgvTaskResponse response) =>
+        new Dictionary<string, string?>
+        {
+            ["deviceId"] = response.AgvId ?? profile.Agvs?.FirstOrDefault()?.AgvId,
+            ["stationId"] = response.TargetStationId,
+            ["deviceTaskId"] = response.DeviceTaskId,
+            ["arrivedAtUtc"] = _timeProvider.GetUtcNow().ToString("O", CultureInfo.InvariantCulture)
+        };
 
     private static bool IsNodeType(WorkflowNodeExecutionWorkItem workItem, string nodeTypeId) =>
         string.Equals(

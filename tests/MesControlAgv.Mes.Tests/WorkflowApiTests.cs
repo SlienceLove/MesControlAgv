@@ -275,7 +275,7 @@ public sealed class WorkflowApiTests : IClassFixture<MesWebApplicationFactory>
     }
 
     [Fact]
-    public async Task G6_condition_contract_round_trips_but_cannot_publish_or_execute_early()
+    public async Task G6B_condition_contract_round_trips_publishes_and_executes_without_device_activity()
     {
         var definition = WorkflowTestDefinitions.CreateConditionWorkflow();
         var create = await _client.PostAsJsonAsync("/api/workflows?actor=g6-contract", definition);
@@ -296,28 +296,41 @@ public sealed class WorkflowApiTests : IClassFixture<MesWebApplicationFactory>
             content: null);
         Assert.Equal(HttpStatusCode.OK, validate.StatusCode);
         var validation = await validate.Content.ReadFromJsonAsync<WorkflowValidationResult>();
-        Assert.False(validation!.IsValid);
-        Assert.Contains(validation.Issues, issue =>
-            issue.Code == WorkflowPublicationIssueCodes.NodeTypeDisabled &&
-            issue.Message == BuiltInWorkflowCatalog.AdvancedFlowContractOnlyReason);
+        Assert.True(validation!.IsValid);
         Assert.DoesNotContain(validation.Issues, issue =>
             issue.Code.StartsWith("WF-CONDITION-", StringComparison.Ordinal));
 
         var publish = await _client.PostAsync(
             $"/api/workflows/{draft.WorkflowId}/versions/{draft.Version}/publish?actor=g6-contract",
             content: null);
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, publish.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, publish.StatusCode);
 
         var execute = await _client.PostAsJsonAsync("/api/workflows/execute", new WorkflowExecutionRequest
         {
             WorkflowId = draft.WorkflowId,
             Version = draft.Version,
             RequestId = Guid.NewGuid(),
-            RequestedBy = "g6-contract"
+            RequestedBy = "g6-contract",
+            Parameters = new Dictionary<string, string?>
+            {
+                ["sample.pressure"] = "10"
+            }
         });
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, execute.StatusCode);
-        var rejection = await execute.Content.ReadFromJsonAsync<WorkflowExecutionResult>();
-        Assert.Equal(WorkflowExecutionRejectionCodes.VersionNotPublished, rejection!.RejectionCode);
+        Assert.Equal(HttpStatusCode.Accepted, execute.StatusCode);
+        var accepted = await execute.Content.ReadFromJsonAsync<WorkflowExecutionResult>();
+        Assert.True(accepted!.IsAccepted);
+
+        var run = await _client.GetFromJsonAsync<WorkflowExecutionSnapshot>(
+            $"/api/workflow-runs/{accepted.ExecutionId}");
+        var nodes = await _client.GetFromJsonAsync<IReadOnlyList<WorkflowNodeExecutionSnapshot>>(
+            $"/api/workflow-runs/{accepted.ExecutionId}/nodes");
+        var operations = await _client.GetFromJsonAsync<IReadOnlyList<WorkflowDeviceOperationSnapshot>>(
+            $"/api/workflow-runs/{accepted.ExecutionId}/device-operations");
+        Assert.Equal(WorkflowRuntimeStatus.Completed, run!.RuntimeStatus);
+        var condition = Assert.Single(nodes!);
+        Assert.Equal(WorkflowGraphNodeTypeIds.Condition, condition.NodeTypeId);
+        Assert.Equal(WorkflowNodeExecutionStatus.Succeeded, condition.Status);
+        Assert.Empty(operations!);
     }
 
     [Fact]

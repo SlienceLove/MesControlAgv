@@ -72,6 +72,24 @@ public interface IWorkflowApplicationService : IWorkflowVersionReader, IWorkflow
         int limit,
         CancellationToken cancellationToken);
 
+    /// <summary>Returns durable external-signal and manual-confirmation evidence.</summary>
+    Task<IReadOnlyList<WorkflowRuntimeInteractionSnapshot>> ListRuntimeInteractionsAsync(
+        Guid workflowRunId,
+        CancellationToken cancellationToken);
+
+    /// <summary>Stores an external signal before attempting deterministic delivery.</summary>
+    Task<WorkflowRuntimeInteractionResult> SubmitExternalSignalAsync(
+        Guid workflowRunId,
+        WorkflowExternalSignalRequest request,
+        CancellationToken cancellationToken);
+
+    /// <summary>Applies one authorized operator outcome to a waiting manual task.</summary>
+    Task<WorkflowRuntimeInteractionResult> CompleteManualConfirmationAsync(
+        Guid workflowRunId,
+        Guid nodeExecutionId,
+        WorkflowManualConfirmationRequest request,
+        CancellationToken cancellationToken);
+
     /// <summary>Returns ready Simulator Move/Timed Wait node records.</summary>
     Task<IReadOnlyList<WorkflowNodeExecutionWorkItem>> ListSimulatorDispatchableNodesAsync(
         CancellationToken cancellationToken);

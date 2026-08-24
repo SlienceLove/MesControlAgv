@@ -295,6 +295,7 @@ public sealed class WorkflowRuntimeExecutor : IWorkflowRuntimeExecutor
                 Version = request.Version,
                 NodeId = current.Id,
                 NodeType = current.Type,
+                NodeTypeId = current.NodeTypeId,
                 NodeName = current.Name,
                 TargetStation = current.TargetStation,
                 DryRun = request.DryRun,

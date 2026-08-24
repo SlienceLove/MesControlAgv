@@ -162,7 +162,8 @@ public sealed partial class WorkflowApplicationService
         {
             TransportOperationId = compatibilityOperationId,
             Outcome = completion.Outcome,
-            Error = completion.Error
+            Error = completion.Error,
+            Outputs = completion.Outputs
         }, cancellationToken);
     }
 
@@ -358,6 +359,7 @@ public sealed partial class WorkflowApplicationService
             NodeType = IsNodeType(node.NodeTypeId, WorkflowGraphNodeTypeIds.Move)
                 ? WorkflowNodeType.Move
                 : WorkflowNodeType.Wait,
+            NodeTypeId = node.NodeTypeId,
             NodeName = node.NodeName,
             TargetStation = targetStation,
             DryRun = false,
