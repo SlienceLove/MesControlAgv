@@ -1,6 +1,6 @@
 # AGV MES MVP Progress
 
-Last updated: 2026-08-22
+Last updated: 2026-08-24
 
 This is the concise active record. Detailed history remains in Git and the
 linked acceptance documents.
@@ -12,9 +12,9 @@ Active branch: `docs/experiment-workflow-architecture-plan`
 - Experiment workflow G2, G3, and G4 have passed overall acceptance.
 - G5-A contracts, additive SQLite storage, and read-only scheduling projections
   have passed project acceptance.
-- G5-B manual planning is accepted. G5-C runtime admission, database-enforced
-  leases, terminal release, and device-free recovery are implemented and await
-  project acceptance; G5-D WPF pages have not started.
+- G5-B manual planning and G5-C runtime admission have passed project
+  acceptance. G5-D independent WPF experiment-plan and task-scheduling pages
+  are now in progress.
 
 The AGV MVP remains in frozen maintenance mode. Production, unattended,
 automatic/batch dispatch, and Push are **NO-GO**. G4-D controls MES scheduling
@@ -36,6 +36,13 @@ The G5-C Release gate completed on 2026-08-22:
 
 ## Recent changes
 
+### 2026-08-24 - G5-C project acceptance
+
+- Project acceptance passed for atomic admission, one-winner runtime leases,
+  terminal release, and device-free recovery.
+- G5-D was authorized. Its scope remains independent WPF plan/scheduling pages,
+  manual scheduling, resource load, and blocking explanations.
+
 ### 2026-08-22 - G5-C runtime admission and lease lifecycle
 
 - Added explicit scheduled-job admission with pinned plan/workflow checks and a
@@ -45,7 +52,7 @@ The G5-C Release gate completed on 2026-08-22:
   conflict leave no partial run or lease, while request replay stays durable.
 - Added terminal release and startup reconciliation. Paused, unresolved Unknown,
   and expired non-terminal runs keep leases; recovery performs no device calls.
-- Implementation commit: `75655cd`; project acceptance is pending.
+- Implementation commit: `75655cd`; project acceptance passed.
 
 ### 2026-08-21 - G5-B manual experiment scheduling
 
@@ -101,11 +108,12 @@ The G5-C Release gate completed on 2026-08-22:
 
 ## Next gate
 
-1. Complete project acceptance for G5-C using the API/lifecycle checks in the
-   G5 acceptance record.
-2. Enter G5-D only after explicit project approval.
-3. WPF scheduling pages remain G5-D; physical device commands, serial control,
-   protocol fields, and D160 writes remain closed.
+1. Implement the independent G5-D experiment-plan and task-scheduling pages.
+2. Verify plan lifecycle, manual scheduling, resource swimlanes, stable blocking
+   explanations, and strict separation from workflow-node execution.
+3. Stop at the G5-D/G5 overall project acceptance gate; G6, automatic
+   scheduling, physical device commands, serial control, protocol fields, and
+   D160 writes remain closed.
 
 ## Planning and evidence
 
