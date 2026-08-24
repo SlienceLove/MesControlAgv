@@ -53,6 +53,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _commands = new ControlCenterCommandCoordinator(mes, simulator);
         ModuleRegistry = moduleRegistry ?? ControlCenterModuleRegistry.CreateStandard();
         WorkflowEditor = new WorkflowEditorViewModel(workflowStore ?? new WorkflowStore(), _mes, () => OperatorName);
+        ExperimentPlans = new ExperimentPlanManagementViewModel(_mes);
+        ExperimentScheduling = new ExperimentSchedulingViewModel(_mes);
         WorkflowRunMonitor = new WorkflowRunMonitorViewModel(_mes);
         Readiness = new ReadinessViewModel(_mes, mapLayoutSource);
         IonChromatography = new IonChromatographyViewModel(_mes);
@@ -96,6 +98,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ObservableCollection<string> BatchImportIssues => _modules.BatchImport.BatchImportIssues;
     public ObservableCollection<DashboardStation> AvailableStations { get; } = [];
     public WorkflowEditorViewModel WorkflowEditor { get; }
+    public ExperimentPlanManagementViewModel ExperimentPlans { get; }
+    public ExperimentSchedulingViewModel ExperimentScheduling { get; }
     public WorkflowRunMonitorViewModel WorkflowRunMonitor { get; }
     public ReadinessViewModel Readiness { get; }
     public IonChromatographyViewModel IonChromatography { get; }
@@ -856,6 +860,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _shutdown.Cancel();
         CancelPendingDetailRefresh();
         _timer?.Dispose();
+        ExperimentPlans.Dispose();
+        ExperimentScheduling.Dispose();
         _refreshGate.Dispose();
         _actionGate.Dispose();
         _shutdown.Dispose();

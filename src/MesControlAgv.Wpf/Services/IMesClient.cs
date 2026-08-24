@@ -1,4 +1,5 @@
 using MesControlAgv.Contracts;
+using MesControlAgv.Contracts.Experiments;
 using MesControlAgv.Contracts.Workflows;
 
 ﻿namespace MesControlAgv.Wpf.Services;
@@ -219,4 +220,110 @@ public interface IMesClient
         int limit,
         CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<WorkflowAuditResponse>>([]);
+
+    Task<IReadOnlyList<ExperimentPlan>> GetExperimentPlansAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ExperimentPlan>>([]);
+
+    Task<IReadOnlyList<ExperimentPlan>> GetExperimentPlanVersionsAsync(
+        Guid planId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ExperimentPlan>>([]);
+
+    Task<ExperimentPlan?> GetExperimentPlanAsync(
+        Guid planId,
+        int version,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<ExperimentPlan?>(null);
+
+    Task<ExperimentPlan> CreateExperimentPlanDraftAsync(
+        SaveExperimentPlanDraftRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentPlan>(new NotSupportedException("Experiment planning APIs are not supported by this MES client."));
+
+    Task<ExperimentPlan> UpdateExperimentPlanDraftAsync(
+        Guid planId,
+        int version,
+        SaveExperimentPlanDraftRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentPlan>(new NotSupportedException("Experiment planning APIs are not supported by this MES client."));
+
+    Task<ExperimentPlan> ValidateExperimentPlanAsync(
+        Guid planId,
+        int version,
+        ExperimentSchedulingActionRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentPlan>(new NotSupportedException("Experiment planning APIs are not supported by this MES client."));
+
+    Task<ExperimentPlan> PublishExperimentPlanAsync(
+        Guid planId,
+        int version,
+        ExperimentSchedulingActionRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentPlan>(new NotSupportedException("Experiment planning APIs are not supported by this MES client."));
+
+    Task<ExperimentPlan> CreateNextExperimentPlanDraftAsync(
+        Guid planId,
+        int sourceVersion,
+        ExperimentSchedulingActionRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentPlan>(new NotSupportedException("Experiment planning APIs are not supported by this MES client."));
+
+    Task<IReadOnlyList<ExperimentJob>> GetExperimentJobsAsync(
+        ExperimentJobStatus? status,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ExperimentJob>>([]);
+
+    Task<ExperimentJob?> GetExperimentJobAsync(
+        Guid jobId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<ExperimentJob?>(null);
+
+    Task<ExperimentJob> CreateExperimentJobAsync(
+        CreateExperimentJobRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentJob>(new NotSupportedException("Experiment scheduling APIs are not supported by this MES client."));
+
+    Task<ExperimentScheduleSnapshot> GetExperimentScheduleAsync(
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(new ExperimentScheduleSnapshot());
+
+    Task<IReadOnlyList<ExperimentResourceAvailability>> GetExperimentResourceAvailabilityAsync(
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ExperimentResourceAvailability>>([]);
+
+    Task<IReadOnlyList<ExperimentSchedulingAuditEntry>> GetExperimentSchedulingAuditsAsync(
+        Guid? planId,
+        Guid? experimentJobId,
+        Guid? scheduleEntryId,
+        int limit,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ExperimentSchedulingAuditEntry>>([]);
+
+    Task<ScheduleEntry> ScheduleExperimentJobAsync(
+        Guid jobId,
+        ScheduleExperimentJobRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ScheduleEntry>(new NotSupportedException("Experiment scheduling APIs are not supported by this MES client."));
+
+    Task<ExperimentJob> UnscheduleExperimentJobAsync(
+        Guid jobId,
+        ExperimentSchedulingActionRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentJob>(new NotSupportedException("Experiment scheduling APIs are not supported by this MES client."));
+
+    Task<ExperimentJob> CancelExperimentJobAsync(
+        Guid jobId,
+        ExperimentSchedulingActionRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentJob>(new NotSupportedException("Experiment scheduling APIs are not supported by this MES client."));
+
+    Task<ExperimentJobAdmissionResult> AdmitExperimentJobAsync(
+        Guid jobId,
+        AdmitExperimentJobRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentJobAdmissionResult>(new NotSupportedException("Experiment runtime admission APIs are not supported by this MES client."));
 }

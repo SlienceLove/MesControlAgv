@@ -3,6 +3,7 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
 using MesControlAgv.Contracts;
+using MesControlAgv.Contracts.Experiments;
 using MesControlAgv.Contracts.Workflows;
 using ContractAgvSnapshot = MesControlAgv.Contracts.AgvSnapshotResponse;
 using ContractAgvFleetStatus = MesControlAgv.Contracts.AgvFleetStatusResponse;
@@ -454,6 +455,208 @@ public sealed class MesClient(HttpClient client) : IMesClient
                ?? [];
     }
 
+    public async Task<IReadOnlyList<ExperimentPlan>> GetExperimentPlansAsync(
+        CancellationToken cancellationToken) =>
+        await GetExperimentAsync<IReadOnlyList<ExperimentPlan>>(
+            "api/experiment-plans",
+            cancellationToken) ?? [];
+
+    public async Task<IReadOnlyList<ExperimentPlan>> GetExperimentPlanVersionsAsync(
+        Guid planId,
+        CancellationToken cancellationToken) =>
+        await GetExperimentAsync<IReadOnlyList<ExperimentPlan>>(
+            $"api/experiment-plans/{planId}/versions",
+            cancellationToken) ?? [];
+
+    public async Task<ExperimentPlan?> GetExperimentPlanAsync(
+        Guid planId,
+        int version,
+        CancellationToken cancellationToken) =>
+        await GetExperimentAsync<ExperimentPlan>(
+            $"api/experiment-plans/{planId}/versions/{version}",
+            cancellationToken,
+            mapNotFoundToNull: true);
+
+    public Task<ExperimentPlan> CreateExperimentPlanDraftAsync(
+        SaveExperimentPlanDraftRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ExperimentPlan>(
+            HttpMethod.Post,
+            "api/experiment-plans",
+            request,
+            cancellationToken);
+
+    public Task<ExperimentPlan> UpdateExperimentPlanDraftAsync(
+        Guid planId,
+        int version,
+        SaveExperimentPlanDraftRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ExperimentPlan>(
+            HttpMethod.Put,
+            $"api/experiment-plans/{planId}/versions/{version}/draft",
+            request,
+            cancellationToken);
+
+    public Task<ExperimentPlan> ValidateExperimentPlanAsync(
+        Guid planId,
+        int version,
+        ExperimentSchedulingActionRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ExperimentPlan>(
+            HttpMethod.Post,
+            $"api/experiment-plans/{planId}/versions/{version}/validate",
+            request,
+            cancellationToken);
+
+    public Task<ExperimentPlan> PublishExperimentPlanAsync(
+        Guid planId,
+        int version,
+        ExperimentSchedulingActionRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ExperimentPlan>(
+            HttpMethod.Post,
+            $"api/experiment-plans/{planId}/versions/{version}/publish",
+            request,
+            cancellationToken);
+
+    public Task<ExperimentPlan> CreateNextExperimentPlanDraftAsync(
+        Guid planId,
+        int sourceVersion,
+        ExperimentSchedulingActionRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ExperimentPlan>(
+            HttpMethod.Post,
+            $"api/experiment-plans/{planId}/versions/{sourceVersion}/next-draft",
+            request,
+            cancellationToken);
+
+    public async Task<IReadOnlyList<ExperimentJob>> GetExperimentJobsAsync(
+        ExperimentJobStatus? status,
+        CancellationToken cancellationToken)
+    {
+        var path = status is null
+            ? "api/experiment-jobs"
+            : $"api/experiment-jobs?status={Uri.EscapeDataString(status.Value.ToString())}";
+        return await GetExperimentAsync<IReadOnlyList<ExperimentJob>>(path, cancellationToken) ?? [];
+    }
+
+    public async Task<ExperimentJob?> GetExperimentJobAsync(
+        Guid jobId,
+        CancellationToken cancellationToken) =>
+        await GetExperimentAsync<ExperimentJob>(
+            $"api/experiment-jobs/{jobId}",
+            cancellationToken,
+            mapNotFoundToNull: true);
+
+    public Task<ExperimentJob> CreateExperimentJobAsync(
+        CreateExperimentJobRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ExperimentJob>(
+            HttpMethod.Post,
+            "api/experiment-jobs",
+            request,
+            cancellationToken);
+
+    public async Task<ExperimentScheduleSnapshot> GetExperimentScheduleAsync(
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        CancellationToken cancellationToken) =>
+        await GetExperimentAsync<ExperimentScheduleSnapshot>(
+            $"api/schedule{BuildExperimentQuery(("from", FormatQueryTime(from)), ("to", FormatQueryTime(to)))}",
+            cancellationToken) ?? throw new InvalidOperationException("MES returned no experiment schedule snapshot.");
+
+    public async Task<IReadOnlyList<ExperimentResourceAvailability>> GetExperimentResourceAvailabilityAsync(
+        DateTimeOffset? from,
+        DateTimeOffset? to,
+        CancellationToken cancellationToken) =>
+        await GetExperimentAsync<IReadOnlyList<ExperimentResourceAvailability>>(
+            $"api/resources/availability{BuildExperimentQuery(("from", FormatQueryTime(from)), ("to", FormatQueryTime(to)))}",
+            cancellationToken) ?? [];
+
+    public async Task<IReadOnlyList<ExperimentSchedulingAuditEntry>> GetExperimentSchedulingAuditsAsync(
+        Guid? planId,
+        Guid? experimentJobId,
+        Guid? scheduleEntryId,
+        int limit,
+        CancellationToken cancellationToken) =>
+        await GetExperimentAsync<IReadOnlyList<ExperimentSchedulingAuditEntry>>(
+            $"api/experiment-scheduling/audits{BuildExperimentQuery(
+                ("planId", planId?.ToString()),
+                ("experimentJobId", experimentJobId?.ToString()),
+                ("scheduleEntryId", scheduleEntryId?.ToString()),
+                ("limit", Math.Clamp(limit, 1, 1000).ToString(System.Globalization.CultureInfo.InvariantCulture)))}",
+            cancellationToken) ?? [];
+
+    public Task<ScheduleEntry> ScheduleExperimentJobAsync(
+        Guid jobId,
+        ScheduleExperimentJobRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ScheduleEntry>(
+            HttpMethod.Put,
+            $"api/experiment-jobs/{jobId}/schedule",
+            request,
+            cancellationToken);
+
+    public Task<ExperimentJob> UnscheduleExperimentJobAsync(
+        Guid jobId,
+        ExperimentSchedulingActionRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ExperimentJob>(
+            HttpMethod.Post,
+            $"api/experiment-jobs/{jobId}/unschedule",
+            request,
+            cancellationToken);
+
+    public Task<ExperimentJob> CancelExperimentJobAsync(
+        Guid jobId,
+        ExperimentSchedulingActionRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ExperimentJob>(
+            HttpMethod.Post,
+            $"api/experiment-jobs/{jobId}/cancel",
+            request,
+            cancellationToken);
+
+    public async Task<ExperimentJobAdmissionResult> AdmitExperimentJobAsync(
+        Guid jobId,
+        AdmitExperimentJobRequest request,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.PostAsJsonAsync(
+            $"api/experiment-jobs/{jobId}/admit",
+            request,
+            cancellationToken);
+        if (response.IsSuccessStatusCode)
+        {
+            return await response.Content.ReadFromJsonAsync<ExperimentJobAdmissionResult>(cancellationToken)
+                ?? throw new InvalidOperationException("MES returned no experiment admission result.");
+        }
+        if (response.StatusCode is HttpStatusCode.Conflict or HttpStatusCode.UnprocessableEntity)
+        {
+            var payload = await response.Content.ReadAsStringAsync(cancellationToken);
+            try
+            {
+                using var document = JsonDocument.Parse(payload);
+                if (document.RootElement.TryGetProperty("status", out _))
+                {
+                    return JsonSerializer.Deserialize<ExperimentJobAdmissionResult>(
+                               payload,
+                               new JsonSerializerOptions(JsonSerializerDefaults.Web))
+                           ?? throw new InvalidOperationException("MES returned no experiment admission result.");
+                }
+
+                throw CreateExperimentApiException(response.StatusCode, document.RootElement);
+            }
+            catch (JsonException)
+            {
+                throw new InvalidOperationException(
+                    $"MES rejected the experiment scheduling request (HTTP {(int)response.StatusCode}).");
+            }
+        }
+
+        throw await CreateExperimentApiExceptionAsync(response, cancellationToken);
+    }
+
     private async Task<DashboardTask> PostAsync(string path, object? body, CancellationToken cancellationToken)
     {
         using var response = await client.PostAsJsonAsync(path, body, cancellationToken);
@@ -462,6 +665,83 @@ public sealed class MesClient(HttpClient client) : IMesClient
             ?? throw new InvalidOperationException("MES returned no task.");
         return ToDashboardTask(task);
     }
+
+    private async Task<T?> GetExperimentAsync<T>(
+        string path,
+        CancellationToken cancellationToken,
+        bool mapNotFoundToNull = false)
+    {
+        using var response = await client.GetAsync(path, cancellationToken);
+        if (mapNotFoundToNull && response.StatusCode == HttpStatusCode.NotFound) return default;
+        if (!response.IsSuccessStatusCode)
+            throw await CreateExperimentApiExceptionAsync(response, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<T>(cancellationToken);
+    }
+
+    private async Task<T> SendExperimentAsync<T>(
+        HttpMethod method,
+        string path,
+        object body,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(method, path)
+        {
+            Content = JsonContent.Create(body)
+        };
+        using var response = await client.SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw await CreateExperimentApiExceptionAsync(response, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<T>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no experiment scheduling result.");
+    }
+
+    private static async Task<InvalidOperationException> CreateExperimentApiExceptionAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var document = await JsonDocument.ParseAsync(
+                await response.Content.ReadAsStreamAsync(cancellationToken),
+                cancellationToken: cancellationToken);
+            return CreateExperimentApiException(response.StatusCode, document.RootElement);
+        }
+        catch (JsonException)
+        {
+            return new InvalidOperationException(
+                $"MES rejected the experiment scheduling request (HTTP {(int)response.StatusCode}).");
+        }
+    }
+
+    private static InvalidOperationException CreateExperimentApiException(
+        HttpStatusCode statusCode,
+        JsonElement body)
+    {
+        var detail = body.TryGetProperty("detail", out var detailElement)
+            ? detailElement.GetString()
+            : null;
+        var code = body.TryGetProperty("code", out var codeElement)
+            ? codeElement.GetString()
+            : null;
+        var status = $"HTTP {(int)statusCode}";
+        var message = string.IsNullOrWhiteSpace(detail)
+            ? $"MES rejected the experiment scheduling request ({status})."
+            : detail;
+        if (!string.IsNullOrWhiteSpace(code)) message = $"[{code}] {message}";
+        return new InvalidOperationException(message);
+    }
+
+    private static string BuildExperimentQuery(params (string Name, string? Value)[] values)
+    {
+        var parts = values
+            .Where(item => !string.IsNullOrWhiteSpace(item.Value))
+            .Select(item => $"{Uri.EscapeDataString(item.Name)}={Uri.EscapeDataString(item.Value!)}")
+            .ToArray();
+        return parts.Length == 0 ? string.Empty : $"?{string.Join("&", parts)}";
+    }
+
+    private static string? FormatQueryTime(DateTimeOffset? value) =>
+        value?.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
 
     private async Task<WorkflowExecutionSnapshot?> GetWorkflowExecutionSnapshotAsync(
         string path,
