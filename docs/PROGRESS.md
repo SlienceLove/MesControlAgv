@@ -15,6 +15,8 @@ Active branch: `docs/experiment-workflow-architecture-plan`
 - G5-B manual planning, G5-C runtime admission, and G5-D independent WPF
   planning/scheduling pages have passed project acceptance. G5 overall
   acceptance passed on 2026-08-24; the project authorized entry into G6.
+- G6-A versioned advanced-flow contracts and deterministic static publication
+  gates have passed project acceptance. G6-B is authorized next.
 
 The AGV MVP remains in frozen maintenance mode. Production, unattended,
 automatic/batch dispatch, and Push are **NO-GO**. G4-D controls MES scheduling
@@ -24,17 +26,26 @@ CIC-D160+ write path.
 
 ## Latest verification
 
-The G5-D Release gate completed on 2026-08-24:
+The G6-A Release gate completed on 2026-08-24:
 
 - Full solution build: **0 warnings / 0 errors**.
-- Full test suite: **682 passed / 5 existing E2E skipped / 0 failed**.
-- Breakdown: Domain 39, Workflow Contract 58, MES 110, WPF 225, Adapter 176,
+- Full test suite: **695 passed / 5 existing E2E skipped / 0 failed**.
+- Breakdown: Domain 39, Workflow Contract 69, MES 111, WPF 226, Adapter 176,
   Instrument Gateway 50, Simulator 5, and E2E 19 passed plus 5 skipped.
-- G5-D focused coverage: **13/13 passed**. It covers G5 HTTP contracts, plan
-  lifecycle, manual scheduling, deterministic blockers, swimlane geometry,
-  active leases, page bindings, and the no-node/no-device boundary.
+- G6-A focused coverage: **15/15 passed**. It covers schema compatibility,
+  typed conditions, signal/parallel/subflow/compensation publication rules,
+  catalog gates, copy/paste remapping, import behavior, and MES round trips.
 
 ## Recent changes
+
+### 2026-08-24 - G6-A advanced-flow contracts
+
+- Advanced the graph schema to v3 while keeping v2 publishable and preserving
+  legacy free-form conditions as unpublishable compatibility data.
+- Added typed condition, signal wait, parallel, pinned subflow, and compensation
+  contracts with deterministic publication rules. All advanced nodes remain
+  runtime-disabled at this gate.
+- Implementation commit: `3f184d7`; project acceptance passed on 2026-08-24.
 
 ### 2026-08-24 - G5-D planning and scheduling UI
 
@@ -67,23 +78,11 @@ The G5-D Release gate completed on 2026-08-24:
   in-place G5-A schema upgrades without runtime admission or device behavior.
 - Implementation commit: `2e5ef8f`; project acceptance passed.
 
-### 2026-08-21 - G4-D audited run controls
-
-- Added server-authorized pause/resume, safe cancellation, and two explicit
-  Unknown conclusions with required request ID, operator, reason, idempotency,
-  and append-only audit evidence.
-- Pause blocks future claims but does not pause devices. Cancel rejects active
-  or Unknown evidence. Unknown resolution updates existing evidence and never
-  resends a command.
-- Added WPF permission checks, disabled reasons, confirmations, and a dedicated
-  Unknown panel without a Retry action.
-- Project acceptance and G4 overall acceptance passed; implementation commit:
-  `379fd59`.
-
 ## Historical trace
 
 | Date | Retained trace |
 | --- | --- |
+| 2026-08-21 | G4-D audited pause/resume, cancellation and Unknown resolution passed; implementation `379fd59`. See [G4 acceptance](EXPERIMENT-WORKFLOW-G4-ACCEPTANCE.md). |
 | 2026-08-21 | G5-A planning foundation passed: immutable plan/workflow references, additive storage, and read-only projections. Implementation `b690289`; see [G5 acceptance](EXPERIMENT-WORKFLOW-G5-ACCEPTANCE.md). |
 | 2026-08-21 | G4 overall acceptance: durable runtime evidence, Simulator-only node execution, monitoring, and audited controls. See [G4 acceptance](EXPERIMENT-WORKFLOW-G4-ACCEPTANCE.md). |
 | 2026-08-21 | G3 overall acceptance: typed catalog, strict publication gate, schema-driven inspector, and issue navigation. See [G3 acceptance](EXPERIMENT-WORKFLOW-G3-ACCEPTANCE.md). |
@@ -103,14 +102,16 @@ The G5-D Release gate completed on 2026-08-24:
 
 ## Next gate
 
-1. Start G6-A with versioned advanced-flow contracts and deterministic static
-   publication validation; do not change runtime execution behavior.
+1. Implement G6-B durable condition, external-signal, and manual-confirmation
+   runtime semantics with deterministic replay, timeout, pause/cancel, recovery,
+   and audit behavior. Do not begin parallel, subflow, or compensation runtime.
 2. Keep automatic scheduling, physical device commands, serial control,
    protocol/register fields, and D160 writes closed unless separately authorized
    by a later device-specific safety gate.
 
 ## Planning and evidence
 
+- [G6 acceptance](EXPERIMENT-WORKFLOW-G6-ACCEPTANCE.md)
 - [G5 acceptance](EXPERIMENT-WORKFLOW-G5-ACCEPTANCE.md)
 - [G4 acceptance](EXPERIMENT-WORKFLOW-G4-ACCEPTANCE.md)
 - [G3 acceptance](EXPERIMENT-WORKFLOW-G3-ACCEPTANCE.md)
