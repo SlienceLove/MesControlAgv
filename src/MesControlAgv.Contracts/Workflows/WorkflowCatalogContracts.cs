@@ -38,6 +38,11 @@ public static class WorkflowNodeConfigurationKeys
     public const string SampleIntervalSeconds = "sampleIntervalSeconds";
     public const string StableDurationSeconds = "stableDurationSeconds";
     public const string StaleAfterSeconds = "staleAfterSeconds";
+    public const string SignalName = "signalName";
+    public const string CorrelationKey = "correlationKey";
+    public const string ParallelGatewayKey = "gatewayKey";
+    public const string SubflowWorkflowId = "workflowId";
+    public const string SubflowVersion = "workflowVersion";
 }
 
 public enum WorkflowSchemaValueType
@@ -144,6 +149,7 @@ public sealed record WorkflowNodeTypeDefinition
     public IReadOnlyList<string> RequiredCapabilityIds { get; init; } = Array.Empty<string>();
     public WorkflowProfileSupport ProfileSupport { get; init; } = new();
     public bool Enabled { get; init; } = true;
+    public string? UnavailableReason { get; init; }
 }
 
 public sealed record DeviceCapabilityDefinition

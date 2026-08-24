@@ -8,9 +8,11 @@ namespace MesControlAgv.Domain.Workflows;
 /// </summary>
 public static class BuiltInWorkflowCatalog
 {
-    public const string CurrentCatalogVersion = "1.0";
+    public const string CurrentCatalogVersion = "1.1";
     public const string CurrentSchemaVersion = "1.0";
     public const string CurrentProductId = "MES-AGV";
+    public const string AdvancedFlowContractOnlyReason =
+        "Advanced flow semantics are contract-only in G6-A; runtime orchestration is not enabled.";
     public const string RestrictedInstrumentWriteReason =
         "Instrument write capability is not authorized by the current read-only safety gate.";
 
@@ -142,6 +144,144 @@ public static class BuiltInWorkflowCatalog
             ExecutionMode = WorkflowExecutionMode.ManualSignal,
             SafetyClassification = WorkflowSafetyClassification.OperatorInteraction,
             ProfileSupport = ProfileIndependent()
+        },
+        new()
+        {
+            NodeTypeId = WorkflowGraphNodeTypeIds.Condition,
+            SchemaVersion = CurrentSchemaVersion,
+            DisplayName = "Condition Gateway",
+            Category = "Control",
+            ResultSchema = new WorkflowObjectSchema
+            {
+                Fields =
+                [
+                    StringField("matchedEdgeId", "Matched Edge", required: true),
+                    DateTimeField("evaluatedAtUtc", "Evaluated At", required: true)
+                ]
+            },
+            Ports =
+            [
+                ControlInput(),
+                Output("condition", "Condition", WorkflowEdgeKind.ConditionTrue),
+                Output("default", "Default", WorkflowEdgeKind.ConditionFalse, WorkflowPortCardinality.Single)
+            ],
+            ExecutionMode = WorkflowExecutionMode.Immediate,
+            SafetyClassification = WorkflowSafetyClassification.None,
+            ProfileSupport = ProfileIndependent(),
+            Enabled = false,
+            UnavailableReason = AdvancedFlowContractOnlyReason
+        },
+        new()
+        {
+            NodeTypeId = WorkflowGraphNodeTypeIds.SignalWait,
+            SchemaVersion = CurrentSchemaVersion,
+            DisplayName = "Wait For External Signal",
+            Category = "Wait",
+            ConfigurationSchema = new WorkflowObjectSchema
+            {
+                Fields =
+                [
+                    StringField(WorkflowNodeConfigurationKeys.SignalName, "Signal Name", required: true),
+                    StringField(WorkflowNodeConfigurationKeys.CorrelationKey, "Correlation Input Key", required: true),
+                    IntegerField(
+                        WorkflowNodeConfigurationKeys.TimeoutSeconds,
+                        "Signal Timeout",
+                        required: true,
+                        defaultValue: "3600",
+                        unit: "s",
+                        minimum: 1,
+                        maximum: 86400)
+                ]
+            },
+            ResultSchema = new WorkflowObjectSchema
+            {
+                Fields =
+                [
+                    StringField("signalId", "Signal", required: true),
+                    StringField("signalName", "Signal Name", required: true),
+                    DateTimeField("receivedAtUtc", "Received At", required: true)
+                ]
+            },
+            Ports = [ControlInput(), SuccessOutput(), TimeoutOutput(), CancelledOutput()],
+            ExecutionMode = WorkflowExecutionMode.ManualSignal,
+            SafetyClassification = WorkflowSafetyClassification.None,
+            ProfileSupport = ProfileIndependent(),
+            Enabled = false,
+            UnavailableReason = AdvancedFlowContractOnlyReason
+        },
+        new()
+        {
+            NodeTypeId = WorkflowGraphNodeTypeIds.ParallelFork,
+            SchemaVersion = CurrentSchemaVersion,
+            DisplayName = "Parallel Fork",
+            Category = "Control",
+            ConfigurationSchema = ParallelGatewayConfiguration(),
+            Ports = [ControlInput(), Output("branch", "Branch", WorkflowEdgeKind.Parallel)],
+            ExecutionMode = WorkflowExecutionMode.Immediate,
+            SafetyClassification = WorkflowSafetyClassification.None,
+            ProfileSupport = ProfileIndependent(),
+            Enabled = false,
+            UnavailableReason = AdvancedFlowContractOnlyReason
+        },
+        new()
+        {
+            NodeTypeId = WorkflowGraphNodeTypeIds.ParallelJoin,
+            SchemaVersion = CurrentSchemaVersion,
+            DisplayName = "Parallel Join",
+            Category = "Control",
+            ConfigurationSchema = ParallelGatewayConfiguration(),
+            Ports = [ControlInput(WorkflowPortCardinality.Many), SuccessOutput()],
+            ExecutionMode = WorkflowExecutionMode.Immediate,
+            SafetyClassification = WorkflowSafetyClassification.None,
+            ProfileSupport = ProfileIndependent(),
+            Enabled = false,
+            UnavailableReason = AdvancedFlowContractOnlyReason
+        },
+        new()
+        {
+            NodeTypeId = WorkflowGraphNodeTypeIds.Subflow,
+            SchemaVersion = CurrentSchemaVersion,
+            DisplayName = "Pinned Subflow",
+            Category = "Control",
+            ConfigurationSchema = new WorkflowObjectSchema
+            {
+                Fields =
+                [
+                    StringField(WorkflowNodeConfigurationKeys.SubflowWorkflowId, "Workflow Id", required: true),
+                    IntegerField(
+                        WorkflowNodeConfigurationKeys.SubflowVersion,
+                        "Workflow Version",
+                        required: true,
+                        minimum: 1)
+                ]
+            },
+            ResultSchema = new WorkflowObjectSchema
+            {
+                Fields = [StringField("workflowRunId", "Subflow Run", required: true)]
+            },
+            Ports = [ControlInput(), SuccessOutput(), FailureOutput(), TimeoutOutput(), CancelledOutput()],
+            ExecutionMode = WorkflowExecutionMode.Immediate,
+            SafetyClassification = WorkflowSafetyClassification.None,
+            ProfileSupport = ProfileIndependent(),
+            Enabled = false,
+            UnavailableReason = AdvancedFlowContractOnlyReason
+        },
+        new()
+        {
+            NodeTypeId = WorkflowGraphNodeTypeIds.CompensationStart,
+            SchemaVersion = CurrentSchemaVersion,
+            DisplayName = "Compensation Start",
+            Category = "Control",
+            Ports =
+            [
+                ControlInput(WorkflowPortCardinality.Many),
+                Output("compensation", "Compensation", WorkflowEdgeKind.Compensation, WorkflowPortCardinality.Single)
+            ],
+            ExecutionMode = WorkflowExecutionMode.Immediate,
+            SafetyClassification = WorkflowSafetyClassification.None,
+            ProfileSupport = ProfileIndependent(),
+            Enabled = false,
+            UnavailableReason = AdvancedFlowContractOnlyReason
         },
         new()
         {
@@ -353,6 +493,17 @@ public static class BuiltInWorkflowCatalog
     private static WorkflowObjectSchema InstrumentIdentityConfiguration() => new()
     {
         Fields = [InstrumentIdField()]
+    };
+
+    private static WorkflowObjectSchema ParallelGatewayConfiguration() => new()
+    {
+        Fields =
+        [
+            StringField(
+                WorkflowNodeConfigurationKeys.ParallelGatewayKey,
+                "Gateway Pair Key",
+                required: true)
+        ]
     };
 
     private static WorkflowObjectSchema InstrumentReadConfiguration() => new()
@@ -639,13 +790,14 @@ public static class BuiltInWorkflowCatalog
     private static WorkflowPortDefinition Output(
         string key,
         string displayName,
-        WorkflowEdgeKind kind) => new()
+        WorkflowEdgeKind kind,
+        WorkflowPortCardinality cardinality = WorkflowPortCardinality.Many) => new()
     {
         Key = key,
         DisplayName = displayName,
         Direction = WorkflowPortDirection.Output,
         DataType = "control",
-        Cardinality = WorkflowPortCardinality.Many,
+        Cardinality = cardinality,
         EdgeKind = kind
     };
 

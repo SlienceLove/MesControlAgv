@@ -275,6 +275,52 @@ public sealed class WorkflowApiTests : IClassFixture<MesWebApplicationFactory>
     }
 
     [Fact]
+    public async Task G6_condition_contract_round_trips_but_cannot_publish_or_execute_early()
+    {
+        var definition = WorkflowTestDefinitions.CreateConditionWorkflow();
+        var create = await _client.PostAsJsonAsync("/api/workflows?actor=g6-contract", definition);
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var draft = await create.Content.ReadFromJsonAsync<WorkflowVersion>();
+        Assert.NotNull(draft);
+
+        var persisted = await _client.GetFromJsonAsync<WorkflowVersion>(
+            $"/api/workflows/{draft!.WorkflowId}/versions/{draft.Version}");
+        var conditionEdge = Assert.Single(persisted!.Definition.Edges, edge =>
+            edge.Kind == WorkflowEdgeKind.ConditionTrue);
+        Assert.Equal(
+            definition.Edges.Single(edge => edge.Kind == WorkflowEdgeKind.ConditionTrue).ConditionExpression,
+            conditionEdge.ConditionExpression);
+
+        var validate = await _client.PostAsync(
+            $"/api/workflows/{draft.WorkflowId}/versions/{draft.Version}/validate",
+            content: null);
+        Assert.Equal(HttpStatusCode.OK, validate.StatusCode);
+        var validation = await validate.Content.ReadFromJsonAsync<WorkflowValidationResult>();
+        Assert.False(validation!.IsValid);
+        Assert.Contains(validation.Issues, issue =>
+            issue.Code == WorkflowPublicationIssueCodes.NodeTypeDisabled &&
+            issue.Message == BuiltInWorkflowCatalog.AdvancedFlowContractOnlyReason);
+        Assert.DoesNotContain(validation.Issues, issue =>
+            issue.Code.StartsWith("WF-CONDITION-", StringComparison.Ordinal));
+
+        var publish = await _client.PostAsync(
+            $"/api/workflows/{draft.WorkflowId}/versions/{draft.Version}/publish?actor=g6-contract",
+            content: null);
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, publish.StatusCode);
+
+        var execute = await _client.PostAsJsonAsync("/api/workflows/execute", new WorkflowExecutionRequest
+        {
+            WorkflowId = draft.WorkflowId,
+            Version = draft.Version,
+            RequestId = Guid.NewGuid(),
+            RequestedBy = "g6-contract"
+        });
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, execute.StatusCode);
+        var rejection = await execute.Content.ReadFromJsonAsync<WorkflowExecutionResult>();
+        Assert.Equal(WorkflowExecutionRejectionCodes.VersionNotPublished, rejection!.RejectionCode);
+    }
+
+    [Fact]
     public async Task Json_payload_cannot_self_authorize_a_restricted_instrument_capability()
     {
         const string injectedKey = "capabilityId";

@@ -332,13 +332,18 @@ internal static class CatalogContractValidator
         var resultSchema = FreezeAndValidate(definition.ResultSchema, "result");
         var ports = FreezePorts(definition.Ports);
         var capabilities = FreezeStableIds(definition.RequiredCapabilityIds, "required capability");
+        if (!definition.Enabled && string.IsNullOrWhiteSpace(definition.UnavailableReason))
+            throw new ArgumentException($"Disabled node type '{definition.NodeTypeId}' requires an unavailable reason.");
         return definition with
         {
             ConfigurationSchema = configurationSchema,
             ResultSchema = resultSchema,
             Ports = ports,
             RequiredCapabilityIds = capabilities,
-            ProfileSupport = FreezeAndValidate(definition.ProfileSupport)
+            ProfileSupport = FreezeAndValidate(definition.ProfileSupport),
+            UnavailableReason = string.IsNullOrWhiteSpace(definition.UnavailableReason)
+                ? null
+                : definition.UnavailableReason.Trim()
         };
     }
 

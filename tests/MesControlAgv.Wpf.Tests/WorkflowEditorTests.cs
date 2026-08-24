@@ -1,6 +1,8 @@
 using ContractWorkflowEdgeDefinition = MesControlAgv.Contracts.Workflows.WorkflowEdgeDefinition;
 using ContractWorkflowEdgeKind = MesControlAgv.Contracts.Workflows.WorkflowEdgeKind;
 using ContractWorkflowGraphDocument = MesControlAgv.Contracts.Workflows.WorkflowGraphDocument;
+using ContractWorkflowConditionOperator = MesControlAgv.Contracts.Workflows.WorkflowConditionOperator;
+using ContractWorkflowConditionValueSource = MesControlAgv.Contracts.Workflows.WorkflowConditionValueSource;
 using ContractWorkflowNodeLayout = MesControlAgv.Contracts.Workflows.WorkflowNodeLayout;
 using ContractWorkflowViewport = MesControlAgv.Contracts.Workflows.WorkflowCanvasViewport;
 using MesControlAgv.Wpf.Services;
@@ -346,10 +348,63 @@ public sealed class WorkflowEditorTests
             }
             """);
 
-        var workflow = Assert.Single(new WorkflowStore(fixture.Path).Load());
+        var store = new WorkflowStore(fixture.Path);
+        var document = Assert.Single(store.LoadDocuments());
+        var workflow = WorkflowDocumentMapper.FromGraph(document);
 
+        Assert.Equal(ContractWorkflowGraphDocument.CurrentSchemaVersion, document.SchemaVersion);
         Assert.Empty(workflow.Edges);
         Assert.All(workflow.Nodes, node => Assert.Empty(node.NextNodeIds));
+    }
+
+    [Fact]
+    public void V3_import_preserves_structured_condition_and_reports_unknown_nested_fields()
+    {
+        var start = Guid.NewGuid();
+        var end = Guid.NewGuid();
+        var edgeId = Guid.NewGuid();
+        var result = new WorkflowDocumentImporter().Import(
+            $$"""
+            {
+              "id": "{{Guid.NewGuid()}}",
+              "schemaVersion": 3,
+              "name": "Condition import",
+              "nodes": [
+                { "id": "{{start}}", "nodeTypeId": "core.start", "name": "Start" },
+                { "id": "{{end}}", "nodeTypeId": "core.end", "name": "End" }
+              ],
+              "edges": [
+                {
+                  "id": "{{edgeId}}",
+                  "sourceNodeId": "{{start}}",
+                  "sourcePort": "success",
+                  "targetNodeId": "{{end}}",
+                  "targetPort": "in",
+                  "kind": "Success",
+                  "conditionExpression": {
+                    "schemaVersion": "1.0",
+                    "source": "RunInput",
+                    "sourceKey": "sample.pressure",
+                    "valueType": "Decimal",
+                    "operator": "LessThanOrEqual",
+                    "compareValue": "12",
+                    "missingValueBehavior": "Fail",
+                    "futureField": "must be reported"
+                  }
+                }
+              ]
+            }
+            """,
+            "condition-v3.json");
+
+        Assert.True(result.CanImport);
+        var expression = Assert.Single(Assert.Single(result.Documents).Edges).ConditionExpression;
+        Assert.NotNull(expression);
+        Assert.Equal(ContractWorkflowConditionValueSource.RunInput, expression!.Source);
+        Assert.Equal(ContractWorkflowConditionOperator.LessThanOrEqual, expression.Operator);
+        Assert.Contains(result.Report.Issues, issue =>
+            issue.Code == "UNSUPPORTED_FIELD_REPORTED" &&
+            issue.Location!.EndsWith("conditionExpression.futureField", StringComparison.Ordinal));
     }
 
     [Fact]

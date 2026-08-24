@@ -58,7 +58,8 @@ public sealed class WorkflowDocumentEditor
         string targetPort,
         WorkflowEdgeKind kind = WorkflowEdgeKind.Success,
         string? condition = null,
-        int priority = 0)
+        int priority = 0,
+        WorkflowConditionExpression? conditionExpression = null)
     {
         var decision = _connectionPolicy.Evaluate(Current, sourceNodeId, sourcePort, targetNodeId, targetPort, kind);
         if (!decision.IsAllowed) return decision;
@@ -71,6 +72,7 @@ public sealed class WorkflowDocumentEditor
             TargetPort = targetPort,
             Kind = kind,
             Condition = condition,
+            ConditionExpression = conditionExpression,
             Priority = priority
         };
         Commit(Current with { Edges = Current.Edges.Append(edge).ToArray() });
@@ -187,7 +189,8 @@ public sealed class WorkflowDocumentEditor
             {
                 Id = Guid.NewGuid(),
                 SourceNodeId = idMap[edge.SourceNodeId],
-                TargetNodeId = idMap[edge.TargetNodeId]
+                TargetNodeId = idMap[edge.TargetNodeId],
+                ConditionExpression = RemapConditionExpression(edge.ConditionExpression, idMap)
             })
             .ToArray();
         var pastedLayouts = fragment.Layouts
@@ -207,6 +210,19 @@ public sealed class WorkflowDocumentEditor
             Layouts = Current.Layouts.Concat(pastedLayouts).ToArray()
         });
         return pastedNodes.Select(node => node.Id).ToArray();
+    }
+
+    private static WorkflowConditionExpression? RemapConditionExpression(
+        WorkflowConditionExpression? expression,
+        IReadOnlyDictionary<Guid, Guid> idMap)
+    {
+        if (expression is not { Source: WorkflowConditionValueSource.NodeOutput, SourceNodeId: { } sourceNodeId } ||
+            !idMap.TryGetValue(sourceNodeId, out var remapped))
+        {
+            return expression;
+        }
+
+        return expression with { SourceNodeId = remapped };
     }
 
     public bool TryApplyLayout(Func<WorkflowGraphDocument, WorkflowGraphDocument> layout)

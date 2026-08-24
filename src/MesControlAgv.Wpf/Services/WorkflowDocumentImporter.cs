@@ -432,7 +432,7 @@ public sealed class WorkflowDocumentImporter
         var nodes = graph.Nodes ?? [];
         var edges = graph.Edges ?? [];
         var migratedEdges = 0;
-        if (sourceSchemaVersion < WorkflowGraphDocument.CurrentSchemaVersion &&
+        if (sourceSchemaVersion < WorkflowGraphDocument.ExplicitEdgesSchemaVersion &&
             edges.Count == 0 &&
             nodes.Count > 1)
         {
@@ -587,7 +587,13 @@ public sealed class WorkflowDocumentImporter
     {
         ReportObjectArrayProperties(workflow, "nodes", GraphNodeProperties, path, context, (node, nodePath) =>
             ReportObjectArrayProperties(node, "ports", GraphPortProperties, nodePath, context));
-        ReportObjectArrayProperties(workflow, "edges", GraphEdgeProperties, path, context);
+        ReportObjectArrayProperties(workflow, "edges", GraphEdgeProperties, path, context, (edge, edgePath) =>
+            ReportObjectProperties(
+                edge,
+                "conditionExpression",
+                GraphConditionExpressionProperties,
+                edgePath,
+                context));
         ReportObjectArrayProperties(workflow, "layouts", GraphLayoutProperties, path, context);
         ReportObjectProperties(workflow, "viewport", GraphViewportProperties, path, context);
     }
@@ -602,7 +608,13 @@ public sealed class WorkflowDocumentImporter
             ReportObjectArrayProperties(node, "parameters", WorkflowParameterProperties, nodePath, context);
             ReportObjectArrayProperties(node, "ports", GraphPortProperties, nodePath, context);
         });
-        ReportObjectArrayProperties(workflow, "edges", GraphEdgeProperties, path, context);
+        ReportObjectArrayProperties(workflow, "edges", GraphEdgeProperties, path, context, (edge, edgePath) =>
+            ReportObjectProperties(
+                edge,
+                "conditionExpression",
+                GraphConditionExpressionProperties,
+                edgePath,
+                context));
         ReportObjectArrayProperties(workflow, "layouts", GraphLayoutProperties, path, context);
         ReportObjectProperties(workflow, "viewport", GraphViewportProperties, path, context);
     }
@@ -818,7 +830,14 @@ public sealed class WorkflowDocumentImporter
 
     private static readonly HashSet<string> GraphEdgeProperties = new(StringComparer.OrdinalIgnoreCase)
     {
-        "id", "sourceNodeId", "sourcePort", "targetNodeId", "targetPort", "kind", "condition", "priority", "metadata"
+        "id", "sourceNodeId", "sourcePort", "targetNodeId", "targetPort", "kind", "condition",
+        "conditionExpression", "priority", "metadata"
+    };
+
+    private static readonly HashSet<string> GraphConditionExpressionProperties = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "schemaVersion", "source", "sourceNodeId", "sourceKey", "valueType", "operator", "compareValue",
+        "missingValueBehavior"
     };
 
     private static readonly HashSet<string> GraphLayoutProperties = new(StringComparer.OrdinalIgnoreCase)

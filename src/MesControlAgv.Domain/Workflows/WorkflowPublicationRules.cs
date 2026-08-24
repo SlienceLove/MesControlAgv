@@ -46,6 +46,24 @@ public static class WorkflowPublicationIssueCodes
     public const string EdgeDuplicate = "WF-EDGE-DUPLICATE";
     public const string EdgeCardinality = "WF-EDGE-CARDINALITY";
     public const string EdgeConditionUnsupported = "WF-EDGE-CONDITION-UNSUPPORTED";
+    public const string AdvancedSchemaRequired = "WF-G6-SCHEMA-REQUIRED";
+    public const string ConditionExpressionRequired = "WF-CONDITION-EXPRESSION-REQUIRED";
+    public const string ConditionExpressionLocation = "WF-CONDITION-EXPRESSION-LOCATION";
+    public const string ConditionExpressionSchema = "WF-CONDITION-EXPRESSION-SCHEMA";
+    public const string ConditionSourceInvalid = "WF-CONDITION-SOURCE-INVALID";
+    public const string ConditionSourceUnavailable = "WF-CONDITION-SOURCE-UNAVAILABLE";
+    public const string ConditionTypeMismatch = "WF-CONDITION-TYPE-MISMATCH";
+    public const string ConditionOperatorInvalid = "WF-CONDITION-OPERATOR-INVALID";
+    public const string ConditionValueInvalid = "WF-CONDITION-VALUE-INVALID";
+    public const string ConditionMissingBehavior = "WF-CONDITION-MISSING-BEHAVIOR";
+    public const string ConditionDefaultInvalid = "WF-CONDITION-DEFAULT-INVALID";
+    public const string ConditionPriorityInvalid = "WF-CONDITION-PRIORITY-INVALID";
+    public const string SignalReferenceInvalid = "WF-SIGNAL-REFERENCE-INVALID";
+    public const string ParallelPairInvalid = "WF-PARALLEL-PAIR-INVALID";
+    public const string ParallelBranchInvalid = "WF-PARALLEL-BRANCH-INVALID";
+    public const string ParallelJoinInvalid = "WF-PARALLEL-JOIN-INVALID";
+    public const string SubflowReferenceInvalid = "WF-SUBFLOW-REFERENCE-INVALID";
+    public const string CompensationPathInvalid = "WF-COMPENSATION-PATH-INVALID";
     public const string BoundaryStart = "WF-GRAPH-START";
     public const string BoundaryEnd = "WF-GRAPH-END";
     public const string StartIncoming = "WF-PATH-START-INCOMING";
@@ -67,7 +85,7 @@ internal static class WorkflowPublicationRules
         WorkflowPublicationContext context,
         ICollection<WorkflowValidationIssue> issues)
     {
-        if (workflow.SchemaVersion != WorkflowGraphDocument.CurrentSchemaVersion)
+        if (!WorkflowGraphDocument.IsPublishableSchemaVersion(workflow.SchemaVersion))
         {
             issues.Add(Error(
                 WorkflowPublicationIssueCodes.DocumentSchemaUnsupported,
@@ -80,6 +98,7 @@ internal static class WorkflowPublicationRules
         var resolvedEdges = ValidateEdges(edges, nodes, resolvedNodes, issues);
         ValidateLegacyProjection(edges, resolvedNodes, issues);
         ValidateTopology(resolvedNodes, resolvedEdges, issues);
+        WorkflowAdvancedPublicationRules.Validate(workflow, catalogs, issues);
     }
 
     private static IReadOnlyDictionary<Guid, ResolvedNode> ResolveNodes(
@@ -124,7 +143,7 @@ internal static class WorkflowPublicationRules
             {
                 issues.Add(Error(
                     WorkflowPublicationIssueCodes.NodeTypeDisabled,
-                    $"Node type '{node.NodeTypeId}' is disabled.",
+                    definition.UnavailableReason ?? $"Node type '{node.NodeTypeId}' is disabled.",
                     node.Id));
             }
             if (!SupportsProfile(definition.ProfileSupport, context.ProductId))

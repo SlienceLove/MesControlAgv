@@ -129,6 +129,113 @@ public sealed class WorkflowGraphEditorTests
     }
 
     [Fact]
+    public void Structured_condition_round_trip_and_paste_remap_its_node_output_reference()
+    {
+        var source = new WorkflowNodeDefinition
+        {
+            NodeTypeId = "test.source",
+            Name = "Source",
+            Ports =
+            [
+                new WorkflowPortDefinition
+                {
+                    Key = "success",
+                    DisplayName = "Success",
+                    Direction = WorkflowPortDirection.Output,
+                    EdgeKind = WorkflowEdgeKind.Success
+                }
+            ]
+        };
+        var gateway = new WorkflowNodeDefinition
+        {
+            NodeTypeId = WorkflowGraphNodeTypeIds.Condition,
+            Name = "Gateway",
+            Ports =
+            [
+                new WorkflowPortDefinition
+                {
+                    Key = "in",
+                    DisplayName = "Input",
+                    Direction = WorkflowPortDirection.Input,
+                    Cardinality = WorkflowPortCardinality.Single
+                },
+                new WorkflowPortDefinition
+                {
+                    Key = "condition",
+                    DisplayName = "Condition",
+                    Direction = WorkflowPortDirection.Output,
+                    EdgeKind = WorkflowEdgeKind.ConditionTrue
+                }
+            ]
+        };
+        var target = new WorkflowNodeDefinition
+        {
+            NodeTypeId = "test.target",
+            Name = "Target",
+            Ports =
+            [
+                new WorkflowPortDefinition
+                {
+                    Key = "in",
+                    DisplayName = "Input",
+                    Direction = WorkflowPortDirection.Input,
+                    Cardinality = WorkflowPortCardinality.Many
+                }
+            ]
+        };
+        var expression = new WorkflowConditionExpression
+        {
+            Source = WorkflowConditionValueSource.NodeOutput,
+            SourceNodeId = source.Id,
+            SourceKey = "pressureMpa",
+            ValueType = WorkflowSchemaValueType.Decimal,
+            Operator = WorkflowConditionOperator.LessThanOrEqual,
+            CompareValue = "12",
+            MissingValueBehavior = WorkflowConditionMissingValueBehavior.Wait
+        };
+        var document = new WorkflowGraphDocument
+        {
+            Nodes = [source, gateway, target],
+            Edges =
+            [
+                new WorkflowEdgeDefinition
+                {
+                    SourceNodeId = source.Id,
+                    SourcePort = "success",
+                    TargetNodeId = gateway.Id,
+                    TargetPort = "in"
+                },
+                new WorkflowEdgeDefinition
+                {
+                    SourceNodeId = gateway.Id,
+                    SourcePort = "condition",
+                    TargetNodeId = target.Id,
+                    TargetPort = "in",
+                    Kind = WorkflowEdgeKind.ConditionTrue,
+                    ConditionExpression = expression
+                }
+            ]
+        };
+        var serialized = new WorkflowDocumentEditor(document).Serialize();
+        var roundTrip = WorkflowDocumentEditor.Deserialize(serialized);
+        var contractRoundTrip = WorkflowGraphContractAdapter.FromContract(
+            WorkflowGraphContractAdapter.ToContract(roundTrip));
+
+        Assert.Equal(expression, contractRoundTrip.Edges.Single(edge => edge.SourceNodeId == gateway.Id).ConditionExpression);
+
+        var editor = new WorkflowDocumentEditor(roundTrip);
+        var fragment = editor.Copy(roundTrip.Nodes.Select(node => node.Id));
+        var pastedIds = editor.Paste(fragment);
+        var pastedSource = editor.Current.Nodes.Single(node => pastedIds.Contains(node.Id) && node.Name == "Source");
+        var pastedGateway = editor.Current.Nodes.Single(node => pastedIds.Contains(node.Id) && node.Name == "Gateway");
+        var pastedCondition = editor.Current.Edges.Single(edge =>
+            edge.SourceNodeId == pastedGateway.Id && edge.SourcePort == "condition");
+
+        Assert.Equal(pastedSource.Id, pastedCondition.ConditionExpression!.SourceNodeId);
+        Assert.NotEqual(source.Id, pastedCondition.ConditionExpression.SourceNodeId);
+    }
+
+    [Fact]
     public void One_hundred_undo_redo_operations_restore_the_same_document()
     {
         var document = WorkflowSpikeSamples.CreateLinear();

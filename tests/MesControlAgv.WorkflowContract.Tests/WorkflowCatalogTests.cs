@@ -6,7 +6,7 @@ namespace MesControlAgv.WorkflowContract.Tests;
 public sealed class WorkflowCatalogTests
 {
     [Fact]
-    public void Built_in_catalog_declares_the_seven_G3_node_types()
+    public void Built_in_catalog_declares_G3_nodes_and_G6_contract_only_nodes()
     {
         var catalog = BuiltInWorkflowCatalog.Create();
 
@@ -15,9 +15,15 @@ public sealed class WorkflowCatalogTests
         Assert.Equal(
         [
             WorkflowGraphNodeTypeIds.Move,
+            WorkflowGraphNodeTypeIds.CompensationStart,
+            WorkflowGraphNodeTypeIds.Condition,
             WorkflowGraphNodeTypeIds.End,
             WorkflowGraphNodeTypeIds.ManualConfirmation,
+            WorkflowGraphNodeTypeIds.ParallelFork,
+            WorkflowGraphNodeTypeIds.ParallelJoin,
+            WorkflowGraphNodeTypeIds.SignalWait,
             WorkflowGraphNodeTypeIds.Start,
+            WorkflowGraphNodeTypeIds.Subflow,
             WorkflowGraphNodeTypeIds.TimedWait,
             WorkflowGraphNodeTypeIds.InstrumentReadStatus,
             WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable
@@ -26,7 +32,59 @@ public sealed class WorkflowCatalogTests
         Assert.All(
             catalog.NodeTypes.Definitions,
             definition => Assert.Equal(BuiltInWorkflowCatalog.CurrentSchemaVersion, definition.SchemaVersion));
-        Assert.Equal(2, WorkflowGraphDocument.CurrentSchemaVersion);
+        Assert.Equal(2, WorkflowGraphDocument.ExplicitEdgesSchemaVersion);
+        Assert.Equal(3, WorkflowGraphDocument.CurrentSchemaVersion);
+        Assert.True(WorkflowGraphDocument.IsPublishableSchemaVersion(2));
+        Assert.True(WorkflowGraphDocument.IsPublishableSchemaVersion(3));
+        Assert.False(WorkflowGraphDocument.IsPublishableSchemaVersion(1));
+    }
+
+    [Fact]
+    public void G6_advanced_nodes_are_typed_but_blocked_until_runtime_orchestration_exists()
+    {
+        var catalog = BuiltInWorkflowCatalog.Create().NodeTypes;
+        var advancedIds = new[]
+        {
+            WorkflowGraphNodeTypeIds.Condition,
+            WorkflowGraphNodeTypeIds.SignalWait,
+            WorkflowGraphNodeTypeIds.ParallelFork,
+            WorkflowGraphNodeTypeIds.ParallelJoin,
+            WorkflowGraphNodeTypeIds.Subflow,
+            WorkflowGraphNodeTypeIds.CompensationStart
+        };
+
+        foreach (var nodeTypeId in advancedIds)
+        {
+            var definition = GetNode(catalog, nodeTypeId);
+            Assert.False(definition.Enabled);
+            Assert.Equal(BuiltInWorkflowCatalog.AdvancedFlowContractOnlyReason, definition.UnavailableReason);
+            Assert.Empty(definition.RequiredCapabilityIds);
+            Assert.Equal(
+                WorkflowCatalogPublishDisposition.BlockedByCatalogCompatibility,
+                catalog.Resolve(nodeTypeId, definition.SchemaVersion).PublishDisposition);
+        }
+
+        var condition = GetNode(catalog, WorkflowGraphNodeTypeIds.Condition);
+        AssertPort(condition, "condition", WorkflowPortDirection.Output, WorkflowEdgeKind.ConditionTrue);
+        AssertPort(condition, "default", WorkflowPortDirection.Output, WorkflowEdgeKind.ConditionFalse);
+
+        var fork = GetNode(catalog, WorkflowGraphNodeTypeIds.ParallelFork);
+        AssertField(fork, WorkflowNodeConfigurationKeys.ParallelGatewayKey, required: true, defaultValue: null);
+        AssertPort(fork, "branch", WorkflowPortDirection.Output, WorkflowEdgeKind.Parallel);
+        Assert.Equal(
+            WorkflowPortCardinality.Many,
+            GetNode(catalog, WorkflowGraphNodeTypeIds.ParallelJoin).Ports.Single(port => port.Key == "in").Cardinality);
+
+        var subflow = GetNode(catalog, WorkflowGraphNodeTypeIds.Subflow);
+        AssertField(subflow, WorkflowNodeConfigurationKeys.SubflowWorkflowId, required: true, defaultValue: null);
+        AssertField(subflow, WorkflowNodeConfigurationKeys.SubflowVersion, required: true, defaultValue: null);
+
+        var signal = GetNode(catalog, WorkflowGraphNodeTypeIds.SignalWait);
+        AssertField(signal, WorkflowNodeConfigurationKeys.SignalName, required: true, defaultValue: null);
+        AssertField(signal, WorkflowNodeConfigurationKeys.CorrelationKey, required: true, defaultValue: null);
+
+        var compensation = GetNode(catalog, WorkflowGraphNodeTypeIds.CompensationStart);
+        AssertPort(compensation, "compensation", WorkflowPortDirection.Output, WorkflowEdgeKind.Compensation);
     }
 
     [Fact]
@@ -196,6 +254,15 @@ public sealed class WorkflowCatalogTests
         Assert.Equal(
             WorkflowNodeType.Custom,
             WorkflowGraphNodeTypeIds.ToContractType(WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable));
+        Assert.Equal(
+            WorkflowNodeType.Custom,
+            WorkflowGraphNodeTypeIds.ToContractType(WorkflowGraphNodeTypeIds.Condition));
+        Assert.Equal(
+            WorkflowNodeType.Custom,
+            WorkflowGraphNodeTypeIds.ToContractType(WorkflowGraphNodeTypeIds.ParallelFork));
+        Assert.Equal(
+            WorkflowNodeType.Custom,
+            WorkflowGraphNodeTypeIds.ToContractType(WorkflowGraphNodeTypeIds.Subflow));
     }
 
     [Fact]

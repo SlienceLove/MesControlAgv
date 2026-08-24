@@ -26,7 +26,8 @@ public enum WorkflowEdgeKind
     Cancelled,
     ConditionTrue,
     ConditionFalse,
-    Compensation
+    Compensation,
+    Parallel
 }
 
 public enum WorkflowCanvasMode
@@ -52,6 +53,12 @@ public static class WorkflowGraphNodeTypeIds
     public const string Wait = "core.wait";
     public const string TimedWait = "core.timed-wait";
     public const string ManualConfirmation = "core.manual-confirmation";
+    public const string Condition = "core.condition";
+    public const string SignalWait = "core.signal-wait";
+    public const string ParallelFork = "core.parallel-fork";
+    public const string ParallelJoin = "core.parallel-join";
+    public const string Subflow = "core.subflow";
+    public const string CompensationStart = "core.compensation-start";
     public const string Pickup = "agv.pickup";
     public const string Dropoff = "agv.dropoff";
     public const string End = "core.end";
@@ -121,7 +128,12 @@ public sealed record WorkflowEdgeDefinition
     public Guid TargetNodeId { get; init; }
     public string TargetPort { get; init; } = string.Empty;
     public WorkflowEdgeKind Kind { get; init; } = WorkflowEdgeKind.Success;
+    /// <summary>
+    /// Legacy free-form condition retained only for lossless compatibility. New
+    /// graphs use ConditionExpression; publication never evaluates this string.
+    /// </summary>
     public string? Condition { get; init; }
+    public WorkflowConditionExpression? ConditionExpression { get; init; }
     public int Priority { get; init; }
     /// <summary>
     /// Editor/import metadata such as a legacy connection colour. Runtime
@@ -154,7 +166,14 @@ public sealed record WorkflowCanvasViewport
 /// </summary>
 public sealed record WorkflowGraphDocument
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int LegacySequentialSchemaVersion = 1;
+    public const int ExplicitEdgesSchemaVersion = 2;
+    public const int AdvancedSemanticsSchemaVersion = 3;
+    public const int MinimumPublishableSchemaVersion = ExplicitEdgesSchemaVersion;
+    public const int CurrentSchemaVersion = AdvancedSemanticsSchemaVersion;
+
+    public static bool IsPublishableSchemaVersion(int schemaVersion) =>
+        schemaVersion is >= MinimumPublishableSchemaVersion and <= CurrentSchemaVersion;
 
     public Guid Id { get; init; } = Guid.NewGuid();
     public int SchemaVersion { get; init; } = CurrentSchemaVersion;

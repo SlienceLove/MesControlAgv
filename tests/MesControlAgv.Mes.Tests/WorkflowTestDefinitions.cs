@@ -102,6 +102,64 @@ internal static class WorkflowTestDefinitions
         };
     }
 
+    public static WorkflowDefinition CreateConditionWorkflow(Guid? workflowId = null)
+    {
+        var id = workflowId ?? Guid.NewGuid();
+        var startId = Guid.NewGuid();
+        var conditionId = Guid.NewGuid();
+        var endId = Guid.NewGuid();
+        var condition = new WorkflowConditionExpression
+        {
+            Source = WorkflowConditionValueSource.RunInput,
+            SourceKey = "sample.pressure",
+            ValueType = WorkflowSchemaValueType.Decimal,
+            Operator = WorkflowConditionOperator.LessThanOrEqual,
+            CompareValue = "12",
+            MissingValueBehavior = WorkflowConditionMissingValueBehavior.Wait
+        };
+        return new WorkflowDefinition
+        {
+            Id = id,
+            SchemaVersion = WorkflowGraphDocument.CurrentSchemaVersion,
+            Name = "G6 condition contract",
+            Nodes =
+            [
+                CreateNode(startId, WorkflowGraphNodeTypeIds.Start, "Start", 1, [conditionId]),
+                CreateNode(conditionId, WorkflowGraphNodeTypeIds.Condition, "Condition", 2, [endId]),
+                CreateNode(endId, WorkflowGraphNodeTypeIds.End, "End", 3, [])
+            ],
+            Edges =
+            [
+                new WorkflowEdgeDefinition
+                {
+                    SourceNodeId = startId,
+                    SourcePort = "success",
+                    TargetNodeId = conditionId,
+                    TargetPort = "in",
+                    Kind = WorkflowEdgeKind.Success
+                },
+                new WorkflowEdgeDefinition
+                {
+                    SourceNodeId = conditionId,
+                    SourcePort = "condition",
+                    TargetNodeId = endId,
+                    TargetPort = "in",
+                    Kind = WorkflowEdgeKind.ConditionTrue,
+                    ConditionExpression = condition,
+                    Priority = 10
+                },
+                new WorkflowEdgeDefinition
+                {
+                    SourceNodeId = conditionId,
+                    SourcePort = "default",
+                    TargetNodeId = endId,
+                    TargetPort = "in",
+                    Kind = WorkflowEdgeKind.ConditionFalse
+                }
+            ]
+        };
+    }
+
     public static WorkflowDefinition CreateMoveTimedWaitMoveWorkflow(
         string durationSeconds,
         Guid? workflowId = null)

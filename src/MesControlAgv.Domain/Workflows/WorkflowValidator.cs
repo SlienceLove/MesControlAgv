@@ -11,7 +11,7 @@ public sealed class WorkflowValidator
 {
     public const string ValidatorVersion = "workflow-contract-v1";
 
-    public const string PublicationValidatorVersion = "workflow-publication-v2";
+    public const string PublicationValidatorVersion = "workflow-publication-v3";
 
     private readonly WorkflowCatalogSet _catalogs;
     private readonly WorkflowPublicationContext _publicationContext;
