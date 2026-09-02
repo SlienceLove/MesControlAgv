@@ -1,0 +1,96 @@
+<UserControl x:Class="MesControlAgv.Wpf.Views.ShineLabSequenceImportView"
+            xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+            xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+            xmlns:converters="clr-namespace:MesControlAgv.Wpf.Converters"
+             xmlns:local="clr-namespace:MesControlAgv.Wpf"
+             HorizontalContentAlignment="Stretch"
+             VerticalContentAlignment="Stretch">
+    <UserControl.Resources>
+        <converters:CountToVisibilityConverter x:Key="CountToVisibilityConverter" />
+        <converters:StatusBrushConverter x:Key="StatusBrushConverter" />
+    </UserControl.Resources>
+
+    <Grid Margin="0,12,0,0">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid Margin="0,0,0,12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <TextBlock FontSize="22" FontWeight="SemiBold" Text="离子色谱样品任务导入" />
+            <TextBlock Grid.Row="1" Margin="0,4,0,0" Foreground="Gray" TextWrapping="Wrap"
+                       Text="解析 ShineLab 样品序列，导入前执行字段校验；控制电脑只接受追加语义，运行仍需现场人工确认。" />
+            <StackPanel Grid.Row="0" Grid.RowSpan="2" HorizontalAlignment="Right" Orientation="Horizontal">
+                <Button Height="34" Padding="14,0" Click="ImportShineLabSequence_Click" Content="选择样品任务文件" />
+                <Button x:Name="SubmitButton" Height="34" Margin="8,0,0,0" Padding="14,0" Command="{Binding ShineLabSequenceImport.SubmitCommand}" Content="导入到 ShineLab" />
+                <Button Height="34" Margin="8,0,0,0" Padding="14,0" Command="{Binding ShineLabSequenceImport.ClearCommand}" Content="清空" />
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="1" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="220" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="160" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock VerticalAlignment="Center" Text="目标序列" />
+            <TextBox x:Name="TargetSequenceTextBox" Grid.Column="1" Margin="8,0,0,0" Height="30" VerticalContentAlignment="Center"
+                     Text="{Binding ShineLabSequenceImport.TargetSequence, UpdateSourceTrigger=PropertyChanged}" />
+            <TextBlock Grid.Column="2" Margin="16,0,0,0" VerticalAlignment="Center" Text="操作人" />
+            <TextBox Grid.Column="3" Margin="8,0,0,0" Height="30" VerticalContentAlignment="Center"
+                     Text="{Binding ShineLabSequenceImport.OperatorName, UpdateSourceTrigger=PropertyChanged}" />
+            <StackPanel Grid.Column="4" Margin="16,0,0,0" Orientation="Horizontal" VerticalAlignment="Center">
+                <CheckBox VerticalAlignment="Center" IsChecked="{Binding ShineLabSequenceImport.AllowAppend}"
+                          Content="确认追加导入（ShineLab 为追加语义）" />
+                <CheckBox Margin="16,0,0,0" VerticalAlignment="Center" IsChecked="{Binding ShineLabSequenceImport.VerifyByExport}"
+                          Content="导入后只读导出比对" />
+            </StackPanel>
+        </Grid>
+
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="320" />
+            </Grid.ColumnDefinitions>
+            <DataGrid AutoGenerateColumns="False" IsReadOnly="True"
+                      ItemsSource="{Binding ShineLabSequenceImport.SampleTasks}" HeadersVisibility="Column">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="序号" Width="60" Binding="{Binding DisplayIndex}" />
+                    <DataGridTextColumn Header="源行" Width="60" Binding="{Binding SourceRowNumber}" />
+                    <DataGridTextColumn Header="样品名称" Width="140" Binding="{Binding SampleName}" />
+                    <DataGridTextColumn Header="样品类型" Width="110" Binding="{Binding SampleType}" />
+                    <DataGridTextColumn Header="样品等级" Width="90" Binding="{Binding SampleLevel}" />
+                    <DataGridTextColumn Header="循环次数" Width="90" Binding="{Binding CycleCount}" />
+                    <DataGridTextColumn Header="进样体积" Width="110" Binding="{Binding InjectionVolume}" />
+                    <DataGridTextColumn Header="色谱方法" Width="*" Binding="{Binding ChromatographyMethod}" />
+                </DataGrid.Columns>
+            </DataGrid>
+            <ScrollViewer Grid.Column="1" Margin="12,0,0,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
+                    <TextBlock FontSize="17" FontWeight="SemiBold" Text="校验问题" />
+                    <ListBox Height="150" Margin="0,8,0,0" ItemsSource="{Binding ShineLabSequenceImport.Issues}" />
+                    <TextBlock Margin="0,12,0,0" Foreground="Gray" Text="批次号" />
+                    <TextBlock Margin="0,4,0,0" Text="{Binding ShineLabSequenceImport.BatchId}" />
+                    <TextBlock Margin="0,12,0,0" Foreground="Gray" Text="控制电脑回执" />
+                    <TextBlock Margin="0,4,0,0" Text="{Binding ShineLabSequenceImport.ReceiptStatusText}" TextWrapping="Wrap" />
+                    <TextBlock Margin="0,12,0,0" Foreground="#A63A2B" TextWrapping="Wrap"
+                               Text="“运行”不由 MES 触发，需现场人工在 ShineLab 上确认后启动。" />
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+        <StackPanel Grid.Row="3" Margin="0,12,0,0" Orientation="Horizontal">
+            <TextBlock Text="{Binding ShineLabSequenceImport.Status}" TextWrapping="Wrap" />
+            <TextBlock Margin="12,0,0,0" FontSize="11"
+                       Foreground="{Binding ShineLabSequenceImport.OfflineState.StateText, Converter={StaticResource StatusBrushConverter}}"
+                       Text="{Binding ShineLabSequenceImport.OfflineState.StateText, StringFormat=数据状态：{0}}" />
+        </StackPanel>
+    </Grid>
+</UserControl>

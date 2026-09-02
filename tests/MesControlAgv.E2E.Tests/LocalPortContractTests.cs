@@ -25,7 +25,15 @@ public sealed class LocalPortContractTests
 
         Assert.Contains("http://localhost:5041/", File.ReadAllText(Path.Combine(root, "src", "MesControlAgv.Mes", "Program.cs")));
         Assert.Contains("http://localhost:5183/", File.ReadAllText(Path.Combine(root, "src", "MesControlAgv.Adapter", "Program.cs")));
-        Assert.Contains("http://localhost:5045/", File.ReadAllText(Path.Combine(root, "src", "MesControlAgv.Wpf", "App.xaml.cs")));
+        var wpfInspector = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "MesControlAgv.Wpf",
+            "Services",
+            "StartupConfigurationInspector.cs"));
+        Assert.Contains("http://localhost:5045/", wpfInspector);
+        Assert.Contains("http://localhost:5041/", wpfInspector);
+        Assert.Contains("http://localhost:5183/", wpfInspector);
         var launcher = File.ReadAllText(Path.Combine(root, "scripts", "run-local.ps1"));
         var physicalLauncher = File.ReadAllText(Path.Combine(root, "scripts", "start-physical-acceptance-adapter.ps1"));
         var stopper = File.ReadAllText(Path.Combine(root, "scripts", "stop-local.ps1"));
@@ -66,7 +74,8 @@ public sealed class LocalPortContractTests
         Assert.DoesNotContain("Simulator__BaseUrl", physicalLauncher);
 
         Assert.Contains("LocalSimulatorRuntime", wpfStartup);
-        Assert.Contains("WPF_MANAGE_LOCAL_SERVICES", wpfStartup);
+        Assert.Contains("InspectEnvironment", wpfStartup);
+        Assert.Contains("WPF_MANAGE_LOCAL_SERVICES", wpfInspector);
         Assert.Contains("OnExit", wpfStartup);
         Assert.Contains("BuildLocalServices", wpfProject);
         Assert.Contains("CopyLocalServiceRuntime", wpfProject);

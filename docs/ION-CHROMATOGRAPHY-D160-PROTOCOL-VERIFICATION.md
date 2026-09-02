@@ -145,6 +145,43 @@ Register `0x17DE` returned raw `3500`, although the workbook labels it as pump
 mode. That value is not credible as a simple mode enum and may indicate a
 firmware-specific layout or stale workbook mapping. It remains uninterpreted.
 
+## Field read gate result: 2026-08-28 13:16 CST
+
+- Result: `artifacts/ion-chromatography/d160-protocol-read-validation-20260828.json`
+- Result SHA-256:
+  `B2F883A4C2C14637FCF890FFC776274CECACE55BB3556CF363E9287F55C11F44`
+- Endpoint: `COM4`, `115200 8N1`, slave `1`
+- Outcome: `12/12` successful function `0x04` reads; an independent recheck of
+  every request/response found no CRC, length, address, or function errors.
+- Stability: all four query ranges returned byte-identical responses in all
+  three rounds; no `0x06` or `0x10` frame was sent.
+- Observed identifier: `YA7261078` (same as the prior validated session).
+- Read-only snapshot: conductivity `359.155151`, column setpoint `35.00 C`,
+  actual column temperature `29.68 C`, flow setpoint/actual `0.100/0.100 mL/min`,
+  pressure raw `0`, pump state raw `0`, and fault-code raw values `0/0`.
+
+The snapshot confirms that the COM4 read path remains repeatable on the current
+control computer. It is not an activation or safety-limit approval; the raw
+pump-mode and suppressor fields remain subject to the existing interpretation
+limits. The complete field JSON is retained without modification.
+
+## 2026-08-28 ShineDataAcquisition lifecycle capture (not a read-only run)
+
+During a supervised USBPcap session the operator clicked Run once, Pause twice,
+Resume once, and Terminate once on the window `ShineDataAcquisition -
+D160+-test111`. The capture showed ten D160+ `0x06` writes with exact echoes,
+including a transition of the process-state raw value at `0x17DF` from `0` to
+`1`; the final captured process response still had pressure raw `9` and
+process-state raw `1`. No matching disable write was captured. These buttons
+must not be assumed to be a hardware pump stop; the site must confirm the
+instrument's physical safe state using its approved stop/emergency procedure.
+
+The same capture's SHA-18i endpoint contained only periodic `0x04` reads, so it
+does not add SHA-18i action evidence. Detailed frame lists and the original ZIP
+are retained in `artifacts/ion-chromatography/
+SHA18I-CAPTURE-ANALYSIS-20260828-132249.md` and
+`SHA18iA-capture-20260828-132249.zip`.
+
 ## Next gate: current-value rewrite only
 
 Prepared package:

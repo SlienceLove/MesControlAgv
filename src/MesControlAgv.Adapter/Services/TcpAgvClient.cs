@@ -19,6 +19,8 @@ public sealed class TcpAgvOptions
     public int StatusPort { get; set; } = 19204;
     public int CommandPort { get; set; } = 19206;
     public int ControlPort { get; set; } = 19207;
+    /// <summary>Robokit "other API" request/response channel (6000+).</summary>
+    public int OtherPort { get; set; } = 19210;
     public int PushPort { get; set; } = 19301;
     public string NickName { get; set; } = "MesControlAgv.Adapter";
     public bool AcquireControl { get; set; } = true;
@@ -210,6 +212,7 @@ internal sealed class TcpApiChannel : IDisposable
 
 public sealed class TcpAgvClient :
     IAgvDeviceClient,
+    IAgvIoDeviceClient,
     IPhysicalAgvDeviceClient,
     IControllerMapEvidenceDeviceClient,
     IControlAcquisitionEvidence,
@@ -234,6 +237,8 @@ public sealed class TcpAgvClient :
     private const ushort RealtimeStatusApi = 1101;
     private const ushort ConfigurePushApi = 9300;
     private const ushort DownloadMapApi = 4011;
+    private const ushort QueryIoApi = 1013;
+    private const ushort SetDoApi = 6001;
     private const ushort PushApi = 19301;
 
     private static readonly string[] PushFields =
@@ -250,6 +255,7 @@ public sealed class TcpAgvClient :
     private readonly TcpApiChannel _statusChannel;
     private readonly TcpApiChannel _commandChannel;
     private readonly TcpApiChannel _controlChannel;
+    private readonly TcpApiChannel _otherChannel;
     // Serialize ownership read/acquire/reconcile and release transactions.
     private readonly SemaphoreSlim _controlTransactionGate = new(1, 1);
     private readonly object _snapshotLock = new();
@@ -276,6 +282,7 @@ public sealed class TcpAgvClient :
         _statusChannel = new TcpApiChannel(_options.Host, _options.StatusPort, _options);
         _commandChannel = new TcpApiChannel(_options.Host, _options.CommandPort, _options);
         _controlChannel = new TcpApiChannel(_options.Host, _options.ControlPort, _options);
+        _otherChannel = new TcpApiChannel(_options.Host, _options.OtherPort, _options);
     }
 
     public async Task EnsureControlAsync(CancellationToken cancellationToken) =>
@@ -382,6 +389,57 @@ public sealed class TcpAgvClient :
             _logger.LogWarning(exception, "Unable to query AGV snapshot at {Host}.", _options.Host);
             return new AgvSnapshotResponse(false, "unknown", null, null);
         }
+    }
+
+    /// <summary>
+    /// Reads the controller's digital I/O through vendor API 1013.
+    /// </summary>
+    public async Task<AgvIoSnapshotResponse> GetIoAsync(CancellationToken cancellationToken)
+    {
+        using var response = await _statusChannel.RequestAsync(
+            QueryIoApi,
+            null,
+            cancellationToken);
+        EnsureSuccess(response, QueryIoApi);
+
+        return new AgvIoSnapshotResponse(
+            ReadIoPoints(response.RootElement, "DI", isInput: true),
+            ReadIoPoints(response.RootElement, "DO", isInput: false),
+            DateTimeOffset.UtcNow);
+    }
+
+    /// <summary>
+    /// Sets one controller DO through vendor API 6001 on the other-API channel.
+    /// A fresh ownership check is performed immediately before the write; this
+    /// method never silently steals control from Roboshop or another client.
+    /// </summary>
+    public async Task<AgvDoWriteResponse> SetDoAsync(
+        int id,
+        bool status,
+        CancellationToken cancellationToken)
+    {
+        ThrowIfMutationIsBlocked("AGV DO write");
+        if (id < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(id), id, "DO id must be non-negative.");
+        }
+
+        await EnsureControlIsHeldAsync(cancellationToken);
+        var request = new { id, status };
+        LogMutationRequest(SetDoApi, request);
+        using var response = await _otherChannel.RequestAsync(
+            SetDoApi,
+            request,
+            cancellationToken);
+        LogMutationResponse(SetDoApi, response.RootElement);
+        EnsureSuccess(response, SetDoApi);
+
+        return new AgvDoWriteResponse(
+            id,
+            status,
+            ReadInt(response.RootElement, "ret_code") ?? 0,
+            ReadString(response.RootElement, "err_msg"),
+            DateTimeOffset.UtcNow);
     }
 
     public async Task<AgvSafetyReadinessResponse> GetSafetyReadinessAsync(CancellationToken cancellationToken)
@@ -711,6 +769,7 @@ public sealed class TcpAgvClient :
         _statusChannel.Dispose();
         _commandChannel.Dispose();
         _controlChannel.Dispose();
+        _otherChannel.Dispose();
         _controlTransactionGate.Dispose();
         _lifetime?.Dispose();
     }
@@ -1282,6 +1341,34 @@ public sealed class TcpAgvClient :
     {
         if (!root.TryGetProperty(name, out var value)) return null;
         return value.ValueKind == JsonValueKind.String ? value.GetString() : value.ToString();
+    }
+
+    private static IReadOnlyList<AgvIoPointResponse> ReadIoPoints(
+        JsonElement root,
+        string name,
+        bool isInput)
+    {
+        if (!root.TryGetProperty(name, out var values)
+            || values.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var points = new List<AgvIoPointResponse>();
+        foreach (var value in values.EnumerateArray())
+        {
+            var id = ReadInt(value, "id");
+            var status = ReadNullableBool(value, "status");
+            if (id is null || status is null) continue;
+
+            points.Add(new AgvIoPointResponse(
+                id.Value,
+                ReadString(value, "source")?.Trim() ?? "unknown",
+                status.Value,
+                isInput ? ReadNullableBool(value, "valid") : null));
+        }
+
+        return points;
     }
 
     private static IReadOnlyList<string> ReadStationCatalog(JsonElement root)

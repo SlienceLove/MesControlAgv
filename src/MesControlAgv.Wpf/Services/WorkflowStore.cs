@@ -118,7 +118,7 @@ public sealed class WorkflowStore
     }
 
     public static IReadOnlyList<WorkflowDefinition> CreateDefaultWorkflows() =>
-        CreateDefaultWorkflows("SAMPLE_01", "ST_PREP_01");
+        CreateDefaultWorkflows("LM1", "LM7");
 
     public static IReadOnlyList<WorkflowDefinition> CreateDefaultWorkflows(
         string sourceStationId,
@@ -154,6 +154,37 @@ public sealed class WorkflowStore
         ];
     }
 
+    /// <summary>
+    /// Creates the supervised acceptance template requested for the field map:
+    /// AGV arrives at the origin, executes the program selected for slot 1,
+    /// travels to the second configured station, then executes the program selected for slot 2. Program
+    /// names are intentionally blank by default and must come from the current
+    /// controller catalog (or an explicit operator selection).
+    /// </summary>
+    public static WorkflowDefinition CreateAuboStationProgramWorkflow(
+        string originStationId = "LM1",
+        string secondStationId = "LM4",
+        string? firstProgramName = null,
+        string? secondProgramName = null,
+        string? armDeviceId = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(originStationId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(secondStationId);
+        var normalizedArmDeviceId = string.IsNullOrWhiteSpace(armDeviceId) ? "ARM-01" : armDeviceId.Trim();
+
+        return CreateLinearWorkflow(
+            $"AUBO 到站程序模板（{originStationId}→{secondStationId}）",
+            $"AGV 到达 {originStationId} 后启动该节点选择的机械臂程序，到达 {secondStationId} 后启动另一个节点选择的程序；每个节点只执行一次。",
+            [
+                Node(WorkflowNodeType.Start, "开始", "启动到站触发流程", null, 0, 420, 1),
+                Node(WorkflowNodeType.Move, $"到达 {originStationId}", $"AGV 前往 {originStationId}", originStationId, 180, 420, 2),
+                RobotProgramNode($"{originStationId} 到站机械臂程序", firstProgramName, normalizedArmDeviceId, 360, 420, 3),
+                Node(WorkflowNodeType.Move, $"前往 {secondStationId}", $"AGV 前往 {secondStationId}", secondStationId, 540, 420, 4),
+                RobotProgramNode($"{secondStationId} 到站机械臂程序", secondProgramName, normalizedArmDeviceId, 720, 420, 5),
+                Node(WorkflowNodeType.End, "结束", "两次程序执行完成", null, 900, 420, 6)
+            ]);
+    }
+
     private static WorkflowDefinition CreateLinearWorkflow(
         string name,
         string description,
@@ -178,16 +209,58 @@ public sealed class WorkflowStore
         };
     }
 
-    private static WorkflowNode Node(WorkflowNodeType type, string name, string description, string? targetStation, double x, double y, int order) => new()
+    private static WorkflowNode Node(WorkflowNodeType type, string name, string description, string? targetStation, double x, double y, int order)
     {
-        Type = type,
+        var configuration = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        if (type is WorkflowNodeType.Move or WorkflowNodeType.Pickup or WorkflowNodeType.Dropoff)
+        {
+            configuration[MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.TargetStation] = targetStation;
+            configuration[MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.TimeoutSeconds] = "300";
+            configuration[MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.RetryCount] = "0";
+        }
+
+        return new WorkflowNode
+        {
+            Type = type,
+            Name = name,
+            Description = description,
+            TargetStation = targetStation,
+            X = x,
+            Y = y,
+            Order = order,
+            Configuration = configuration
+        };
+    }
+
+    private static WorkflowNode RobotProgramNode(
+        string name,
+        string? programName,
+        string armDeviceId,
+        double x,
+        double y,
+        int order) => new()
+    {
+        Type = WorkflowNodeType.RobotProgram,
         Name = name,
-        Description = description,
-        TargetStation = targetStation,
+        Description = string.IsNullOrWhiteSpace(programName)
+            ? "到站后从机械臂程序目录选择并单次加载/启动"
+            : $"到站后单次加载并启动 AUBO 程序 {programName}",
         X = x,
         Y = y,
-        Order = order
+        Order = order,
+        Configuration = CreateRobotProgramConfiguration(programName, armDeviceId)
     };
+
+    private static Dictionary<string, string?> CreateRobotProgramConfiguration(string? programName, string armDeviceId)
+    {
+        var configuration = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+        {
+            [MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.DeviceId] = armDeviceId
+        };
+        if (!string.IsNullOrWhiteSpace(programName))
+            configuration[MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.ProgramName] = programName.Trim();
+        return configuration;
+    }
 
     private static MesControlAgv.Contracts.Workflows.WorkflowEdgeDefinition CreateSuccessEdge(
         Guid sourceNodeId,

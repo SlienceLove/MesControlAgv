@@ -24,11 +24,17 @@
     <PackageReference Include="Nodify" Version="7.3.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="Configuration\guangzhou606.station-mapping.json"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <Target Name="BuildLocalServices" BeforeTargets="Build;Publish">
     <MSBuild Projects="@(LocalServiceProjects)" Targets="Build" Properties="Configuration=$(Configuration);Platform=$(Platform)" />
   </Target>
 
-  <Target Name="CopyLocalServiceRuntimeAfterBuild" AfterTargets="Build">
+  <Target Name="CopyLocalServiceRuntimeAfterBuild" AfterTargets="Build" Condition="'$(SkipLocalServiceCopy)' != 'true'">
     <PropertyGroup>
       <LocalServiceDestinationRoot>$(OutDir)services\</LocalServiceDestinationRoot>
     </PropertyGroup>
@@ -44,7 +50,7 @@
     <Copy SourceFiles="@(MesRuntimeFiles)" DestinationFiles="@(MesRuntimeFiles->'$(LocalServiceDestinationRoot)Mes\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
   </Target>
 
-  <Target Name="CopyLocalServiceRuntimeAfterPublish" AfterTargets="Publish">
+  <Target Name="CopyLocalServiceRuntimeAfterPublish" AfterTargets="Publish" Condition="'$(SkipLocalServiceCopy)' != 'true'">
     <PropertyGroup>
       <LocalServiceDestinationRoot>$(PublishDir)services\</LocalServiceDestinationRoot>
     </PropertyGroup>

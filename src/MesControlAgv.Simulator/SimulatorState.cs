@@ -4,7 +4,7 @@ public sealed class SimulatorState
 {
     private readonly Dictionary<string, SimulatedAgv> _agvs;
 
-    public SimulatorState(IEnumerable<string>? agvIds = null)
+    public SimulatorState(IEnumerable<string>? agvIds = null, string? defaultStationId = null)
     {
         var ids = (agvIds ?? ["AGV-01", "AGV-02", "AGV-03"])
             .Where(id => !string.IsNullOrWhiteSpace(id))
@@ -12,7 +12,10 @@ public sealed class SimulatorState
             .ToArray();
         if (ids.Length == 0) ids = ["AGV-01"];
 
-        _agvs = ids.ToDictionary(id => id, id => new SimulatedAgv(id), StringComparer.Ordinal);
+        var initialStation = string.IsNullOrWhiteSpace(defaultStationId)
+            ? "CHARGE_01"
+            : defaultStationId.Trim();
+        _agvs = ids.ToDictionary(id => id, id => new SimulatedAgv(id, initialStation), StringComparer.Ordinal);
     }
 
     public bool Online => DefaultAgv.Online;
@@ -168,13 +171,13 @@ public sealed class SimulatorState
         if (!agv.Online) throw new InvalidOperationException("AGV is offline.");
     }
 
-    private sealed class SimulatedAgv(string id)
+    private sealed class SimulatedAgv(string id, string initialStation)
     {
         public string Id { get; } = id;
         public Dictionary<Guid, SimulatedTask> Tasks { get; } = [];
         public bool Online { get; set; } = true;
         public string ControlOwner { get; } = "adapter";
-        public string CurrentStationId { get; set; } = "CHARGE_01";
+        public string CurrentStationId { get; set; } = initialStation;
         public Guid? CurrentTaskId { get; set; }
         public string? NextFault { get; set; }
     }

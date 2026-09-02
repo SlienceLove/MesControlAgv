@@ -700,4 +700,4 @@ G2 实施结果和后续约束如下：
 7. 模块调试与正常流程运行使用不同入口和权限。
 8. D160 当前仅在设计器中提供只读节点能力，控制能力保持禁用。
 
-UI 阶段 1 随 G2-C 完成实现，当前停在 G2 验收门禁。验收通过后才进入 G3 类型化节点、能力目录和发布校验，不提前新增设备节点或运行按钮。具体交付顺序和验收标准见 [EXPERIMENT-WORKFLOW-IMPLEMENTATION-PLAN.md](EXPERIMENT-WORKFLOW-IMPLEMENTATION-PLAN.md)。
+UI 阶段 1 随 G2-C 完成实现，G2 总体验收已于 2026-08-20 通过。G3 类型化节点、能力目录和发布校验是下一阶段，但尚未开始；不得借机新增设备执行路径或实体设备运行按钮。具体交付顺序和验收标准见 [EXPERIMENT-WORKFLOW-IMPLEMENTATION-PLAN.md](EXPERIMENT-WORKFLOW-IMPLEMENTATION-PLAN.md)。

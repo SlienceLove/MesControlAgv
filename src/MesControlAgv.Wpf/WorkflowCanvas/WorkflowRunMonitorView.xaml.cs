@@ -37,12 +37,16 @@ public partial class WorkflowRunMonitorView : UserControl
         if (_viewModel is null) return;
         _viewModel.PropertyChanged += ViewModel_PropertyChanged;
         AttachCanvas();
+        _viewModel.StartAutoRefresh();
     }
 
     private void DetachViewModel()
     {
         if (_viewModel is not null)
+        {
             _viewModel.PropertyChanged -= ViewModel_PropertyChanged;
+            _viewModel.StopAutoRefresh();
+        }
         _viewModel = null;
         RunCanvasSurface.Detach();
     }

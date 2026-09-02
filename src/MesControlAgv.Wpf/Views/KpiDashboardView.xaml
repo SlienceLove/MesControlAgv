@@ -1,0 +1,75 @@
+<UserControl x:Class="MesControlAgv.Wpf.Views.KpiDashboardView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:MesControlAgv.Wpf.Controls"
+             xmlns:converters="clr-namespace:MesControlAgv.Wpf.Converters"
+             HorizontalContentAlignment="Stretch"
+             VerticalContentAlignment="Stretch">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/MesControlAgv.Wpf;component/Themes/MesTheme.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <converters:StatusBrushConverter x:Key="StatusBrushConverter" />
+            <converters:CountToVisibilityConverter x:Key="CountToVisibilityConverter" />
+        </ResourceDictionary>
+    </UserControl.Resources>
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <Grid Margin="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="260" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <UniformGrid Grid.Row="0" Columns="5" Margin="0,0,0,16">
+                    <Border Style="{StaticResource KpiBlueCardStyle}"><StackPanel><TextBlock Foreground="#EAF2FF" Text="今日任务" /><TextBlock Margin="0,8,0,0" Foreground="White" FontSize="28" FontWeight="SemiBold" Text="{Binding Kpi.TaskSummary.Total}" /></StackPanel></Border>
+                    <Border Style="{StaticResource KpiGreenCardStyle}"><StackPanel><TextBlock Foreground="#E8FFF7" Text="运行中" /><TextBlock Margin="0,8,0,0" Foreground="White" FontSize="28" FontWeight="SemiBold" Text="{Binding Kpi.TaskSummary.Running}" /></StackPanel></Border>
+                    <Border Style="{StaticResource KpiCyanCardStyle}" Margin="0,0,10,0"><StackPanel><TextBlock Foreground="#E8FBFF" Text="已完成" /><TextBlock Margin="0,8,0,0" Foreground="White" FontSize="28" FontWeight="SemiBold" Text="{Binding Kpi.TaskSummary.Completed}" /></StackPanel></Border>
+                    <Border Style="{StaticResource KpiOrangeCardStyle}"><StackPanel><TextBlock Foreground="#FFF4E8" Text="失败" /><TextBlock Margin="0,8,0,0" Foreground="White" FontSize="28" FontWeight="SemiBold" Text="{Binding Kpi.TaskSummary.Failed}" /></StackPanel></Border>
+                    <Border Style="{StaticResource KpiPurpleCardStyle}" Margin="0"><StackPanel><TextBlock Foreground="#F2ECFF" Text="完成率" /><TextBlock Margin="0,8,0,0" Foreground="White" FontSize="28" FontWeight="SemiBold" Text="{Binding Kpi.CompletionRate}" /></StackPanel></Border>
+                </UniformGrid>
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="300" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <Border Margin="0,0,16,0" Padding="12" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8">
+                        <Grid>
+                            <controls:KpiDonutChart x:Name="TaskDonutChart" Visibility="{Binding Kpi.TaskSummary.Total, Converter={StaticResource CountToVisibilityConverter}}" Slices="{Binding Kpi.StatusSlices}" />
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding Kpi.TaskSummary.Total, Converter={StaticResource CountToVisibilityConverter}, ConverterParameter=Invert}">
+                                <TextBlock HorizontalAlignment="Center" FontSize="28" FontWeight="SemiBold" Foreground="#98A2B3" Text="—" />
+                                <TextBlock HorizontalAlignment="Center" Margin="0,2,0,0" Foreground="#667085" Text="暂无任务数据" />
+                            </StackPanel>
+                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding Kpi.TaskSummary.Total, Converter={StaticResource CountToVisibilityConverter}}"><TextBlock HorizontalAlignment="Center" FontSize="22" FontWeight="SemiBold" Text="{Binding Kpi.TaskSummary.Total}" /><TextBlock Foreground="Gray" Text="任务状态" /></StackPanel>
+                        </Grid>
+                    </Border>
+                    <Border Grid.Column="1" Padding="12" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8">
+                        <StackPanel>
+                            <DockPanel><TextBlock FontSize="18" FontWeight="SemiBold" Text="任务趋势" /><TextBlock DockPanel.Dock="Right" Foreground="Gray" Text="创建 / 完成" /></DockPanel>
+                            <Grid Height="205" Margin="0,8,0,0">
+                                <controls:KpiTrendChart x:Name="TaskTrendChart" Visibility="{Binding Kpi.TaskSummary.Total, Converter={StaticResource CountToVisibilityConverter}}" Points="{Binding Kpi.TaskTrend}" />
+                                <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#98A2B3" Text="暂无趋势数据" Visibility="{Binding Kpi.TaskSummary.Total, Converter={StaticResource CountToVisibilityConverter}, ConverterParameter=Invert}" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+                <Grid Grid.Row="2" Margin="0,16,0,0">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <Border Margin="0,0,8,0" Padding="16" Background="#F6F8FA" CornerRadius="8">
+                        <StackPanel>
+                            <TextBlock FontSize="18" FontWeight="SemiBold" Text="样品处理信息" />
+                            <TextBlock Margin="0,10,0,0"><Run Text="总量：" /><Run Text="{Binding Kpi.SampleSummary.Total}" /></TextBlock>
+                            <TextBlock Margin="0,4,0,0"><Run Text="待处理：" /><Run Text="{Binding Kpi.SampleSummary.Waiting}" /></TextBlock>
+                            <TextBlock Margin="0,4,0,0"><Run Text="处理中：" /><Run Text="{Binding Kpi.SampleSummary.Processing}" /></TextBlock>
+                            <TextBlock Margin="0,4,0,0"><Run Text="已完成：" /><Run Text="{Binding Kpi.SampleSummary.Completed}" /></TextBlock>
+                            <TextBlock Margin="0,10,0,0" Foreground="DarkGoldenrod" TextWrapping="Wrap" Text="{Binding Kpi.SampleSummary.DataSource}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Grid.Column="1" Margin="8,0,0,0" Padding="16" Background="#F6F8FA" CornerRadius="8">
+                        <StackPanel><TextBlock FontSize="18" FontWeight="SemiBold" Text="耗材剩余情况" /><ItemsControl Margin="0,8,0,0" ItemsSource="{Binding Kpi.Consumables}"><ItemsControl.ItemTemplate><DataTemplate><Grid Margin="0,4"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="70" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="{Binding Name}" /><ProgressBar Height="8" Margin="0,5,12,0" Maximum="{Binding Capacity}" Value="{Binding Remaining}" /></StackPanel><TextBlock Grid.Column="1" HorizontalAlignment="Right" Text="{Binding Status}" /></Grid></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel>
+                    </Border>
+                </Grid>
+                <Border Grid.Row="3" Margin="0,16,0,0" Padding="16" Background="#F6F8FA" CornerRadius="8">
+                    <StackPanel><DockPanel><TextBlock FontSize="18" FontWeight="SemiBold" Text="仪器运作状态" /><TextBlock DockPanel.Dock="Right" Foreground="Gray" Text="{Binding Kpi.LastUpdated}" /></DockPanel><ItemsControl Margin="0,8,0,0" ItemsSource="{Binding Kpi.Instruments}"><ItemsControl.ItemTemplate><DataTemplate><Grid Margin="0,5"><Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="110" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock VerticalAlignment="Center" Text="{Binding Name}" /><StackPanel Grid.Column="1" Orientation="Horizontal"><Ellipse Width="8" Height="8" Margin="0,0,6,0" VerticalAlignment="Center" Fill="{Binding Status, Converter={StaticResource StatusBrushConverter}}" /><TextBlock FontWeight="SemiBold" Foreground="{Binding Status, Converter={StaticResource StatusBrushConverter}}" Text="{Binding Status}" /></StackPanel><TextBlock Grid.Column="2" Foreground="Gray" TextWrapping="Wrap" Text="{Binding Detail}" /></Grid></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel>
+                </Border>
+            </Grid>
+        </ScrollViewer>
+</UserControl>

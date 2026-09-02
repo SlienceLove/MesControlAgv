@@ -542,6 +542,39 @@ public sealed class MesClientHttpContractTests
         Assert.Null(request.Body);
     }
 
+    [Fact]
+    public async Task ShineLab_config_and_command_use_high_level_mes_routes()
+    {
+        var response = new ShineLabCommandResponse(
+            "str-001",
+            "Config",
+            "SHA18I",
+            true,
+            "accepted",
+            System.Text.Json.JsonSerializer.SerializeToElement(new { result = "Success" }));
+        var handler = new RecordingHandler(_ => JsonResponse(response));
+        using var httpClient = CreateClient(handler);
+        var client = new MesClient(httpClient);
+
+        await client.SendShineLabConfigAsync(
+            "SHA18I",
+            new ShineLabConfigRequest(
+                "task-001",
+                [new ShineLabSampleData("S-01", "标准样", "1", 11, null, "A")]),
+            CancellationToken.None);
+        await client.SendShineLabCommandAsync(
+            "SHA18I",
+            new ShineLabCommandRequest("task-001", 0, "S-01", "标准样", "A"),
+            CancellationToken.None);
+
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(HttpMethod.Post, handler.Requests[0].Method);
+        Assert.Equal("/api/shinelab/devices/SHA18I/config", handler.Requests[0].Uri.AbsolutePath);
+        Assert.Contains("task-001", handler.Requests[0].Body);
+        Assert.Equal("/api/shinelab/devices/SHA18I/command", handler.Requests[1].Uri.AbsolutePath);
+        Assert.Contains("\"action\":0", handler.Requests[1].Body);
+    }
+
     private static HttpClient CreateClient(RecordingHandler handler) => new(handler)
     {
         BaseAddress = new Uri("http://mes.local/")

@@ -14,12 +14,14 @@ public static class WorkflowCapabilityIds
     public const string InstrumentInject = "instrument.inject";
     public const string InstrumentStartAnalysis = "instrument.start-analysis";
     public const string InstrumentStopAnalysis = "instrument.stop-analysis";
+    public const string RobotExecuteProgram = "robot.execute-program";
 }
 
 public static class WorkflowDeviceFamilyIds
 {
     public const string Agv = "agv";
     public const string IonChromatography = "ion-chromatography";
+    public const string RobotArm = "robot-arm";
 }
 
 /// <summary>Configuration keys stored directly in WorkflowNodeDefinition.Configuration.</summary>
@@ -27,6 +29,7 @@ public static class WorkflowNodeConfigurationKeys
 {
     public const string TargetStation = "$targetStation";
     public const string DeviceId = "deviceId";
+    public const string ProgramName = "programName";
     public const string InstrumentId = "instrumentId";
     public const string TimeoutSeconds = "timeoutSeconds";
     public const string RetryCount = "retryCount";

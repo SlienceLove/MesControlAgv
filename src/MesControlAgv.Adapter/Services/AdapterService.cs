@@ -76,6 +76,29 @@ public sealed class AdapterService
         DispatchWithPhysicalSessionGateAsync(
             taskId, sourceStationId, targetStationId, requestedAgvId, requestedPath, DispatchPermission.Standard, cancellationToken);
 
+    /// <summary>
+    /// Writes one AGV digital output inside the same physical-session gate used
+    /// by navigation and control release. The driver owns vendor framing;
+    /// this service owns device-policy and control-ownership admission.
+    /// </summary>
+    public Task<AgvDoWriteResponse> SetDoAsync(
+        string agvId,
+        int id,
+        bool status,
+        CancellationToken cancellationToken) =>
+        _physicalSessionGate.RunAsync(async () =>
+        {
+            EnsureMutationIsAllowed("AGV DO write");
+            EnsureDeviceControlEnabled(agvId);
+            if (_device is not IAgvIoDeviceClient io)
+            {
+                throw new NotSupportedException("The configured AGV driver does not expose digital I/O.");
+            }
+
+            await _device.EnsureControlAsync(cancellationToken);
+            return await io.SetDoAsync(id, status, cancellationToken);
+        }, cancellationToken);
+
     public async Task<AgvTaskResponse> DispatchFieldNavigationAcceptanceAsync(
         Guid acceptanceId,
         FieldNavigationDispatchCommand command,
@@ -787,7 +810,7 @@ public sealed class AdapterService
 
     private string HomeStationId => _profile.Agvs.FirstOrDefault(agv => agv.Enabled)?.HomeStationId
         ?? _profile.Map.StationIds.FirstOrDefault()
-        ?? "CHARGE_01";
+        ?? throw new InvalidOperationException("The active AGV profile does not declare a home station.");
 
     private async Task<AgvSnapshotResponse> GetSnapshotAsync(string agvId, CancellationToken cancellationToken)
     {

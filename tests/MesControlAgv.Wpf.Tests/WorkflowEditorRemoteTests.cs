@@ -90,6 +90,82 @@ public sealed class WorkflowEditorRemoteTests
         Assert.Equal("B-1", parameter.Value);
     }
 
+    [Fact]
+    public async Task Robot_program_catalog_refresh_populates_workflow_selector()
+    {
+        using var fixture = new TempWorkflowFile();
+        var client = new WorkflowEditorClientStub(CreateContractWorkflow())
+        {
+            ProgramCatalog = new MesControlAgv.Contracts.AuboArmProgramCatalogResponse(
+                "ARM-01",
+                true,
+                null,
+                ["现场程序.pro", "校准程序.pro"],
+                [],
+                true,
+                [],
+                DateTimeOffset.UtcNow)
+        };
+        var editor = new WorkflowEditorViewModel(new WorkflowStore(fixture.Path), client);
+        editor.AddNodeAt(MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.RobotExecuteProgram, 100, 200);
+
+        editor.RefreshRobotProgramsCommand.Execute(null);
+        await WaitUntilAsync(() => !editor.IsRemoteBusy &&
+            editor.RobotProgramCatalogStatus.Contains("2", StringComparison.Ordinal));
+
+        var program = editor.Inspector.Fields.Single(field =>
+            field.Key == MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.ProgramName);
+        Assert.Equal(WorkflowInspectorEditorKind.Selection, program.EditorKind);
+        program.Value = "校准程序.pro";
+        Assert.Equal("校准程序.pro", editor.SelectedNode!.Configuration[
+            MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.ProgramName]);
+    }
+
+    [Fact]
+    public async Task Published_workflow_can_execute_only_when_simulator_mode_is_enabled()
+    {
+        using var fixture = new TempWorkflowFile();
+        var client = new WorkflowEditorClientStub(CreateContractWorkflow());
+        var editor = new WorkflowEditorViewModel(
+            new WorkflowStore(fixture.Path),
+            client,
+            () => "simulator-operator",
+            simulatorExecutionEnabled: true);
+
+        editor.LoadFromMesCommand.Execute(null);
+        await WaitUntilAsync(() => !editor.IsRemoteBusy && editor.SelectedRemoteVersion is not null);
+        editor.ValidateCommand.Execute(null);
+        await WaitUntilAsync(() => !editor.IsRemoteBusy && editor.LastValidation is not null);
+        editor.PublishCommand.Execute(null);
+        await WaitUntilAsync(() => !editor.IsRemoteBusy && editor.SelectedRemoteVersion?.PublishStatus == ContractWorkflowPublishStatus.Published);
+
+        Assert.True(editor.ExecuteSimulatorCommand.CanExecute(null));
+        editor.ExecuteSimulatorCommand.Execute(null);
+        await WaitUntilAsync(() => !editor.IsRemoteBusy && client.LastExecutionRequest is not null);
+
+        Assert.False(client.LastExecutionRequest!.DryRun);
+        Assert.Equal("simulator-operator", client.LastExecutionRequest.RequestedBy);
+        Assert.Contains("本地模拟流程已受理", editor.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Published_workflow_does_not_expose_simulator_execution_in_default_mode()
+    {
+        using var fixture = new TempWorkflowFile();
+        var client = new WorkflowEditorClientStub(CreateContractWorkflow());
+        var editor = new WorkflowEditorViewModel(new WorkflowStore(fixture.Path), client);
+
+        editor.LoadFromMesCommand.Execute(null);
+        await WaitUntilAsync(() => !editor.IsRemoteBusy && editor.SelectedRemoteVersion is not null);
+        editor.ValidateCommand.Execute(null);
+        await WaitUntilAsync(() => !editor.IsRemoteBusy && editor.LastValidation is not null);
+        editor.PublishCommand.Execute(null);
+        await WaitUntilAsync(() => !editor.IsRemoteBusy && editor.SelectedRemoteVersion?.PublishStatus == ContractWorkflowPublishStatus.Published);
+
+        Assert.False(editor.IsSimulatorExecutionEnabled);
+        Assert.False(editor.ExecuteSimulatorCommand.CanExecute(null));
+    }
+
     private static ContractWorkflowDefinition CreateContractWorkflow()
     {
         var startId = Guid.NewGuid();
@@ -134,11 +210,14 @@ public sealed class WorkflowEditorRemoteTests
         public string? LastActor { get; private set; }
         public int UpdateDraftCallCount { get; private set; }
         public ContractWorkflowExecutionRequest? LastExecutionRequest { get; private set; }
+        public MesControlAgv.Contracts.AuboArmProgramCatalogResponse? ProgramCatalog { get; init; }
 
         public Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<DashboardTask>>([]);
         public Task<KpiDashboard> GetKpiDashboardAsync(DateOnly date, CancellationToken cancellationToken) => Task.FromResult(new KpiDashboard(date, new KpiTaskSummary(0, 0, 0, 0, 0), [], new KpiSampleSummary(0, 0, 0, 0, 0, 0, "test"), [], []));
         public Task<DashboardTaskDetail?> GetTaskDetailAsync(Guid taskId, CancellationToken cancellationToken) => Task.FromResult<DashboardTaskDetail?>(null);
         public Task<AgvDashboardSnapshot> GetAgvSnapshotAsync(CancellationToken cancellationToken) => Task.FromResult(new AgvDashboardSnapshot(false, "none", null, null));
+        public Task<MesControlAgv.Contracts.AuboArmProgramCatalogResponse?> GetAuboArmProgramCatalogAsync(string deviceId, CancellationToken cancellationToken) =>
+            Task.FromResult(ProgramCatalog);
         public Task<DashboardTask> CreateTaskAsync(CancellationToken cancellationToken) => Task.FromException<DashboardTask>(new NotSupportedException());
         public Task<DashboardTask> CreateTaskAsync(int sourceStationCode, int targetStationCode, int priority, string? description, string? externalId, CancellationToken cancellationToken) => Task.FromException<DashboardTask>(new NotSupportedException());
         public Task<DashboardTask> MarkArrivedAsync(Guid taskId, CancellationToken cancellationToken) => Task.FromException<DashboardTask>(new NotSupportedException());

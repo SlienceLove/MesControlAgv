@@ -81,7 +81,7 @@ public sealed class MesClient(HttpClient client) : IMesClient
         {
             throw;
         }
-        catch (Exception exception) when (exception is HttpRequestException or NotSupportedException or System.Text.Json.JsonException or TaskCanceledException)
+        catch (Exception exception) when (exception is HttpRequestException or NotSupportedException or System.Text.Json.JsonException or TaskCanceledException or TimeoutException)
         {
             return DashboardRuntimeSettings.Default;
         }
@@ -98,6 +98,86 @@ public sealed class MesClient(HttpClient client) : IMesClient
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<IonChromatographyControlCenterStatusResponse>(cancellationToken);
     }
+
+    public async Task<IReadOnlyList<ShineLabDeviceStatusResponse>> GetShineLabDeviceStatusesAsync(
+        CancellationToken cancellationToken)
+    {
+        return await client.GetFromJsonAsync<List<ShineLabDeviceStatusResponse>>(
+            "api/shinelab/devices/status",
+            cancellationToken) ?? [];
+    }
+
+    public async Task<ShineLabCommandResponse> SendShineLabConfigAsync(
+        string equipmentCode,
+        ShineLabConfigRequest request,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.PostAsJsonAsync(
+            $"api/shinelab/devices/{Uri.EscapeDataString(equipmentCode)}/config",
+            request,
+            cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<ShineLabCommandResponse>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no ShineLab Config response.");
+    }
+
+    public async Task<ShineLabCommandResponse> SendShineLabCommandAsync(
+        string equipmentCode,
+        ShineLabCommandRequest request,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.PostAsJsonAsync(
+            $"api/shinelab/devices/{Uri.EscapeDataString(equipmentCode)}/command",
+            request,
+            cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<ShineLabCommandResponse>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no ShineLab Command response.");
+    }
+
+    public async Task<ShineLabTaskResponse> CreateShineLabTaskAsync(
+        ShineLabTaskCreateRequest request,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.PostAsJsonAsync("api/shinelab/tasks", request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<ShineLabTaskResponse>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no ShineLab task.");
+    }
+
+    public async Task<ShineLabTaskResponse> ConfigureShineLabTaskAsync(
+        string taskUuid,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.PostAsync(
+            $"api/shinelab/tasks/{Uri.EscapeDataString(taskUuid)}/config",
+            null,
+            cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<ShineLabTaskResponse>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no configured ShineLab task.");
+    }
+
+    public async Task<ShineLabTaskResponse> SendShineLabTaskCommandAsync(
+        string taskUuid,
+        ShineLabCommandRequest request,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.PostAsJsonAsync(
+            $"api/shinelab/tasks/{Uri.EscapeDataString(taskUuid)}/command",
+            request,
+            cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<ShineLabTaskResponse>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no commanded ShineLab task.");
+    }
+
+    public async Task<IReadOnlyList<ShineLabTaskResponse>> GetShineLabTasksAsync(
+        int limit,
+        CancellationToken cancellationToken) =>
+        await client.GetFromJsonAsync<List<ShineLabTaskResponse>>(
+            $"api/shinelab/tasks?limit={Math.Clamp(limit, 1, 500)}",
+            cancellationToken) ?? [];
 
     public async Task<DashboardPlannedPath> PlanPathAsync(
         string fromStationId,
@@ -188,6 +268,94 @@ public sealed class MesClient(HttpClient client) : IMesClient
         var result = await response.Content.ReadFromJsonAsync<ContractAgvTask>(cancellationToken);
         return result is null ? null : ToCommandResult(result);
     }
+
+    public Task<AuboArmStatusResponse?> GetAuboArmStatusAsync(
+        string deviceId,
+        CancellationToken cancellationToken) =>
+        GetAuboAsync<AuboArmStatusResponse>(
+            $"api/robot-arms/{Uri.EscapeDataString(deviceId)}/status",
+            cancellationToken);
+
+    public Task<AuboArmReadinessResponse?> GetAuboArmReadinessAsync(
+        string deviceId,
+        CancellationToken cancellationToken) =>
+        GetAuboAsync<AuboArmReadinessResponse>(
+            $"api/robot-arms/{Uri.EscapeDataString(deviceId)}/readiness",
+            cancellationToken);
+
+    public Task<AuboArmProgramStatusResponse?> GetAuboArmProgramAsync(
+        string deviceId,
+        CancellationToken cancellationToken) =>
+        GetAuboAsync<AuboArmProgramStatusResponse>(
+            $"api/robot-arms/{Uri.EscapeDataString(deviceId)}/program",
+            cancellationToken);
+
+    public Task<AuboArmProgramCatalogResponse?> GetAuboArmProgramCatalogAsync(
+        string deviceId,
+        CancellationToken cancellationToken) =>
+        GetAuboAsync<AuboArmProgramCatalogResponse>(
+            $"api/robot-arms/{Uri.EscapeDataString(deviceId)}/programs",
+            cancellationToken);
+
+    public Task<AuboArmProgramOperationResponse> LoadAuboProgramAsync(
+        string deviceId,
+        string programName,
+        string operatorName,
+        Guid operationId,
+        CancellationToken cancellationToken) =>
+        SendAuboAsync(
+            $"api/robot-arms/{Uri.EscapeDataString(deviceId)}/program/load",
+            new AuboArmProgramRequest(programName, operatorName, operationId),
+            cancellationToken);
+
+    public Task<AuboArmProgramOperationResponse> RunAuboProgramAsync(
+        string deviceId,
+        string? programName,
+        string operatorName,
+        Guid operationId,
+        CancellationToken cancellationToken) =>
+        SendAuboAsync(
+            $"api/robot-arms/{Uri.EscapeDataString(deviceId)}/program/run",
+            new AuboArmProgramRunRequest(programName, operatorName, operationId),
+            cancellationToken);
+
+    public Task<AuboArmProgramOperationResponse> StopAuboProgramAsync(
+        string deviceId,
+        string operatorName,
+        Guid operationId,
+        CancellationToken cancellationToken) =>
+        SendAuboAsync(
+            $"api/robot-arms/{Uri.EscapeDataString(deviceId)}/program/stop",
+            new AuboArmProgramStopRequest(operatorName, operationId),
+            cancellationToken);
+
+    public Task<AuboArmProgramOperationResponse> LoadRobotArmProgramAsync(
+        string deviceId,
+        string programName,
+        string operatorName,
+        Guid operationId,
+        CancellationToken cancellationToken) =>
+        LoadAuboProgramAsync(deviceId, programName, operatorName, operationId, cancellationToken);
+
+    public Task<AuboArmProgramStatusResponse?> GetRobotArmProgramStatusAsync(
+        string deviceId,
+        CancellationToken cancellationToken) =>
+        GetAuboArmProgramAsync(deviceId, cancellationToken);
+
+    public Task<AuboArmProgramOperationResponse> RunRobotArmProgramAsync(
+        string deviceId,
+        string? programName,
+        string operatorName,
+        Guid operationId,
+        CancellationToken cancellationToken) =>
+        RunAuboProgramAsync(deviceId, programName, operatorName, operationId, cancellationToken);
+
+    public Task<AuboArmProgramOperationResponse> StopRobotArmProgramAsync(
+        string deviceId,
+        string operatorName,
+        Guid operationId,
+        CancellationToken cancellationToken) =>
+        StopAuboProgramAsync(deviceId, operatorName, operationId, cancellationToken);
 
     public Task<DashboardTask> CreateTaskAsync(CancellationToken cancellationToken) =>
         Task.FromException<DashboardTask>(new InvalidOperationException(
@@ -365,6 +533,30 @@ public sealed class MesClient(HttpClient client) : IMesClient
         await client.GetFromJsonAsync<IReadOnlyList<WorkflowRunTimelineEntry>>(
             $"api/workflow-runs/{workflowRunId}/timeline?limit={Math.Clamp(limit, 1, 500)}",
             cancellationToken) ?? [];
+
+    public async Task<IReadOnlyList<FieldNavigationAcceptanceResponse>> GetWorkflowFieldNavigationAcceptancesAsync(
+        Guid workflowRunId,
+        CancellationToken cancellationToken) =>
+        await client.GetFromJsonAsync<IReadOnlyList<FieldNavigationAcceptanceResponse>>(
+            $"api/workflow-runs/{workflowRunId}/field-navigation-acceptances",
+            cancellationToken) ?? [];
+
+    public Task<FieldNavigationAcceptanceResponse> CreateFieldNavigationAcceptanceAsync(
+        CreateFieldNavigationAcceptanceRequest request,
+        CancellationToken cancellationToken) =>
+        SendFieldAcceptanceAsync(
+            "api/field-navigation-acceptances",
+            request,
+            cancellationToken);
+
+    public Task<FieldNavigationAcceptanceResponse> AuthorizeFieldNavigationAcceptanceAsync(
+        Guid acceptanceId,
+        AuthorizeFieldNavigationAcceptanceRequest request,
+        CancellationToken cancellationToken) =>
+        SendFieldAcceptanceAsync(
+            $"api/field-navigation-acceptances/{acceptanceId}/authorize",
+            request,
+            cancellationToken);
 
     public async Task<WorkflowRunControlPermissionsSnapshot> GetWorkflowRunControlPermissionsAsync(
         string actor,
@@ -666,6 +858,54 @@ public sealed class MesClient(HttpClient client) : IMesClient
         return ToDashboardTask(task);
     }
 
+    private async Task<T?> GetAuboAsync<T>(string path, CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync(path, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound) return default;
+        if (!response.IsSuccessStatusCode)
+            throw await CreateAuboApiExceptionAsync(response, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<T>(cancellationToken);
+    }
+
+    private async Task<AuboArmProgramOperationResponse> SendAuboAsync(
+        string path,
+        object body,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.PostAsJsonAsync(path, body, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw await CreateAuboApiExceptionAsync(response, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<AuboArmProgramOperationResponse>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no AUBO program operation result.");
+    }
+
+    private static async Task<InvalidOperationException> CreateAuboApiExceptionAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        var detail = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!string.IsNullOrWhiteSpace(detail))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(detail);
+                if (document.RootElement.TryGetProperty("detail", out var detailElement)
+                    && detailElement.ValueKind == JsonValueKind.String)
+                {
+                    detail = detailElement.GetString() ?? detail;
+                }
+            }
+            catch (JsonException)
+            {
+            }
+        }
+
+        return new InvalidOperationException(
+            string.IsNullOrWhiteSpace(detail)
+                ? $"MES rejected the AUBO program request (HTTP {(int)response.StatusCode})."
+                : detail);
+    }
+
     private async Task<T?> GetExperimentAsync<T>(
         string path,
         CancellationToken cancellationToken,
@@ -769,6 +1009,37 @@ public sealed class MesClient(HttpClient client) : IMesClient
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<WorkflowVersion>(cancellationToken)
             ?? throw new InvalidOperationException("MES returned no workflow version.");
+    }
+
+    private async Task<FieldNavigationAcceptanceResponse> SendFieldAcceptanceAsync<TRequest>(
+        string path,
+        TRequest body,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.PostAsJsonAsync(path, body, cancellationToken);
+        if (response.IsSuccessStatusCode)
+        {
+            return await response.Content.ReadFromJsonAsync<FieldNavigationAcceptanceResponse>(cancellationToken)
+                ?? throw new InvalidOperationException("MES returned no field-navigation acceptance.");
+        }
+
+        string? detail = null;
+        try
+        {
+            using var document = await JsonDocument.ParseAsync(
+                await response.Content.ReadAsStreamAsync(cancellationToken),
+                cancellationToken: cancellationToken);
+            if (document.RootElement.TryGetProperty("detail", out var detailElement))
+                detail = detailElement.GetString();
+        }
+        catch (JsonException)
+        {
+        }
+
+        throw new InvalidOperationException(
+            string.IsNullOrWhiteSpace(detail)
+                ? $"MES rejected the field-navigation acceptance request (HTTP {(int)response.StatusCode})."
+                : detail);
     }
 
     private async Task<WorkflowValidationResult> SendWorkflowValidationAsync(

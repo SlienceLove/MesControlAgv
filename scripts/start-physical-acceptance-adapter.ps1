@@ -12,11 +12,34 @@ param(
     [string]$LogDirectory,
     [string]$RunId,
     [int]$StartupTimeoutSeconds = 30,
+    [switch]$EnableAuboReadOnly,
+    [switch]$EnableAuboControl,
+    [switch]$ConfirmPhysical,
+    [string[]]$AuboAllowedProgramNames = @(),
+    [string]$AuboHost,
+    [ValidateRange(1, 65535)]
+    [int]$AuboPort = 9012,
+    [string]$AuboRobotName = 'rob1',
     [switch]$EnableFieldNavigationAcceptance,
     [switch]$AllowExistingDatabase
 )
 
 $ErrorActionPreference = 'Stop'
+
+# PowerShell callers often pass a pair of names as one comma-delimited value
+# (for example, `-AuboAllowedProgramNames '测试1,测试2'`).  Normalize that
+# boundary form into individual exact names before projecting indexed
+# environment variables for the .NET configuration binder.  The Adapter still
+# performs the authoritative program-name validation.
+$AuboAllowedProgramNames = @(
+    foreach ($rawName in @($AuboAllowedProgramNames)) {
+        if ($null -eq $rawName) { continue }
+        foreach ($candidate in ([string]$rawName -split '[,;]')) {
+            $trimmed = $candidate.Trim()
+            if ($trimmed.Length -gt 0) { $trimmed }
+        }
+    }
+)
 
 if ($StartupTimeoutSeconds -lt 1) {
     throw 'StartupTimeoutSeconds must be at least 1.'
@@ -26,6 +49,24 @@ if ([string]::IsNullOrWhiteSpace($ControllerHost)) {
 }
 if ($ExpectedRunMode -eq 'read-only-preflight' -and $EnableFieldNavigationAcceptance) {
     throw 'Field navigation acceptance cannot be enabled in read-only-preflight mode.'
+}
+if ($EnableAuboReadOnly -and [string]::IsNullOrWhiteSpace($AuboHost)) {
+    throw 'AuboHost is required when EnableAuboReadOnly is specified.'
+}
+if ($EnableAuboControl -and -not $EnableAuboReadOnly) {
+    throw 'EnableAuboControl requires EnableAuboReadOnly so the same session has an explicit read gate.'
+}
+if ($EnableAuboControl -and $ExpectedRunMode -ne 'standard') {
+    throw 'EnableAuboControl is allowed only with ExpectedRunMode=standard.'
+}
+if ($EnableAuboControl -and -not $ConfirmPhysical) {
+    throw 'EnableAuboControl requires -ConfirmPhysical during a supervised field test.'
+}
+if ($EnableAuboControl -and @($AuboAllowedProgramNames).Count -eq 0) {
+    throw 'EnableAuboControl requires at least one exact AuboAllowedProgramNames value.'
+}
+if ([string]::IsNullOrWhiteSpace($AuboRobotName)) {
+    throw 'AuboRobotName must not be empty.'
 }
 
 if ([string]::IsNullOrWhiteSpace($RunId)) {
@@ -283,7 +324,24 @@ $environmentVariables = @{
     'Profile__features__enableAutomaticDispatch' = 'false'
     'Profile__features__enableFieldNavigationAcceptance' = if ($EnableFieldNavigationAcceptance) { 'true' } else { 'false' }
     'Profile__features__enableTaskCancellation' = 'false'
+    # The AUBO module is opt-in for this launcher. It remains read-only unless the
+    # caller supplies EnableAuboControl + ConfirmPhysical + an exact allowlist.
+    'Devices__AuboArm__Enabled' = if ($EnableAuboReadOnly) { 'true' } else { 'false' }
+    'Devices__AuboArm__ControlEnabled' = if ($EnableAuboControl) { 'true' } else { 'false' }
+    'Devices__AuboArm__Host' = if ($EnableAuboReadOnly) { $AuboHost.Trim() } else { '' }
+    'Devices__AuboArm__Port' = [string]$AuboPort
+    'Devices__AuboArm__RobotName' = $AuboRobotName.Trim()
+    'Devices__AuboArm__ProgramCatalogMaxSlots' = '100'
     'ConnectionStrings__Adapter' = "Data Source=$AdapterDatabasePath"
+}
+
+if ($EnableAuboReadOnly) {
+    if ($AuboAllowedProgramNames.Count -gt 0) {
+        $environmentVariables['Devices__AuboArm__AllowedProgramNames__0'] = $AuboAllowedProgramNames[0]
+        for ($index = 1; $index -lt $AuboAllowedProgramNames.Count; $index++) {
+            $environmentVariables["Devices__AuboArm__AllowedProgramNames__${index}"] = $AuboAllowedProgramNames[$index]
+        }
+    }
 }
 
 $process = $null
@@ -330,6 +388,12 @@ try {
         DatabasePath = $AdapterDatabasePath
         StartedAtUtc = [DateTime]::UtcNow.ToString('O')
         ExpectedRunMode = $ExpectedRunMode
+        AuboReadOnly = [bool]$EnableAuboReadOnly
+        AuboControl = [bool]$EnableAuboControl
+        AuboAllowedProgramNames = @($AuboAllowedProgramNames)
+        AuboHost = if ($EnableAuboReadOnly) { $AuboHost.Trim() } else { $null }
+        AuboPort = if ($EnableAuboReadOnly) { $AuboPort } else { $null }
+        AuboRobotName = if ($EnableAuboReadOnly) { $AuboRobotName.Trim() } else { $null }
         StandardOutputPath = $standardOutputPath
         StandardErrorPath = $standardErrorPath
     }

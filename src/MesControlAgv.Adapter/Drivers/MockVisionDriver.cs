@@ -12,7 +12,8 @@ public sealed class MockVisionDriver : IVisionDriver
     public const string DriverKind = "mock-vision";
 
     private readonly VisionDriverOptions _options;
-    private readonly Random _random = new();
+    private readonly Random _random;
+    private readonly int _recognitionFailurePercent;
     private readonly Dictionary<Guid, VisionCaptureResponse> _captures = new();
     private readonly Dictionary<Guid, VisionRecognitionResponse> _recognitions = new();
     private bool _isCalibrated = true;
@@ -20,6 +21,8 @@ public sealed class MockVisionDriver : IVisionDriver
     public MockVisionDriver(VisionDriverOptions? options = null)
     {
         _options = options ?? new VisionDriverOptions();
+        _recognitionFailurePercent = ReadPercent(_options.Settings, "RecognitionFailurePercent", 10);
+        _random = ReadSeed(_options.Settings) is { } seed ? new Random(seed) : new Random();
     }
 
     public string DriverId => DriverKind;
@@ -67,7 +70,7 @@ public sealed class MockVisionDriver : IVisionDriver
         await Task.Delay(300, cancellationToken);
 
         // Simulate occasional recognition failure (10% chance)
-        var recognitionFailed = _random.Next(100) < 10;
+        var recognitionFailed = _random.Next(100) < _recognitionFailurePercent;
 
         VisionRecognitionResponse response;
 
@@ -111,6 +114,16 @@ public sealed class MockVisionDriver : IVisionDriver
 
         return response;
     }
+
+    private static int ReadPercent(IReadOnlyDictionary<string, string>? settings, string key, int fallback) =>
+        settings is not null && settings.TryGetValue(key, out var value) && int.TryParse(value, out var parsed)
+            ? Math.Clamp(parsed, 0, 100)
+            : fallback;
+
+    private static int? ReadSeed(IReadOnlyDictionary<string, string>? settings) =>
+        settings is not null && settings.TryGetValue("RandomSeed", out var value) && int.TryParse(value, out var seed)
+            ? seed
+            : null;
 
     public async Task<VisionLocalizationResponse> LocalizeAsync(
         VisionLocalizationCommand command,

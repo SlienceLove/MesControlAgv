@@ -27,6 +27,7 @@ public sealed class IonChromatographyViewModel : INotifyPropertyChanged
     }
 
     public ICommand RefreshCommand { get; }
+    public OfflineDataStateViewModel OfflineState { get; } = new();
     public string InstrumentId => _snapshot?.Status.InstrumentId ?? DefaultInstrumentId;
     public string Model => _snapshot?.Status.Model ?? "CIC-D160+";
     public string SerialNumber => _snapshot?.Status.SerialNumber ?? "-";
@@ -68,29 +69,36 @@ public sealed class IonChromatographyViewModel : INotifyPropertyChanged
     {
         if (IsRefreshing) return;
         IsRefreshing = true;
+        OfflineState.BeginLoading("正在读取仪器只读状态...");
         StatusMessage = "正在读取只读状态...";
         try
         {
             _snapshot = await _mes.GetIonChromatographyStatusAsync(DefaultInstrumentId, cancellationToken);
             ConnectionStatus = _snapshot?.Status.Online == true ? "在线" : "不可用";
             StatusMessage = _snapshot is null ? "MES 未返回仪器状态。" : "只读状态已更新。";
+            OfflineState.MarkReady(
+                _snapshot is not null,
+                _snapshot is null ? "MES 未返回仪器状态。" : "仪器只读状态已更新。");
             RaiseSnapshotProperties();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             ConnectionStatus = "已取消";
             StatusMessage = "状态读取已取消。";
+            OfflineState.MarkCancelled("仪器状态读取已取消。");
         }
         catch (Exception exception) when (exception is
             HttpRequestException or
             InvalidOperationException or
             NotSupportedException or
             JsonException or
-            TaskCanceledException)
+            TaskCanceledException or
+            TimeoutException)
         {
             _snapshot = null;
             ConnectionStatus = "不可用";
             StatusMessage = exception.Message;
+            OfflineState.MarkError("仪器状态刷新失败，可点击刷新重试。", exception.Message);
             RaiseSnapshotProperties();
         }
         finally

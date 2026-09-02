@@ -6,10 +6,26 @@ using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Workflows;
 using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Mes.Data;
+using MesControlAgv.Mes.Endpoints;
 using MesControlAgv.Mes.Services;
+using MesControlAgv.Mes;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
+if (builder.Environment.IsEnvironment(FieldSimulationConfiguration.EnvironmentName))
+{
+    FieldSimulationConfiguration.ReplaceDefaultSources(
+        builder.Configuration,
+        builder.Environment.ContentRootPath,
+        args);
+}
+else if (builder.Environment.IsEnvironment(PhysicalAcceptanceConfiguration.EnvironmentName))
+{
+    PhysicalAcceptanceConfiguration.ReplaceDefaultSources(
+        builder.Configuration,
+        builder.Environment.ContentRootPath,
+        args);
+}
 var connectionString = builder.Configuration.GetConnectionString("Mes") ?? "Data Source=data/mes.db";
 var profile = BindProfile(builder.Configuration);
 var map = AgvMap.FromProfile(profile.Map);
@@ -20,12 +36,40 @@ builder.Services.AddDbContext<MesDbContext>(options => options.UseSqlite(connect
 builder.Services.AddHttpClient<IAgvGateway, AdapterClient>(client =>
     client.BaseAddress = new Uri(
         builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5041/"));
+builder.Services.AddHttpClient<IAgvIoGateway, AdapterIoClient>(client =>
+    client.BaseAddress = new Uri(
+        builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5041/"));
+builder.Services.AddHttpClient<IAuboArmGateway, AdapterAuboArmClient>(client =>
+    client.BaseAddress = new Uri(
+        builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5041/"));
+builder.Services.AddSingleton(builder.Configuration
+    .GetSection("AgvAuboSequence")
+    .Get<AgvAuboSequenceOptions>() ?? new AgvAuboSequenceOptions());
+builder.Services.AddSingleton(builder.Configuration
+    .GetSection("WorkflowAuboWorker")
+    .Get<WorkflowAuboProgramWorkerOptions>() ?? new WorkflowAuboProgramWorkerOptions());
+builder.Services.AddSingleton(builder.Configuration
+    .GetSection("WorkflowFieldNavigationWorker")
+    .Get<WorkflowFieldNavigationWorkerOptions>() ?? new WorkflowFieldNavigationWorkerOptions());
 builder.Services.AddHttpClient<ISampleWorkstationReader, SampleWorkstationAdapterClient>(client =>
     client.BaseAddress = new Uri(
         builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5041/"));
 builder.Services.AddHttpClient<IIonChromatographyStatusReader, IonChromatographyGatewayClient>(client =>
     client.BaseAddress = new Uri(
         builder.Configuration["IonChromatographyGateway:BaseUrl"] ?? "http://127.0.0.1:5190/"));
+builder.Services.AddOptions<ShineLabTcpOptions>()
+    .Bind(builder.Configuration.GetSection(ShineLabTcpOptions.SectionName))
+    .Validate(options => options.Port is >= 1 and <= 65535, "ShineLabTcp:Port must be between 1 and 65535.")
+    .Validate(options => options.StaleAfterSeconds > 0, "ShineLabTcp:StaleAfterSeconds must be positive.")
+    .Validate(options => options.CommandTimeoutMs > 0, "ShineLabTcp:CommandTimeoutMs must be positive.")
+    .ValidateOnStart();
+builder.Services.AddSingleton<ShineLabStatusHub>();
+builder.Services.AddSingleton<ShineLabConnectionManager>();
+builder.Services.AddSingleton<ShineLabCommandService>();
+builder.Services.AddScoped<ShineLabTaskRepository>();
+builder.Services.AddScoped<ShineLabTaskService>();
+builder.Services.AddHostedService<ShineLabTcpServer>();
+builder.Services.AddHostedService<ShineLabTaskRecoveryService>();
 builder.Services.AddSingleton(profile);
 builder.Services.AddSingleton(map);
 builder.Services.AddSingleton(workflowCatalogs);
@@ -60,11 +104,15 @@ builder.Services.AddScoped<IFieldNavigationAcceptanceApplicationService, FieldNa
 builder.Services.AddScoped<TaskRepository>();
 builder.Services.AddScoped<ITaskApplicationService, TaskService>();
 builder.Services.AddScoped<IKpiDashboardApplicationService, KpiDashboardService>();
+builder.Services.AddScoped<IAgvAuboSequenceService, AgvAuboSequenceService>();
 builder.Services.AddHostedService<RecoveryService>();
+builder.Services.AddHostedService<FieldNavigationAcceptanceRecoveryService>();
 builder.Services.AddHostedService<ExperimentRuntimeRecoveryService>();
 builder.Services.AddHostedService<WorkflowRecoveryService>();
 builder.Services.AddHostedService<WorkflowSimulatorWorker>();
 builder.Services.AddHostedService<WorkflowAdvancedRuntimeWorker>();
+builder.Services.AddHostedService<WorkflowAuboProgramWorker>();
+builder.Services.AddHostedService<WorkflowFieldNavigationWorker>();
 
 var app = builder.Build();
 
@@ -76,614 +124,17 @@ using (var scope = app.Services.CreateScope())
     await EnsureWorkflowTablesAsync(database);
     await EnsureExperimentSchedulingTablesAsync(database);
     await EnsureFieldNavigationAcceptanceTablesAsync(database);
+    await EnsureShineLabTablesAsync(database);
 }
 
 app.MapGet("/health", () => Results.Ok(new { service = "mes", status = "ok" }));
 
-app.MapGet("/api/instruments/{instrumentId}/status", async (
-    string instrumentId,
-    IIonChromatographyStatusReader reader,
-    CancellationToken cancellationToken) =>
-{
-    try
-    {
-        var status = await reader.GetStatusAsync(instrumentId, cancellationToken);
-        return Results.Ok(new IonChromatographyControlCenterStatusResponse(
-            new IonChromatographyStatusResponse(
-                status.InstrumentId,
-                status.Model,
-                status.SerialNumber,
-                status.Online,
-                status.DeviceState,
-                status.PortOwned,
-                status.ObservedAtUtc,
-                status.Pressure,
-                status.ColumnTemperature,
-                status.DetectorTemperature,
-                status.Alarm,
-                status.Conductivity,
-                status.TotalConductivity,
-                status.Flow,
-                status.MappingConfidence,
-                status.FlowSetpoint,
-                status.ColumnTemperatureSetpoint,
-                status.TemperatureControlStateRaw,
-                status.PumpStateRaw,
-                status.PressureRaw,
-                status.SuppressorEluentStateRaw,
-                status.FaultCode1Raw,
-                status.FaultCode2Raw),
-            IonChromatographyReadOnlyPolicy.TaskAdmissionEnabled,
-            IonChromatographyReadOnlyPolicy.EnabledOperations.Select(operation => operation.ToString()).ToArray(),
-            "ReadOnlyCaptureCorrelated"));
-    }
-    catch (ArgumentException exception)
-    {
-        return Results.BadRequest(new { detail = exception.Message });
-    }
-    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-    {
-        throw;
-    }
-    catch (Exception exception) when (exception is
-        HttpRequestException or
-        TaskCanceledException or
-        InvalidOperationException)
-    {
-        return Results.Problem(
-            "The read-only instrument status gateway is unavailable.",
-            statusCode: StatusCodes.Status503ServiceUnavailable);
-    }
-});
+app.MapMesDeviceGatewayEndpoints();
+app.MapShineLabStatusEndpoints();
 
-app.MapGet("/api/workstations/{deviceId}/status", async (
-    string deviceId,
-    ISampleWorkstationReader reader,
-    CancellationToken cancellationToken) =>
-    await ExecuteWorkstationReadAsync(
-        () => reader.GetStatusAsync(deviceId, cancellationToken),
-        cancellationToken));
+app.MapMesWorkflowEndpoints();
 
-app.MapGet("/api/workstations/{deviceId}/errors", async (
-    string deviceId,
-    ISampleWorkstationReader reader,
-    CancellationToken cancellationToken) =>
-    await ExecuteWorkstationReadAsync(
-        () => reader.GetErrorsAsync(deviceId, cancellationToken),
-        cancellationToken));
-
-app.MapGet("/api/workstations/{deviceId}/tasks", async (
-    string deviceId,
-    string? state,
-    string? startDate,
-    string? endDate,
-    int? startNo,
-    int? recordNum,
-    ISampleWorkstationReader reader,
-    CancellationToken cancellationToken) =>
-    await ExecuteWorkstationReadAsync(
-        () => reader.GetTasksAsync(
-            deviceId,
-            new SampleWorkstationTaskQuery(
-                state,
-                startDate,
-                endDate,
-                startNo ?? 1,
-                recordNum ?? 50),
-            cancellationToken),
-        cancellationToken));
-
-app.MapGet("/api/workstations/{deviceId}/tasks/{taskNo}", async (
-    string deviceId,
-    string taskNo,
-    ISampleWorkstationReader reader,
-    CancellationToken cancellationToken) =>
-    await ExecuteWorkstationReadAsync(
-        () => reader.GetTaskDetailsAsync(deviceId, taskNo, cancellationToken),
-        cancellationToken));
-
-app.MapGet("/api/workstations/{deviceId}/tasks/{taskNo}/state", async (
-    string deviceId,
-    string taskNo,
-    ISampleWorkstationReader reader,
-    CancellationToken cancellationToken) =>
-    await ExecuteWorkstationReadAsync(
-        () => reader.GetTaskStateAsync(deviceId, taskNo, cancellationToken),
-        cancellationToken));
-
-app.MapGet("/api/workflows", async (IWorkflowApplicationService service, CancellationToken cancellationToken) =>
-    Results.Ok(await service.ListAsync(cancellationToken)));
-
-app.MapGet("/api/workflows/{workflowId:guid}", async (
-    Guid workflowId,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-{
-    var workflow = await service.GetAsync(workflowId, cancellationToken);
-    return workflow is null ? Results.NotFound() : Results.Ok(workflow);
-});
-
-app.MapGet("/api/workflows/{workflowId:guid}/versions", async (
-    Guid workflowId,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-    Results.Ok(await service.ListVersionsAsync(workflowId, cancellationToken)));
-
-app.MapGet("/api/workflows/{workflowId:guid}/audits", async (
-    Guid workflowId,
-    int? version,
-    int? limit,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-{
-    try
-    {
-        return Results.Ok(await service.ListAuditsAsync(
-            workflowId,
-            version,
-            limit ?? 100,
-            cancellationToken));
-    }
-    catch (ArgumentException exception)
-    {
-        return Results.BadRequest(new { detail = exception.Message });
-    }
-});
-
-app.MapGet("/api/workflows/{workflowId:guid}/versions/{version:int}", async (
-    Guid workflowId,
-    int version,
-    IWorkflowVersionReader reader,
-    CancellationToken cancellationToken) =>
-{
-    var workflowVersion = await reader.GetVersionAsync(workflowId, version, cancellationToken);
-    return workflowVersion is null ? Results.NotFound() : Results.Ok(workflowVersion);
-});
-
-app.MapPost("/api/workflows", async (
-    WorkflowDefinition definition,
-    string actor,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-{
-    try
-    {
-        var draft = await service.CreateDraftAsync(definition, actor, cancellationToken);
-        return Results.Created($"/api/workflows/{draft.WorkflowId}/versions/{draft.Version}", draft);
-    }
-    catch (ArgumentException exception)
-    {
-        return Results.UnprocessableEntity(new { detail = exception.Message });
-    }
-});
-
-app.MapPut("/api/workflows/{workflowId:guid}/versions/{version:int}/draft", async (
-    Guid workflowId,
-    int version,
-    WorkflowDefinition definition,
-    string actor,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-{
-    try
-    {
-        return Results.Ok(await service.UpdateDraftAsync(workflowId, version, definition, actor, cancellationToken));
-    }
-    catch (KeyNotFoundException exception)
-    {
-        return Results.NotFound(new { detail = exception.Message });
-    }
-    catch (ArgumentException exception)
-    {
-        return Results.UnprocessableEntity(new { detail = exception.Message });
-    }
-    catch (InvalidOperationException exception)
-    {
-        return Results.UnprocessableEntity(new { detail = exception.Message });
-    }
-});
-
-app.MapPost("/api/workflows/validate", async (
-    WorkflowDefinition definition,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-    Results.Ok(await service.ValidateAsync(definition, cancellationToken)));
-
-app.MapPost("/api/workflows/{workflowId:guid}/versions/{version:int}/validate", async (
-    Guid workflowId,
-    int version,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-{
-    try
-    {
-        return Results.Ok(await service.ValidateVersionAsync(workflowId, version, cancellationToken));
-    }
-    catch (KeyNotFoundException exception)
-    {
-        return Results.NotFound(new { detail = exception.Message });
-    }
-});
-
-app.MapPost("/api/workflows/{workflowId:guid}/versions/{version:int}/publish", async (
-    Guid workflowId,
-    int version,
-    string actor,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-{
-    try
-    {
-        return Results.Ok(await service.PublishAsync(workflowId, version, actor, cancellationToken));
-    }
-    catch (KeyNotFoundException exception)
-    {
-        return Results.NotFound(new { detail = exception.Message });
-    }
-    catch (ArgumentException exception)
-    {
-        return Results.UnprocessableEntity(new { detail = exception.Message });
-    }
-    catch (InvalidOperationException exception)
-    {
-        return Results.UnprocessableEntity(new { detail = exception.Message });
-    }
-});
-
-app.MapPost("/api/workflows/execute", async (
-    WorkflowExecutionRequest request,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-{
-    var result = await service.ExecuteAsync(request, cancellationToken);
-    if (result.IsAccepted)
-    {
-        return Results.Json(result, statusCode: result.IsIdempotentReplay ? StatusCodes.Status200OK : StatusCodes.Status202Accepted);
-    }
-
-    return result.RejectionCode switch
-    {
-        WorkflowExecutionRejectionCodes.VersionNotFound => Results.NotFound(result),
-        WorkflowExecutionRejectionCodes.RequestIdReused => Results.Conflict(result),
-        _ => Results.UnprocessableEntity(result)
-    };
-});
-
-app.MapGet("/api/workflow-executions/{executionId:guid}", async (
-    Guid executionId,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-{
-    var execution = await service.GetExecutionAsync(executionId, cancellationToken);
-    return execution is null ? Results.NotFound() : Results.Ok(execution);
-});
-
-app.MapGet("/api/workflow-executions/by-request/{requestId:guid}", async (
-    Guid requestId,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-{
-    var execution = await service.GetExecutionByRequestAsync(requestId, cancellationToken);
-    return execution is null ? Results.NotFound() : Results.Ok(execution);
-});
-
-app.MapGet("/api/workflow-runs/{workflowRunId:guid}", async (
-    Guid workflowRunId,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-{
-    var execution = await service.GetExecutionAsync(workflowRunId, cancellationToken);
-    return execution is null ? Results.NotFound() : Results.Ok(execution);
-});
-
-app.MapGet("/api/workflow-runs/{workflowRunId:guid}/nodes", async (
-    Guid workflowRunId,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-{
-    if (await service.GetExecutionAsync(workflowRunId, cancellationToken) is null)
-    {
-        return Results.NotFound();
-    }
-
-    return Results.Ok(await service.ListNodeExecutionsAsync(workflowRunId, cancellationToken));
-});
-
-app.MapGet("/api/workflow-runs/{workflowRunId:guid}/device-operations", async (
-    Guid workflowRunId,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-{
-    if (await service.GetExecutionAsync(workflowRunId, cancellationToken) is null)
-    {
-        return Results.NotFound();
-    }
-
-    return Results.Ok(await service.ListDeviceOperationsAsync(workflowRunId, cancellationToken));
-});
-
-app.MapGet("/api/workflow-runs/{workflowRunId:guid}/timeline", async (
-    Guid workflowRunId,
-    int? limit,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-{
-    if (await service.GetExecutionAsync(workflowRunId, cancellationToken) is null)
-    {
-        return Results.NotFound();
-    }
-
-    return Results.Ok(await service.ListRunTimelineAsync(
-        workflowRunId,
-        limit ?? 200,
-        cancellationToken));
-});
-
-app.MapGet("/api/workflow-runs/{workflowRunId:guid}/interactions", async (
-    Guid workflowRunId,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-{
-    if (await service.GetExecutionAsync(workflowRunId, cancellationToken) is null)
-    {
-        return Results.NotFound();
-    }
-
-    return Results.Ok(await service.ListRuntimeInteractionsAsync(workflowRunId, cancellationToken));
-});
-
-app.MapPost("/api/workflow-runs/{workflowRunId:guid}/signals", async (
-    Guid workflowRunId,
-    WorkflowExternalSignalRequest request,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-    await ExecuteWorkflowInteractionAsync(
-        () => service.SubmitExternalSignalAsync(workflowRunId, request, cancellationToken)));
-
-app.MapPost("/api/workflow-runs/{workflowRunId:guid}/nodes/{nodeExecutionId:guid}/manual-confirmation", async (
-    Guid workflowRunId,
-    Guid nodeExecutionId,
-    WorkflowManualConfirmationRequest request,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-    await ExecuteWorkflowInteractionAsync(
-        () => service.CompleteManualConfirmationAsync(
-            workflowRunId,
-            nodeExecutionId,
-            request,
-            cancellationToken)));
-
-app.MapGet("/api/workflow-run-controls/permissions", (
-    string actor,
-    IWorkflowRunControlAuthorizer authorizer) =>
-{
-    try
-    {
-        return Results.Ok(authorizer.GetPermissions(actor));
-    }
-    catch (ArgumentException exception)
-    {
-        return Results.BadRequest(new { detail = exception.Message });
-    }
-});
-
-app.MapPost("/api/workflow-runs/{workflowRunId:guid}/pause", async (
-    Guid workflowRunId,
-    WorkflowRunControlRequest request,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-    await ExecuteWorkflowRunControlAsync(
-        () => service.PauseRunAsync(workflowRunId, request, cancellationToken)));
-
-app.MapPost("/api/workflow-runs/{workflowRunId:guid}/resume", async (
-    Guid workflowRunId,
-    WorkflowRunControlRequest request,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-    await ExecuteWorkflowRunControlAsync(
-        () => service.ResumeRunAsync(workflowRunId, request, cancellationToken)));
-
-app.MapPost("/api/workflow-runs/{workflowRunId:guid}/cancel", async (
-    Guid workflowRunId,
-    WorkflowRunControlRequest request,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-    await ExecuteWorkflowRunControlAsync(
-        () => service.CancelRunAsync(workflowRunId, request, cancellationToken)));
-
-app.MapPost("/api/workflow-runs/{workflowRunId:guid}/unknown-resolution", async (
-    Guid workflowRunId,
-    WorkflowUnknownResolutionRequest request,
-    IWorkflowApplicationService service,
-    CancellationToken cancellationToken) =>
-    await ExecuteWorkflowRunControlAsync(
-        () => service.ResolveUnknownAsync(workflowRunId, request, cancellationToken)));
-
-app.MapGet("/api/experiment-plans", async (
-    IExperimentSchedulingQueryService service,
-    CancellationToken cancellationToken) =>
-    Results.Ok(await service.ListPlansAsync(cancellationToken)));
-
-app.MapGet("/api/experiment-plans/{planId:guid}/versions", async (
-    Guid planId,
-    IExperimentSchedulingQueryService service,
-    CancellationToken cancellationToken) =>
-    Results.Ok(await service.ListPlanVersionsAsync(planId, cancellationToken)));
-
-app.MapGet("/api/experiment-plans/{planId:guid}/versions/{version:int}", async (
-    Guid planId,
-    int version,
-    IExperimentSchedulingQueryService service,
-    CancellationToken cancellationToken) =>
-{
-    var plan = await service.GetPlanAsync(planId, version, cancellationToken);
-    return plan is null ? Results.NotFound() : Results.Ok(plan);
-});
-
-app.MapPost("/api/experiment-plans", async (
-    SaveExperimentPlanDraftRequest request,
-    IExperimentSchedulingCommandService service,
-    CancellationToken cancellationToken) =>
-    await ExecuteExperimentSchedulingCommandAsync(
-        () => service.CreatePlanDraftAsync(request, cancellationToken),
-        plan => Results.Created(
-            $"/api/experiment-plans/{plan.PlanId}/versions/{plan.Version}",
-            plan)));
-
-app.MapPut("/api/experiment-plans/{planId:guid}/versions/{version:int}/draft", async (
-    Guid planId,
-    int version,
-    SaveExperimentPlanDraftRequest request,
-    IExperimentSchedulingCommandService service,
-    CancellationToken cancellationToken) =>
-    await ExecuteExperimentSchedulingCommandAsync(
-        () => service.UpdatePlanDraftAsync(planId, version, request, cancellationToken),
-        Results.Ok));
-
-app.MapPost("/api/experiment-plans/{planId:guid}/versions/{version:int}/validate", async (
-    Guid planId,
-    int version,
-    ExperimentSchedulingActionRequest request,
-    IExperimentSchedulingCommandService service,
-    CancellationToken cancellationToken) =>
-    await ExecuteExperimentSchedulingCommandAsync(
-        () => service.ValidatePlanAsync(planId, version, request, cancellationToken),
-        Results.Ok));
-
-app.MapPost("/api/experiment-plans/{planId:guid}/versions/{version:int}/publish", async (
-    Guid planId,
-    int version,
-    ExperimentSchedulingActionRequest request,
-    IExperimentSchedulingCommandService service,
-    CancellationToken cancellationToken) =>
-    await ExecuteExperimentSchedulingCommandAsync(
-        () => service.PublishPlanAsync(planId, version, request, cancellationToken),
-        Results.Ok));
-
-app.MapPost("/api/experiment-plans/{planId:guid}/versions/{sourceVersion:int}/next-draft", async (
-    Guid planId,
-    int sourceVersion,
-    ExperimentSchedulingActionRequest request,
-    IExperimentSchedulingCommandService service,
-    CancellationToken cancellationToken) =>
-    await ExecuteExperimentSchedulingCommandAsync(
-        () => service.CreateNextPlanDraftAsync(planId, sourceVersion, request, cancellationToken),
-        plan => Results.Created(
-            $"/api/experiment-plans/{plan.PlanId}/versions/{plan.Version}",
-            plan)));
-
-app.MapGet("/api/experiment-jobs", async (
-    ExperimentJobStatus? status,
-    IExperimentSchedulingQueryService service,
-    CancellationToken cancellationToken) =>
-    Results.Ok(await service.ListJobsAsync(status, cancellationToken)));
-
-app.MapGet("/api/experiment-jobs/{jobId:guid}", async (
-    Guid jobId,
-    IExperimentSchedulingQueryService service,
-    CancellationToken cancellationToken) =>
-{
-    var job = await service.GetJobAsync(jobId, cancellationToken);
-    return job is null ? Results.NotFound() : Results.Ok(job);
-});
-
-app.MapPost("/api/experiment-jobs", async (
-    CreateExperimentJobRequest request,
-    IExperimentSchedulingCommandService service,
-    CancellationToken cancellationToken) =>
-    await ExecuteExperimentSchedulingCommandAsync(
-        () => service.CreateJobAsync(request, cancellationToken),
-        job => Results.Created($"/api/experiment-jobs/{job.JobId}", job)));
-
-app.MapPut("/api/experiment-jobs/{jobId:guid}/schedule", async (
-    Guid jobId,
-    ScheduleExperimentJobRequest request,
-    IExperimentSchedulingCommandService service,
-    CancellationToken cancellationToken) =>
-    await ExecuteExperimentSchedulingCommandAsync(
-        () => service.ScheduleJobAsync(jobId, request, cancellationToken),
-        Results.Ok));
-
-app.MapPost("/api/experiment-jobs/{jobId:guid}/admit", async (
-    Guid jobId,
-    AdmitExperimentJobRequest request,
-    IExperimentRuntimeAdmissionService service,
-    CancellationToken cancellationToken) =>
-    await ExecuteExperimentAdmissionAsync(
-        () => service.AdmitJobAsync(jobId, request, cancellationToken)));
-
-app.MapPost("/api/experiment-jobs/{jobId:guid}/unschedule", async (
-    Guid jobId,
-    ExperimentSchedulingActionRequest request,
-    IExperimentSchedulingCommandService service,
-    CancellationToken cancellationToken) =>
-    await ExecuteExperimentSchedulingCommandAsync(
-        () => service.UnscheduleJobAsync(jobId, request, cancellationToken),
-        Results.Ok));
-
-app.MapPost("/api/experiment-jobs/{jobId:guid}/cancel", async (
-    Guid jobId,
-    ExperimentSchedulingActionRequest request,
-    IExperimentSchedulingCommandService service,
-    CancellationToken cancellationToken) =>
-    await ExecuteExperimentSchedulingCommandAsync(
-        () => service.CancelJobAsync(jobId, request, cancellationToken),
-        Results.Ok));
-
-app.MapGet("/api/schedule", async (
-    DateTimeOffset? from,
-    DateTimeOffset? to,
-    IExperimentSchedulingQueryService service,
-    CancellationToken cancellationToken) =>
-{
-    try
-    {
-        return Results.Ok(await service.GetScheduleAsync(from, to, cancellationToken));
-    }
-    catch (ArgumentException exception)
-    {
-        return Results.BadRequest(new { detail = exception.Message });
-    }
-});
-
-app.MapGet("/api/resources/availability", async (
-    DateTimeOffset? from,
-    DateTimeOffset? to,
-    IExperimentSchedulingQueryService service,
-    CancellationToken cancellationToken) =>
-{
-    try
-    {
-        return Results.Ok(await service.ListResourceAvailabilityAsync(from, to, cancellationToken));
-    }
-    catch (ArgumentException exception)
-    {
-        return Results.BadRequest(new { detail = exception.Message });
-    }
-});
-
-app.MapGet("/api/experiment-scheduling/audits", async (
-    Guid? planId,
-    Guid? experimentJobId,
-    Guid? scheduleEntryId,
-    int? limit,
-    IExperimentSchedulingQueryService service,
-    CancellationToken cancellationToken) =>
-{
-    try
-    {
-        return Results.Ok(await service.ListAuditsAsync(
-            planId,
-            experimentJobId,
-            scheduleEntryId,
-            limit ?? 200,
-            cancellationToken));
-    }
-    catch (ArgumentException exception)
-    {
-        return Results.BadRequest(new { detail = exception.Message });
-    }
-});
+app.MapMesExperimentSchedulingEndpoints();
 
 app.MapPost("/api/field-navigation-acceptances", async (
     CreateFieldNavigationAcceptanceRequest request,
@@ -717,6 +168,12 @@ app.MapGet("/api/field-navigation-acceptances/{acceptanceId:guid}", async (
     var acceptance = await service.GetAsync(acceptanceId, cancellationToken);
     return acceptance is null ? Results.NotFound() : Results.Ok(acceptance);
 });
+
+app.MapGet("/api/workflow-runs/{workflowRunId:guid}/field-navigation-acceptances", async (
+    Guid workflowRunId,
+    IFieldNavigationAcceptanceApplicationService service,
+    CancellationToken cancellationToken) =>
+    Results.Ok(await service.ListForWorkflowRunAsync(workflowRunId, cancellationToken)));
 
 app.MapPost("/api/field-navigation-acceptances/{acceptanceId:guid}/authorize", async (
     Guid acceptanceId,
@@ -779,19 +236,6 @@ app.MapPost("/api/field-navigation-acceptances/{acceptanceId:guid}/cancel", asyn
         return Results.Conflict(new { detail = exception.Message });
     }
 });
-app.MapGet("/api/agv", async (IAgvGateway adapter, CancellationToken cancellationToken) =>
-    Results.Ok(await adapter.GetSnapshotAsync(cancellationToken)));
-
-app.MapGet("/api/physical/preflight", async (IAgvGateway adapter, CancellationToken cancellationToken) =>
-{
-    if (adapter is not IPhysicalPreflightAgvGateway physical)
-    {
-        return Results.NotFound(new { detail = "The configured AGV gateway does not support physical preflight." });
-    }
-
-    return Results.Ok(await physical.GetPhysicalPreflightAsync(cancellationToken));
-});
-
 app.MapGet("/api/dashboard/kpi", async (
     DateOnly? date,
     IKpiDashboardApplicationService service,
@@ -799,41 +243,6 @@ app.MapGet("/api/dashboard/kpi", async (
     Results.Ok(await service.GetAsync(
         date ?? DateOnly.FromDateTime(DateTime.UtcNow),
         cancellationToken)));
-
-app.MapGet("/api/agvs/fleet", async (IAgvGateway adapter, CancellationToken cancellationToken) =>
-{
-    if (adapter is IFleetAwareAgvGateway fleet)
-    {
-        return Results.Ok(await fleet.GetFleetSnapshotAsync(cancellationToken));
-    }
-
-    return Results.Ok(new[] { await adapter.GetSnapshotAsync(cancellationToken) });
-});
-
-app.MapGet("/api/agvs/fleet/status", async (ITaskApplicationService service, CancellationToken cancellationToken) =>
-    Results.Ok(await service.GetFleetStatusAsync(cancellationToken)));
-
-app.MapPost("/api/agvs/{agvId}/command", async (
-    string agvId,
-    AgvCommandRequest request,
-    IAgvGateway adapter,
-    ITaskApplicationService tasks,
-    CancellationToken cancellationToken) =>
-{
-    try
-    {
-        var result = await adapter.ExecuteAgvCommandAsync(agvId, request.Command, request.TaskId, cancellationToken);
-        if (result is not null && request.TaskId is { } operationId && request.Command.Trim().ToLowerInvariant() is "pause" or "resume" or "continue")
-        {
-            await tasks.RecordAgvCommandAsync(operationId, request.Command, result, cancellationToken);
-        }
-        return result is null ? Results.NotFound() : Results.Ok(result);
-    }
-    catch (AdapterHttpException exception)
-    {
-        return Results.Json(new { detail = exception.Detail ?? exception.Message }, statusCode: (int?)exception.ResponseStatusCode);
-    }
-});
 
 app.MapGet("/api/map", (ProfileConfiguration configuredProfile, AgvMap configuredMap) =>
     Results.Ok(new MapSnapshotResponse(
@@ -884,197 +293,7 @@ app.MapGet("/api/runtime-settings", (ProfileConfiguration configuredProfile) => 
     configuredProfile.Product.Version,
     configuredProfile.Timeouts.TaskPollingInterval)));
 
-app.MapPost("/api/tasks", async (
-    CreateTaskRequest request,
-    ITaskApplicationService service,
-    CancellationToken cancellationToken) =>
-{
-    try
-    {
-        var task = await service.CreateAsync(request, cancellationToken);
-        return Results.Created($"/api/tasks/{task.Id}", task);
-    }
-    catch (UnsupportedRouteException exception)
-    {
-        return Results.UnprocessableEntity(new { detail = exception.Message });
-    }
-});
-
-app.MapPost("/api/tasks/{taskId:guid}/dispatch", async (Guid taskId, ITaskApplicationService service, CancellationToken cancellationToken) =>
-{
-    try
-    {
-        return Results.Ok(await service.DispatchAsync(taskId, cancellationToken));
-    }
-    catch (KeyNotFoundException)
-    {
-        return Results.NotFound();
-    }
-    catch (InvalidTaskTransitionException exception)
-    {
-        return Results.Conflict(new { detail = exception.Message });
-    }
-});
-
-app.MapPost("/api/tasks/{taskId:guid}/arrived", async (Guid taskId, ITaskApplicationService service, CancellationToken cancellationToken) =>
-    Results.Ok(await service.RecordArrivalAsync(taskId, cancellationToken)));
-
-app.MapPost("/api/tasks/{taskId:guid}/confirm-pickup", async (Guid taskId, OperatorActionRequest request, ITaskApplicationService service, CancellationToken cancellationToken) =>
-    Results.Ok(await service.ConfirmPickupAsync(taskId, request.OperatorName, cancellationToken)));
-
-app.MapPost("/api/tasks/{taskId:guid}/confirm-dropoff", async (Guid taskId, OperatorActionRequest request, ITaskApplicationService service, CancellationToken cancellationToken) =>
-    Results.Ok(await service.ConfirmDropoffAsync(taskId, request.OperatorName, cancellationToken)));
-
-app.MapPost("/api/tasks/{taskId:guid}/retry", async (Guid taskId, ITaskApplicationService service, CancellationToken cancellationToken) =>
-    Results.Ok(await service.RetryAsync(taskId, cancellationToken)));
-
-app.MapPost("/api/tasks/{taskId:guid}/cancel", async (Guid taskId, OperatorActionRequest request, ITaskApplicationService service, CancellationToken cancellationToken) =>
-    Results.Ok(await service.CancelAsync(taskId, request.OperatorName, cancellationToken)));
-
-app.MapPost("/api/tasks/{taskId:guid}/recover", async (Guid taskId, ITaskApplicationService service, CancellationToken cancellationToken) =>
-    Results.Ok(await service.RecoverAsync(taskId, cancellationToken)));
-
-app.MapGet("/api/tasks", async (DateOnly? date, ITaskApplicationService service, CancellationToken cancellationToken) =>
-    Results.Ok(await service.ListAsync(date ?? DateOnly.FromDateTime(DateTime.UtcNow), cancellationToken)));
-
-app.MapGet("/api/tasks/{taskId:guid}", async (
-    Guid taskId,
-    ITaskApplicationService service,
-    CancellationToken cancellationToken) =>
-{
-    var task = await service.GetDetailAsync(taskId, cancellationToken);
-    return task is null ? Results.NotFound() : Results.Ok(task);
-});
-
-static async Task<IResult> ExecuteWorkflowRunControlAsync(
-    Func<Task<WorkflowRunControlResult>> action)
-{
-    try
-    {
-        return Results.Ok(await action());
-    }
-    catch (ArgumentException exception)
-    {
-        return Results.BadRequest(new { detail = exception.Message });
-    }
-    catch (WorkflowRunControlForbiddenException exception)
-    {
-        return Results.Problem(
-            detail: exception.Message,
-            statusCode: StatusCodes.Status403Forbidden);
-    }
-    catch (KeyNotFoundException exception)
-    {
-        return Results.NotFound(new { detail = exception.Message });
-    }
-    catch (WorkflowRunControlConflictException exception)
-    {
-        return Results.Conflict(new { detail = exception.Message });
-    }
-    catch (InvalidOperationException exception)
-    {
-        return Results.Conflict(new { detail = exception.Message });
-    }
-}
-
-static async Task<IResult> ExecuteWorkflowInteractionAsync(
-    Func<Task<WorkflowRuntimeInteractionResult>> action)
-{
-    try
-    {
-        var result = await action();
-        return Results.Json(
-            result,
-            statusCode: result.Status == WorkflowRuntimeInteractionStatus.Pending && !result.IsIdempotentReplay
-                ? StatusCodes.Status202Accepted
-                : StatusCodes.Status200OK);
-    }
-    catch (ArgumentException exception)
-    {
-        return Results.BadRequest(new { detail = exception.Message });
-    }
-    catch (WorkflowRunControlForbiddenException exception)
-    {
-        return Results.Problem(detail: exception.Message, statusCode: StatusCodes.Status403Forbidden);
-    }
-    catch (KeyNotFoundException exception)
-    {
-        return Results.NotFound(new { detail = exception.Message });
-    }
-    catch (WorkflowAdvancedRuntimeConflictException exception)
-    {
-        return Results.Conflict(new { code = exception.Code, detail = exception.Message });
-    }
-    catch (InvalidOperationException exception)
-    {
-        return Results.Conflict(new { detail = exception.Message });
-    }
-}
-
-static async Task<IResult> ExecuteExperimentSchedulingCommandAsync<T>(
-    Func<Task<T>> action,
-    Func<T, IResult> success)
-{
-    try
-    {
-        return success(await action());
-    }
-    catch (ArgumentException exception)
-    {
-        return Results.BadRequest(new { detail = exception.Message });
-    }
-    catch (KeyNotFoundException exception)
-    {
-        return Results.NotFound(new { detail = exception.Message });
-    }
-    catch (ExperimentPlanValidationException exception)
-    {
-        return Results.UnprocessableEntity(new
-        {
-            detail = exception.Message,
-            validation = exception.Validation
-        });
-    }
-    catch (ExperimentSchedulingConflictException exception)
-    {
-        return Results.Conflict(new { detail = exception.Message, code = exception.Code });
-    }
-}
-
-static async Task<IResult> ExecuteExperimentAdmissionAsync(
-    Func<Task<ExperimentJobAdmissionResult>> action)
-{
-    try
-    {
-        var result = await action();
-        if (result.IsAdmitted)
-        {
-            return Results.Json(
-                result,
-                statusCode: result.IsIdempotentReplay
-                    ? StatusCodes.Status200OK
-                    : StatusCodes.Status202Accepted);
-        }
-
-        return Results.Json(
-            result,
-            statusCode: result.RejectionCode == ExperimentSchedulingIssueCodes.WorkflowAdmissionRejected
-                ? StatusCodes.Status422UnprocessableEntity
-                : StatusCodes.Status409Conflict);
-    }
-    catch (ArgumentException exception)
-    {
-        return Results.BadRequest(new { detail = exception.Message });
-    }
-    catch (KeyNotFoundException exception)
-    {
-        return Results.NotFound(new { detail = exception.Message });
-    }
-    catch (ExperimentSchedulingConflictException exception)
-    {
-        return Results.Conflict(new { detail = exception.Message, code = exception.Code });
-    }
-}
+app.MapMesTaskEndpoints();
 
 static async Task EnsureTaskColumnsAsync(MesDbContext database)
 {
@@ -1517,6 +736,9 @@ static async Task EnsureFieldNavigationAcceptanceTablesAsync(MesDbContext databa
             ExpiresAtUtc TEXT NULL,
             PermitConsumedAtUtc TEXT NULL,
             DeviceTaskId TEXT NULL,
+            WorkflowRunId TEXT NULL,
+            WorkflowNodeExecutionId TEXT NULL,
+            WorkflowDeviceOperationId TEXT NULL,
             LastError TEXT NULL,
             CreatedAtUtc TEXT NOT NULL,
             UpdatedAtUtc TEXT NOT NULL
@@ -1542,6 +764,77 @@ static async Task EnsureFieldNavigationAcceptanceTablesAsync(MesDbContext databa
         command.CommandText = statement;
         await command.ExecuteNonQueryAsync();
     }
+
+    await EnsureColumnsAsync(
+        connection,
+        "FieldNavigationAcceptances",
+        [
+            (Name: "WorkflowRunId", Sql: "TEXT NULL"),
+            (Name: "WorkflowNodeExecutionId", Sql: "TEXT NULL"),
+            (Name: "WorkflowDeviceOperationId", Sql: "TEXT NULL")
+        ]);
+
+    foreach (var statement in new[]
+    {
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_FieldNavigationAcceptances_WorkflowNodeExecutionId ON FieldNavigationAcceptances (WorkflowNodeExecutionId);",
+        "CREATE INDEX IF NOT EXISTS IX_FieldNavigationAcceptances_WorkflowRunId ON FieldNavigationAcceptances (WorkflowRunId);"
+    })
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = statement;
+        await command.ExecuteNonQueryAsync();
+    }
+}
+
+static async Task EnsureShineLabTablesAsync(MesDbContext database)
+{
+    var connection = database.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open)
+    {
+        await connection.OpenAsync();
+    }
+
+    var statements = new[]
+    {
+        """
+        CREATE TABLE IF NOT EXISTS ShineLabTasks (
+            Id TEXT NOT NULL PRIMARY KEY,
+            TaskUuid TEXT NOT NULL,
+            EquipmentCode TEXT NOT NULL,
+            Status TEXT NOT NULL,
+            CurrentStage TEXT NOT NULL,
+            RequestFingerprint TEXT NOT NULL,
+            ConfigJson TEXT NOT NULL,
+            ConfigResponseJson TEXT NULL,
+            CommandResponseJson TEXT NULL,
+            ResultJson TEXT NULL,
+            LastError TEXT NULL,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL,
+            StartedAtUtc TEXT NULL,
+            CompletedAtUtc TEXT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ShineLabTaskEvents (
+            Id TEXT NOT NULL PRIMARY KEY,
+            TaskUuid TEXT NOT NULL,
+            EventType TEXT NOT NULL,
+            PayloadJson TEXT NOT NULL,
+            OccurredAtUtc TEXT NOT NULL
+        );
+        """,
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ShineLabTasks_TaskUuid ON ShineLabTasks (TaskUuid);",
+        "CREATE INDEX IF NOT EXISTS IX_ShineLabTasks_Status_UpdatedAtUtc ON ShineLabTasks (Status, UpdatedAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_ShineLabTaskEvents_TaskUuid_OccurredAtUtc ON ShineLabTaskEvents (TaskUuid, OccurredAtUtc);"
+    };
+
+    foreach (var statement in statements)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = statement;
+        await command.ExecuteNonQueryAsync();
+    }
 }
 
 static ProfileConfiguration BindProfile(IConfiguration configuration)
@@ -1557,48 +850,6 @@ static ProfileConfiguration BindProfile(IConfiguration configuration)
     }
 
     return profile;
-}
-
-static async Task<IResult> ExecuteWorkstationReadAsync<T>(
-    Func<Task<T>> operation,
-    CancellationToken cancellationToken)
-{
-    try
-    {
-        return Results.Ok(await operation());
-    }
-    catch (ArgumentException exception)
-    {
-        return Results.BadRequest(new { detail = exception.Message });
-    }
-    catch (AdapterHttpException exception) when (exception.ResponseStatusCode == System.Net.HttpStatusCode.NotFound)
-    {
-        return Results.NotFound(new { detail = exception.Detail });
-    }
-    catch (AdapterHttpException exception) when (
-        exception.ResponseStatusCode == System.Net.HttpStatusCode.BadRequest)
-    {
-        return Results.BadRequest(new { detail = exception.Detail });
-    }
-    catch (AdapterHttpException exception) when (
-        exception.ResponseStatusCode is System.Net.HttpStatusCode.BadGateway
-            or System.Net.HttpStatusCode.ServiceUnavailable
-            or System.Net.HttpStatusCode.GatewayTimeout)
-    {
-        return Results.Problem(
-            exception.Detail ?? "The sample workstation Adapter is unavailable.",
-            statusCode: (int)exception.ResponseStatusCode);
-    }
-    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-    {
-        throw;
-    }
-    catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or InvalidOperationException)
-    {
-        return Results.Problem(
-            "The sample workstation Adapter is unavailable.",
-            statusCode: StatusCodes.Status503ServiceUnavailable);
-    }
 }
 
 app.Run();

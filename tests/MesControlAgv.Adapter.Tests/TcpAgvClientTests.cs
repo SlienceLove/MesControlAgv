@@ -14,6 +14,121 @@ namespace MesControlAgv.Adapter.Tests;
 public sealed class TcpAgvClientTests
 {
     [Fact]
+    public async Task Get_io_reads_vendor_1013_and_preserves_di_validity_and_do_state()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var statusServer = new TcpApiTestServer(1, packet =>
+        {
+            Assert.Equal((ushort)1013, packet.ApiId);
+            Assert.Empty(packet.Payload);
+            return Task.FromResult(Encoding.UTF8.GetBytes(
+                "{\"ret_code\":0,\"DI\":[{\"id\":0,\"source\":\"normal\",\"status\":true,\"valid\":true}],\"DO\":[{\"id\":6,\"source\":\"normal\",\"status\":false}]}"));
+        });
+        using var client = new TcpAgvClient(
+            Options.Create(new TcpAgvOptions
+            {
+                Host = "127.0.0.1",
+                StatusPort = statusServer.Port,
+                CommandPort = statusServer.Port,
+                ControlPort = statusServer.Port,
+                OtherPort = statusServer.Port,
+                EnablePush = false,
+                RequestTimeoutMs = 1000,
+                ConnectTimeoutMs = 1000
+            }),
+            NullLogger<TcpAgvClient>.Instance);
+
+        var snapshot = await client.GetIoAsync(cancellation.Token);
+
+        var di = Assert.Single(snapshot.DigitalInputs);
+        Assert.Equal(0, di.Id);
+        Assert.Equal("normal", di.Source);
+        Assert.True(di.Status);
+        Assert.True(di.Valid);
+        var @do = Assert.Single(snapshot.DigitalOutputs);
+        Assert.Equal(6, @do.Id);
+        Assert.False(@do.Status);
+        Assert.Null(@do.Valid);
+        Assert.Equal([1013], statusServer.ApiIds);
+        await statusServer.Completion;
+    }
+
+    [Fact]
+    public async Task Set_do_sends_exact_vendor_6001_payload_on_other_channel_after_ownership_check()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var statusServer = new TcpApiTestServer(1, packet =>
+        {
+            Assert.Equal((ushort)1060, packet.ApiId);
+            return Task.FromResult(Encoding.UTF8.GetBytes(
+                "{\"ret_code\":0,\"locked\":true,\"nick_name\":\"MesControlAgv.Adapter\"}"));
+        });
+        await using var otherServer = new TcpApiTestServer(1, packet =>
+        {
+            Assert.Equal((ushort)6001, packet.ApiId);
+            using var request = JsonDocument.Parse(packet.Payload);
+            Assert.Equal(6, request.RootElement.GetProperty("id").GetInt32());
+            Assert.True(request.RootElement.GetProperty("status").GetBoolean());
+            return Task.FromResult(Encoding.UTF8.GetBytes("{\"ret_code\":0}"));
+        });
+        using var client = new TcpAgvClient(
+            Options.Create(new TcpAgvOptions
+            {
+                Host = "127.0.0.1",
+                StatusPort = statusServer.Port,
+                CommandPort = statusServer.Port,
+                ControlPort = statusServer.Port,
+                OtherPort = otherServer.Port,
+                EnablePush = false,
+                AcquireControl = false,
+                RequestTimeoutMs = 1000,
+                ConnectTimeoutMs = 1000
+            }),
+            NullLogger<TcpAgvClient>.Instance);
+
+        var result = await client.SetDoAsync(6, true, cancellation.Token);
+
+        Assert.Equal(6, result.Id);
+        Assert.True(result.Status);
+        Assert.Equal(0, result.ReturnCode);
+        Assert.Equal([1060], statusServer.ApiIds);
+        Assert.Equal([6001], otherServer.ApiIds);
+        await Task.WhenAll(statusServer.Completion, otherServer.Completion);
+    }
+
+    [Fact]
+    public async Task Set_do_is_rejected_in_read_only_preflight_before_any_channel_is_opened()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var statusServer = new TcpApiTestServer(0, _ =>
+            throw new InvalidOperationException("The status channel must not be opened."));
+        await using var otherServer = new TcpApiTestServer(0, _ =>
+            throw new InvalidOperationException("The other channel must not be opened."));
+        using var client = new TcpAgvClient(
+            Options.Create(new TcpAgvOptions
+            {
+                Host = "127.0.0.1",
+                StatusPort = statusServer.Port,
+                CommandPort = statusServer.Port,
+                ControlPort = statusServer.Port,
+                OtherPort = otherServer.Port,
+                EnablePush = false,
+                RequestTimeoutMs = 1000,
+                ConnectTimeoutMs = 1000
+            }),
+            NullLogger<TcpAgvClient>.Instance,
+            AdapterRunMode.ReadOnlyPreflight);
+
+        await Assert.ThrowsAsync<ReadOnlyPreflightModeException>(
+            () => client.SetDoAsync(6, true, cancellation.Token));
+
+        Assert.False(statusServer.HasPendingConnection);
+        Assert.False(otherServer.HasPendingConnection);
+        Assert.Empty(statusServer.ApiIds);
+        Assert.Empty(otherServer.ApiIds);
+    }
+
+    [Fact]
     public async Task Read_only_preflight_uses_only_read_apis_and_rejects_mutations()
     {
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));

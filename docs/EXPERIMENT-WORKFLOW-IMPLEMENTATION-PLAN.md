@@ -1,6 +1,6 @@
 # 实验流程编排实施计划与验收门禁
 
-> 状态：G2-C 已实现，等待 G2 总体验收；G3 尚未开始
+> 状态：G2 总体验收通过；G3 尚未开始
 > 日期：2026-08-20
 > 关联：[目标架构](EXPERIMENT-WORKFLOW-ARCHITECTURE.md)、[界面规划](EXPERIMENT-WORKFLOW-UI-DESIGN.md)、[画布技术评估](EXPERIMENT-WORKFLOW-CANVAS-EVALUATION.md)
 
@@ -111,7 +111,7 @@ G2-A 验收记录见 [EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md](EXPERIMENT-WORKFLOW-
 
 Graph Document schema 已提升到 v2：仅 v1 Graph Document 和旧 WPF 数组在整图完全无边时补顺序成功边，v2 断开草稿保持断开。默认预置流程直接保存 6 节点、5 条显式边和兼容运行时所需的 `NextNodeIds`。Release 全方案构建为 0 警告/0 错误，全量测试 570 通过、5 个既有 E2E 跳过、0 失败；隔离 Simulator 主窗口冒烟确认 `节点 6 / 边 5` 且连线和属性面板正常渲染。
 
-G2-B 的手工验收步骤和剩余边界见 [EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md](EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md)。验收前不进入 G3。G2-C 仅收口旧 `实验流程设计` 入口、WPF 兼容投影所有权和可见的旧格式转换报告，不扩展设备执行能力。
+G2-B 的手工验收步骤和剩余边界见 [EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md](EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md)。G2 总体验收通过后才允许进入 G3。G2-C 仅收口旧 `实验流程设计` 入口、WPF 兼容投影所有权和可见的旧格式转换报告，不扩展设备执行能力。
 
 ### G2-C 当前执行记录（2026-08-20）
 
@@ -119,9 +119,13 @@ G2-B 的手工验收步骤和剩余边界见 [EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.
 
 `WorkflowEditorViewModel` 现在持有规范 `WorkflowGraphDocument` 集合；WPF `ObservableCollection` 仅作为属性面板所需的展示投影。画布、属性面板、本地保存和 MES Draft/Validate/Publish 都从同一规范文档提交或读取，视口和发布版本元数据仍不进入撤销历史。
 
-新增结构化导入器和用户可见转换报告，覆盖当前/v1 图文档信封、单个/数组图文档、旧 WPF 数组和旧实验设计器 DTO。报告列出格式、schema、节点/边计数、补建顺序边、未知字段、兼容节点类型及阻断错误；未来 schema、悬空连接、重复 ID 或其他错误会整批拒绝，不会部分覆盖现有流程。G2-C 验收步骤见 [EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md](EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md)，验收前不进入 G3。
+新增结构化导入器和用户可见转换报告，覆盖当前/v1 图文档信封、单个/数组图文档、旧 WPF 数组和旧实验设计器 DTO。报告列出格式、schema、节点/边计数、补建顺序边、未知字段、兼容节点类型及阻断错误；未来 schema、悬空连接、重复 ID 或其他错误会整批拒绝，不会部分覆盖现有流程。G2-C 验收步骤见 [EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md](EXPERIMENT-WORKFLOW-G2-ACCEPTANCE.md)。
 
-G2-C 最终 Release 门禁为全方案构建 0 警告/0 错误、577 个测试通过、5 个既有 E2E 跳过、0 失败，其中 WPF 192/192。隔离 Simulator 主窗口冒烟确认旧页签已移除、`兼容导入` 和启动迁移报告可见、默认画布仍为 6 节点/5 条边且 5 条连接正常渲染；本机流程文件未被只读启动改写，隔离服务均已正常退出。
+G2-C 验收中发现自定义 Nodify 连线模板沿用了默认不可选择状态，导致用户无法选线删除；同时 Nodify 7.3 的 `ConnectionCompletedCommand` 实际传入 C# `ValueTuple`，原实现依据其 XML 注释误按引用 `Tuple` 解析，导致拖线结束时报“未识别到有效的连线端口”。现已显式启用连线选择、扩大透明命中区域，增加悬停/选中高亮和 Delete 提示，并按真实 `ValueTuple` 事件形态创建连接；隔离内存 Spike 的真实 UI 冒烟已确认点击连线后可见选中提示，Delete 后边数从 19 降为 18 且节点数不变。修复后的最终 Release 门禁为全方案构建 0 警告/0 错误、578 个测试通过、5 个既有 E2E 跳过、0 失败，其中 WPF 193/193。此前隔离 Simulator 主窗口冒烟确认旧页签已移除、`兼容导入` 和启动迁移报告可见、默认画布仍为 6 节点/5 条边且 5 条连接正常渲染；本机流程文件未被只读启动改写，隔离服务均已正常退出。
+
+### G2 总体验收记录（2026-08-20）
+
+项目方确认 G2 总体验收通过。人工验收覆盖画布连线选择/删除/重建、撤销/重做、节点与属性同步、自动布局、适应画布、平移缩放、流程切换与视口保持，以及 G2-C 的单一编辑入口和兼容边界。G3 类型化节点、能力目录和发布校验尚未开始；设备执行能力、实体设备控制和 CIC-D160+ 写入仍需独立安全门禁。
 
 ## 6. G3：类型化节点与发布校验
 

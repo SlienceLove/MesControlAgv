@@ -43,11 +43,13 @@ public static class WorkflowRuntimeInputProjection
             values[WorkflowRuntimeParameterNames.WaitDurationSeconds] = durationSeconds;
         }
 
-        if (IsServerManagedInteraction(node.NodeTypeId))
+        if (IsServerManagedInteraction(node.NodeTypeId) ||
+            string.Equals(node.NodeTypeId, WorkflowGraphNodeTypeIds.RobotExecuteProgram, StringComparison.OrdinalIgnoreCase))
         {
             foreach (var configuration in node.Configuration ??
                      new Dictionary<string, string?>())
             {
+                if (configuration.Key.StartsWith("$", StringComparison.Ordinal)) continue;
                 values[configuration.Key] = configuration.Value;
             }
         }

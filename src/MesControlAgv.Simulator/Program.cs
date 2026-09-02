@@ -3,7 +3,8 @@ using MesControlAgv.Simulator;
 var builder = WebApplication.CreateBuilder(args);
 var agvIds = builder.Configuration.GetSection("Agv:Ids").Get<string[]>()
     ?? ["AGV-01", "AGV-02", "AGV-03"];
-builder.Services.AddSingleton(new SimulatorState(agvIds));
+var defaultStationId = builder.Configuration["Agv:DefaultStationId"];
+builder.Services.AddSingleton(new SimulatorState(agvIds, defaultStationId));
 var app = builder.Build();
 
 app.MapGet("/health", () => Results.Ok(new { service = "simulator", status = "ok" }));

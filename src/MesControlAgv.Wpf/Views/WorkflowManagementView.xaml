@@ -1,0 +1,402 @@
+<UserControl x:Class="MesControlAgv.Wpf.Views.WorkflowManagementView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:converters="clr-namespace:MesControlAgv.Wpf.Converters"
+             xmlns:workflowCanvas="clr-namespace:MesControlAgv.Wpf.WorkflowCanvas"
+             HorizontalContentAlignment="Stretch"
+             VerticalContentAlignment="Stretch">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/MesControlAgv.Wpf;component/Themes/MesTheme.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <converters:StatusBrushConverter x:Key="StatusBrushConverter" />
+            <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        </ResourceDictionary>
+    </UserControl.Resources>
+        <Grid Margin="0,12,0,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <DockPanel Margin="0,0,0,12">
+                <StackPanel DockPanel.Dock="Left">
+                    <TextBlock FontSize="22" FontWeight="SemiBold" Text="实验流程管理" />
+                    <TextBlock Margin="0,4,0,0" Foreground="Gray" Text="可预设、编辑并通过拖拽编排实验步骤" />
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.CreateAuboTemplateCommand}" Content="LM1/LM4 AUBO模板" ToolTip="到达 LM1 和 LM4 后运行界面中选择的程序" />
+                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.NewWorkflowCommand}" Content="新建流程" />
+                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.CopyWorkflowCommand}" Content="复制" />
+                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.DeleteWorkflowCommand}" Content="删除" />
+                    <Button Margin="6,0,0,0" Padding="14,7" Click="ImportWorkflowCompatibility_Click" Content="兼容导入" ToolTip="导入旧 WPF、旧实验设计器或图文档 JSON" />
+                    <Button Margin="6,0,0,0" Padding="14,7" Background="#1769AA" Foreground="White" Command="{Binding WorkflowEditor.SaveCommand}" Content="保存" />
+                    <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.LoadFromMesCommand}" Content="从 MES 加载" />
+                    <Button AutomationProperties.AutomationId="WorkflowSaveDraftButton" Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.SaveDraftCommand}" Content="保存草稿" />
+                    <Button AutomationProperties.AutomationId="WorkflowValidateButton" Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.ValidateCommand}" Content="校验" />
+                    <Button AutomationProperties.AutomationId="WorkflowPublishButton" Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.PublishCommand}" Content="发布" />
+                    <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.DryRunCommand}" Content="试运行" />
+                    <Button x:Name="WorkflowSimulatorExecuteButton"
+                            AutomationProperties.AutomationId="WorkflowSimulatorExecuteButton"
+                            Margin="6,0,0,0"
+                            Padding="10,7"
+                            Command="{Binding WorkflowEditor.ExecuteSimulatorCommand}"
+                            Content="执行模拟"
+                            ToolTip="仅 simulator 模式；进入本地隔离服务并执行已发布流程" />
+                </StackPanel>
+            </DockPanel>
+
+            <Grid Grid.Row="1" MinHeight="0" ClipToBounds="True">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="190" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="360" />
+                </Grid.ColumnDefinitions>
+
+                <Border Padding="12" Background="#F6F8FA" CornerRadius="6">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <TextBlock FontSize="16" FontWeight="SemiBold" Text="流程预设" />
+                        <ListBox Grid.Row="1" Margin="0,8,0,16" ItemsSource="{Binding WorkflowEditor.Workflows}" SelectedItem="{Binding WorkflowEditor.SelectedWorkflow}" DisplayMemberPath="Name" />
+                        <TextBlock Grid.Row="2" FontSize="16" FontWeight="SemiBold" Text="步骤工具箱" />
+                        <ListBox x:Name="WorkflowPalette" Grid.Row="3" Margin="0,8,0,0" ItemsSource="{Binding WorkflowEditor.NodeTypeOptions}" DisplayMemberPath="DisplayName" PreviewMouseMove="WorkflowPalette_PreviewMouseMove">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <Setter Property="Padding" Value="8,6" />
+                                    <Setter Property="Margin" Value="0,0,0,4" />
+                                    <Setter Property="Background" Value="White" />
+                                    <Setter Property="IsEnabled" Value="{Binding IsAvailable}" />
+                                    <Setter Property="ToolTip" Value="{Binding UnavailableReason}" />
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                        </ListBox>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Column="1" Margin="12,0" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Border Padding="10" Background="#F6F8FA">
+                            <DockPanel LastChildFill="True">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <Button Width="64" Margin="6,0,0,0" Padding="8,5" Command="{Binding WorkflowEditor.CanvasViewModel.UndoCommand}" Content="撤销" ToolTip="撤销画布编辑" />
+                                    <Button Width="64" Margin="6,0,0,0" Padding="8,5" Command="{Binding WorkflowEditor.CanvasViewModel.RedoCommand}" Content="重做" ToolTip="重做画布编辑" />
+                                    <Button Width="76" Margin="6,0,0,0" Padding="8,5" Command="{Binding WorkflowEditor.CanvasViewModel.AutoLayoutCommand}" Content="自动布局" />
+                                    <Button Width="76" Margin="6,0,0,0" Padding="8,5" Click="WorkflowCanvas_FitToContent" Content="适应画布" />
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                    <TextBlock FontSize="17" FontWeight="SemiBold" Text="{Binding WorkflowEditor.SelectedWorkflow.Name}" />
+                                    <TextBlock Margin="12,2,0,0" Foreground="Gray" Text="{Binding WorkflowEditor.RemoteStatus}" />
+                                </StackPanel>
+                            </DockPanel>
+                        </Border>
+                        <workflowCanvas:NodifyCanvasAdapter x:Name="WorkflowCanvasSurface"
+                                                            AutomationProperties.AutomationId="WorkflowCanvasSurface"
+                                                            Grid.Row="1"
+                                                            MinWidth="0"
+                                                            Focusable="True"
+                                                            AllowDrop="True"
+                                                            DragOver="WorkflowCanvas_DragOver"
+                                                            Drop="WorkflowCanvas_Drop"
+                                                            PreviewKeyDown="WorkflowCanvas_PreviewKeyDown" />
+                        <Border Grid.Row="2" Padding="8,6" Background="#F6F8FA" BorderBrush="#D0D7DE" BorderThickness="0,1,0,0">
+                            <DockPanel LastChildFill="True">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <TextBlock Foreground="#667085" Text="{Binding WorkflowEditor.CanvasViewModel.NodeCount, StringFormat={}节点 {0}}" />
+                                    <TextBlock Margin="12,0,0,0" Foreground="#667085" Text="{Binding WorkflowEditor.CanvasViewModel.EdgeCount, StringFormat={}边 {0}}" />
+                                </StackPanel>
+                                <TextBlock Foreground="#475467" TextTrimming="CharacterEllipsis" Text="{Binding WorkflowEditor.CanvasViewModel.Status}" />
+                                <TextBlock Margin="16,0,0,0" Foreground="#7A3E00" TextTrimming="CharacterEllipsis" Text="{Binding WorkflowEditor.CanvasViewModel.LastConnectionMessage}" />
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Column="2" Padding="12" Background="#F6F8FA" CornerRadius="6">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                             <TextBlock FontSize="16" FontWeight="SemiBold" Text="流程属性" />
+                            <TextBlock Margin="0,12,0,4" Foreground="Gray" Text="流程名称" />
+                            <TextBox Text="{Binding WorkflowEditor.SelectedWorkflow.Name, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Margin="0,10,0,4" Foreground="Gray" Text="流程说明" />
+                            <TextBox MinHeight="54" AcceptsReturn="True" TextWrapping="Wrap" Text="{Binding WorkflowEditor.SelectedWorkflow.Description, UpdateSourceTrigger=PropertyChanged}" />
+                            <Separator Margin="0,14" />
+                             <TextBlock FontSize="16" FontWeight="SemiBold" Text="节点属性" />
+                            <ListBox Margin="0,8,0,10" MaxHeight="120" ItemsSource="{Binding WorkflowEditor.Nodes}" SelectedItem="{Binding WorkflowEditor.SelectedNode}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Width="28" Foreground="Gray" Text="{Binding Order}" />
+                                            <TextBlock Text="{Binding Name}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <StackPanel Orientation="Horizontal">
+                                <Button Padding="10,5" Command="{Binding WorkflowEditor.MoveNodeLeftCommand}" Content="左移" />
+                                <Button Margin="6,0,0,0" Padding="10,5" Command="{Binding WorkflowEditor.MoveNodeRightCommand}" Content="右移" />
+                                <Button Margin="6,0,0,0" Padding="10,5" Command="{Binding WorkflowEditor.AddNodeCommand}" Content="添加" />
+                                <Button Margin="6,0,0,0" Padding="10,5" Command="{Binding WorkflowEditor.DeleteNodeCommand}" Content="删除" />
+                            </StackPanel>
+                            <TextBlock Margin="0,12,0,4" Foreground="Gray" Text="目录节点" />
+                            <TextBlock FontWeight="SemiBold" Text="{Binding WorkflowEditor.Inspector.NodeTypeDisplayName}" TextWrapping="Wrap" />
+                            <TextBlock Margin="0,2,0,0" FontSize="11" Foreground="#667085" Text="{Binding WorkflowEditor.Inspector.NodeTypeId}" TextWrapping="Wrap" />
+                            <TextBlock Margin="0,2,0,0" FontSize="11" Foreground="#667085">
+                                <Run Text="schema " />
+                                <Run Text="{Binding WorkflowEditor.Inspector.SchemaVersion, Mode=OneWay}" />
+                                <Run Text=" / " />
+                                <Run Text="{Binding WorkflowEditor.Inspector.Category, Mode=OneWay}" />
+                            </TextBlock>
+                            <Border Margin="0,8,0,0"
+                                    Padding="8,6"
+                                    Background="#FFF4E5"
+                                    BorderBrush="#F0B429"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Visibility="{Binding WorkflowEditor.Inspector.RequiresMigration, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <TextBlock Foreground="#7A3E00" Text="{Binding WorkflowEditor.Inspector.CompatibilityMessage}" TextWrapping="Wrap" />
+                            </Border>
+                            <TextBlock Margin="0,10,0,4" Foreground="Gray" Text="节点名称" />
+                            <TextBox Text="{Binding WorkflowEditor.SelectedNode.Name, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Margin="0,10,0,4" Foreground="Gray" Text="节点说明" />
+                            <TextBox MinHeight="58" AcceptsReturn="True" TextWrapping="Wrap" Text="{Binding WorkflowEditor.SelectedNode.Description, UpdateSourceTrigger=PropertyChanged}" />
+                            <Separator Margin="0,14,0,10" />
+                            <TextBlock FontSize="15" FontWeight="SemiBold" Text="配置参数" />
+                            <TextBlock Margin="0,6,0,0"
+                                       Foreground="#667085"
+                                       Text="机械臂程序目录：" />
+                            <TextBlock Margin="0,2,0,0"
+                                       Foreground="#475467"
+                                       Text="{Binding WorkflowEditor.RobotProgramCatalogStatus}"
+                                       TextWrapping="Wrap" />
+                            <Button AutomationProperties.AutomationId="WorkflowRefreshRobotProgramsButton"
+                                    Margin="0,6,0,0"
+                                    Padding="10,5"
+                                    HorizontalAlignment="Left"
+                                    Command="{Binding WorkflowEditor.RefreshRobotProgramsCommand}"
+                                    Content="刷新机械臂程序目录"
+                                    ToolTip="只读读取当前机械臂的预加载槽位/允许列表，不会加载或启动程序" />
+                            <ItemsControl ItemsSource="{Binding WorkflowEditor.Inspector.Fields}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="0,9,0,0">
+                                            <DockPanel Margin="0,0,0,4">
+                                                <TextBlock DockPanel.Dock="Right" Foreground="#667085" Text="{Binding Unit}" />
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Foreground="#475467" Text="{Binding DisplayName}" />
+                                                    <TextBlock Foreground="#B42318"
+                                                               Text=" *"
+                                                               Visibility="{Binding IsRequired, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                </StackPanel>
+                                            </DockPanel>
+                                            <Grid>
+                                                <TextBox Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                         Visibility="{Binding IsTextEditor, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                <TextBox InputScope="Number"
+                                                         Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                                         Visibility="{Binding IsNumberEditor, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                <ComboBox ItemsSource="{Binding Options}"
+                                                          SelectedValuePath="Value"
+                                                          SelectedValue="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          Visibility="{Binding IsSelectionEditor, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                    <ComboBox.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <TextBlock Text="{Binding DisplayName}" TextWrapping="Wrap" />
+                                                        </DataTemplate>
+                                                    </ComboBox.ItemTemplate>
+                                                    <ComboBox.ItemContainerStyle>
+                                                        <Style TargetType="ComboBoxItem">
+                                                            <Setter Property="IsEnabled" Value="{Binding IsAvailable}" />
+                                                            <Setter Property="ToolTip" Value="{Binding UnavailableReason}" />
+                                                        </Style>
+                                                    </ComboBox.ItemContainerStyle>
+                                                </ComboBox>
+                                                <CheckBox VerticalAlignment="Center"
+                                                          IsChecked="{Binding BooleanValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          Content="启用"
+                                                          Visibility="{Binding IsBooleanEditor, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                                <TextBox IsReadOnly="True"
+                                                         Background="#EAECF0"
+                                                         Text="{Binding Value}"
+                                                         TextWrapping="Wrap"
+                                                         Visibility="{Binding IsReadOnlyEditor, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                            </Grid>
+                                            <TextBlock Margin="0,3,0,0"
+                                                       FontSize="11"
+                                                       Foreground="#B42318"
+                                                       Text="{Binding ValidationMessage}"
+                                                       TextWrapping="Wrap"
+                                                       Visibility="{Binding HasValidationMessage, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock Margin="0,8,0,0" Foreground="#667085" Text="此节点没有配置字段。">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Visible" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding WorkflowEditor.Inspector.HasFields}" Value="True">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                            <Separator Margin="0,14,0,10" />
+                            <TextBlock FontSize="15" FontWeight="SemiBold" Text="执行与能力" />
+                            <Grid Margin="0,7,0,0">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="88" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Foreground="#667085" Text="执行模式" />
+                                <TextBlock Grid.Column="1" Text="{Binding WorkflowEditor.Inspector.ExecutionMode}" TextWrapping="Wrap" />
+                                <TextBlock Grid.Row="1" Foreground="#667085" Text="安全分类" />
+                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding WorkflowEditor.Inspector.SafetyClassification}" TextWrapping="Wrap" />
+                            </Grid>
+                            <ItemsControl Margin="0,7,0,0" ItemsSource="{Binding WorkflowEditor.Inspector.Capabilities}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="0,0,0,6">
+                                            <TextBlock FontWeight="SemiBold" Text="{Binding DisplayName}" TextWrapping="Wrap" />
+                                            <TextBlock FontSize="11" Foreground="#667085" Text="{Binding CapabilityId}" TextWrapping="Wrap" />
+                                            <TextBlock FontSize="11" Foreground="#475467" Text="{Binding Status}" TextWrapping="Wrap" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Border>
+            </Grid>
+            <Border Grid.Row="2"
+                    MinHeight="180"
+                    MaxHeight="250"
+                    Margin="0,10,0,0"
+                    BorderBrush="#D0D7DE"
+                    BorderThickness="1"
+                    CornerRadius="4">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+                    <DockPanel Margin="10,7" LastChildFill="True">
+                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                            <ComboBox Width="112"
+                                      AutomationProperties.AutomationId="WorkflowValidationSeverityFilter"
+                                      ItemsSource="{Binding WorkflowEditor.Validation.SeverityFilters}"
+                                      DisplayMemberPath="DisplayName"
+                                      SelectedItem="{Binding WorkflowEditor.Validation.SelectedSeverityFilter}" />
+                            <ComboBox Width="210"
+                                      AutomationProperties.AutomationId="WorkflowValidationLocationFilter"
+                                      Margin="8,0,0,0"
+                                      ItemsSource="{Binding WorkflowEditor.Validation.LocationFilters}"
+                                      DisplayMemberPath="DisplayName"
+                                      SelectedItem="{Binding WorkflowEditor.Validation.SelectedLocationFilter}" />
+                        </StackPanel>
+                        <StackPanel>
+                            <WrapPanel>
+                                <TextBlock FontWeight="SemiBold" Text="{Binding WorkflowEditor.RemoteStateDescription}" />
+                                <TextBlock Margin="14,0,0,0" Foreground="#315B87" Text="{Binding WorkflowEditor.RemoteVersionDescription}" />
+                                <TextBlock Margin="14,0,0,0" Foreground="#7A3E00" Text="{Binding WorkflowEditor.Validation.Summary}" />
+                            </WrapPanel>
+                            <WrapPanel Margin="0,3,0,0">
+                                <TextBlock FontSize="11" Foreground="#667085" Text="{Binding WorkflowEditor.Validation.ValidatorMetadata}" />
+                                <TextBlock Margin="14,0,0,0" FontSize="11" Foreground="#667085" Text="{Binding WorkflowEditor.Validation.ProfileMetadata}" />
+                            </WrapPanel>
+                            <WrapPanel Margin="0,3,0,0">
+                                <TextBlock FontSize="11" Foreground="#315B87" Text="{Binding WorkflowEditor.ExecutionRuntimeSummary}" />
+                                <TextBlock Margin="14,0,0,0" FontSize="11" Foreground="#7A3E00" Text="{Binding WorkflowEditor.ExecutionAuditSummary}" />
+                            </WrapPanel>
+                        </StackPanel>
+                    </DockPanel>
+                    <TabControl Grid.Row="1" Margin="6,0,6,6">
+                        <TabItem Header="{Binding WorkflowEditor.Validation.IssueTabHeader}">
+                            <Grid>
+                                <DataGrid x:Name="WorkflowValidationGrid"
+                                          AutomationProperties.AutomationId="WorkflowValidationGrid"
+                                          AutoGenerateColumns="False"
+                                          CanUserAddRows="False"
+                                          CanUserDeleteRows="False"
+                                          HeadersVisibility="Column"
+                                          IsReadOnly="True"
+                                          ItemsSource="{Binding WorkflowEditor.Validation.VisibleIssues}"
+                                          SelectedItem="{Binding WorkflowEditor.Validation.SelectedIssue, Mode=TwoWay}"
+                                          SelectionMode="Single"
+                                          SelectionUnit="FullRow">
+                                    <DataGrid.RowStyle>
+                                        <Style TargetType="DataGridRow">
+                                            <Setter Property="ToolTip" Value="{Binding Message}" />
+                                        </Style>
+                                    </DataGrid.RowStyle>
+                                    <DataGrid.Columns>
+                                        <DataGridTemplateColumn Width="66" Header="级别">
+                                            <DataGridTemplateColumn.CellTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding SeverityDisplayName}">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Foreground" Value="#8A5A00" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding IsError}" Value="True">
+                                                                        <Setter Property="Foreground" Value="#B42318" />
+                                                                        <Setter Property="FontWeight" Value="SemiBold" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </DataTemplate>
+                                            </DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTextColumn Width="170" Header="代码" Binding="{Binding Code}" />
+                                        <DataGridTextColumn Width="220" Header="节点 / 边" Binding="{Binding Location}" />
+                                        <DataGridTextColumn Width="*" Header="问题" Binding="{Binding Message}" />
+                                        <DataGridTextColumn Width="220" Header="建议处理" Binding="{Binding SuggestedAction}" />
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                                <TextBlock HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           Foreground="#667085"
+                                           IsHitTestVisible="False"
+                                           Text="{Binding WorkflowEditor.Validation.EmptyMessage}">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding WorkflowEditor.Validation.HasVisibleIssues}" Value="True">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Grid>
+                        </TabItem>
+                        <TabItem Header="转换报告"
+                                 Visibility="{Binding WorkflowEditor.HasImportReport, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <TextBlock Margin="10,7" Foreground="#7A3E00" TextWrapping="Wrap" Text="{Binding WorkflowEditor.ImportReportDetails}" />
+                            </ScrollViewer>
+                        </TabItem>
+                    </TabControl>
+                </Grid>
+            </Border>
+        </Grid>
+</UserControl>

@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
 using MesControlAgv.Contracts;
+using MesControlAgv.Wpf.Infrastructure;
 using MesControlAgv.Wpf.Services;
 
 namespace MesControlAgv.Wpf.ViewModels;
@@ -35,9 +36,57 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
 
     public ICommand RefreshCommand { get; }
     public ICommand LoadMapCommand { get; }
+    public OfflineDataStateViewModel OfflineState { get; } = new();
 
     public MapViewModel Map { get; } = new();
     public MapViewportViewModel Viewport { get; } = new();
+
+    /// <summary>
+    /// Station catalog derived from the local SMAP layout and station mapping.
+    /// It remains available when MES is offline, so the workflow editor can
+    /// avoid falling back to the legacy CHARGE_01/SAMPLE_01 defaults.
+    /// </summary>
+    public IReadOnlyList<DashboardStation> LocalStationCatalog
+    {
+        get
+        {
+            if (_mapLayoutResult is not { Loaded: true, Layout: { } layout })
+                return [];
+
+            return layout.Stations
+                .Select((station, index) =>
+                {
+                    var mapped = _mapLayoutResult.Mapping.TryResolve(station.Id, out var entry)
+                        ? entry
+                        : null;
+                    var agvStationId = string.IsNullOrWhiteSpace(mapped?.MesAgvStationId)
+                        ? station.Id
+                        : mapped!.MesAgvStationId!;
+                    var code = ParseStationCode(agvStationId, index + 1);
+                    return new DashboardStation(
+                        code,
+                        string.IsNullOrWhiteSpace(mapped?.DisplayName) ? agvStationId : mapped!.DisplayName!,
+                        agvStationId,
+                        true,
+                        code == 1 ? "Charge" : "FieldAcceptance");
+                })
+                .OrderBy(station => station.Code)
+                .ToArray();
+        }
+    }
+
+    /// <summary>Directed routes recovered from the local SMAP for offline route selection.</summary>
+    public IReadOnlyList<MapEdgeResponse> LocalMapEdges =>
+        _mapLayoutResult is { Loaded: true, Layout: { } layout }
+            ? layout.Routes
+                .Select(route => new MapEdgeResponse(
+                    ResolveMappedStationId(route.FromStationId),
+                    ResolveMappedStationId(route.ToStationId),
+                    1,
+                    false))
+                .DistinctBy(edge => $"{edge.From}\u001f{edge.To}", StringComparer.OrdinalIgnoreCase)
+                .ToArray()
+            : [];
 
     public DashboardMapSnapshot? MapSnapshot
     {
@@ -196,26 +245,58 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
     {
         if (IsRefreshing) return;
         IsRefreshing = true;
+        OfflineState.BeginLoading("正在刷新只读就绪数据...");
         Status = "正在刷新只读就绪数据...";
         try
         {
-            var mapTask = _mes.GetMapSnapshotAsync(cancellationToken);
-            var preflightTask = _mes.GetPhysicalPreflightAsync(cancellationToken);
+            // Keep the independent reads concurrent. A disconnected MES or a
+            // simulator that does not expose physical preflight must not make
+            // the local map wait behind several sequential HTTP timeouts.
+            var mapTask = ReadOptionalAsync(
+                () => _mes.GetMapSnapshotAsync(cancellationToken),
+                cancellationToken);
+            var preflightTask = ReadOptionalAsync(
+                () => _mes.GetPhysicalPreflightAsync(cancellationToken),
+                cancellationToken);
             var layoutTask = LoadMapLayoutOnceAsync(cancellationToken);
             await Task.WhenAll(mapTask, preflightTask, layoutTask);
-            MapSnapshot = await mapTask;
-            Preflight = await preflightTask;
-            Status = MapLayoutError is null
+
+            var mapRead = await mapTask;
+            var preflightRead = await preflightTask;
+            if (mapRead.Value is not null) MapSnapshot = mapRead.Value;
+            if (preflightRead.Value is not null) Preflight = preflightRead.Value;
+
+            var hasRemoteData = mapRead.Value is not null || preflightRead.Value is not null;
+            var hasLocalLayout = _mapLayoutResult is { Loaded: true };
+            var diagnostics = new[] { mapRead.Error, preflightRead.Error }
+                .Where(error => !string.IsNullOrWhiteSpace(error))
+                .ToArray();
+            if (!hasRemoteData && !hasLocalLayout)
+            {
+                throw new InvalidOperationException(
+                    diagnostics.Length == 0
+                        ? "MES 未返回只读就绪数据。"
+                        : string.Join("；", diagnostics));
+            }
+
+            Status = diagnostics.Length == 0
                 ? $"只读快照已接收：{DateTimeOffset.UtcNow:O}"
-                : $"只读快照已接收；地图布局加载失败：{MapLayoutError}";
+                : hasRemoteData
+                    ? $"只读快照部分接收：{string.Join("；", diagnostics)}"
+                    : $"MES 不可用，已加载本地地图布局：{string.Join("；", diagnostics)}";
+            OfflineState.MarkReady(
+                MapSnapshot is not null || Preflight is not null || hasLocalLayout,
+                hasRemoteData ? "只读就绪数据已更新。" : "已加载本地地图，可离线编辑流程。" );
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             Status = "就绪状态刷新已取消。";
+            OfflineState.MarkCancelled("就绪状态刷新已取消。");
         }
         catch (Exception exception)
         {
             Status = $"就绪状态刷新失败：{exception.Message}";
+            OfflineState.MarkError("就绪状态刷新失败，可点击刷新重试。", exception.Message);
         }
         finally
         {
@@ -244,6 +325,8 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
             _mapLayoutResult = result;
             _mapLayoutAttempted = true;
             MapLayoutError = result.Error;
+            OnPropertyChanged(nameof(LocalStationCatalog));
+            OnPropertyChanged(nameof(LocalMapEdges));
 
             if (result.Loaded && result.Layout is not null)
             {
@@ -259,6 +342,8 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(MapLayoutVerificationStatus));
             OnPropertyChanged(nameof(MapLayoutVerificationDetails));
             OnPropertyChanged(nameof(IsMapLayoutVerified));
+            OnPropertyChanged(nameof(LocalStationCatalog));
+            OnPropertyChanged(nameof(LocalMapEdges));
             RefreshMap();
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -278,6 +363,41 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
 
     private void RefreshMap() => Map.Update(MapSnapshot, Preflight, FleetStatus);
 
+    private static async Task<OptionalRead<T>> ReadOptionalAsync<T>(
+        Func<Task<T>> read,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return new OptionalRead<T>(await read(), null);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            return new OptionalRead<T>(default, exception.Message);
+        }
+    }
+
+    private static int ParseStationCode(string stationId, int fallback)
+    {
+        var digits = new string(stationId.Reverse().TakeWhile(char.IsDigit).Reverse().ToArray());
+        return int.TryParse(digits, out var code) && code > 0 ? code : fallback;
+    }
+
+    private string ResolveMappedStationId(string stationId)
+    {
+        if (_mapLayoutResult?.Mapping.TryResolve(stationId, out var entry) == true &&
+            !string.IsNullOrWhiteSpace(entry.MesAgvStationId))
+        {
+            return entry.MesAgvStationId!.Trim();
+        }
+
+        return stationId.Trim();
+    }
+
     private async Task LoadMapLayoutOnceAsync(CancellationToken cancellationToken)
     {
         if (_mapLayoutAttempted) return;
@@ -285,6 +405,8 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
         var result = await _mapLayoutSource.LoadAsync(cancellationToken);
         _mapLayoutResult = result;
         MapLayoutError = result.Error;
+        OnPropertyChanged(nameof(LocalStationCatalog));
+        OnPropertyChanged(nameof(LocalMapEdges));
         if (result.Loaded && result.Layout is not null)
         {
             Map.ApplyLayout(result.Layout, result.Mapping, Map.CanvasWidth, Map.CanvasHeight);
@@ -294,6 +416,8 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(MapLayoutVerificationStatus));
         OnPropertyChanged(nameof(MapLayoutVerificationDetails));
         OnPropertyChanged(nameof(IsMapLayoutVerified));
+        OnPropertyChanged(nameof(LocalStationCatalog));
+        OnPropertyChanged(nameof(LocalMapEdges));
     }
 
     private void VerifyMapLayoutIdentity()
@@ -350,6 +474,8 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
 
         public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
     }
+
+    private sealed record OptionalRead<T>(T? Value, string? Error);
 
     private sealed class EmptyMapLayoutSource : IMapLayoutSource
     {

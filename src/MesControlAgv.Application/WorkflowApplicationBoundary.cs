@@ -98,6 +98,22 @@ public interface IWorkflowApplicationService : IWorkflowVersionReader, IWorkflow
     Task<IReadOnlyList<WorkflowNodeExecutionWorkItem>> ListSimulatorRecoverableNodesAsync(
         CancellationToken cancellationToken);
 
+    /// <summary>Returns ready Move nodes eligible for an operator-authorized field acceptance.</summary>
+    Task<IReadOnlyList<WorkflowNodeExecutionWorkItem>> ListFieldNavigationDispatchableNodesAsync(
+        CancellationToken cancellationToken);
+
+    /// <summary>Returns running Move nodes whose linked field acceptance must be reconciled.</summary>
+    Task<IReadOnlyList<WorkflowNodeExecutionWorkItem>> ListFieldNavigationRecoverableNodesAsync(
+        CancellationToken cancellationToken);
+
+    /// <summary>Returns ready robot-program node records for the single-flight AUBO worker.</summary>
+    Task<IReadOnlyList<WorkflowNodeExecutionWorkItem>> ListAuboProgramDispatchableNodesAsync(
+        CancellationToken cancellationToken);
+
+    /// <summary>Returns running robot-program node records for restart reconciliation.</summary>
+    Task<IReadOnlyList<WorkflowNodeExecutionWorkItem>> ListAuboProgramRecoverableNodesAsync(
+        CancellationToken cancellationToken);
+
     /// <summary>Claims one durable node attempt without contacting a device.</summary>
     Task<WorkflowNodeExecutionWorkItem> ClaimNodeExecutionAsync(
         Guid nodeExecutionId,

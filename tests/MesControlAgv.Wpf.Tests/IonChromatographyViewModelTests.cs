@@ -1,4 +1,5 @@
 using MesControlAgv.Contracts;
+using MesControlAgv.Wpf.Infrastructure;
 using MesControlAgv.Wpf.ViewModels;
 
 namespace MesControlAgv.Wpf.Tests;
@@ -43,6 +44,8 @@ public sealed class IonChromatographyViewModelTests
         Assert.Equal("Identify / ReadStatus", viewModel.EnabledOperations);
         Assert.Equal("CaptureCorrelatedCandidate", viewModel.MappingConfidence);
         Assert.Equal("已释放", viewModel.PortStatus);
+        Assert.Equal(OfflineDataStateKind.Ready, viewModel.OfflineState.Kind);
+        Assert.Equal("已更新", viewModel.OfflineState.StateText);
     }
 
     [Fact]
@@ -55,5 +58,7 @@ public sealed class IonChromatographyViewModelTests
         Assert.Equal("不可用", viewModel.ConnectionStatus);
         Assert.Equal("禁用", viewModel.TaskAdmissionStatus);
         Assert.Equal("无", viewModel.EnabledOperations);
+        Assert.Equal(OfflineDataStateKind.Empty, viewModel.OfflineState.Kind);
+        Assert.Equal("暂无数据", viewModel.OfflineState.StateText);
     }
 }

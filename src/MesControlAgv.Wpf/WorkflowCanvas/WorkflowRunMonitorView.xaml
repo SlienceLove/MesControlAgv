@@ -33,6 +33,23 @@
                 </StackPanel>
                 <TextBlock Margin="0,4,0,0" Foreground="#475467" Text="{Binding RunIdentity}" />
                 <TextBlock Margin="0,2,0,0" FontSize="11" Foreground="#667085" Text="{Binding RunTimeSummary}" />
+                <Grid Margin="0,8,0,0" MaxWidth="660">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <ProgressBar x:Name="WorkflowRunProgressBar"
+                                 Height="8"
+                                 Margin="0,0,12,0"
+                                 VerticalAlignment="Center"
+                                 Maximum="100"
+                                 Value="{Binding ProgressPercent, Mode=OneWay}" />
+                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                        <TextBlock Foreground="#475467" Text="{Binding ProgressDisplay}" />
+                        <TextBlock Margin="12,0,0,0" Foreground="#667085" Text="当前：" />
+                        <TextBlock Foreground="#475467" Text="{Binding CurrentNodeDisplay}" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </Grid>
             </StackPanel>
             <StackPanel Grid.Column="1" HorizontalAlignment="Right">
                 <TextBlock Margin="0,0,0,4" Foreground="#475467" Text="运行 ID" />
@@ -47,6 +64,18 @@
                             AutomationProperties.AutomationId="WorkflowRunRefreshButton"
                             Command="{Binding RefreshCommand}"
                             Content="加载 / 刷新" />
+                </StackPanel>
+                <StackPanel Margin="0,7,0,0" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <CheckBox x:Name="AutoRefreshCheckBox"
+                              VerticalAlignment="Center"
+                              AutomationProperties.AutomationId="WorkflowRunAutoRefreshCheckBox"
+                              IsChecked="{Binding IsAutoRefreshEnabled, Mode=TwoWay}"
+                              Content="自动刷新" />
+                    <TextBlock Margin="8,0,0,0"
+                               VerticalAlignment="Center"
+                               FontSize="11"
+                               Foreground="#667085"
+                               Text="{Binding AutoRefreshStatusDisplay}" />
                 </StackPanel>
             </StackPanel>
         </Grid>
@@ -181,6 +210,114 @@
                     </StackPanel>
                 </Grid>
             </Border>
+
+            <Border Margin="0,8,0,0"
+                    Padding="10,8"
+                    Background="#FFF8E7"
+                    BorderBrush="#F79009"
+                    BorderThickness="1"
+                    CornerRadius="4">
+                <StackPanel>
+                    <DockPanel>
+                        <TextBlock DockPanel.Dock="Left"
+                                   FontWeight="SemiBold"
+                                   Text="现场 Move 验收许可" />
+                        <TextBlock Margin="12,0,0,0"
+                                   Foreground="#8A5A00"
+                                   Text="{Binding FieldAcceptanceStatus}"
+                                   TextTrimming="CharacterEllipsis" />
+                    </DockPanel>
+                    <Grid Margin="0,7,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="120" />
+                            <ColumnDefinition Width="160" />
+                            <ColumnDefinition Width="170" />
+                            <ColumnDefinition Width="90" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel Margin="0,0,8,0">
+                            <TextBlock FontSize="11" Foreground="#667085" Text="AGV ID" />
+                            <TextBox MinHeight="28"
+                                     AutomationProperties.AutomationId="WorkflowFieldAgvIdInput"
+                                     Text="{Binding FieldAgvId, UpdateSourceTrigger=PropertyChanged}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Margin="0,0,8,0">
+                            <TextBlock FontSize="11" Foreground="#667085" Text="起点站" />
+                            <TextBox MinHeight="28"
+                                     AutomationProperties.AutomationId="WorkflowFieldSourceStationInput"
+                                     Text="{Binding FieldSourceStationId, UpdateSourceTrigger=PropertyChanged}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Margin="0,0,8,0">
+                            <TextBlock FontSize="11" Foreground="#667085" Text="安全监护人" />
+                            <TextBox MinHeight="28"
+                                     AutomationProperties.AutomationId="WorkflowFieldSafetyObserverInput"
+                                     Text="{Binding FieldSafetyObserverName, UpdateSourceTrigger=PropertyChanged}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="3" Margin="0,0,8,0">
+                            <TextBlock FontSize="11" Foreground="#667085" Text="许可编号" />
+                            <TextBox MinHeight="28"
+                                     AutomationProperties.AutomationId="WorkflowFieldPermitIdInput"
+                                     Text="{Binding FieldPermitId, UpdateSourceTrigger=PropertyChanged}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="4" Margin="0,0,8,0">
+                            <TextBlock FontSize="11" Foreground="#667085" Text="有效分钟" />
+                            <TextBox MinHeight="28"
+                                     AutomationProperties.AutomationId="WorkflowFieldPermitMinutesInput"
+                                     Text="{Binding FieldPermitMinutes, UpdateSourceTrigger=PropertyChanged}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="5" Margin="0,0,8,0">
+                            <TextBlock FontSize="11" Foreground="#667085" Text="说明" />
+                            <TextBox MinHeight="28"
+                                     MaxLength="2048"
+                                     AutomationProperties.AutomationId="WorkflowFieldDescriptionInput"
+                                     Text="{Binding FieldDescription, UpdateSourceTrigger=PropertyChanged}" />
+                        </StackPanel>
+                        <Button x:Name="CreateFieldAcceptanceButton"
+                                Grid.Column="6"
+                                MinWidth="132"
+                                MinHeight="30"
+                                Padding="10,4"
+                                VerticalAlignment="Bottom"
+                                AutomationProperties.AutomationId="WorkflowFieldCreateAuthorizeButton"
+                                Command="{Binding CreateAndAuthorizeFieldMoveCommand}"
+                                Content="创建并授权"
+                                ToolTip="{Binding FieldMoveUnavailableReason}"
+                                ToolTipService.ShowOnDisabled="True" />
+                    </Grid>
+                    <TextBlock Margin="0,5,0,0"
+                               FontSize="11"
+                               Foreground="#8A5A00"
+                               Text="WPF 不直接派发 AGV；只有 PhysicalAcceptance、现场 worker 显式启用且许可有效时才会认领节点。"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <Border x:Name="WorkflowFailureEvidencePanel"
+                    Margin="0,8,0,0"
+                    Padding="10,8"
+                    Background="#FFF1F0"
+                    BorderBrush="#F04438"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Visibility="{Binding HasFailureEvidence, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <StackPanel>
+                    <TextBlock Foreground="#B42318" FontWeight="SemiBold" Text="运行失败证据" />
+                    <TextBlock Margin="0,3,0,0" Foreground="#B42318" Text="{Binding FailureReasonDisplay}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <Border x:Name="WorkflowCancellationPanel"
+                    Margin="0,8,0,0"
+                    Padding="10,8"
+                    Background="#FFF1F0"
+                    BorderBrush="#B42318"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Visibility="{Binding IsCancelled, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <TextBlock Foreground="#B42318" FontWeight="SemiBold" Text="{Binding CancellationStatusDisplay}" TextWrapping="Wrap" />
+            </Border>
         </StackPanel>
 
         <Grid Grid.Row="2" MinHeight="0">
@@ -307,7 +444,7 @@
                         <TextBlock Margin="0,6,0,0" Foreground="#667085" Text="请求摘要" />
                         <TextBlock Text="{Binding SelectedDeviceOperation.RequestSummary}" TextWrapping="Wrap" />
                         <TextBlock Margin="0,6,0,0" Foreground="#667085" Text="结果摘要" />
-                        <TextBlock Text="{Binding SelectedDeviceOperation.ResultSummary}" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding SelectedDeviceOperation.ResultOrErrorSummary}" TextWrapping="Wrap" />
                     </StackPanel>
                 </ScrollViewer>
             </Border>
@@ -348,7 +485,7 @@
                         <DataGridTextColumn Width="235" Header="请求 ID" Binding="{Binding RequestId}" />
                         <DataGridTextColumn Width="145" Header="请求时间" Binding="{Binding RequestedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" />
                         <DataGridTextColumn Width="2*" Header="请求摘要" Binding="{Binding RequestSummary}" />
-                        <DataGridTextColumn Width="*" Header="结果 / 错误" Binding="{Binding ResultSummary}" />
+                        <DataGridTextColumn Width="*" Header="结果 / 错误" Binding="{Binding ResultOrErrorSummary}" />
                     </DataGrid.Columns>
                 </DataGrid>
             </TabItem>

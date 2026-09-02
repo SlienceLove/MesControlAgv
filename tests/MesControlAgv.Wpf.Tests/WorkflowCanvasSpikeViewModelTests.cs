@@ -64,7 +64,7 @@ public sealed class WorkflowCanvasSpikeViewModelTests
         var target = viewModel.Nodes[1].InputPorts.First();
         viewModel.CanvasMode = MesControlAgv.Contracts.Workflows.WorkflowCanvasMode.ReadOnly;
 
-        viewModel.CompleteConnectionCommand.Execute(Tuple.Create<object, object>(source, target));
+        viewModel.CompleteConnectionCommand.Execute((source, target));
 
         Assert.Equal("当前画布为只读，不能创建连接。", viewModel.LastConnectionMessage);
         Assert.Equal(19, viewModel.EdgeCount);
@@ -77,11 +77,32 @@ public sealed class WorkflowCanvasSpikeViewModelTests
         var source = viewModel.Nodes[0].OutputPorts.Single(port => port.Key == "failure");
         var target = viewModel.Nodes[1].InputPorts.Single();
 
-        viewModel.CompleteConnectionCommand.Execute(Tuple.Create<object, object>(source, target));
+        viewModel.CompleteConnectionCommand.Execute((source, target));
 
         Assert.Equal(20, viewModel.EdgeCount);
         Assert.Equal(MesControlAgv.Contracts.Workflows.WorkflowEdgeKind.Failure, viewModel.Connections.Last().Kind);
         Assert.Equal("失败", viewModel.Connections.Last().Label);
+    }
+
+    [Fact]
+    public void Selecting_a_connection_exposes_delete_feedback_and_deletes_only_that_edge()
+    {
+        var viewModel = new WorkflowCanvasSpikeViewModel();
+        var selected = viewModel.Connections[0];
+        var remainingEdgeIds = viewModel.Connections.Skip(1).Select(edge => edge.Id).ToArray();
+
+        viewModel.SelectedConnection = selected;
+
+        Assert.True(viewModel.DeleteCommand.CanExecute(null));
+        Assert.Equal("已选择“成功”连接；按 Delete 可删除。", viewModel.LastConnectionMessage);
+
+        viewModel.DeleteCommand.Execute(null);
+
+        Assert.Null(viewModel.SelectedConnection);
+        Assert.Equal(20, viewModel.NodeCount);
+        Assert.Equal(18, viewModel.EdgeCount);
+        Assert.Equal(remainingEdgeIds, viewModel.Connections.Select(edge => edge.Id));
+        Assert.Equal("已删除连接。", viewModel.LastConnectionMessage);
     }
 
     [Fact]

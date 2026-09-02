@@ -1,4 +1,5 @@
 using System.Net.Http;
+using System.IO;
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -47,23 +48,22 @@ public partial class App : Application
 
         try
         {
-            var mesUrl = ReadBaseUrl("MES_BASE_URL", "http://localhost:5045/");
-            var simulatorUrl = ReadBaseUrl("SIMULATOR_BASE_URL", "http://localhost:5183/");
-            var adapterUrl = ReadBaseUrl("ADAPTER_BASE_URL", "http://localhost:5041/");
-            var runtimeMode = Environment.GetEnvironmentVariable("WPF_RUNTIME_MODE") ?? "simulator";
-            if (!runtimeMode.Equals("simulator", StringComparison.OrdinalIgnoreCase) &&
-                !runtimeMode.Equals("physical", StringComparison.OrdinalIgnoreCase))
+            startupWindow.SetStatus("正在执行离线启动配置检查...");
+            var startupConfiguration = StartupConfigurationInspector.InspectEnvironment(AppContext.BaseDirectory);
+            if (!startupConfiguration.CanStart)
             {
-                throw new InvalidOperationException("WPF_RUNTIME_MODE 只能设置为 simulator 或 physical。");
+                var errors = startupConfiguration.Items
+                    .Where(item => item.Severity == StartupDiagnosticSeverity.Error)
+                    .Select(item => item.Detail);
+                throw new InvalidOperationException($"启动配置检查失败：{string.Join("；", errors)}");
             }
 
+            var mesUrl = startupConfiguration.MesBaseUrl;
+            var simulatorUrl = startupConfiguration.SimulatorBaseUrl;
+            var adapterUrl = startupConfiguration.AdapterBaseUrl;
+            var runtimeMode = startupConfiguration.RuntimeMode;
             var isSimulator = runtimeMode.Equals("simulator", StringComparison.OrdinalIgnoreCase);
-            if (LocalSimulatorRuntime.ShouldManageLocalServices(
-                    runtimeMode,
-                    simulatorUrl,
-                    adapterUrl,
-                    mesUrl,
-                    Environment.GetEnvironmentVariable("WPF_MANAGE_LOCAL_SERVICES")))
+            if (startupConfiguration.ManageLocalServices)
             {
                 var progress = new Progress<string>(startupWindow.SetStatus);
                 _localRuntime = await LocalSimulatorRuntime.StartAsync(
@@ -78,17 +78,29 @@ public partial class App : Application
                 startupWindow.SetStatus(isSimulator ? "正在连接现有本地服务..." : "正在连接 MES...");
             }
 
-            var mesClient = new MesClient(new HttpClient { BaseAddress = mesUrl });
+            // Ordinary reads fail fast while the explicit AUBO catalog scan
+            // and state-changing requests retain their own larger budgets.
+            // This keeps an unplugged UI responsive without turning a slow
+            // device mutation into an unnecessary unknown outcome.
+            var mesClient = new MesClient(new HttpClient(new MesHttpTimeoutHandler())
+            {
+                BaseAddress = mesUrl,
+                Timeout = Timeout.InfiniteTimeSpan
+            });
             ISimulatorControlClient? simulatorClient = null;
             if (isSimulator)
             {
-                simulatorClient = new SimulatorControlClient(new HttpClient { BaseAddress = simulatorUrl });
+                simulatorClient = new SimulatorControlClient(new HttpClient
+                {
+                    BaseAddress = simulatorUrl,
+                    Timeout = TimeSpan.FromSeconds(3)
+                });
             }
 
             var moduleRegistry = ControlCenterModuleRegistry.CreateStandard();
             var mapLayoutSource = new SmapMapLayoutSource(
-                () => Environment.GetEnvironmentVariable("MAP_SMAP_PATH"),
-                () => Environment.GetEnvironmentVariable("MAP_STATION_MAPPING_PATH"));
+                ResolveMapSmapPath,
+                ResolveStationMappingPath);
             var workflowStorePath = Environment.GetEnvironmentVariable("WPF_WORKFLOW_STORE_PATH");
             var workflowStore = string.IsNullOrWhiteSpace(workflowStorePath)
                 ? null
@@ -98,7 +110,8 @@ public partial class App : Application
                 simulatorClient,
                 moduleRegistry,
                 mapLayoutSource,
-                workflowStore);
+                workflowStore,
+                startupConfiguration);
             var window = new MainWindow { DataContext = _viewModel };
             window.Closed += (_, _) =>
             {
@@ -129,7 +142,7 @@ public partial class App : Application
             startupWindow.Close();
             MessageBox.Show(
                 $"中控启动失败：{exception.Message}",
-                "AGV MES 中控",
+                "中控运营中心",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             Shutdown(-1);
@@ -156,16 +169,36 @@ public partial class App : Application
         window.Show();
     }
 
-    private static Uri ReadBaseUrl(string variableName, string fallback)
+    private static string? ResolveMapSmapPath()
     {
-        var value = Environment.GetEnvironmentVariable(variableName) ?? fallback;
-        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
-            (!uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
-             !uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)))
-        {
-            throw new InvalidOperationException($"{variableName} 必须是绝对 HTTP(S) 地址。");
-        }
+        var configured = Environment.GetEnvironmentVariable("MAP_SMAP_PATH");
+        if (!string.IsNullOrWhiteSpace(configured)) return configured.Trim();
 
-        return new Uri($"{uri.AbsoluteUri.TrimEnd('/')}/", UriKind.Absolute);
+        // The field-approved map is the safe fallback for this deployment. It
+        // is still checked for existence; an absent map never blocks startup.
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var candidate = Path.Combine(
+            localAppData,
+            "RoboshopPro",
+            "appInfo",
+            "robots",
+            "All",
+            "de48aac8dc641f04",
+            "maps",
+            "guangzhou606.smap");
+        return File.Exists(candidate) ? candidate : null;
     }
+
+    private static string? ResolveStationMappingPath()
+    {
+        var configured = Environment.GetEnvironmentVariable("MAP_STATION_MAPPING_PATH");
+        if (!string.IsNullOrWhiteSpace(configured)) return configured.Trim();
+
+        var candidate = Path.Combine(
+            AppContext.BaseDirectory,
+            "Configuration",
+            "guangzhou606.station-mapping.json");
+        return File.Exists(candidate) ? candidate : null;
+    }
+
 }

@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using MesControlAgv.Contracts.Workflows;
+using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Domain.Workflows;
 using MesControlAgv.Wpf.Services;
 using MesControlAgv.Wpf.ViewModels;
@@ -14,7 +15,7 @@ namespace MesControlAgv.Wpf.Tests;
 public sealed class WorkflowInspectorTests
 {
     [Fact]
-    public void Catalog_palette_creates_and_round_trips_all_seven_typed_nodes()
+    public void Catalog_palette_creates_and_round_trips_all_typed_nodes()
     {
         using var fixture = new TempWorkflowFile();
         var editor = new WorkflowEditorViewModel(new WorkflowStore(fixture.Path));
@@ -27,7 +28,8 @@ public sealed class WorkflowInspectorTests
             WorkflowGraphNodeTypeIds.TimedWait,
             WorkflowGraphNodeTypeIds.ManualConfirmation,
             WorkflowGraphNodeTypeIds.InstrumentReadStatus,
-            WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable
+            WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable,
+            WorkflowGraphNodeTypeIds.RobotExecuteProgram
         };
 
         Assert.Equal(expectedTypeIds, editor.NodeTypeOptions.Select(option => option.NodeTypeId));
@@ -128,6 +130,39 @@ public sealed class WorkflowInspectorTests
         Assert.DoesNotContain(WorkflowNodeConfigurationKeys.DeviceId, node.Configuration.Keys);
         device.Value = "AGV-01";
         Assert.Equal("AGV-01", node.Configuration[WorkflowNodeConfigurationKeys.DeviceId]);
+    }
+
+    [Fact]
+    public void Robot_program_field_uses_explicit_controller_catalog_names_when_available()
+    {
+        var catalog = BuiltInWorkflowCatalog.Create();
+        var definition = catalog.NodeTypes.GetLatest(WorkflowGraphNodeTypeIds.RobotExecuteProgram)!;
+        var node = new WpfWorkflowNode
+        {
+            Type = WpfWorkflowNodeType.RobotProgram,
+            GraphNodeTypeId = definition.NodeTypeId,
+            SchemaVersion = definition.SchemaVersion,
+            Ports = new ObservableCollection<WorkflowPortDefinition>(definition.Ports),
+            Configuration = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+            {
+                [WorkflowNodeConfigurationKeys.DeviceId] = "ARM-01"
+            }
+        };
+        var inspector = new WorkflowInspectorViewModel();
+        inspector.Load(
+            node,
+            catalog,
+            WorkflowPublicationContext.FromProfile(ProfileConfiguration.Default),
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+            (_, _) => { },
+            ["现场程序.pro", "校准程序.pro"]);
+
+        var program = inspector.Fields.Single(field => field.Key == WorkflowNodeConfigurationKeys.ProgramName);
+        Assert.Equal(WorkflowInspectorEditorKind.Selection, program.EditorKind);
+        Assert.Equal(["校准程序.pro", "现场程序.pro"], program.Options.Select(option => option.Value));
+
+        program.Value = "校准程序.pro";
+        Assert.Equal("校准程序.pro", program.Value);
     }
 
     [Fact]

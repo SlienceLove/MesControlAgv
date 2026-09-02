@@ -40,7 +40,7 @@ public sealed class VendorTcpTransportAcceptanceTests
         var health = await client.GetFromJsonAsync<JsonElement>("health");
         Assert.Equal(AdapterRunMode.ReadOnlyPreflightValue, health.GetProperty("runMode").GetString());
         var modules = health.GetProperty("modules").EnumerateArray().ToArray();
-        Assert.Equal(2, modules.Length);
+        Assert.Equal(3, modules.Length);
         var module = Assert.Single(modules.Where(item => item.GetProperty("moduleId").GetString() == "agv"));
         Assert.Equal("agv", module.GetProperty("moduleId").GetString());
         Assert.Equal("agv", module.GetProperty("deviceType").GetString());
@@ -70,6 +70,28 @@ public sealed class VendorTcpTransportAcceptanceTests
             content: null);
         Assert.Equal(HttpStatusCode.ServiceUnavailable, workstationStatus.StatusCode);
         Assert.Equal(HttpStatusCode.MethodNotAllowed, workstationWrite.StatusCode);
+
+        var armModule = Assert.Single(modules.Where(item =>
+            item.GetProperty("moduleId").GetString() == "aubo-arm"));
+        Assert.Equal(
+            ["Tcp"],
+            armModule.GetProperty("supportedTransports")
+                .EnumerateArray()
+                .Select(item => item.GetString())
+                .ToArray());
+        var arm = Assert.Single(health.GetProperty("devices").EnumerateArray().Where(item =>
+            item.GetProperty("deviceId").GetString() == "ARM-01"));
+        Assert.False(arm.GetProperty("enabled").GetBoolean());
+        Assert.False(arm.GetProperty("controlEnabled").GetBoolean());
+
+        // The arm ships read-disabled, and read-only preflight rejects its dispatch POST
+        // at the middleware before routing, so no named-variable write is reachable.
+        using var armStatus = await client.GetAsync("api/robot-arms/ARM-01/status");
+        using var armDispatch = await client.PostAsync(
+            "api/robot-arms/ARM-01/handshake/dispatch",
+            content: null);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, armStatus.StatusCode);
+        Assert.Equal(HttpStatusCode.MethodNotAllowed, armDispatch.StatusCode);
 
         using var preflight = await client.GetAsync("physical/preflight");
         Assert.Equal(HttpStatusCode.OK, preflight.StatusCode);

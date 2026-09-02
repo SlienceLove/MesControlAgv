@@ -156,7 +156,7 @@ public sealed partial class WorkflowApplicationService
         node.LastError = null;
         node.UpdatedAtUtc = now;
 
-        if (step.NodeType != WorkflowNodeType.Move)
+        if (step.NodeType is not (WorkflowNodeType.Move or WorkflowNodeType.RobotProgram))
         {
             return (node, null);
         }
@@ -175,7 +175,8 @@ public sealed partial class WorkflowApplicationService
                 NodeExecutionId = node.Id,
                 RequestId = run.RequestId,
                 Attempt = node.Attempt,
-                CapabilityId = WorkflowCapabilityIds.AgvNavigateToStation,
+                CapabilityId = ResolveDeviceCapability(step),
+                DeviceId = ResolveDeviceId(step),
                 IdempotencyKey = operationId.ToString("N"),
                 CorrelationId = request.CorrelationId,
                 Status = WorkflowDeviceOperationStatus.Prepared.ToString(),
@@ -206,7 +207,7 @@ public sealed partial class WorkflowApplicationService
             now,
             cancellationToken);
         WorkflowDeviceOperationRecord? device = null;
-        if (completedStep.NodeType == WorkflowNodeType.Move)
+        if (completedStep.NodeType is WorkflowNodeType.Move or WorkflowNodeType.RobotProgram)
         {
             (_, device) = await EnsureClaimRuntimeRecordsAsync(
                 run,
@@ -453,6 +454,7 @@ public sealed partial class WorkflowApplicationService
             WorkflowNodeType.Move => WorkflowGraphNodeTypeIds.Move,
             WorkflowNodeType.Wait => WorkflowGraphNodeTypeIds.TimedWait,
             WorkflowNodeType.InstrumentOperation => WorkflowGraphNodeTypeIds.InstrumentReadStatus,
+            WorkflowNodeType.RobotProgram => WorkflowGraphNodeTypeIds.RobotExecuteProgram,
             _ => $"legacy.{step.NodeType.ToString().ToLowerInvariant()}"
         };
     }
@@ -475,8 +477,27 @@ public sealed partial class WorkflowApplicationService
         ["nodeExecutionId"] = nodeExecutionId.ToString(),
         ["nodeId"] = step.NodeId.ToString(),
         ["stepRequestId"] = step.StepRequestId.ToString(),
-        ["targetStation"] = step.TargetStation
+        ["targetStation"] = step.TargetStation,
+        ["deviceId"] = ResolveDeviceId(step),
+        ["programName"] = ResolveProgramName(step)
     };
+
+    private static string ResolveDeviceCapability(WorkflowNextStepRequest step) =>
+        step.NodeType == WorkflowNodeType.RobotProgram
+            ? WorkflowCapabilityIds.RobotExecuteProgram
+            : WorkflowCapabilityIds.AgvNavigateToStation;
+
+    private static string? ResolveDeviceId(WorkflowNextStepRequest step) =>
+        step.Parameters.TryGetValue(WorkflowNodeConfigurationKeys.DeviceId, out var value) &&
+        !string.IsNullOrWhiteSpace(value)
+            ? value.Trim()
+            : null;
+
+    private static string? ResolveProgramName(WorkflowNextStepRequest step) =>
+        step.Parameters.TryGetValue(WorkflowNodeConfigurationKeys.ProgramName, out var value) &&
+        !string.IsNullOrWhiteSpace(value)
+            ? value.Trim()
+            : null;
 
     private static IReadOnlyDictionary<string, string?> CreateOutcomeSummary(
         string? outcome,

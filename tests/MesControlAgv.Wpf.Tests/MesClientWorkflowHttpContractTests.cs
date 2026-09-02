@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
+using MesControlAgv.Contracts;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Wpf.Services;
 
@@ -243,6 +244,65 @@ public sealed class MesClientWorkflowHttpContractTests
         Assert.Equal($"/api/workflow-executions/{executionId}", handler.Requests[0].Uri.AbsolutePath);
         Assert.Equal($"/api/workflow-executions/by-request/{requestId}", handler.Requests[1].Uri.AbsolutePath);
         Assert.All(handler.Requests, request => Assert.Equal(HttpMethod.Get, request.Method));
+    }
+
+    [Fact]
+    public async Task Workflow_field_acceptance_uses_linked_run_routes_and_payloads()
+    {
+        var runId = Guid.NewGuid();
+        var nodeExecutionId = Guid.NewGuid();
+        var acceptanceId = Guid.NewGuid();
+        var response = new FieldNavigationAcceptanceResponse(
+            acceptanceId,
+            FieldNavigationAcceptanceStatuses.Authorized,
+            "AGV-01",
+            "LM1",
+            "LM4",
+            "map",
+            "0123456789abcdef0123456789abcdef",
+            ["LM1", "LM4"],
+            null,
+            "operator",
+            "observer",
+            "permit-1",
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow.AddMinutes(30),
+            null,
+            null,
+            null,
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow)
+        {
+            WorkflowRunId = runId,
+            WorkflowNodeExecutionId = nodeExecutionId
+        };
+        var handler = new RecordingHandler(request => request.Method == HttpMethod.Get
+            ? JsonResponse(new[] { response })
+            : JsonResponse(response, request.RequestUri!.AbsolutePath.EndsWith("/authorize", StringComparison.Ordinal)
+                ? HttpStatusCode.OK
+                : HttpStatusCode.Created));
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://mes.local/") };
+        var client = new MesClient(httpClient);
+        var create = new CreateFieldNavigationAcceptanceRequest("AGV-01", "LM1", "LM4")
+        {
+            WorkflowRunId = runId,
+            WorkflowNodeExecutionId = nodeExecutionId
+        };
+
+        Assert.Single(await client.GetWorkflowFieldNavigationAcceptancesAsync(runId, CancellationToken.None));
+        await client.CreateFieldNavigationAcceptanceAsync(create, CancellationToken.None);
+        await client.AuthorizeFieldNavigationAcceptanceAsync(
+            acceptanceId,
+            new AuthorizeFieldNavigationAcceptanceRequest(
+                "operator", "observer", "permit-1", DateTimeOffset.UtcNow.AddMinutes(30)),
+            CancellationToken.None);
+
+        Assert.Equal($"/api/workflow-runs/{runId}/field-navigation-acceptances", handler.Requests[0].Uri.AbsolutePath);
+        Assert.Equal("/api/field-navigation-acceptances", handler.Requests[1].Uri.AbsolutePath);
+        Assert.Equal($"/api/field-navigation-acceptances/{acceptanceId}/authorize", handler.Requests[2].Uri.AbsolutePath);
+        using var createBody = JsonDocument.Parse(handler.Requests[1].Body!);
+        Assert.Equal(runId, createBody.RootElement.GetProperty("workflowRunId").GetGuid());
+        Assert.Equal(nodeExecutionId, createBody.RootElement.GetProperty("workflowNodeExecutionId").GetGuid());
     }
 
     [Fact]

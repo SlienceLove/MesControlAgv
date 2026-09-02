@@ -1,0 +1,108 @@
+<UserControl x:Class="MesControlAgv.Wpf.Views.AgvCommunicationView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:converters="clr-namespace:MesControlAgv.Wpf.Converters"
+             xmlns:local="clr-namespace:MesControlAgv.Wpf"
+             HorizontalContentAlignment="Stretch"
+             VerticalContentAlignment="Stretch">
+    <UserControl.Resources>
+        <converters:CountToVisibilityConverter x:Key="CountToVisibilityConverter" />
+        <converters:StatusBrushConverter x:Key="StatusBrushConverter" />
+    </UserControl.Resources>
+
+    <Grid Margin="0,12,0,0">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid Margin="0,0,0,12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <StackPanel>
+                <TextBlock FontSize="22" FontWeight="SemiBold" Text="AGV 通讯与调度" />
+                <TextBlock Margin="0,4,0,0" Foreground="Gray" TextWrapping="Wrap" Text="查看连接、在线状态、位置和当前任务；控制命令仅作用于当前任务" />
+            </StackPanel>
+            <StackPanel Grid.Row="1" Margin="0,8,0,0" HorizontalAlignment="Right" Orientation="Horizontal">
+                <Button Padding="14,7" Click="ResetAgvGridLayout_Click" Content="恢复列布局" ToolTip="恢复 AGV 表默认列宽和顺序" />
+                <Button Margin="8,0,0,0" Padding="14,7" Command="{Binding RefreshAgvCommand}" Content="刷新 AGV 状态" />
+            </StackPanel>
+            <TextBlock Grid.Row="1" Margin="0,8,0,0" VerticalAlignment="Center" FontSize="11"
+                       Foreground="{Binding OfflineState.StateText, Converter={StaticResource StatusBrushConverter}}"
+                       Text="{Binding OfflineState.StateText, StringFormat=数据状态：{0}}" />
+        </Grid>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="260" />
+            </Grid.ColumnDefinitions>
+
+            <Grid Grid.Column="0">
+                <DataGrid x:Name="AgvGrid"
+                          local:DataGridLayoutPersistence.LayoutKey="AgvCommunication"
+                          local:DataGridLayoutPersistence.PersistLayout="True"
+                          ItemsSource="{Binding Agvs}"
+                          SelectedItem="{Binding SelectedAgv}"
+                          AutoGenerateColumns="False"
+                          CanUserAddRows="False"
+                          IsReadOnly="True"
+                          SelectionMode="Single"
+                          CanUserReorderColumns="True"
+                          CanUserResizeColumns="True"
+                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                          ScrollViewer.VerticalScrollBarVisibility="Auto">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Width="170" Header="MES 状态" Binding="{Binding MesTaskStatus}" />
+                        <DataGridTextColumn Width="110" Header="设备状态" Binding="{Binding DeviceState}" />
+                        <DataGridTextColumn Width="150" Header="目标站点" Binding="{Binding TargetStationId}" />
+                        <DataGridTextColumn Width="140" Header="AGV ID" Binding="{Binding AgvId}" />
+                        <DataGridTextColumn Width="100" Header="连接状态" Binding="{Binding OnlineText}" />
+                        <DataGridTextColumn Width="120" Header="控制权" Binding="{Binding ControlOwner}" />
+                        <DataGridTextColumn Width="150" Header="当前位置" Binding="{Binding CurrentStationId}" />
+                        <DataGridTextColumn Width="2*" Header="当前任务" Binding="{Binding CurrentTaskText}" />
+                    </DataGrid.Columns>
+                </DataGrid>
+                <Border Margin="1"
+                        Background="#FBFCFE"
+                        BorderBrush="#E2E8F0"
+                        BorderThickness="1"
+                        Visibility="{Binding Agvs.Count, Converter={StaticResource CountToVisibilityConverter}, ConverterParameter=Invert}">
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="340">
+                        <TextBlock Style="{DynamicResource EmptyStateTitleStyle}" Text="暂无 AGV 数据" />
+                        <TextBlock Style="{DynamicResource EmptyStateDescriptionStyle}" Text="刷新后将显示在线状态、当前位置和当前任务。" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <Border x:Name="AgvControlPanel" Grid.Column="1" Margin="16,0,0,0" Padding="16" Background="#F6F8FA" CornerRadius="6">
+                <ScrollViewer x:Name="AgvControlScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
+                    <TextBlock FontSize="18" FontWeight="SemiBold" Text="调度控制" />
+                    <TextBlock Margin="0,12,0,0" Foreground="Gray" Text="选中 AGV" />
+                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding SelectedAgv.AgvId}" />
+                    <TextBlock Margin="0,8,0,0" Foreground="Gray" Text="当前任务" />
+                    <TextBlock Text="{Binding SelectedAgv.CurrentTaskText}" TextWrapping="Wrap" />
+                    <TextBlock Margin="0,8,0,0" Foreground="Gray" Text="MES / 设备状态" />
+                    <TextBlock Text="{Binding SelectedAgv.MesTaskStatus}" TextWrapping="Wrap" />
+                    <TextBlock Margin="0,6,0,0" Text="{Binding SelectedAgv.DeviceState}" />
+                    <TextBlock Margin="0,8,0,0" Foreground="Gray" Text="目标 / 路径" />
+                    <TextBlock Text="{Binding SelectedAgv.TargetStationId}" />
+                    <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding SelectedAgv.ExecutionPath}" />
+                    <TextBlock Margin="0,6,0,0" Foreground="#B42318" TextWrapping="Wrap" Text="{Binding SelectedAgv.ExecutionError}" />
+                    <TextBlock Margin="0,6,0,0" Foreground="Gray" Text="{Binding SelectedAgv.CapabilitySummary}" TextWrapping="Wrap" />
+                    <Button Margin="0,18,0,0" MinHeight="34" Command="{Binding PauseAgvCommand}" Content="暂停当前任务" />
+                    <Button Margin="0,8,0,0" MinHeight="34" Command="{Binding ResumeAgvCommand}" Content="恢复当前任务" />
+                    <Button Margin="0,8,0,0" MinHeight="34" Command="{Binding CancelAgvCommand}" Content="取消当前任务" />
+                    <TextBlock Margin="0,18,0,0" Foreground="Gray" Text="说明：无当前任务时不会发送控制指令；真实 AGV 接入后由 Adapter 协议实现具体响应。" TextWrapping="Wrap" />
+                </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Grid>
+
+        <TextBlock Grid.Row="2" Margin="0,12,0,0" Foreground="Gray" Text="当前版本支持暂停、恢复、取消当前任务，以及查看 AGV 在线和连接状态。" />
+    </Grid>
+</UserControl>

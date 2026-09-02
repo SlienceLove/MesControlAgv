@@ -59,6 +59,7 @@ internal sealed class LocalSimulatorRuntime : IDisposable
         simulatorUrl = NormalizeLoopbackUrl(simulatorUrl, "Simulator");
         adapterUrl = NormalizeLoopbackUrl(adapterUrl, "Adapter");
         mesUrl = NormalizeLoopbackUrl(mesUrl, "MES");
+        var serviceEnvironment = ResolveServiceEnvironment();
 
         var dataDirectory = ResolveDataDirectory();
         var services = new[]
@@ -69,7 +70,8 @@ internal sealed class LocalSimulatorRuntime : IDisposable
                 simulatorUrl,
                 "Simulator",
                 "MesControlAgv.Simulator.dll",
-                new Dictionary<string, string>()),
+                new Dictionary<string, string>(),
+                serviceEnvironment),
             CreateService(
                 "Adapter",
                 "adapter",
@@ -80,7 +82,8 @@ internal sealed class LocalSimulatorRuntime : IDisposable
                 {
                     ["Simulator__BaseUrl"] = simulatorUrl.AbsoluteUri,
                     ["ConnectionStrings__Adapter"] = $"Data Source={Path.Combine(dataDirectory, "adapter.db")}"
-                }),
+                },
+                serviceEnvironment),
             CreateService(
                 "MES",
                 "mes",
@@ -91,7 +94,8 @@ internal sealed class LocalSimulatorRuntime : IDisposable
                 {
                     ["Adapter__BaseUrl"] = adapterUrl.AbsoluteUri,
                     ["ConnectionStrings__Mes"] = $"Data Source={Path.Combine(dataDirectory, "mes.db")}"
-                })
+                },
+                serviceEnvironment)
         };
 
         var ownedProcesses = new List<Process>();
@@ -149,11 +153,35 @@ internal sealed class LocalSimulatorRuntime : IDisposable
         Uri url,
         string runtimeFolder,
         string assemblyName,
-        IReadOnlyDictionary<string, string> environmentVariables)
+        IReadOnlyDictionary<string, string> environmentVariables,
+        string environmentName)
     {
         var workingDirectory = Path.Combine(AppContext.BaseDirectory, "services", runtimeFolder);
         var assemblyPath = Path.Combine(workingDirectory, assemblyName);
-        return new LocalServiceDefinition(name, healthName, url, workingDirectory, assemblyPath, environmentVariables);
+        return new LocalServiceDefinition(
+            name,
+            healthName,
+            url,
+            workingDirectory,
+            assemblyPath,
+            environmentVariables,
+            environmentName);
+    }
+
+    private static string ResolveServiceEnvironment()
+    {
+        var configured = Environment.GetEnvironmentVariable("WPF_LOCAL_SERVICE_ENVIRONMENT");
+        if (string.IsNullOrWhiteSpace(configured)) return "FieldSimulation";
+
+        var normalized = configured.Trim();
+        if (!normalized.Equals("Development", StringComparison.OrdinalIgnoreCase) &&
+            !normalized.Equals("FieldSimulation", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "WPF_LOCAL_SERVICE_ENVIRONMENT must be Development or FieldSimulation.");
+        }
+
+        return normalized;
     }
 
     private static string ResolveDataDirectory()
@@ -209,7 +237,9 @@ internal sealed class LocalSimulatorRuntime : IDisposable
         startInfo.ArgumentList.Add("--urls");
         startInfo.ArgumentList.Add(service.Url.AbsoluteUri.TrimEnd('/'));
         startInfo.ArgumentList.Add("--environment");
-        startInfo.ArgumentList.Add("Development");
+        startInfo.ArgumentList.Add(service.EnvironmentName);
+        startInfo.Environment["ASPNETCORE_ENVIRONMENT"] = service.EnvironmentName;
+        startInfo.Environment["DOTNET_ENVIRONMENT"] = service.EnvironmentName;
 
         foreach (var entry in service.EnvironmentVariables)
         {
@@ -319,5 +349,6 @@ internal sealed class LocalSimulatorRuntime : IDisposable
         Uri Url,
         string WorkingDirectory,
         string AssemblyPath,
-        IReadOnlyDictionary<string, string> EnvironmentVariables);
+        IReadOnlyDictionary<string, string> EnvironmentVariables,
+        string EnvironmentName);
 }

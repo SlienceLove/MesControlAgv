@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
+using MesControlAgv.Contracts;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Workflows;
 using MesControlAgv.Wpf.Infrastructure;
@@ -12,8 +13,9 @@ namespace MesControlAgv.Wpf.ViewModels;
 /// Read-only projection of one pinned workflow graph plus audited run-state
 /// controls. These controls never issue a device command.
 /// </summary>
-public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
+public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDisposable
 {
+    private static readonly TimeSpan DefaultAutoRefreshInterval = TimeSpan.FromSeconds(3);
     private readonly IMesClient _mes;
     private readonly IWorkflowRunControlConfirmation _confirmation;
     private readonly AsyncCommand _refreshCommand;
@@ -23,6 +25,14 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
     private readonly AsyncCommand _cancelCommand;
     private readonly AsyncCommand _resolveSucceededCommand;
     private readonly AsyncCommand _resolveFailedCommand;
+    private readonly AsyncCommand _createAndAuthorizeFieldMoveCommand;
+    private CancellationTokenSource? _autoRefreshCancellation;
+    private Task? _autoRefreshLoop;
+    private bool _autoRefreshViewAttached;
+    private bool _isAutoRefreshEnabled = true;
+    private TimeSpan _autoRefreshInterval = DefaultAutoRefreshInterval;
+    private bool _isAutoRefreshRunning;
+    private bool _disposed;
     private string _runIdText = string.Empty;
     private WorkflowExecutionSnapshot? _run;
     private WorkflowVersion? _version;
@@ -42,6 +52,14 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
     private string? _permissionActor;
     private IReadOnlyList<string> _grantedPermissions = [];
     private string _permissionStatus = "权限尚未校验。";
+    private IReadOnlyList<FieldNavigationAcceptanceResponse> _fieldAcceptances = [];
+    private FieldNavigationAcceptanceResponse? _selectedFieldAcceptance;
+    private string _fieldAgvId = string.Empty;
+    private string _fieldSourceStationId = string.Empty;
+    private string _fieldSafetyObserverName = string.Empty;
+    private string _fieldPermitId = string.Empty;
+    private string _fieldPermitMinutes = "30";
+    private string _fieldDescription = string.Empty;
 
     public WorkflowRunMonitorViewModel(
         IMesClient mes,
@@ -60,6 +78,9 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
         _resolveFailedCommand = new AsyncCommand(
             () => ResolveUnknownAsync(WorkflowUnknownResolutionOutcome.ConfirmedFailed),
             () => CanResolveUnknown);
+        _createAndAuthorizeFieldMoveCommand = new AsyncCommand(
+            CreateAndAuthorizeFieldMoveAsync,
+            () => CanCreateAndAuthorizeFieldMove);
         RefreshCommand = _refreshCommand;
         CheckPermissionsCommand = _checkPermissionsCommand;
         PauseCommand = _pauseCommand;
@@ -67,6 +88,7 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
         CancelCommand = _cancelCommand;
         ResolveUnknownSucceededCommand = _resolveSucceededCommand;
         ResolveUnknownFailedCommand = _resolveFailedCommand;
+        CreateAndAuthorizeFieldMoveCommand = _createAndAuthorizeFieldMoveCommand;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -88,6 +110,70 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
     public ICommand CancelCommand { get; }
     public ICommand ResolveUnknownSucceededCommand { get; }
     public ICommand ResolveUnknownFailedCommand { get; }
+    public ICommand CreateAndAuthorizeFieldMoveCommand { get; }
+
+    /// <summary>
+    /// The view calls this when it is visible. Refreshing is read-only and is
+    /// stopped again when the view is unloaded, so a hidden tab cannot retain
+    /// a network polling loop.
+    /// </summary>
+    public void StartAutoRefresh()
+    {
+        if (_disposed) return;
+        _autoRefreshViewAttached = true;
+        EnsureAutoRefreshLoop();
+        OnPropertyChanged(nameof(AutoRefreshStatusDisplay));
+    }
+
+    public void StopAutoRefresh()
+    {
+        _autoRefreshViewAttached = false;
+        CancelAutoRefreshLoop();
+        OnPropertyChanged(nameof(AutoRefreshStatusDisplay));
+    }
+
+    public bool IsAutoRefreshEnabled
+    {
+        get => _isAutoRefreshEnabled;
+        set
+        {
+            if (!SetField(ref _isAutoRefreshEnabled, value)) return;
+            if (value) EnsureAutoRefreshLoop();
+            else CancelAutoRefreshLoop();
+            OnPropertyChanged(nameof(AutoRefreshStatusDisplay));
+        }
+    }
+
+    public TimeSpan AutoRefreshInterval
+    {
+        get => _autoRefreshInterval;
+        set
+        {
+            var interval = value <= TimeSpan.Zero ? DefaultAutoRefreshInterval : value;
+            if (!SetField(ref _autoRefreshInterval, interval)) return;
+            if (_autoRefreshLoop is not null)
+            {
+                CancelAutoRefreshLoop();
+                EnsureAutoRefreshLoop();
+            }
+            OnPropertyChanged(nameof(AutoRefreshStatusDisplay));
+        }
+    }
+
+    public bool IsAutoRefreshRunning => _isAutoRefreshRunning;
+
+    public string AutoRefreshStatusDisplay
+    {
+        get
+        {
+            if (!IsAutoRefreshEnabled) return "自动刷新已关闭";
+            if (Run is null) return "加载运行后自动刷新";
+            if (Run.IsTerminal) return "流程已终态，自动刷新已暂停";
+            return IsAutoRefreshRunning
+                ? $"每 {AutoRefreshInterval.TotalSeconds:0.#} 秒自动刷新"
+                : "自动刷新待启动";
+        }
+    }
 
     public string OperatorName
     {
@@ -186,6 +272,10 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
                 SelectedDeviceOperation = value.DeviceOperations.LastOrDefault();
             }
 
+            SelectedFieldAcceptance = value is null
+                ? null
+                : FieldAcceptances.LastOrDefault(item => item.WorkflowNodeExecutionId == value.Id);
+
             RaiseControlStateChanged();
         }
     }
@@ -224,6 +314,111 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
     {
         get => _statusMessage;
         private set => SetField(ref _statusMessage, value);
+    }
+
+    public IReadOnlyList<FieldNavigationAcceptanceResponse> FieldAcceptances
+    {
+        get => _fieldAcceptances;
+        private set => SetField(ref _fieldAcceptances, value);
+    }
+
+    public FieldNavigationAcceptanceResponse? SelectedFieldAcceptance
+    {
+        get => _selectedFieldAcceptance;
+        private set
+        {
+            if (!SetField(ref _selectedFieldAcceptance, value)) return;
+            OnPropertyChanged(nameof(FieldAcceptanceStatus));
+            OnPropertyChanged(nameof(HasFieldAcceptance));
+            RaiseControlStateChanged();
+        }
+    }
+
+    public bool HasFieldAcceptance => SelectedFieldAcceptance is not null;
+
+    public string FieldAcceptanceStatus => SelectedFieldAcceptance is null
+        ? "尚未创建现场导航验收单"
+        : $"{SelectedFieldAcceptance.Status} / {SelectedFieldAcceptance.Id:D}";
+
+    public string FieldSourceStationId
+    {
+        get => _fieldSourceStationId;
+        set
+        {
+            if (!SetField(ref _fieldSourceStationId, value ?? string.Empty)) return;
+            RaiseControlStateChanged();
+        }
+    }
+
+    public string FieldAgvId
+    {
+        get => _fieldAgvId;
+        set
+        {
+            if (!SetField(ref _fieldAgvId, value ?? string.Empty)) return;
+            RaiseControlStateChanged();
+        }
+    }
+
+    public string FieldSafetyObserverName
+    {
+        get => _fieldSafetyObserverName;
+        set
+        {
+            if (!SetField(ref _fieldSafetyObserverName, value ?? string.Empty)) return;
+            RaiseControlStateChanged();
+        }
+    }
+
+    public string FieldPermitId
+    {
+        get => _fieldPermitId;
+        set
+        {
+            if (!SetField(ref _fieldPermitId, value ?? string.Empty)) return;
+            RaiseControlStateChanged();
+        }
+    }
+
+    public string FieldPermitMinutes
+    {
+        get => _fieldPermitMinutes;
+        set
+        {
+            if (!SetField(ref _fieldPermitMinutes, value ?? string.Empty)) return;
+            RaiseControlStateChanged();
+        }
+    }
+
+    public string FieldDescription
+    {
+        get => _fieldDescription;
+        set => SetField(ref _fieldDescription, value ?? string.Empty);
+    }
+
+    public bool CanCreateAndAuthorizeFieldMove =>
+        string.IsNullOrEmpty(FieldMoveUnavailableReason);
+
+    public string FieldMoveUnavailableReason
+    {
+        get
+        {
+            if (IsBusy) return "正在处理其他运行请求。";
+            if (Run is null || SelectedNode is null) return "请先加载流程并选择 Move 节点。";
+            if (SelectedNode.Status != WorkflowNodeExecutionStatus.Ready ||
+                !string.Equals(SelectedNode.NodeTypeId, WorkflowGraphNodeTypeIds.Move, StringComparison.OrdinalIgnoreCase))
+                return "只能为当前 Ready Move 节点创建验收单。";
+            if (!TryGetFieldTargetStation(SelectedNode, out _)) return "Move 节点缺少目标站点输入。";
+            if (SelectedFieldAcceptance is not null) return "该 Move 节点已有关联验收单。";
+            if (string.IsNullOrWhiteSpace(FieldAgvId)) return "请输入现场确认的 AGV ID。";
+            if (string.IsNullOrWhiteSpace(FieldSourceStationId)) return "请输入现场确认的起点站。";
+            if (string.IsNullOrWhiteSpace(OperatorName)) return "请输入操作者。";
+            if (string.IsNullOrWhiteSpace(FieldSafetyObserverName)) return "请输入安全监护人。";
+            if (string.IsNullOrWhiteSpace(FieldPermitId)) return "请输入唯一许可编号。";
+            if (!int.TryParse(FieldPermitMinutes, out var minutes) || minutes is < 1 or > 1440)
+                return "许可有效期必须为 1–1440 分钟。";
+            return string.Empty;
+        }
     }
 
     public bool IsBusy
@@ -318,6 +513,79 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
         ? string.Empty
         : $"开始 {Run.CreatedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}  /  更新 {Run.UpdatedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}";
 
+    public int TotalNodeCount => Nodes.Count;
+
+    public int CompletedNodeCount => Nodes.Count(node => node.Status is
+        WorkflowNodeExecutionStatus.Succeeded or WorkflowNodeExecutionStatus.Skipped);
+
+    public int FailedNodeCount => Nodes.Count(node => node.Status is
+        WorkflowNodeExecutionStatus.Failed or WorkflowNodeExecutionStatus.TimedOut);
+
+    public int CancelledNodeCount => Nodes.Count(node => node.Status == WorkflowNodeExecutionStatus.Cancelled);
+
+    public int UnknownNodeCount => Nodes.Count(node => node.Status == WorkflowNodeExecutionStatus.Unknown);
+
+    public int TerminalNodeCount => Nodes.Count(node => node.Status is
+        WorkflowNodeExecutionStatus.Succeeded or WorkflowNodeExecutionStatus.Skipped or
+        WorkflowNodeExecutionStatus.Failed or WorkflowNodeExecutionStatus.TimedOut or
+        WorkflowNodeExecutionStatus.Unknown or WorkflowNodeExecutionStatus.Cancelled);
+
+    public double ProgressPercent => TotalNodeCount == 0
+        ? 0
+        : Math.Round(TerminalNodeCount * 100d / TotalNodeCount, 1);
+
+    public string ProgressDisplay => TotalNodeCount == 0
+        ? "暂无节点执行记录"
+        : $"已处理 {TerminalNodeCount}/{TotalNodeCount} 个节点（完成 {CompletedNodeCount}，失败 {FailedNodeCount}，取消 {CancelledNodeCount}，未知 {UnknownNodeCount}）";
+
+    public string CurrentNodeDisplay
+    {
+        get
+        {
+            if (Run?.CurrentNodeId is not { } currentNodeId) return "无";
+            return Nodes
+                       .Where(node => node.NodeId == currentNodeId)
+                       .OrderByDescending(node => node.Attempt)
+                       .ThenByDescending(node => node.UpdatedAt)
+                       .Select(node => $"{node.NodeName} / {node.StatusDisplay}")
+                       .FirstOrDefault() ?? currentNodeId.ToString("D");
+        }
+    }
+
+    public bool HasFailureEvidence => !string.IsNullOrWhiteSpace(FailureReasonDisplay);
+
+    public string FailureReasonDisplay
+    {
+        get
+        {
+            if (Run is null) return string.Empty;
+
+            var reasons = new List<string>();
+            AddReason(reasons, Run.LastError);
+            AddReason(reasons, Run.RejectionReason);
+            foreach (var node in Nodes.Where(node => node.Status is
+                         WorkflowNodeExecutionStatus.Failed or WorkflowNodeExecutionStatus.TimedOut))
+                AddReason(reasons, node.LastError);
+            foreach (var operation in DeviceOperations.Where(operation => operation.Status is
+                         WorkflowDeviceOperationStatus.Rejected or WorkflowDeviceOperationStatus.Failed))
+                AddReason(reasons, operation.LastError);
+            foreach (var entry in Timeline.Where(entry =>
+                         entry.Outcome.Contains("fail", StringComparison.OrdinalIgnoreCase) ||
+                         entry.Outcome.Contains("timeout", StringComparison.OrdinalIgnoreCase) ||
+                         entry.Outcome.Contains("reject", StringComparison.OrdinalIgnoreCase) ||
+                         entry.EventType.Contains("Failed", StringComparison.OrdinalIgnoreCase)))
+                AddReason(reasons, entry.Reason);
+
+            return string.Join("；", reasons);
+        }
+    }
+
+    public bool IsCancelled => Run?.RuntimeStatus == WorkflowRuntimeStatus.Cancelled;
+
+    public string CancellationStatusDisplay => IsCancelled
+        ? "流程已取消：MES 已停止后续节点调度；已发出的设备操作不会自动撤销，请核对设备证据和时间线。"
+        : string.Empty;
+
     public string UnknownWarning => HasUnknownState
         ? "结果未知，禁止自动重试。请先核对设备操作和时间线证据。"
         : string.Empty;
@@ -347,18 +615,21 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
             var nodesTask = _mes.GetWorkflowNodeExecutionsAsync(workflowRunId, cancellationToken);
             var operationsTask = _mes.GetWorkflowDeviceOperationsAsync(workflowRunId, cancellationToken);
             var timelineTask = _mes.GetWorkflowRunTimelineAsync(workflowRunId, 200, cancellationToken);
-            await Task.WhenAll(versionTask, nodesTask, operationsTask, timelineTask);
+            var acceptancesTask = _mes.GetWorkflowFieldNavigationAcceptancesAsync(workflowRunId, cancellationToken);
+            await Task.WhenAll(versionTask, nodesTask, operationsTask, timelineTask, acceptancesTask);
 
             var version = await versionTask ??
                           throw new InvalidOperationException("The workflow run's pinned version was not found.");
             var nodes = await nodesTask;
             var operations = await operationsTask;
             var timeline = await timelineTask;
+            var acceptances = await acceptancesTask;
             ValidateReadModel(run, version, nodes, operations, timeline);
-            ApplyReadModel(run, version, nodes, operations, timeline);
+            ValidateFieldAcceptances(run, nodes, acceptances);
+            ApplyReadModel(run, version, nodes, operations, timeline, acceptances);
             await RefreshPermissionsAsync(cancellationToken, reportFailure: false);
             RefreshedAt = DateTimeOffset.Now;
-            StatusMessage = $"已读取 {Nodes.Count} 次节点执行、{DeviceOperations.Count} 次设备操作和 {Timeline.Count} 条时间线记录。";
+            StatusMessage = $"已读取 {Nodes.Count} 次节点执行、{DeviceOperations.Count} 次设备操作、{FieldAcceptances.Count} 张现场验收单和 {Timeline.Count} 条时间线记录。";
         }
         finally
         {
@@ -368,6 +639,85 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
 
     private bool CanRefresh() =>
         !IsBusy && Guid.TryParse(RunIdText, out var runId) && runId != Guid.Empty;
+
+    public async Task RefreshLoadedRunAsync(CancellationToken cancellationToken = default)
+    {
+        if (Run?.ExecutionId is not { } workflowRunId || workflowRunId == Guid.Empty) return;
+        await LoadAsync(workflowRunId, cancellationToken);
+    }
+
+    private void EnsureAutoRefreshLoop()
+    {
+        if (_disposed || !_autoRefreshViewAttached || !IsAutoRefreshEnabled ||
+            Run is null || Run.IsTerminal || _autoRefreshLoop is not null)
+            return;
+
+        var cancellation = new CancellationTokenSource();
+        _autoRefreshCancellation = cancellation;
+        _isAutoRefreshRunning = true;
+        OnPropertyChanged(nameof(IsAutoRefreshRunning));
+        OnPropertyChanged(nameof(AutoRefreshStatusDisplay));
+        _autoRefreshLoop = AutoRefreshLoopAsync(cancellation);
+    }
+
+    private void CancelAutoRefreshLoop()
+    {
+        try { _autoRefreshCancellation?.Cancel(); }
+        catch (ObjectDisposedException) { }
+        _isAutoRefreshRunning = false;
+        OnPropertyChanged(nameof(IsAutoRefreshRunning));
+        OnPropertyChanged(nameof(AutoRefreshStatusDisplay));
+    }
+
+    private async Task AutoRefreshLoopAsync(CancellationTokenSource cancellation)
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(AutoRefreshInterval);
+            while (await timer.WaitForNextTickAsync(cancellation.Token))
+            {
+                if (!IsAutoRefreshEnabled || Run is null || Run.IsTerminal) break;
+                if (IsBusy) continue;
+
+                try
+                {
+                    await RefreshLoadedRunAsync(cancellation.Token);
+                }
+                catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception exception)
+                {
+                    if (!cancellation.IsCancellationRequested)
+                        StatusMessage = $"自动刷新失败：{exception.Message}";
+                }
+
+                if (Run?.IsTerminal == true) break;
+            }
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        finally
+        {
+            cancellation.Dispose();
+            if (ReferenceEquals(_autoRefreshCancellation, cancellation))
+            {
+                _autoRefreshCancellation = null;
+                _autoRefreshLoop = null;
+                _isAutoRefreshRunning = false;
+                OnPropertyChanged(nameof(IsAutoRefreshRunning));
+                OnPropertyChanged(nameof(AutoRefreshStatusDisplay));
+                if (_autoRefreshViewAttached && IsAutoRefreshEnabled &&
+                    Run is not null && !Run.IsTerminal)
+                    EnsureAutoRefreshLoop();
+            }
+        }
+    }
 
     private async Task RefreshFromInputAsync()
     {
@@ -528,6 +878,78 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
         }
     }
 
+    private async Task CreateAndAuthorizeFieldMoveAsync()
+    {
+        if (Run is null || SelectedNode is null ||
+            !TryGetFieldTargetStation(SelectedNode, out var targetStation) ||
+            !int.TryParse(FieldPermitMinutes, out var permitMinutes))
+        {
+            return;
+        }
+
+        if (!_confirmation.Confirm(
+                "创建并授权现场导航验收单",
+                $"将为流程节点“{SelectedNode.NodeName}”创建 {FieldSourceStationId.Trim()} → {targetStation.Trim()} 验收单，" +
+                "并写入操作者、安全监护人和一次性许可。此操作不会由 WPF 直接派发 AGV；只有现场 worker 明确启用后才会认领节点。是否继续？"))
+        {
+            return;
+        }
+
+        var runId = Run.ExecutionId;
+        IsBusy = true;
+        FieldNavigationAcceptanceResponse? draft = null;
+        try
+        {
+            draft = await _mes.CreateFieldNavigationAcceptanceAsync(
+                new CreateFieldNavigationAcceptanceRequest(
+                    FieldAgvId.Trim(),
+                    FieldSourceStationId.Trim(),
+                    targetStation.Trim(),
+                    string.IsNullOrWhiteSpace(FieldDescription) ? null : FieldDescription.Trim())
+                {
+                    WorkflowRunId = runId,
+                    WorkflowNodeExecutionId = SelectedNode.Id
+                },
+                CancellationToken.None);
+            await _mes.AuthorizeFieldNavigationAcceptanceAsync(
+                draft.Id,
+                new AuthorizeFieldNavigationAcceptanceRequest(
+                    OperatorName.Trim(),
+                    FieldSafetyObserverName.Trim(),
+                    FieldPermitId.Trim(),
+                    DateTimeOffset.UtcNow.AddMinutes(permitMinutes)),
+                CancellationToken.None);
+            await LoadAsync(runId);
+            StatusMessage = "现场导航验收单已创建并授权；WPF 未直接发送 AGV 命令。";
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = draft is null
+                ? $"现场导航验收单创建失败：{exception.Message}"
+                : $"验收单 {draft.Id:D} 已创建但授权失败：{exception.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private static bool TryGetFieldTargetStation(
+        WorkflowRunNodeItemViewModel node,
+        out string targetStation)
+    {
+        targetStation = string.Empty;
+        if ((!node.Snapshot.Inputs.TryGetValue(WorkflowNodeConfigurationKeys.TargetStation, out var value) &&
+             !node.Snapshot.Inputs.TryGetValue("targetStation", out value)) ||
+            string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        targetStation = value.Trim();
+        return true;
+    }
+
     private async Task ExecuteControlAsync(
         string actionName,
         Func<Guid, WorkflowRunControlRequest, CancellationToken, Task<WorkflowRunControlResult>> execute)
@@ -565,7 +987,8 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
         WorkflowVersion version,
         IReadOnlyList<WorkflowNodeExecutionSnapshot> nodeSnapshots,
         IReadOnlyList<WorkflowDeviceOperationSnapshot> operationSnapshots,
-        IReadOnlyList<WorkflowRunTimelineEntry> timelineEntries)
+        IReadOnlyList<WorkflowRunTimelineEntry> timelineEntries,
+        IReadOnlyList<FieldNavigationAcceptanceResponse> fieldAcceptances)
     {
         var previousRun = _run;
         var selectedNodeExecutionId = SelectedNode?.Id;
@@ -601,6 +1024,10 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
         Nodes = nodeRows;
         DeviceOperations = operationRows;
         Timeline = timelineRows;
+        FieldAcceptances = fieldAcceptances
+            .OrderBy(item => item.CreatedAtUtc)
+            .ThenBy(item => item.Id)
+            .ToArray();
         OnPropertyChanged(nameof(Run));
         OnPropertyChanged(nameof(Version));
         NotifyRunSummaryChanged();
@@ -624,12 +1051,16 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
         ApplyRuntimeOverlay(CanvasViewModel!, run, nodeSnapshots);
         SelectedNode = nodeRows.FirstOrDefault(node => node.Id == selectedNodeExecutionId) ??
                        SelectDefaultNode(run, nodeRows);
+        SelectedFieldAcceptance = SelectedNode is null
+            ? null
+            : FieldAcceptances.LastOrDefault(item => item.WorkflowNodeExecutionId == SelectedNode.Id);
         SelectedDeviceOperation = operationRows.FirstOrDefault(operation => operation.OperationId == selectedOperationId) ??
                                   SelectedNode?.DeviceOperations.LastOrDefault();
         SetField(
             ref _selectedTimelineEntry,
             timelineRows.FirstOrDefault(entry => entry.Id == selectedTimelineEntryId) ?? timelineRows.LastOrDefault(),
             nameof(SelectedTimelineEntry));
+        EnsureAutoRefreshLoop();
     }
 
     private static WorkflowRunNodeItemViewModel? SelectDefaultNode(
@@ -695,14 +1126,17 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
 
     private void ClearLoadedRun()
     {
+        CancelAutoRefreshLoop();
         _run = null;
         _version = null;
         Nodes = [];
         DeviceOperations = [];
         Timeline = [];
+        FieldAcceptances = [];
         SelectedNode = null;
         SelectedDeviceOperation = null;
         SelectedTimelineEntry = null;
+        SelectedFieldAcceptance = null;
         CanvasViewModel = null;
         RefreshedAt = null;
         OnPropertyChanged(nameof(Run));
@@ -719,6 +1153,20 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(RunStatusDisplay));
         OnPropertyChanged(nameof(RunStatusBrush));
         OnPropertyChanged(nameof(RunTimeSummary));
+        OnPropertyChanged(nameof(TotalNodeCount));
+        OnPropertyChanged(nameof(CompletedNodeCount));
+        OnPropertyChanged(nameof(FailedNodeCount));
+        OnPropertyChanged(nameof(CancelledNodeCount));
+        OnPropertyChanged(nameof(UnknownNodeCount));
+        OnPropertyChanged(nameof(TerminalNodeCount));
+        OnPropertyChanged(nameof(ProgressPercent));
+        OnPropertyChanged(nameof(ProgressDisplay));
+        OnPropertyChanged(nameof(CurrentNodeDisplay));
+        OnPropertyChanged(nameof(HasFailureEvidence));
+        OnPropertyChanged(nameof(FailureReasonDisplay));
+        OnPropertyChanged(nameof(IsCancelled));
+        OnPropertyChanged(nameof(CancellationStatusDisplay));
+        OnPropertyChanged(nameof(AutoRefreshStatusDisplay));
         OnPropertyChanged(nameof(UnknownWarning));
         OnPropertyChanged(nameof(UnknownResolutionContext));
         RaiseControlStateChanged();
@@ -754,6 +1202,7 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
         _cancelCommand.RaiseCanExecuteChanged();
         _resolveSucceededCommand.RaiseCanExecuteChanged();
         _resolveFailedCommand.RaiseCanExecuteChanged();
+        _createAndAuthorizeFieldMoveCommand.RaiseCanExecuteChanged();
         OnPropertyChanged(nameof(CanPause));
         OnPropertyChanged(nameof(CanResume));
         OnPropertyChanged(nameof(CanCancel));
@@ -763,6 +1212,16 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CancelUnavailableReason));
         OnPropertyChanged(nameof(UnknownResolutionUnavailableReason));
         OnPropertyChanged(nameof(UnknownResolutionContext));
+        OnPropertyChanged(nameof(CanCreateAndAuthorizeFieldMove));
+        OnPropertyChanged(nameof(FieldMoveUnavailableReason));
+    }
+
+    private static void AddReason(List<string> reasons, string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason)) return;
+        var normalized = reason.Trim();
+        if (!reasons.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+            reasons.Add(normalized);
     }
 
     private static void ValidateReadModel(
@@ -802,6 +1261,22 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
         }
     }
 
+    private static void ValidateFieldAcceptances(
+        WorkflowExecutionSnapshot run,
+        IReadOnlyList<WorkflowNodeExecutionSnapshot> nodes,
+        IReadOnlyList<FieldNavigationAcceptanceResponse> acceptances)
+    {
+        var nodeIds = nodes.Select(node => node.Id).ToHashSet();
+        if (acceptances.Any(acceptance =>
+                acceptance.WorkflowRunId != run.ExecutionId ||
+                acceptance.WorkflowNodeExecutionId is not { } nodeId ||
+                !nodeIds.Contains(nodeId)))
+        {
+            throw new InvalidOperationException(
+                "MES returned a field-navigation acceptance that is not linked to this workflow run.");
+        }
+    }
+
     private static string ToCanvasRuntimeState(WorkflowNodeExecutionStatus status) => status switch
     {
         WorkflowNodeExecutionStatus.Succeeded or WorkflowNodeExecutionStatus.Skipped => "Completed",
@@ -834,6 +1309,14 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged
         WorkflowRuntimeStatus.Failed or WorkflowRuntimeStatus.Rejected or WorkflowRuntimeStatus.Cancelled => "#B42318",
         _ => "#667085"
     };
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _autoRefreshViewAttached = false;
+        CancelAutoRefreshLoop();
+    }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {
@@ -961,6 +1444,11 @@ public sealed class WorkflowRunDeviceOperationItemViewModel
     public string LastError => Snapshot.LastError ?? string.Empty;
     public string RequestSummary => WorkflowRunFieldItemViewModel.Summarize(RequestFields);
     public string ResultSummary => WorkflowRunFieldItemViewModel.Summarize(ResultFields);
+    public string ResultOrErrorSummary => string.IsNullOrWhiteSpace(LastError)
+        ? ResultSummary
+        : ResultSummary == "-"
+            ? $"错误={LastError}"
+            : $"{ResultSummary}；错误={LastError}";
 }
 
 public sealed class WorkflowRunTimelineItemViewModel

@@ -18,6 +18,9 @@ public sealed class FieldNavigationAcceptance
     public DateTimeOffset? ExpiresAtUtc { get; set; }
     public DateTimeOffset? PermitConsumedAtUtc { get; set; }
     public string? DeviceTaskId { get; set; }
+    public Guid? WorkflowRunId { get; init; }
+    public Guid? WorkflowNodeExecutionId { get; init; }
+    public Guid? WorkflowDeviceOperationId { get; set; }
     public string? LastError { get; set; }
     public DateTimeOffset CreatedAtUtc { get; init; } = DateTimeOffset.UtcNow;
     public DateTimeOffset UpdatedAtUtc { get; set; } = DateTimeOffset.UtcNow;

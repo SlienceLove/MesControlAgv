@@ -45,7 +45,24 @@
                                            TargetOffsetMode="None"
                                            Stroke="{Binding Stroke}"
                                            StrokeThickness="2.2"
-                                           ArrowSize="9,7" />
+                                           IsSelectable="True"
+                                           OutlineThickness="5"
+                                           Cursor="Hand"
+                                           ArrowSize="9,7">
+                            <nodify:Connection.Style>
+                                <Style TargetType="nodify:Connection">
+                                    <Setter Property="OutlineBrush" Value="Transparent" />
+                                    <Style.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter Property="OutlineBrush" Value="#40155EEF" />
+                                        </Trigger>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter Property="OutlineBrush" Value="#CCF79009" />
+                                        </Trigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </nodify:Connection.Style>
+                        </nodify:Connection>
                         <Border Canvas.Left="{Binding MidPoint.X}"
                                 Canvas.Top="{Binding MidPoint.Y}"
                                 IsHitTestVisible="False"

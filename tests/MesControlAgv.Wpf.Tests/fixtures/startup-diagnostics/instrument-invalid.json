@@ -1,0 +1,11 @@
+{
+  "IonChromatography": {
+    "Enabled": true,
+    "InstrumentId": "",
+    "ComPort": "",
+    "BaudRate": 0,
+    "DataBits": 9,
+    "TimeoutMs": 0,
+    "SlaveAddress": 0
+  }
+}

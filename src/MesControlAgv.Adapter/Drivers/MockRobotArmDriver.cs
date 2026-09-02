@@ -12,7 +12,8 @@ public sealed class MockRobotArmDriver : IRobotArmDriver
     public const string DriverKind = "mock-robot-arm";
 
     private readonly RobotArmDriverOptions _options;
-    private readonly Random _random = new();
+    private readonly Random _random;
+    private readonly int _pickFailurePercent;
     private RobotArmPose _currentPose;
     private bool _isHoldingObject;
     private string _state = "Idle";
@@ -21,6 +22,8 @@ public sealed class MockRobotArmDriver : IRobotArmDriver
     public MockRobotArmDriver(RobotArmDriverOptions? options = null)
     {
         _options = options ?? new RobotArmDriverOptions();
+        _pickFailurePercent = ReadPercent(_options.Settings, "PickFailurePercent", 5);
+        _random = ReadSeed(_options.Settings) is { } seed ? new Random(seed) : new Random();
         _currentPose = new RobotArmPose(0, 0, 300, 0, 0, 0); // Home position
         _isHoldingObject = false;
     }
@@ -96,8 +99,8 @@ public sealed class MockRobotArmDriver : IRobotArmDriver
             // Simulate gripper closing
             await Task.Delay(500, cancellationToken);
 
-            // Simulate occasional pick failure (5% chance)
-            if (_random.Next(100) < 5)
+            // Simulate an optional pick failure. Tests can set PickFailurePercent=0.
+            if (_random.Next(100) < _pickFailurePercent)
             {
                 lock (_lock)
                 {
@@ -134,6 +137,16 @@ public sealed class MockRobotArmDriver : IRobotArmDriver
             throw;
         }
     }
+
+    private static int ReadPercent(IReadOnlyDictionary<string, string>? settings, string key, int fallback) =>
+        settings is not null && settings.TryGetValue(key, out var value) && int.TryParse(value, out var parsed)
+            ? Math.Clamp(parsed, 0, 100)
+            : fallback;
+
+    private static int? ReadSeed(IReadOnlyDictionary<string, string>? settings) =>
+        settings is not null && settings.TryGetValue("RandomSeed", out var value) && int.TryParse(value, out var seed)
+            ? seed
+            : null;
 
     public async Task<RobotArmOperationResponse> PlaceAsync(
         RobotArmPlaceCommand command,

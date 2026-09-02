@@ -14,7 +14,9 @@ public enum WorkflowNodeType
     Dropoff,
     End,
     Custom,
-    InstrumentOperation
+    InstrumentOperation,
+    /// <summary>Load and run one explicitly approved robot-arm program.</summary>
+    RobotProgram
 }
 
 /// <summary>Well-known runtime parameter names shared by workflow clients and workers.</summary>

@@ -6,6 +6,7 @@ using MesControlAgv.Wpf.Services;
 using MesControlAgv.Wpf.ViewModels;
 using MesControlAgv.Wpf.WorkflowCanvas;
 using MesControlAgv.Wpf.Workflows;
+using MesControlAgv.Wpf.Views;
 
 namespace MesControlAgv.Wpf.Tests;
 
@@ -51,10 +52,14 @@ public sealed class WorkflowMainWindowBindingTests
                 window.Arrange(new Rect(0, 0, 1420, 860));
                 window.UpdateLayout();
 
-                var surface = Assert.IsType<NodifyCanvasAdapter>(window.FindName("WorkflowCanvasSurface"));
+                var workflowView = Assert.IsType<WorkflowManagementView>(window.FindName("WorkflowManagementView"));
+                var surface = Assert.IsType<NodifyCanvasAdapter>(workflowView.FindName("WorkflowCanvasSurface"));
+                var simulatorExecute = Assert.IsType<Button>(workflowView.FindName("WorkflowSimulatorExecuteButton"));
                 surface.Attach(Assert.IsType<WorkflowCanvasSpikeViewModel>(editor.CanvasViewModel));
                 PumpDispatcher(window.Dispatcher);
-                var validationGrid = Assert.IsType<DataGrid>(window.FindName("WorkflowValidationGrid"));
+                Assert.Same(editor.ExecuteSimulatorCommand, simulatorExecute.Command);
+                Assert.False(simulatorExecute.IsEnabled);
+                var validationGrid = Assert.IsType<DataGrid>(workflowView.FindName("WorkflowValidationGrid"));
                 validationGrid.SelectedItem = Assert.Single(
                     validationGrid.Items.OfType<WorkflowValidationIssueItemViewModel>());
                 PumpDispatcher(window.Dispatcher);

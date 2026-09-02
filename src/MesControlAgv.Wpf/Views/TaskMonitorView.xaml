@@ -1,0 +1,309 @@
+<UserControl x:Class="MesControlAgv.Wpf.Views.TaskMonitorView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:converters="clr-namespace:MesControlAgv.Wpf.Converters"
+             xmlns:local="clr-namespace:MesControlAgv.Wpf"
+             HorizontalContentAlignment="Stretch"
+             VerticalContentAlignment="Stretch">
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="/MesControlAgv.Wpf;component/Themes/MesTheme.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <converters:StatusBrushConverter x:Key="StatusBrushConverter" />
+            <converters:CountToVisibilityConverter x:Key="CountToVisibilityConverter" />
+            <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        </ResourceDictionary>
+    </UserControl.Resources>
+<Grid Margin="0">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="220" />
+                <ColumnDefinition Width="220" />
+                <ColumnDefinition Width="240" />
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock FontSize="26" FontWeight="SemiBold" Text="生产运营总览" />
+                <TextBlock Margin="0,6,0,0" Foreground="#667085" Text="运输任务、设备状态与实验流程统一协同" />
+            </StackPanel>
+            <Border Grid.Column="1" Margin="12,0,0,0" Padding="14" Background="#EEF5FF" BorderBrush="#CFE0FF" BorderThickness="1" CornerRadius="8">
+                <StackPanel>
+                    <TextBlock Foreground="Gray" Text="MES 连接" />
+                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding ConnectionStatus}" />
+                    <TextBlock Margin="0,4,0,0" Foreground="Gray" FontSize="11" TextWrapping="Wrap" Text="{Binding RefreshStatus}" />
+                    <TextBlock Margin="0,4,0,0" FontSize="11"
+                               Foreground="{Binding OfflineState.StateText, Converter={StaticResource StatusBrushConverter}}"
+                               Text="{Binding OfflineState.StateText, StringFormat=数据状态：{0}}" />
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="2" Margin="12,0,0,0" Padding="14" Background="#ECFDF3" BorderBrush="#C4EBD6" BorderThickness="1" CornerRadius="8">
+                <StackPanel>
+                    <TextBlock Foreground="Gray" Text="运行模式" />
+                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding RuntimeMode}" />
+                    <TextBlock Foreground="Gray" FontSize="11" Text="{Binding RuntimeModeDescription}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="3" Margin="12,0,0,0" Padding="14" Background="#FFF6ED" BorderBrush="#FEDFBE" BorderThickness="1" CornerRadius="8">
+                <StackPanel>
+                    <TextBlock Foreground="Gray" Text="AGV 状态 / 当前位置" />
+                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding AgvStatus}" />
+                    <TextBlock Text="{Binding AgvStation}" />
+                    <TextBlock Margin="0,4,0,0" Foreground="Gray" FontSize="11" TextWrapping="Wrap" Text="{Binding AgvExecutionStatus}" />
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="1" Margin="0,0,0,16" Padding="16" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="1.25*" />
+                    <ColumnDefinition Width="1.25*" />
+                    <ColumnDefinition Width="90" />
+                    <ColumnDefinition Width="1.2*" />
+                    <ColumnDefinition Width="1.1*" />
+                    <ColumnDefinition Width="130" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.ColumnSpan="6" FontSize="18" FontWeight="SemiBold" Text="新建运输任务" />
+
+                <StackPanel Grid.Row="1" Margin="0,10,10,0">
+                    <TextBlock Margin="0,0,0,4" Foreground="Gray" Text="起点站" />
+                    <ComboBox MinHeight="30" MinWidth="220" MaxDropDownHeight="360"
+                              IsEnabled="{Binding HasAvailableStations}"
+                              ToolTip="{Binding StationCatalogHint}"
+                              ItemsSource="{Binding AvailableStations}"
+                              SelectedItem="{Binding NewTaskSourceStation}"
+                              TextSearch.TextPath="Name">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
+                                    <TextBlock Margin="8,0,0,0" Foreground="#667085" Text="{Binding AgvStationId, StringFormat=ID: {0}}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <TextBlock Margin="0,5,0,0" FontSize="11" Foreground="#98A2B3" Text="{Binding StationCatalogHint}" />
+                </StackPanel>
+
+                <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,10,10,0">
+                    <TextBlock Margin="0,0,0,4" Foreground="Gray" Text="终点站" />
+                    <ComboBox MinHeight="30" MinWidth="220" MaxDropDownHeight="360"
+                              IsEnabled="{Binding HasAvailableStations}"
+                              ToolTip="{Binding StationCatalogHint}"
+                              ItemsSource="{Binding AvailableStations}"
+                              SelectedItem="{Binding NewTaskTargetStation}"
+                              TextSearch.TextPath="Name">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock FontWeight="SemiBold" Text="{Binding Name}" />
+                                    <TextBlock Margin="8,0,0,0" Foreground="#667085" Text="{Binding AgvStationId, StringFormat=ID: {0}}" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                    <TextBlock Margin="0,5,0,0" FontSize="11" Foreground="#98A2B3" Text="{Binding StationCatalogHint}" />
+                </StackPanel>
+
+                <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,10,10,0">
+                    <TextBlock Margin="0,0,0,4" Foreground="Gray" Text="优先级" />
+                    <TextBox MinHeight="30" Text="{Binding NewTaskPriority, UpdateSourceTrigger=LostFocus}" />
+                </StackPanel>
+
+                <StackPanel Grid.Row="1" Grid.Column="3" Margin="0,10,10,0">
+                    <TextBlock Margin="0,0,0,4" Foreground="Gray" Text="外部单号" />
+                    <TextBox MinHeight="30" Text="{Binding NewTaskExternalId, UpdateSourceTrigger=PropertyChanged}" />
+                </StackPanel>
+
+                <StackPanel Grid.Row="1" Grid.Column="4" Margin="0,10,10,0">
+                    <TextBlock Margin="0,0,0,4" Foreground="Gray" Text="操作员" />
+                    <TextBox MinHeight="30" Text="{Binding OperatorName, UpdateSourceTrigger=PropertyChanged}" />
+                </StackPanel>
+
+                <StackPanel Grid.Row="1" Grid.RowSpan="2" Grid.Column="5" Margin="0,10,0,0">
+                    <Button MinHeight="32" Command="{Binding PlanRouteCommand}" Content="预览路线" />
+                    <Button Margin="0,8,0,0" MinHeight="38" Style="{StaticResource PrimaryButtonStyle}" Command="{Binding CreateTaskCommand}" Content="创建任务" />
+                </StackPanel>
+
+                <StackPanel Grid.Row="2" Grid.ColumnSpan="3" Margin="0,10,10,0">
+                    <TextBlock Margin="0,0,0,4" Foreground="Gray" Text="任务描述" />
+                    <TextBox MinHeight="30" Text="{Binding NewTaskDescription, UpdateSourceTrigger=PropertyChanged}" />
+                </StackPanel>
+
+                <StackPanel Grid.Row="2" Grid.Column="3" Grid.ColumnSpan="2" Margin="0,10,10,0">
+                    <TextBlock Margin="0,0,0,4" Foreground="Gray" Text="路线预览" />
+                    <TextBlock MinHeight="30" VerticalAlignment="Center" Text="{Binding RoutePreview}" TextTrimming="CharacterEllipsis" ToolTip="{Binding RoutePreview}" />
+                    <TextBlock Margin="0,4,0,0" Foreground="Gray" FontSize="11" Text="{Binding TaskFormStatus}" TextWrapping="Wrap" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="2" MinHeight="0" ClipToBounds="True">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <StackPanel Grid.Row="0" Margin="0,0,0,10" Orientation="Horizontal">
+                <TextBlock Margin="0,0,8,0" VerticalAlignment="Center" Foreground="Gray" Text="日期：" />
+                <DatePicker Width="140" SelectedDate="{Binding TaskFilterDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                <Button Margin="8,0,0,0" Padding="12,4" Command="{Binding QueryTasksCommand}" Content="查询" />
+                <Button Margin="8,0,0,0" Padding="12,4" Command="{Binding RefreshTasksCommand}" Content="刷新" />
+                <Button Margin="8,0,0,0" Padding="12,4" Click="ResetTaskGridLayout_Click" Content="恢复列布局" ToolTip="恢复任务表默认列宽和顺序" />
+            </StackPanel>
+            <Grid Grid.Row="1" MinHeight="0" ClipToBounds="True">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="310" />
+            </Grid.ColumnDefinitions>
+            <Grid Grid.Column="0">
+                <DataGrid x:Name="TaskGrid"
+                          local:DataGridLayoutPersistence.LayoutKey="TaskMonitor"
+                          local:DataGridLayoutPersistence.PersistLayout="True"
+                          ItemsSource="{Binding Tasks}"
+                          SelectedItem="{Binding SelectedTask}"
+                          AutoGenerateColumns="False"
+                          CanUserAddRows="False"
+                          IsReadOnly="True"
+                          SelectionMode="Single">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Width="240" Header="任务 ID" Binding="{Binding Id}" />
+                        <DataGridTextColumn Width="2*" Header="任务内容" Binding="{Binding TaskDescription}" />
+                        <DataGridTextColumn Width="150" Header="起点站" Binding="{Binding SourceStationName}" />
+                        <DataGridTextColumn Width="170" Header="终点站" Binding="{Binding TargetStationName}" />
+                        <DataGridTemplateColumn Width="140" Header="状态">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Border Padding="8,3" HorizontalAlignment="Left" Background="{Binding StatusDescription, Converter={StaticResource StatusBrushConverter}}" CornerRadius="10">
+                                        <TextBlock Foreground="White" FontSize="12" Text="{Binding StatusDescription}" />
+                                    </Border>
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTextColumn Width="145" Header="创建时间" Binding="{Binding CreatedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" />
+                        <DataGridTextColumn Width="145" Header="结束时间" Binding="{Binding EndedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" />
+                        <DataGridTextColumn Width="70" Header="重试" Binding="{Binding RetryCount}" />
+                        <DataGridTextColumn Width="*" Header="错误" Binding="{Binding ErrorDescription}" />
+                    </DataGrid.Columns>
+                </DataGrid>
+                <Border Margin="1" Background="#FBFCFE" BorderBrush="#E2E8F0" BorderThickness="1"
+                        Visibility="{Binding Tasks.Count, Converter={StaticResource CountToVisibilityConverter}, ConverterParameter=Invert}">
+                    <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="340">
+                        <TextBlock Style="{StaticResource EmptyStateTitleStyle}" Text="暂无任务记录" />
+                        <TextBlock Style="{StaticResource EmptyStateDescriptionStyle}" Text="连接 MES 后，任务列表会在这里显示；当前可先创建或刷新任务。" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+            <Grid Grid.Column="1" Margin="16,0,0,0" MinHeight="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <Border Grid.Row="0" Padding="16" Background="#F6F8FA" CornerRadius="6">
+                    <StackPanel>
+                        <TextBlock FontSize="18" FontWeight="SemiBold" Text="所选任务操作" />
+                        <Button Margin="0,16,0,0" MinHeight="36" Style="{StaticResource PrimaryButtonStyle}" Command="{Binding DispatchTaskCommand}" Content="派发任务" />
+                        <Button Margin="0,16,0,0" MinHeight="32" Command="{Binding ArriveCommand}" Content="仿真到站并通知 MES" Visibility="{Binding IsManualArrivalAvailable, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                        <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding ConfirmPickupCommand}" Content="确认取货" />
+                        <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding ConfirmDropoffCommand}" Content="确认放货" />
+                        <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding RetryCommand}" Content="失败后重试" />
+                        <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding RecoverCommand}" Content="恢复查询" />
+                        <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding CancelCommand}" Content="取消任务" />
+                        <Separator Margin="0,16,0,12" />
+                        <TextBlock FontWeight="SemiBold" Text="操作结果" />
+                        <TextBlock Margin="0,4,0,0" Foreground="#1769AA" TextWrapping="Wrap" Text="{Binding CurrentAction}" />
+                        <TextBlock Margin="0,4,0,0" Foreground="#176B3A" TextWrapping="Wrap" Text="{Binding ActionStatus}" />
+                        <TextBlock Margin="0,6,0,0" Foreground="#8A6D1D" TextWrapping="Wrap" Text="{Binding OperatorValidationMessage}" />
+                        <TextBlock Margin="0,4,0,0" Foreground="#B42318" TextWrapping="Wrap" Text="{Binding Message}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Row="1" Margin="0,12,0,0" Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <TextBlock FontSize="16" FontWeight="SemiBold" Text="任务详情" />
+                        <StackPanel Grid.Row="1" Margin="0,8,0,8">
+                            <TextBlock FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding SelectedTask.TaskDescription}" />
+                            <TextBlock Margin="0,6,0,0" Foreground="Gray" Text="{Binding SelectedTask.RouteDescription}" />
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Foreground="Gray" Text="任务 ID" />
+                                <TextBlock Text="{Binding SelectedTask.Id}" TextTrimming="CharacterEllipsis" />
+                            </StackPanel>
+                            <StackPanel Margin="0,4,0,0" Orientation="Horizontal">
+                                <TextBlock Foreground="Gray" Text="状态：" />
+                                <TextBlock Text="{Binding SelectedTask.StatusDescription}" />
+                            </StackPanel>
+                            <Grid Margin="0,4,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="72" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <TextBlock Foreground="Gray" Text="执行 AGV：" />
+                                <TextBlock Grid.Column="1" Text="{Binding SelectedTask.AssignedAgvDescription}" TextTrimming="CharacterEllipsis" />
+                            </Grid>
+                            <Grid Margin="0,4,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="72" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <TextBlock Foreground="Gray" Text="设备任务：" />
+                                <TextBlock Grid.Column="1" Text="{Binding SelectedTask.DeviceTaskDescription}" TextTrimming="CharacterEllipsis" ToolTip="{Binding SelectedTask.DeviceTaskDescription}" />
+                            </Grid>
+                            <Grid Margin="0,4,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="72" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <TextBlock Foreground="Gray" Text="当前路径：" />
+                                <TextBlock Grid.Column="1" Text="{Binding SelectedTask.CurrentPathDescription}" TextWrapping="Wrap" />
+                            </Grid>
+                            <TextBlock Margin="0,4,0,0" Foreground="#B42318" TextWrapping="Wrap" Text="{Binding SelectedTask.ErrorDescription}" />
+                        </StackPanel>
+                        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl ItemsSource="{Binding TaskEvents}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Margin="0,0,0,8" Padding="8" Background="#F6F8FA" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="4">
+                                            <StackPanel>
+                                                <TextBlock FontWeight="SemiBold" Text="{Binding EventType}" />
+                                                <TextBlock Margin="0,2,0,0" Foreground="Gray" Text="{Binding CreatedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" />
+                                                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding Payload}" />
+                                            </StackPanel>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </Grid>
+                </Border>
+
+                <Border Grid.Row="2" Margin="0,12,0,0" Padding="12" Background="#FFF8E1" CornerRadius="6" Visibility="{Binding IsSimulatorPanelVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <StackPanel>
+                        <TextBlock FontWeight="SemiBold" Text="开发模拟器" />
+                        <WrapPanel Margin="0,8,0,0">
+                            <Button Margin="0,0,6,6" MinWidth="110" Command="{Binding SimulatorArriveCommand}" Content="底层到站" />
+                             <Button Margin="0,0,6,6" MinWidth="90" Command="{Binding SimulatorFailCommand}" Content="下一次失败" />
+                             <Button Margin="0,0,6,6" MinWidth="90" Command="{Binding SimulatorTimeoutCommand}" Content="下一次超时" />
+                            <Button Margin="0,0,6,6" MinWidth="72" Command="{Binding SimulatorOfflineCommand}" Content="离线" />
+                            <Button Margin="0,0,6,6" MinWidth="72" Command="{Binding SimulatorRecoverCommand}" Content="上线" />
+                        </WrapPanel>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Grid>
+        </Grid>
+        <TextBlock Grid.Row="3" Margin="0,16,0,0" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False" Foreground="Gray" Text="界面每 2 秒从 MES 刷新；取货与放货需要人工确认后才会推进。" />
+
+
+        </Grid>
+</UserControl>

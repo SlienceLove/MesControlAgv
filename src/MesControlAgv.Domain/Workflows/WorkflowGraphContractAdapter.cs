@@ -106,6 +106,13 @@ public static class WorkflowGraphContractAdapter
             [
                 InputPort("in", WorkflowPortCardinality.Many)
             ],
+            WorkflowNodeType.Move or WorkflowNodeType.RobotProgram or WorkflowNodeType.InstrumentOperation =>
+            [
+                InputPort("in", WorkflowPortCardinality.Single),
+                OutputPort("success", WorkflowEdgeKind.Success),
+                OutputPort("failure", WorkflowEdgeKind.Failure),
+                OutputPort("timeout", WorkflowEdgeKind.Timeout)
+            ],
             _ =>
             [
                 InputPort("in", WorkflowPortCardinality.Single),

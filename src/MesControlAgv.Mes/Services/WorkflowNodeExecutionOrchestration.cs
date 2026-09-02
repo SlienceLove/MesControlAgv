@@ -47,6 +47,78 @@ public sealed partial class WorkflowApplicationService
             .ToArray();
     }
 
+    public async Task<IReadOnlyList<WorkflowNodeExecutionWorkItem>> ListAuboProgramDispatchableNodesAsync(
+        CancellationToken cancellationToken)
+    {
+        await EnsureLegacySimulatorRuntimeRecordsAsync(cancellationToken);
+        var records = await (
+                from node in _database.WorkflowNodeExecutions.AsNoTracking()
+                join run in _database.WorkflowExecutions.AsNoTracking()
+                    on node.WorkflowRunId equals run.ExecutionId
+                where (run.RuntimeStatus == WorkflowRuntimeStatus.Prepared.ToString() ||
+                       run.RuntimeStatus == WorkflowRuntimeStatus.Running.ToString()) &&
+                      node.Status == WorkflowNodeExecutionStatus.Ready.ToString() &&
+                      node.NodeTypeId == WorkflowGraphNodeTypeIds.RobotExecuteProgram
+                select node)
+            .OrderBy(item => item.CreatedAtUtc)
+            .ThenBy(item => item.Id)
+            .ToListAsync(cancellationToken);
+        return (await CreateWorkItemsAsync(records, cancellationToken))
+            .Where(IsAuboProgramWorkItem)
+            .ToArray();
+    }
+
+    public async Task<IReadOnlyList<WorkflowNodeExecutionWorkItem>> ListFieldNavigationDispatchableNodesAsync(
+        CancellationToken cancellationToken)
+    {
+        await EnsureLegacySimulatorRuntimeRecordsAsync(cancellationToken);
+        var records = await (
+                from node in _database.WorkflowNodeExecutions.AsNoTracking()
+                join run in _database.WorkflowExecutions.AsNoTracking()
+                    on node.WorkflowRunId equals run.ExecutionId
+                where (run.RuntimeStatus == WorkflowRuntimeStatus.Prepared.ToString() ||
+                       run.RuntimeStatus == WorkflowRuntimeStatus.Running.ToString()) &&
+                      node.Status == WorkflowNodeExecutionStatus.Ready.ToString() &&
+                      node.NodeTypeId == WorkflowGraphNodeTypeIds.Move
+                select node)
+            .OrderBy(item => item.CreatedAtUtc)
+            .ThenBy(item => item.Id)
+            .ToListAsync(cancellationToken);
+        return (await CreateWorkItemsAsync(records, cancellationToken))
+            .Where(IsSimulatorWorkItem)
+            .ToArray();
+    }
+
+    public async Task<IReadOnlyList<WorkflowNodeExecutionWorkItem>> ListFieldNavigationRecoverableNodesAsync(
+        CancellationToken cancellationToken)
+    {
+        var records = await _database.WorkflowNodeExecutions
+            .AsNoTracking()
+            .Where(item => item.Status == WorkflowNodeExecutionStatus.Running.ToString() &&
+                           item.NodeTypeId == WorkflowGraphNodeTypeIds.Move)
+            .OrderBy(item => item.StartedAtUtc)
+            .ThenBy(item => item.Id)
+            .ToListAsync(cancellationToken);
+        return (await CreateWorkItemsAsync(records, cancellationToken))
+            .Where(IsSimulatorWorkItem)
+            .ToArray();
+    }
+
+    public async Task<IReadOnlyList<WorkflowNodeExecutionWorkItem>> ListAuboProgramRecoverableNodesAsync(
+        CancellationToken cancellationToken)
+    {
+        var records = await _database.WorkflowNodeExecutions
+            .AsNoTracking()
+            .Where(item => item.Status == WorkflowNodeExecutionStatus.Running.ToString() &&
+                           item.NodeTypeId == WorkflowGraphNodeTypeIds.RobotExecuteProgram)
+            .OrderBy(item => item.StartedAtUtc)
+            .ThenBy(item => item.Id)
+            .ToListAsync(cancellationToken);
+        return (await CreateWorkItemsAsync(records, cancellationToken))
+            .Where(IsAuboProgramWorkItem)
+            .ToArray();
+    }
+
     public async Task<WorkflowNodeExecutionWorkItem> ClaimNodeExecutionAsync(
         Guid nodeExecutionId,
         CancellationToken cancellationToken)
@@ -64,9 +136,9 @@ public sealed partial class WorkflowApplicationService
         }
 
         var nodeSnapshot = ToNodeExecutionSnapshot(node);
-        if (!IsSimulatorWorkItem(new WorkflowNodeExecutionWorkItem { NodeExecution = nodeSnapshot }))
+        if (!IsDeviceWorkItem(new WorkflowNodeExecutionWorkItem { NodeExecution = nodeSnapshot }))
         {
-            throw new InvalidOperationException("The node execution is not a supported Simulator Move or Timed Wait.");
+            throw new InvalidOperationException("The node execution is not a supported device operation.");
         }
 
         var run = await FindExecutionAsync(node.WorkflowRunId, cancellationToken);
@@ -113,7 +185,8 @@ public sealed partial class WorkflowApplicationService
         var run = await FindExecutionAsync(node.WorkflowRunId, cancellationToken);
         var step = CreateStepRequest(run, node);
         Guid compatibilityOperationId;
-        if (IsNodeType(node.NodeTypeId, WorkflowGraphNodeTypeIds.Move))
+        if (IsNodeType(node.NodeTypeId, WorkflowGraphNodeTypeIds.Move) ||
+            IsNodeType(node.NodeTypeId, WorkflowGraphNodeTypeIds.RobotExecuteProgram))
         {
             if (completion.DeviceOperationId is not { } operationId ||
                 operationId == Guid.Empty)
@@ -142,7 +215,7 @@ public sealed partial class WorkflowApplicationService
         }
         else
         {
-            throw new InvalidOperationException("The node execution is not supported by the Simulator worker.");
+            throw new InvalidOperationException("The node execution is not supported by a device worker.");
         }
 
         var preservePause = string.Equals(
@@ -358,7 +431,9 @@ public sealed partial class WorkflowApplicationService
             NodeId = node.NodeId,
             NodeType = IsNodeType(node.NodeTypeId, WorkflowGraphNodeTypeIds.Move)
                 ? WorkflowNodeType.Move
-                : WorkflowNodeType.Wait,
+                : IsNodeType(node.NodeTypeId, WorkflowGraphNodeTypeIds.RobotExecuteProgram)
+                    ? WorkflowNodeType.RobotProgram
+                    : WorkflowNodeType.Wait,
             NodeTypeId = node.NodeTypeId,
             NodeName = node.NodeName,
             TargetStation = targetStation,
@@ -381,6 +456,19 @@ public sealed partial class WorkflowApplicationService
             : IsTimedWait(node.NodeTypeId) && node.Inputs.Keys.Any(key =>
                 StringComparer.OrdinalIgnoreCase.Equals(key, WorkflowRuntimeParameterNames.WaitDurationSeconds));
     }
+
+    private static bool IsAuboProgramWorkItem(WorkflowNodeExecutionWorkItem workItem)
+    {
+        var node = workItem.NodeExecution;
+        // Include malformed/missing-program nodes so the worker can claim them
+        // and record a durable Failed outcome instead of leaving a workflow
+        // permanently stuck in Ready. Publication validation still rejects the
+        // missing required field before normal execution.
+        return IsNodeType(node.NodeTypeId, WorkflowGraphNodeTypeIds.RobotExecuteProgram);
+    }
+
+    private static bool IsDeviceWorkItem(WorkflowNodeExecutionWorkItem workItem) =>
+        IsSimulatorWorkItem(workItem) || IsAuboProgramWorkItem(workItem);
 
     private static bool IsTimedWait(string nodeTypeId) =>
         IsNodeType(nodeTypeId, WorkflowGraphNodeTypeIds.TimedWait) ||

@@ -1,0 +1,66 @@
+<UserControl x:Class="MesControlAgv.Wpf.Views.BatchTaskImportView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:converters="clr-namespace:MesControlAgv.Wpf.Converters"
+             xmlns:local="clr-namespace:MesControlAgv.Wpf"
+             HorizontalContentAlignment="Stretch"
+             VerticalContentAlignment="Stretch">
+    <UserControl.Resources>
+        <converters:StatusBrushConverter x:Key="StatusBrushConverter" />
+    </UserControl.Resources>
+    <Grid Margin="0,12,0,0">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="150" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Grid Margin="0,0,0,12">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <TextBlock FontSize="22" FontWeight="SemiBold" Text="批量任务导入" />
+            <TextBlock Grid.Row="1" Margin="0,4,0,0" Foreground="Gray" TextWrapping="Wrap"
+                       Text="支持 CSV / XLSX；导入后按优先级、计划时间自动排序，可直接编辑优先级；站点支持数字编码、AGV 站点 ID 或名称" />
+            <WrapPanel Grid.Row="0" Grid.RowSpan="2" HorizontalAlignment="Right" VerticalAlignment="Top">
+                <Button Margin="6,0,0,0" Padding="14,7" Click="ImportBatch_Click" Content="选择文件" />
+                <Button x:Name="SortButton" Margin="6,0,0,0" Padding="14,7" Command="{Binding SortBatchCommand}" Content="按优先级排序" />
+                <Button x:Name="SubmitButton" Margin="6,0,0,0" Padding="14,7" Background="#1769AA" Foreground="White" Command="{Binding SubmitBatchCommand}" Content="批量提交" />
+                <Button x:Name="ClearButton" Margin="6,0,0,0" Padding="14,7" Command="{Binding ClearBatchCommand}" Content="清空" />
+            </WrapPanel>
+        </Grid>
+
+        <DataGrid x:Name="BatchTaskGrid" Grid.Row="1" ItemsSource="{Binding BatchTasks}" AutoGenerateColumns="False"
+                  CanUserAddRows="False" IsReadOnly="False" SelectionMode="Single" Margin="0,0,0,12"
+                  local:DataGridLayoutPersistence.LayoutKey="BatchTaskImport"
+                  local:DataGridLayoutPersistence.PersistLayout="True">
+            <DataGrid.Columns>
+                <DataGridTextColumn Width="70" Header="行号" Binding="{Binding SourceRowNumber}" IsReadOnly="True" />
+                <DataGridTextColumn Width="180" Header="任务 ID" Binding="{Binding TaskId}" IsReadOnly="True" />
+                <DataGridTextColumn Width="90" Header="起点" Binding="{Binding SourceStation}" IsReadOnly="True" />
+                <DataGridTextColumn Width="90" Header="终点" Binding="{Binding TargetStation}" IsReadOnly="True" />
+                <DataGridTextColumn Width="90" Header="优先级（可编辑）" Binding="{Binding Priority, UpdateSourceTrigger=PropertyChanged}" />
+                <DataGridTextColumn Width="180" Header="计划时间" Binding="{Binding PlannedTime}" IsReadOnly="True" />
+                <DataGridTextColumn Width="2*" Header="描述" Binding="{Binding Description}" IsReadOnly="True" />
+                <DataGridTextColumn Width="140" Header="状态" Binding="{Binding Status}" IsReadOnly="True" />
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <Border Grid.Row="2" Padding="10" Background="#FFF8E1" BorderBrush="#E8C35A" BorderThickness="1" CornerRadius="4">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <ItemsControl ItemsSource="{Binding BatchImportIssues}" />
+            </ScrollViewer>
+        </Border>
+        <DockPanel Grid.Row="3" Margin="0,10,0,0">
+            <Button DockPanel.Dock="Right" Padding="10,4" Click="ResetBatchGridLayout_Click" Content="恢复列布局" ToolTip="恢复批量任务表默认列宽和顺序" />
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <TextBlock Foreground="Gray" Text="{Binding BatchStatus}" />
+                <TextBlock Margin="12,0,0,0" FontSize="11"
+                           Foreground="{Binding BatchImport.OfflineState.StateText, Converter={StaticResource StatusBrushConverter}}"
+                           Text="{Binding BatchImport.OfflineState.StateText, StringFormat=数据状态：{0}}" />
+            </StackPanel>
+        </DockPanel>
+    </Grid>
+</UserControl>

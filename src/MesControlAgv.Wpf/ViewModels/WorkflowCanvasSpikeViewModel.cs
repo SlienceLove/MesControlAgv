@@ -193,8 +193,8 @@ public sealed class WorkflowCanvasSpikeViewModel : INotifyPropertyChanged
     public ICommand CommitNodeLocationsCommand { get; }
 
     /// <summary>
-    /// Receives a Tuple supplied by Nodify's ConnectionCompletedCommand. The
-    /// view-model intentionally accepts object rather than a Nodify type.
+    /// Receives Nodify's tuple-shaped connection payload. Nodify 7.3 uses a
+    /// ValueTuple even though its XML documentation describes Tuple.
     /// </summary>
     public ICommand CompleteConnectionCommand { get; }
 
@@ -229,6 +229,8 @@ public sealed class WorkflowCanvasSpikeViewModel : INotifyPropertyChanged
         set
         {
             if (!SetField(ref _selectedConnection, value)) return;
+            if (value is not null)
+                LastConnectionMessage = $"已选择“{value.Label}”连接；按 Delete 可删除。";
             RaiseCommandStates();
         }
     }
@@ -409,6 +411,7 @@ public sealed class WorkflowCanvasSpikeViewModel : INotifyPropertyChanged
             if (_editor.TryRemoveEdge(edgeId))
             {
                 SelectedConnection = null;
+                LastConnectionMessage = "已删除连接。";
                 RefreshPresentation("已删除连接。");
             }
             return;
@@ -588,9 +591,9 @@ public sealed class WorkflowCanvasSpikeViewModel : INotifyPropertyChanged
     {
         source = null!;
         target = null!;
-        if (parameter is not Tuple<object, object> pair ||
-            pair.Item1 is not WorkflowCanvasPortViewModel sourcePort ||
-            pair.Item2 is not WorkflowCanvasPortViewModel targetPort) return false;
+        if (parameter is not ITuple pair || pair.Length != 2 ||
+            pair[0] is not WorkflowCanvasPortViewModel sourcePort ||
+            pair[1] is not WorkflowCanvasPortViewModel targetPort) return false;
 
         source = sourcePort;
         target = targetPort;

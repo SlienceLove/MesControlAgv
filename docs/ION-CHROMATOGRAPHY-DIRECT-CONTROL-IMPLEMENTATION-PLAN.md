@@ -1,4 +1,9 @@
-# CIC-D160+ 中控直控实施计划
+# CIC-D160+ 中控直控实施计划（历史方案，已停止）
+
+> 本计划记录的中控直接打开 D160+/SHA-18i 串口方案已停止采用。当前以
+> `docs/SHINELAB-SHA18I-INTERFACE-REQUIREMENTS-2026-09-01.md` 为准：ShineLab
+> 负责串口和设备动作，ShineLab 作为 TCP Client 连接我方 TCP Server，中控只
+> 管理任务、发送业务命令和接收状态/结果。
 
 ## 目标
 

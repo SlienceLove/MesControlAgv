@@ -1,0 +1,14 @@
+{
+  "IonChromatography": {
+    "Enabled": true,
+    "InstrumentId": "CIC-D160-01",
+    "Model": "CIC-D160+",
+    "ComPort": "COM4",
+    "BaudRate": 115200,
+    "DataBits": 8,
+    "Parity": "None",
+    "StopBits": "One",
+    "TimeoutMs": 3000,
+    "SlaveAddress": 1
+  }
+}

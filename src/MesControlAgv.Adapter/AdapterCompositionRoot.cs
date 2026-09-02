@@ -1,4 +1,5 @@
 using MesControlAgv.Adapter.Modules;
+using MesControlAgv.Adapter.Modules.AuboArm;
 using MesControlAgv.Adapter.Modules.SampleWorkstation;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -27,5 +28,5 @@ public static class AdapterCompositionRoot
     }
 
     public static DeviceAdapterModuleCatalog CreateDefaultModuleCatalog() =>
-        new([new AgvAdapterModule(), new SampleWorkstationAdapterModule()]);
+        new([new AgvAdapterModule(), new SampleWorkstationAdapterModule(), new AuboArmAdapterModule()]);
 }

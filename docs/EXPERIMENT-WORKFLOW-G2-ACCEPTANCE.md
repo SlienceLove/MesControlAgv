@@ -1,6 +1,6 @@
 # Experiment Workflow G2 Acceptance Record
 
-Status: G2-A, G2-B, and G2-C implemented; waiting for project acceptance before G3 typed-node work.
+Status: G2-A, G2-B, and G2-C accepted by the project; G3 typed-node work has not started.
 
 Date: 2026-08-20
 
@@ -38,18 +38,26 @@ Date: 2026-08-20
 | Check | Result |
 | --- | --- |
 | Graph/domain adapter tests | 28/28 passed |
-| WPF editor/store/canvas/import tests | 192/192 passed |
+| WPF editor/store/canvas/import tests | 193/193 passed |
 | MES workflow/runtime tests | 70/70 passed |
-| Full Release solution tests | 577 passed, 5 existing E2E skipped, 0 failed |
+| Full Release solution tests | 578 passed, 5 existing E2E skipped, 0 failed |
 | Full Release solution build | 0 warnings, 0 errors |
 
 The main window was also started from Release output with fresh temporary service data and isolated Simulator ports `5583/5541/5545`. UI automation confirmed that `实验流程管理` is present, `实验流程设计` is absent, `兼容导入` is available, and the default canvas reports `节点 6`, `边 5`, and `已加载 5 条连接。`. The startup migration report was visible as `旧 WPF 流程：2 个流程，12 个节点，10 条边；迁移生成 10 条顺序边；转换完成`. A DPI-aware visual check confirmed that the links render and the report, canvas, and property panel do not overlap. The existing workflow file hash was unchanged, the application closed normally, and all temporary service ports were released.
+
+During project acceptance, connection selection was found to be unavailable because the custom Nodify connection template retained Nodify's default non-selectable state. The template now explicitly enables selection, provides a wider transparent hit target, shows blue hover and orange selected outlines, and reports the selected edge and Delete action. The same acceptance run exposed that Nodify 7.3 sends a C# `ValueTuple` from `ConnectionCompletedCommand`, while the editor was parsing the reference `Tuple` described by Nodify's XML documentation; the editor now parses the actual event shape, and its connection tests use that shape. A standalone, in-memory Release UI smoke test clicked a rendered connection, observed `已选择“失败”连接；按 Delete 可删除。`, pressed Delete, and confirmed that the edge count changed from 19 to 18 without changing the node count. This smoke path did not start MES, Adapter, Simulator, or any device connection.
+
+On 2026-08-20, project manual acceptance confirmed that connection selection, deletion, recreation, undo, and redo all passed in the normal Release WPF application.
+
+The same acceptance run confirmed that auto-layout, fit-to-canvas, pan, zoom, workflow switching, viewport retention, and viewport changes that do not consume an undo step all passed.
+
+On 2026-08-20, the project owner confirmed that the G2 overall acceptance passed. This authorizes the separate G3 gate but does not start G3 implementation.
 
 ## Manual acceptance node G2-B
 
 1. Start the normal WPF application and open `实验流程管理`. Confirm that `标准搬运实验` shows six nodes, five visible links, `节点 6`, and `边 5`.
 2. Select nodes from both the canvas and the right-side list. Confirm that both selections stay synchronized and that property edits immediately update the canvas.
-3. Move a node, add an `仪器操作` node from the palette, create or delete a connection, then use undo and redo. Confirm that node data, parameters, layout, and links return together.
+3. Move a node and add an `仪器操作` node from the palette. Confirm that adding a node does not guess or automatically modify the workflow path. Hover an existing link and confirm the blue hit outline, click it and confirm the orange selection outline plus the Delete prompt, then press Delete. Reconnect the path by dragging from a green output port to a blue input port. Use undo and redo and confirm that node data, parameters, layout, and links return together.
 4. Use `自动布局` and `适应画布`; pan and zoom, switch workflows, and return. Confirm that the viewport is retained without consuming an undo step.
 5. Save locally, restart WPF, and confirm that the JSON root is `mes.workflow.graph`, schema version is `2`, and positions, parameters, ports, explicit edges, and viewport round-trip.
 6. Confirm that an intentionally disconnected v2 draft remains disconnected. Import an edge-less v1/legacy linear workflow and confirm that only that old format receives sequential success links.
@@ -65,13 +73,14 @@ The main window was also started from Release output with fresh temporary servic
 6. Save an accepted import and restart. Confirm that the file is a `mes.workflow.graph` v2 envelope and no legacy format is written.
 7. Confirm that none of these actions opens a serial port, contacts a physical AGV or robot arm, or writes to CIC-D160+.
 
-## Remaining boundary before G3
+## Boundary carried into G3
 
 - Graph-level validation focus, typed capability schemas, and schema-driven property editors remain G3 work.
 - The observable WPF objects deliberately remain as a presentation projection because WPF controls require mutable observable bindings. They are not persistence, MES, or runtime owners.
 - G2 does not enable runtime device execution beyond the previously accepted Simulator-only behavior.
 
-Decision options:
+Acceptance decision:
 
-- Accept G2 and continue to G3 typed nodes, capability catalog, and publication validation.
-- Request G2-C import-report or main-editor interaction changes before starting G3.
+- G2 overall acceptance: **accepted** on 2026-08-20.
+- G3 typed nodes, capability catalog, and publication validation: authorized as the next stage, not started in this acceptance change.
+- Device execution, physical AGV/robot/instrument control, and CIC-D160+ writes remain outside this gate.

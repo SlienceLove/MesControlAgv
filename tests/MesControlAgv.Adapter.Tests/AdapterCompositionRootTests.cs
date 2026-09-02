@@ -1,7 +1,9 @@
 using System.Text;
 using MesControlAgv.Adapter.Drivers;
 using MesControlAgv.Adapter.Modules;
+using MesControlAgv.Adapter.Modules.AuboArm;
 using MesControlAgv.Application;
+using MesControlAgv.Contracts;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -113,7 +115,9 @@ public sealed class AdapterCompositionRootTests
 
         Assert.IsType<SimulatorDriver>(provider.GetRequiredService<IAgvDriver>());
         var catalog = provider.GetRequiredService<DeviceAdapterModuleCatalog>();
-        Assert.Equal(["agv", "sample-workstation"], catalog.Descriptors.Select(item => item.ModuleId));
+        Assert.Equal(
+            ["agv", "aubo-arm", "sample-workstation"],
+            catalog.Descriptors.Select(item => item.ModuleId));
         var module = catalog.Descriptors.Single(item => item.ModuleId == "agv");
         Assert.Equal(
             [DeviceTransportKind.Simulator, DeviceTransportKind.Tcp],
@@ -124,6 +128,51 @@ public sealed class AdapterCompositionRootTests
         Assert.False(workstation.Enabled);
         Assert.False(workstation.ControlEnabled);
         Assert.Equal(DeviceTransportKind.Http, workstation.Transport);
+
+        var arm = devices.GetRequired("ARM-01");
+        Assert.False(arm.Enabled);
+        Assert.False(arm.ControlEnabled);
+        Assert.Equal(DeviceTransportKind.Tcp, arm.Transport);
+    }
+
+    [Fact]
+    public async Task Explicit_aubo_simulator_registers_local_program_driver_without_a_controller_endpoint()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Agv:Driver"] = "simulator",
+                ["Devices:AuboArm:Driver"] = "simulator",
+                ["Devices:AuboArm:Enabled"] = "true",
+                ["Devices:AuboArm:ControlEnabled"] = "true",
+                ["Devices:AuboArm:AllowedProgramNames:0"] = "测试1",
+                ["Devices:AuboArm:ProgramCatalogMaxSlots"] = "2",
+                ["Devices:AuboArm:ProgramCatalogInterRequestDelayMs"] = "0"
+            })
+            .Build();
+        using var provider = AddServices(configuration).BuildServiceProvider();
+
+        var devices = provider.GetRequiredService<DeviceAdapterRegistry>();
+        Assert.Equal(
+            AuboArmAdapterModule.SimulatorDriverId,
+            devices.GetRequired("ARM-01").DriverId);
+
+        var controller = provider.GetRequiredService<IAuboArmProgramController>();
+        var catalog = await controller.GetProgramCatalogAsync("ARM-01", CancellationToken.None);
+        Assert.Equal(["测试1"], catalog.AvailablePrograms);
+
+        var load = await controller.LoadProgramAsync(
+            "ARM-01", "测试1", "offline-test", Guid.NewGuid(), CancellationToken.None);
+        Assert.Equal(AuboArmProgramOperationState.Loaded, load.State);
+
+        var run = await controller.RunProgramAsync(
+            "ARM-01", "测试1", "offline-test", Guid.NewGuid(), CancellationToken.None);
+        Assert.Equal(AuboArmProgramOperationState.Running, run.State);
+
+        await Task.Delay(1300);
+        var status = await controller.GetProgramAsync("ARM-01", CancellationToken.None);
+        Assert.Equal(AuboArmRuntimeState.Stopped, status.RuntimeState);
+        Assert.Equal("测试1", status.LoadedProgram);
     }
 
     [Fact]

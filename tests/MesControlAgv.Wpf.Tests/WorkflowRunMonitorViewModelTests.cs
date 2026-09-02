@@ -274,6 +274,148 @@ public sealed class WorkflowRunMonitorViewModelTests
         Assert.Equal(fixture.EndNodeId, monitor.CanvasViewModel.SelectedNode!.Id);
     }
 
+    [Fact]
+    public async Task Ready_move_can_create_and_authorize_a_linked_field_acceptance_without_dispatching()
+    {
+        var fixture = WorkflowRunMonitorFixture.Create();
+        var client = new WorkflowRunMonitorClientStub(fixture)
+        {
+            Run = fixture.Run with { RuntimeStatus = WorkflowRuntimeStatus.Prepared },
+            Nodes = [fixture.NodeExecution with
+            {
+                Status = WorkflowNodeExecutionStatus.Ready,
+                StartedAt = null
+            }],
+            DeviceOperations = [],
+            Timeline = []
+        };
+        var confirmation = new WorkflowRunControlConfirmationStub();
+        var monitor = new WorkflowRunMonitorViewModel(client, confirmation);
+        await monitor.LoadAsync(fixture.Run.ExecutionId);
+        monitor.FieldAgvId = "AGV-01";
+        monitor.FieldSourceStationId = "LM1";
+        monitor.FieldSafetyObserverName = "safety-observer";
+        monitor.FieldPermitId = "permit-ui-1";
+        monitor.FieldPermitMinutes = "30";
+
+        Assert.True(monitor.CanCreateAndAuthorizeFieldMove);
+        monitor.CreateAndAuthorizeFieldMoveCommand.Execute(null);
+        var deadline = DateTime.UtcNow.AddSeconds(3);
+        while (client.AuthorizedAcceptances.Count == 0 &&
+               !monitor.StatusMessage.Contains("失败", StringComparison.Ordinal) &&
+               DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+        Assert.True(client.AuthorizedAcceptances.Count == 1, monitor.StatusMessage);
+        await WaitUntilAsync(() => !monitor.IsBusy);
+
+        var request = Assert.Single(client.CreatedAcceptanceRequests);
+        Assert.Equal(fixture.Run.ExecutionId, request.WorkflowRunId);
+        Assert.Equal(fixture.NodeExecution.Id, request.WorkflowNodeExecutionId);
+        Assert.Equal("SAMPLE_01", request.TargetStationId);
+        Assert.Equal("permit-ui-1", Assert.Single(client.AuthorizationRequests).PermitId);
+        Assert.Contains("不会由 WPF 直接派发 AGV", Assert.Single(confirmation.Messages), StringComparison.Ordinal);
+        Assert.True(monitor.HasFieldAcceptance);
+        Assert.Equal(FieldNavigationAcceptanceStatuses.Authorized, monitor.SelectedFieldAcceptance!.Status);
+        Assert.Contains("未直接发送 AGV 命令", monitor.StatusMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Runtime_projection_reports_progress_failure_evidence_and_cancel_semantics()
+    {
+        var fixture = WorkflowRunMonitorFixture.Create();
+        var failedNode = fixture.NodeExecution with
+        {
+            Status = WorkflowNodeExecutionStatus.Failed,
+            LastError = "simulator rejected the command"
+        };
+        var client = new WorkflowRunMonitorClientStub(fixture)
+        {
+            Run = fixture.Run with
+            {
+                RuntimeStatus = WorkflowRuntimeStatus.Failed,
+                LastError = "workflow stopped"
+            },
+            Nodes = [failedNode],
+            DeviceOperations =
+            [
+                fixture.DeviceOperation with
+                {
+                    Status = WorkflowDeviceOperationStatus.Failed,
+                    LastError = "adapter returned rejected"
+                }
+            ],
+            Timeline =
+            [
+                fixture.TimelineEntry with
+                {
+                    Outcome = "Failed",
+                    Reason = "operator acknowledgement required"
+                }
+            ]
+        };
+        var monitor = new WorkflowRunMonitorViewModel(client);
+
+        await monitor.LoadAsync(fixture.Run.ExecutionId);
+
+        Assert.Equal(1, monitor.TotalNodeCount);
+        Assert.Equal(0, monitor.CompletedNodeCount);
+        Assert.Equal(1, monitor.FailedNodeCount);
+        Assert.Equal(1, monitor.TerminalNodeCount);
+        Assert.Equal(100, monitor.ProgressPercent);
+        Assert.Contains("1/1", monitor.ProgressDisplay, StringComparison.Ordinal);
+        Assert.Contains("workflow stopped", monitor.FailureReasonDisplay, StringComparison.Ordinal);
+        Assert.Contains("simulator rejected the command", monitor.FailureReasonDisplay, StringComparison.Ordinal);
+        Assert.Contains("adapter returned rejected", monitor.FailureReasonDisplay, StringComparison.Ordinal);
+        Assert.Equal("错误=adapter returned rejected", monitor.DeviceOperations.Single().ResultOrErrorSummary);
+        Assert.False(monitor.IsCancelled);
+
+        client.Run = client.Run with { RuntimeStatus = WorkflowRuntimeStatus.Cancelled };
+        await monitor.LoadAsync(fixture.Run.ExecutionId);
+
+        Assert.True(monitor.IsCancelled);
+        Assert.Contains("不会自动撤销", monitor.CancellationStatusDisplay, StringComparison.Ordinal);
+        Assert.Equal("流程已终态，自动刷新已暂停", monitor.AutoRefreshStatusDisplay);
+    }
+
+    [Fact]
+    public async Task Auto_refresh_updates_the_run_and_stops_after_terminal_state()
+    {
+        var fixture = WorkflowRunMonitorFixture.Create();
+        var client = new WorkflowRunMonitorClientStub(fixture);
+        var monitor = new WorkflowRunMonitorViewModel(client)
+        {
+            AutoRefreshInterval = TimeSpan.FromMilliseconds(25)
+        };
+        monitor.StartAutoRefresh();
+
+        await monitor.LoadAsync(fixture.Run.ExecutionId);
+        var initialReads = client.ExecutionReadCount;
+        client.Run = fixture.Run with
+        {
+            RuntimeStatus = WorkflowRuntimeStatus.Completed,
+            CurrentNodeId = fixture.EndNodeId
+        };
+        client.Nodes =
+        [
+            fixture.NodeExecution with
+            {
+                Status = WorkflowNodeExecutionStatus.Succeeded,
+                CompletedAt = fixture.NodeExecution.UpdatedAt.AddSeconds(1),
+                UpdatedAt = fixture.NodeExecution.UpdatedAt.AddSeconds(1)
+            }
+        ];
+
+        await WaitUntilAsync(() => client.ExecutionReadCount > initialReads &&
+                                   monitor.Run?.RuntimeStatus == WorkflowRuntimeStatus.Completed);
+
+        Assert.Equal(100, monitor.ProgressPercent);
+        Assert.False(monitor.IsAutoRefreshRunning);
+        Assert.Equal("流程已终态，自动刷新已暂停", monitor.AutoRefreshStatusDisplay);
+        monitor.Dispose();
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         var deadline = DateTime.UtcNow.AddSeconds(3);
@@ -300,14 +442,25 @@ internal sealed class WorkflowRunMonitorClientStub : IMesClient
     public IReadOnlyList<WorkflowNodeExecutionSnapshot> Nodes { get; set; }
     public IReadOnlyList<WorkflowDeviceOperationSnapshot> DeviceOperations { get; set; }
     public IReadOnlyList<WorkflowRunTimelineEntry> Timeline { get; set; }
+    public IReadOnlyList<FieldNavigationAcceptanceResponse> FieldAcceptances { get; set; } = [];
     public IReadOnlyList<string> GrantedPermissions { get; set; } = [];
     public List<WorkflowRunControlRequest> PauseRequests { get; } = [];
     public List<WorkflowRunControlRequest> ResumeRequests { get; } = [];
     public List<WorkflowRunControlRequest> CancelRequests { get; } = [];
     public List<WorkflowUnknownResolutionRequest> UnknownResolutionRequests { get; } = [];
+    public List<CreateFieldNavigationAcceptanceRequest> CreatedAcceptanceRequests { get; } = [];
+    public List<AuthorizeFieldNavigationAcceptanceRequest> AuthorizationRequests { get; } = [];
+    public List<FieldNavigationAcceptanceResponse> AuthorizedAcceptances { get; } = [];
+    public int ExecutionReadCount { get; private set; }
 
     public Task<WorkflowExecutionSnapshot?> GetWorkflowExecutionAsync(Guid executionId, CancellationToken cancellationToken) =>
-        Task.FromResult(Run);
+        ReadExecution();
+
+    private Task<WorkflowExecutionSnapshot?> ReadExecution()
+    {
+        ExecutionReadCount++;
+        return Task.FromResult(Run);
+    }
 
     public Task<WorkflowVersion?> GetWorkflowVersionAsync(Guid workflowId, int version, CancellationToken cancellationToken) =>
         Task.FromResult<WorkflowVersion?>(_fixture.Version);
@@ -324,6 +477,66 @@ internal sealed class WorkflowRunMonitorClientStub : IMesClient
         Guid workflowRunId,
         int limit,
         CancellationToken cancellationToken) => Task.FromResult(Timeline);
+
+    public Task<IReadOnlyList<FieldNavigationAcceptanceResponse>> GetWorkflowFieldNavigationAcceptancesAsync(
+        Guid workflowRunId,
+        CancellationToken cancellationToken) => Task.FromResult(FieldAcceptances);
+
+    public Task<FieldNavigationAcceptanceResponse> CreateFieldNavigationAcceptanceAsync(
+        CreateFieldNavigationAcceptanceRequest request,
+        CancellationToken cancellationToken)
+    {
+        CreatedAcceptanceRequests.Add(request);
+        return Task.FromResult(CreateAcceptance(request, FieldNavigationAcceptanceStatuses.Draft));
+    }
+
+    public Task<FieldNavigationAcceptanceResponse> AuthorizeFieldNavigationAcceptanceAsync(
+        Guid acceptanceId,
+        AuthorizeFieldNavigationAcceptanceRequest request,
+        CancellationToken cancellationToken)
+    {
+        AuthorizationRequests.Add(request);
+        var created = CreatedAcceptanceRequests[^1];
+        var authorized = CreateAcceptance(created, FieldNavigationAcceptanceStatuses.Authorized, acceptanceId) with
+        {
+            OperatorName = request.OperatorName,
+            SafetyObserverName = request.SafetyObserverName,
+            PermitId = request.PermitId,
+            AuthorizedAtUtc = DateTimeOffset.UtcNow,
+            ExpiresAtUtc = request.ExpiresAtUtc
+        };
+        AuthorizedAcceptances.Add(authorized);
+        FieldAcceptances = [authorized];
+        return Task.FromResult(authorized);
+    }
+
+    private static FieldNavigationAcceptanceResponse CreateAcceptance(
+        CreateFieldNavigationAcceptanceRequest request,
+        string status,
+        Guid? acceptanceId = null) => new(
+            acceptanceId ?? Guid.NewGuid(),
+            status,
+            request.AgvId,
+            request.SourceStationId,
+            request.TargetStationId,
+            "test-map",
+            "0123456789abcdef0123456789abcdef",
+            [request.SourceStationId, request.TargetStationId],
+            request.Description,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow)
+        {
+            WorkflowRunId = request.WorkflowRunId,
+            WorkflowNodeExecutionId = request.WorkflowNodeExecutionId
+        };
 
     public Task<WorkflowRunControlPermissionsSnapshot> GetWorkflowRunControlPermissionsAsync(
         string actor,

@@ -41,24 +41,49 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private string _currentAction = string.Empty;
     private TimeSpan _taskRefreshInterval = DashboardRuntimeSettings.Default.TaskRefreshInterval;
 
+    public OfflineDataStateViewModel OfflineState { get; } = new();
+
     public MainViewModel(
         IMesClient mes,
         ISimulatorControlClient? simulator = null,
         ControlCenterModuleRegistry? moduleRegistry = null,
         IMapLayoutSource? mapLayoutSource = null,
-        WorkflowStore? workflowStore = null)
+        WorkflowStore? workflowStore = null,
+        StartupConfigurationReport? startupConfiguration = null,
+        OfflineDiagnosticAuditTrail? diagnosticAudit = null)
     {
         _mes = mes;
         _simulator = simulator;
         _commands = new ControlCenterCommandCoordinator(mes, simulator);
         ModuleRegistry = moduleRegistry ?? ControlCenterModuleRegistry.CreateStandard();
-        WorkflowEditor = new WorkflowEditorViewModel(workflowStore ?? new WorkflowStore(), _mes, () => OperatorName);
+        StartupDiagnostics = startupConfiguration ?? StartupConfigurationReport.Unknown;
+        WorkflowEditor = new WorkflowEditorViewModel(
+            workflowStore ?? new WorkflowStore(),
+            _mes,
+            () => OperatorName,
+            simulatorExecutionEnabled: StartupDiagnostics.RuntimeMode.Equals("simulator", StringComparison.OrdinalIgnoreCase));
         ExperimentPlans = new ExperimentPlanManagementViewModel(_mes);
         ExperimentScheduling = new ExperimentSchedulingViewModel(_mes);
         WorkflowRunMonitor = new WorkflowRunMonitorViewModel(_mes);
         Readiness = new ReadinessViewModel(_mes, mapLayoutSource);
+        AuboArm = new AuboArmControlViewModel(_mes);
         IonChromatography = new IonChromatographyViewModel(_mes);
+        ShineLabDeviceStatus = new ShineLabDeviceStatusViewModel(_mes);
+        ShineLabTaskDispatch = new ShineLabTaskDispatchViewModel(_mes);
+        ShineLabSequenceImport = new ShineLabSequenceImportViewModel();
         _modules = new ControlCenterViewModel(WorkflowEditor, ModuleRegistry);
+        DiagnosticAudit = diagnosticAudit ?? new OfflineDiagnosticAuditTrail();
+        Diagnostics = new DiagnosticsCenterViewModel(StartupDiagnostics, DiagnosticAudit);
+        ObserveOfflineState("dashboard", OfflineState);
+        ObserveOfflineState("ion-chromatography", IonChromatography.OfflineState);
+        ObserveOfflineState("readiness", Readiness.OfflineState);
+        ObserveOfflineState("batch-import", _modules.BatchImport.OfflineState);
+        ObserveOfflineState("shinelab-import", ShineLabSequenceImport.OfflineState);
+        DiagnosticAudit.Record(
+            "startup",
+            "configuration",
+            StartupDiagnostics.OverallStatus,
+            $"runtime={StartupDiagnostics.RuntimeMode}; driver={StartupDiagnostics.AdapterDriver}; writes={StartupDiagnostics.RealWriteAccess}");
         Kpi = _modules.KpiDashboard;
         CreateTaskCommand = CreateActionCommand("\u521B\u5EFA\u4EFB\u52A1", CreateTaskAsync, CanCreateTask);
         DispatchTaskCommand = CreateActionCommand("\u6D3E\u53D1\u4EFB\u52A1", DispatchTaskAsync, CanDispatchTask);
@@ -97,12 +122,25 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ObservableCollection<BatchTaskRowViewModel> BatchTasks => _modules.BatchImport.BatchTasks;
     public ObservableCollection<string> BatchImportIssues => _modules.BatchImport.BatchImportIssues;
     public ObservableCollection<DashboardStation> AvailableStations { get; } = [];
+    public bool HasAvailableStations => AvailableStations.Count > 0;
+    public string StationCatalogHint => AvailableStations.Count > 0
+        ? $"已加载 {AvailableStations.Count} 个可用站点"
+        : ConnectionStatus.Contains("不可用", StringComparison.Ordinal)
+            ? "MES 未连接，暂无可选站点"
+            : "正在加载站点目录...";
     public WorkflowEditorViewModel WorkflowEditor { get; }
     public ExperimentPlanManagementViewModel ExperimentPlans { get; }
     public ExperimentSchedulingViewModel ExperimentScheduling { get; }
     public WorkflowRunMonitorViewModel WorkflowRunMonitor { get; }
     public ReadinessViewModel Readiness { get; }
+    public AuboArmControlViewModel AuboArm { get; }
     public IonChromatographyViewModel IonChromatography { get; }
+    public ShineLabDeviceStatusViewModel ShineLabDeviceStatus { get; }
+    public ShineLabTaskDispatchViewModel ShineLabTaskDispatch { get; }
+    public ShineLabSequenceImportViewModel ShineLabSequenceImport { get; }
+    public StartupConfigurationReport StartupDiagnostics { get; }
+    public OfflineDiagnosticAuditTrail DiagnosticAudit { get; }
+    public DiagnosticsCenterViewModel Diagnostics { get; }
     public KpiDashboardViewModel Kpi { get; }
     public ControlCenterModuleRegistry ModuleRegistry { get; }
     public ControlCenterViewModel Modules => _modules;
@@ -143,6 +181,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             if (string.Equals(_modules.TaskMonitor.ConnectionStatus, value, StringComparison.Ordinal)) return;
             _modules.TaskMonitor.ConnectionStatus = value;
             OnPropertyChanged(nameof(ConnectionStatus));
+            OnPropertyChanged(nameof(StationCatalogHint));
         }
     }
     public string AgvStatus
@@ -360,8 +399,27 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public async Task StartAsync()
     {
         await RefreshAsync();
-        await IonChromatography.RefreshAsync(_shutdown.Token);
+        await ShineLabTaskDispatch.RefreshTasksAsync();
         await Readiness.RefreshAsync(_shutdown.Token);
+        // When MES is unavailable (for example while the field Ethernet is
+        // intentionally unplugged), seed the editor from the local SMAP
+        // station mapping instead of exposing legacy profile station IDs.
+        // Prefer the MES station/map snapshot whenever it was obtained. The
+        // local SMAP is only an offline fallback; applying it over a live MES
+        // snapshot could silently change route choices when the two catalogs
+        // differ.
+        if (Readiness.MapSnapshot is { Stations.Count: > 0 } remoteMap)
+        {
+            WorkflowEditor.ApplyProfileStations(remoteMap.Stations, remoteMap.Edges);
+        }
+        else
+        {
+            var localStations = Readiness.LocalStationCatalog;
+            if (localStations.Count > 0)
+            {
+                WorkflowEditor.ApplyProfileStations(localStations, Readiness.LocalMapEdges);
+            }
+        }
         if (_refreshLoop is not null)
         {
             return;
@@ -377,6 +435,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         if (!await TryEnterRefreshAsync()) return;
 
         IsRefreshing = true;
+        OfflineState.BeginLoading("正在刷新 MES 任务与 AGV 数据...");
         try
         {
             // 随任务和车队快照刷新配置站点目录；配置变更必须使路线预览失效，
@@ -385,6 +444,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             var tasks = await _mes.GetTasksAsync(CurrentTaskDate, _shutdown.Token);
             var fleetStatus = await _mes.GetAgvFleetStatusAsync(_shutdown.Token);
             await Kpi.RefreshAsync(_mes, CurrentTaskDate, _shutdown.Token);
+            await ShineLabDeviceStatus.RefreshAsync(_shutdown.Token);
             var selectedId = preferredTaskId ?? SelectedTask?.Id;
             Tasks.Clear();
             foreach (var task in tasks) Tasks.Add(TaskRowViewModel.From(task, _stationCatalog));
@@ -400,6 +460,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             await LoadTaskDetailAsync(SelectedTask?.Id, _shutdown.Token);
             UpdateAgvs(fleetStatus);
             Readiness.UpdateFleet(fleetStatus);
+            // Keep the arm projection in the same serialized refresh cycle as MES
+            // and AGV data; a failed AUBO read is shown in its panel and does not
+            // make the unrelated AGV snapshot stale.
+            await AuboArm.RefreshAsync(_shutdown.Token);
             ConnectionStatus = "MES \u5DF2\u8FDE\u63A5";
             var primary = fleetStatus.FirstOrDefault()?.Snapshot;
             AgvStatus = primary is null ? "\u65E0 AGV \u6570\u636E" : primary.Online ? $"\u5728\u7EBF / {primary.ControlOwner}" : "\u79BB\u7EBF";
@@ -410,18 +474,36 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
                 : $"MES {active.MesStatus} / \u8BBE\u5907 {active.DeviceState ?? "\u672A\u77E5"} -> {active.TargetStationId ?? "-"}";
             LastRefreshAt = DateTimeOffset.UtcNow;
             IsDataStale = false;
+            OfflineState.MarkReady(
+                tasks.Count > 0 || fleetStatus.Count > 0,
+                tasks.Count > 0 || fleetStatus.Count > 0
+                    ? "MES 数据已更新。"
+                    : "MES 已连接，但当前暂无任务或 AGV 数据。");
         }
-        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+        {
+            OfflineState.MarkCancelled();
+        }
         catch (Exception exception)
         {
             ConnectionStatus = "MES \u4E0D\u53EF\u7528";
             Message = exception.Message;
             IsDataStale = true;
+            if (LastRefreshAt is not null)
+            {
+                OfflineState.MarkStale("MES 暂时不可用，当前显示的数据可能已过期。", exception.Message);
+            }
+            else
+            {
+                OfflineState.MarkError("MES 暂时不可用，可点击刷新重试。", exception.Message);
+            }
+            OnPropertyChanged(nameof(StationCatalogHint));
         }
         finally
         {
             IsRefreshing = false;
-            _refreshGate.Release();
+            try { _refreshGate.Release(); }
+            catch (ObjectDisposedException) { }
         }
     }
 
@@ -430,6 +512,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         if (!await TryEnterRefreshAsync()) return;
 
         IsRefreshing = true;
+        OfflineState.BeginLoading("正在刷新 AGV 数据...");
         try
         {
             var fleetStatus = await _mes.GetAgvFleetStatusAsync(_shutdown.Token);
@@ -438,17 +521,32 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             BatchStatus = $"AGV \u72B6\u6001\u5DF2\u5237\u65B0\uFF1A{fleetStatus.Count} \u53F0";
             LastRefreshAt = DateTimeOffset.UtcNow;
             IsDataStale = false;
+            OfflineState.MarkReady(
+                fleetStatus.Count > 0,
+                fleetStatus.Count > 0 ? "AGV 数据已更新。" : "MES 已连接，但暂无 AGV 数据。");
         }
-        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
-        catch
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+        {
+            OfflineState.MarkCancelled();
+        }
+        catch (Exception exception)
         {
             IsDataStale = true;
+            if (LastRefreshAt is not null)
+            {
+                OfflineState.MarkStale("AGV 数据可能已过期，可点击刷新重试。", exception.Message);
+            }
+            else
+            {
+                OfflineState.MarkError("AGV 数据刷新失败，可点击刷新重试。", exception.Message);
+            }
             throw;
         }
         finally
         {
             IsRefreshing = false;
-            _refreshGate.Release();
+            try { _refreshGate.Release(); }
+            catch (ObjectDisposedException) { }
         }
     }
 
@@ -559,7 +657,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             AvailableStations.Add(station);
         }
-        WorkflowEditor.ApplyProfileStations(stations);
+        OnPropertyChanged(nameof(HasAvailableStations));
+        OnPropertyChanged(nameof(StationCatalogHint));
+        WorkflowEditor.ApplyProfileStations(stations, Readiness.MapSnapshot?.Edges);
         NewTaskSourceStation = sourceCode is { } source
             ? AvailableStations.FirstOrDefault(station => station.Code == source)
             : null;
@@ -757,6 +857,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     {
         try { while (await timer.WaitForNextTickAsync(cancellationToken)) await RefreshAsync(); }
         catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
     }
 
     private void RefreshCommandState()
@@ -817,6 +918,24 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         foreach (var command in new[] { SortBatchCommand, SubmitBatchCommand }.OfType<AsyncCommand>()) command.RaiseCanExecuteChanged();
     }
 
+    private void ObserveOfflineState(string category, OfflineDataStateViewModel state)
+    {
+        state.Transitioned += (_, transition) =>
+        {
+            var action = transition.CurrentKind == OfflineDataStateKind.Loading &&
+                         transition.PreviousKind is OfflineDataStateKind.Error or
+                             OfflineDataStateKind.Stale or
+                             OfflineDataStateKind.Cancelled
+                ? "retry"
+                : "state-transition";
+            DiagnosticAudit.Record(
+                category,
+                action,
+                transition.CurrentKind.ToString(),
+                transition.DiagnosticDetail ?? transition.Message);
+        };
+    }
+
     private void RequestTaskDetailRefresh()
     {
         CancelPendingDetailRefresh();
@@ -853,6 +972,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         {
             return false;
         }
+        catch (ObjectDisposedException)
+        {
+            return false;
+        }
     }
 
     public void Dispose()
@@ -862,6 +985,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _timer?.Dispose();
         ExperimentPlans.Dispose();
         ExperimentScheduling.Dispose();
+        WorkflowEditor.Dispose();
+        WorkflowRunMonitor.Dispose();
+        AuboArm.Dispose();
         _refreshGate.Dispose();
         _actionGate.Dispose();
         _shutdown.Dispose();

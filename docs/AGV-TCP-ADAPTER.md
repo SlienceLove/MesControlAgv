@@ -73,10 +73,20 @@ restarting the Adapter with a separately approved configuration.
 | Map MD5 query | 19204 | 1302 |
 | Read-only full map download | 19207 | 4011 |
 | Localization status | 19204 | 1021 |
+| Digital I/O read | 19204 | 1013 |
+| Single DO write | 19210 | 6001 |
 
 Packets use the vendor 16-byte header, big-endian payload length and API number,
 followed by UTF-8 JSON. The expected response API is request API plus `10000`.
 A non-zero `ret_code` is an AGV error.
+
+The current Roboshop controller also exposes the vendor I/O APIs used by the
+arm handoff. API `1013` returns `DI` and `DO` arrays. API `6001` on the
+`19210` other-API channel accepts `{"id":<do-id>,"status":true|false}` and
+returns API `16001`. The Adapter's `SetDoAsync` checks API `1060` ownership
+immediately before this write; it does not infer that an AGV DO is physically
+connected to a robot-arm DI. See [AGV I/O direct-control verification](AGV-IO-DIRECT-CONTROL.md)
+for the field evidence and point-mapping gate.
 
 For API `1101`, vendor field `mode` is the vehicle operating mode: `0` is
 manual and `1` is automatic. It must not be inferred from `dispatch_mode`, SRC

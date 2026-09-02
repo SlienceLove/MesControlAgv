@@ -1,0 +1,10 @@
+{
+  "entries": [
+    { "smapMark": "LM1", "mesAgvStationId": "LM1", "displayName": "充电原点" },
+    { "smapMark": "LM2", "mesAgvStationId": "LM2", "displayName": null },
+    { "smapMark": "LM4", "mesAgvStationId": "LM4", "displayName": null },
+    { "smapMark": "LM5", "mesAgvStationId": "LM5", "displayName": null },
+    { "smapMark": "LM6", "mesAgvStationId": "LM6", "displayName": null },
+    { "smapMark": "LM7", "mesAgvStationId": "LM7", "displayName": "站点1" }
+  ]
+}

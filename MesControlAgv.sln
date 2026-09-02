@@ -43,6 +43,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MesControlAgv.InstrumentGat
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MesControlAgv.InstrumentGateway.Tests", "tests\MesControlAgv.InstrumentGateway.Tests\MesControlAgv.InstrumentGateway.Tests.csproj", "{843E7721-35A6-4D21-B4FD-2E227DFEF7ED}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MesControlAgv.ShineLabDispatcher", "src\MesControlAgv.ShineLabDispatcher\MesControlAgv.ShineLabDispatcher.csproj", "{C0E0B76A-68A4-4182-BD33-C71659EAD124}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "MesControlAgv.AuboModbusBridge", "src\MesControlAgv.AuboModbusBridge\MesControlAgv.AuboModbusBridge.csproj", "{D61F7C11-7F01-418C-9214-19B0BB99CA79}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -124,6 +128,14 @@ Global
 		{843E7721-35A6-4D21-B4FD-2E227DFEF7ED}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{843E7721-35A6-4D21-B4FD-2E227DFEF7ED}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{843E7721-35A6-4D21-B4FD-2E227DFEF7ED}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C0E0B76A-68A4-4182-BD33-C71659EAD124}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C0E0B76A-68A4-4182-BD33-C71659EAD124}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C0E0B76A-68A4-4182-BD33-C71659EAD124}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C0E0B76A-68A4-4182-BD33-C71659EAD124}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D61F7C11-7F01-418C-9214-19B0BB99CA79}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D61F7C11-7F01-418C-9214-19B0BB99CA79}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D61F7C11-7F01-418C-9214-19B0BB99CA79}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D61F7C11-7F01-418C-9214-19B0BB99CA79}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{E0F229AF-BA57-4295-AFB6-103CDCB989FD} = {142BDF93-A26F-433F-A124-2B7CA35EDC08}
@@ -144,5 +156,7 @@ Global
 		{28F23A28-4FC1-417B-BFB1-9640CF06395A} = {142BDF93-A26F-433F-A124-2B7CA35EDC08}
 		{62A4CCB7-A204-47AF-9A0F-0D0F668C947E} = {142BDF93-A26F-433F-A124-2B7CA35EDC08}
 		{843E7721-35A6-4D21-B4FD-2E227DFEF7ED} = {9FF26AA0-A553-422E-B721-FBA880F0D11E}
+		{C0E0B76A-68A4-4182-BD33-C71659EAD124} = {142BDF93-A26F-433F-A124-2B7CA35EDC08}
+		{D61F7C11-7F01-418C-9214-19B0BB99CA79} = {142BDF93-A26F-433F-A124-2B7CA35EDC08}
 	EndGlobalSection
 EndGlobal

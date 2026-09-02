@@ -53,6 +53,27 @@ public sealed class WorkflowEditorTests
     }
 
     [Fact]
+    public void Aubo_template_uses_runtime_station_and_arm_identifiers()
+    {
+        var workflow = WorkflowStore.CreateAuboStationProgramWorkflow(
+            "LM7",
+            "LM6",
+            firstProgramName: "现场程序A",
+            secondProgramName: "现场程序B",
+            armDeviceId: "ARM-02");
+
+        var nodes = workflow.Nodes.OrderBy(node => node.Order).ToArray();
+        Assert.Equal("LM7", nodes[1].TargetStation);
+        Assert.Equal("LM6", nodes[3].TargetStation);
+        Assert.Equal("LM7 到站机械臂程序", nodes[2].Name);
+        Assert.Equal("LM6 到站机械臂程序", nodes[4].Name);
+        Assert.Equal("现场程序A", nodes[2].Configuration[MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.ProgramName]);
+        Assert.Equal("现场程序B", nodes[4].Configuration[MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.ProgramName]);
+        Assert.All(new[] { nodes[2], nodes[4] }, node =>
+            Assert.Equal("ARM-02", node.Configuration[MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.DeviceId]));
+    }
+
+    [Fact]
     public void Missing_store_rebuilds_presets_from_enabled_profile_station_types()
     {
         using var fixture = new TempWorkflowFile();

@@ -1,5 +1,6 @@
 using MesControlAgv.Contracts;
 using MesControlAgv.Domain.Map;
+using MesControlAgv.Wpf.Infrastructure;
 using MesControlAgv.Wpf.Services;
 using MesControlAgv.Wpf.ViewModels;
 
@@ -47,6 +48,7 @@ public sealed class ReadinessViewModelTests
         Assert.Contains("SAMPLE_CUSTOM -> DROP_CUSTOM", readiness.MapEdgeSummary, StringComparison.Ordinal);
         Assert.Contains("AGV-02: SAMPLE_CUSTOM -> PREP_CUSTOM -> DROP_CUSTOM", readiness.ActualExecutionPath, StringComparison.Ordinal);
         Assert.Contains("只读快照已接收", readiness.Status, StringComparison.Ordinal);
+        Assert.Equal(OfflineDataStateKind.Ready, readiness.OfflineState.Kind);
     }
 
     [Fact]
@@ -61,6 +63,34 @@ public sealed class ReadinessViewModelTests
         Assert.Equal("配置地图：未知", readiness.ProfileFingerprint);
         Assert.Contains("就绪状态刷新失败：MES unavailable", readiness.Status, StringComparison.Ordinal);
         Assert.Contains("物理预检尚未加载", readiness.BlockingReasons, StringComparison.Ordinal);
+        Assert.Equal(OfflineDataStateKind.Error, readiness.OfflineState.Kind);
+    }
+
+    [Fact]
+    public async Task Mes_failure_keeps_local_map_available_for_offline_workflow_editing()
+    {
+        var client = new FakeMesClient([]) { ReadinessException = new HttpRequestException("MES offline") };
+        var mapping = new StationMappingConfig([
+            new StationMappingEntry("LM1", "LM1", "充电原点"),
+            new StationMappingEntry("LM2", "LM4", null)
+        ]);
+        var readiness = new ReadinessViewModel(
+            client,
+            new StubMapLayoutSource(new MapLayoutResult(
+                Layout(),
+                mapping,
+                Loaded: true,
+                Error: null,
+                MatchingIdentity())));
+
+        await readiness.RefreshAsync();
+
+        Assert.Equal(OfflineDataStateKind.Ready, readiness.OfflineState.Kind);
+        Assert.Contains("本地地图", readiness.Status, StringComparison.Ordinal);
+        Assert.Equal(["LM1", "LM4"], readiness.LocalStationCatalog.Select(station => station.AgvStationId));
+        var edge = Assert.Single(readiness.LocalMapEdges);
+        Assert.Equal("LM1", edge.From);
+        Assert.Equal("LM4", edge.To);
     }
 
     [Fact]

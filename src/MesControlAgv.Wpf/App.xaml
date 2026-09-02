@@ -1,7 +1,14 @@
 ﻿<Application x:Class="MesControlAgv.Wpf.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:converters="clr-namespace:MesControlAgv.Wpf.Converters">
     <Application.Resources>
-
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Themes/MesTheme.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <converters:StatusBrushConverter x:Key="StatusBrushConverter" />
+            <converters:CountToVisibilityConverter x:Key="CountToVisibilityConverter" />
+        </ResourceDictionary>
     </Application.Resources>
 </Application>

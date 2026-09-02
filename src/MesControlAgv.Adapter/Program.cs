@@ -12,6 +12,23 @@ if (builder.Environment.IsEnvironment(PhysicalAcceptanceConfiguration.Environmen
         builder.Environment.ContentRootPath,
         args);
 }
+else if (builder.Environment.IsEnvironment(FieldSimulationConfiguration.EnvironmentName))
+{
+    FieldSimulationConfiguration.ReplaceDefaultSources(
+        builder.Configuration,
+        builder.Environment.ContentRootPath,
+        args);
+}
+
+if (builder.Environment.IsEnvironment(PhysicalAcceptanceConfiguration.EnvironmentName) &&
+    string.Equals(
+        builder.Configuration["Devices:AuboArm:Driver"],
+        "simulator",
+        StringComparison.OrdinalIgnoreCase))
+{
+    throw new InvalidOperationException(
+        "PhysicalAcceptance cannot use the in-process AUBO simulator; restore the site-confirmed WebSocket driver.");
+}
 
 var configuredConnectionString = builder.Configuration.GetConnectionString("Adapter")
     ?? "Data Source=data/adapter.db";

@@ -1,0 +1,16 @@
+{
+  "Adapter": { "RunMode": "standard" },
+  "Agv": {
+    "Driver": "simulator",
+    "Tcp": { "AcquireControl": false, "EnablePush": false, "MinimumConfidence": 0.0 }
+  },
+  "Devices": {
+    "AuboArm": { "Enabled": false, "ControlEnabled": false, "Host": "" },
+    "SampleWorkstation": {
+      "Enabled": false,
+      "ControlEnabled": false,
+      "EquipmentNo": "",
+      "BaseUrl": "http://127.0.0.1:8082/Service/"
+    }
+  }
+}

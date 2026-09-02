@@ -297,7 +297,8 @@ public sealed class WorkflowInspectorViewModel : INotifyPropertyChanged
         WorkflowCatalogSet catalog,
         WorkflowPublicationContext profile,
         IReadOnlyDictionary<string, string> stationNames,
-        Action<WorkflowInspectorFieldViewModel, string?> commit)
+        Action<WorkflowInspectorFieldViewModel, string?> commit,
+        IReadOnlyList<string>? robotProgramNames = null)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         ArgumentNullException.ThrowIfNull(profile);
@@ -355,7 +356,14 @@ public sealed class WorkflowInspectorViewModel : INotifyPropertyChanged
         foreach (var field in definition.ConfigurationSchema.Fields)
         {
             TryGetValue(node.Configuration, field.Key, out var value);
-            var options = BuildOptions(field, definition, catalog, profile, stationNames, value);
+            var options = BuildOptions(
+                field,
+                definition,
+                catalog,
+                profile,
+                stationNames,
+                value,
+                robotProgramNames);
             _fields.Add(new WorkflowInspectorFieldViewModel(
                 node.Id,
                 field.Key,
@@ -366,7 +374,7 @@ public sealed class WorkflowInspectorViewModel : INotifyPropertyChanged
                 field.Unit,
                 field.Minimum,
                 field.Maximum,
-                ResolveEditorKind(field),
+                ResolveEditorKind(field, options),
                 options,
                 value,
                 isReadOnly: false,
@@ -418,7 +426,8 @@ public sealed class WorkflowInspectorViewModel : INotifyPropertyChanged
         WorkflowCatalogSet catalog,
         WorkflowPublicationContext profile,
         IReadOnlyDictionary<string, string> stationNames,
-        string? currentValue)
+        string? currentValue,
+        IReadOnlyList<string>? robotProgramNames)
     {
         var options = field.ReferenceKind switch
         {
@@ -437,6 +446,25 @@ public sealed class WorkflowInspectorViewModel : INotifyPropertyChanged
                 .ToList(),
             _ => []
         };
+
+        // Program names are deliberately supplied by an explicit, read-only
+        // controller catalog refresh.  They are not part of the static workflow
+        // schema because AUBO exposes preloaded/approved slots rather than a
+        // portable filesystem directory listing.
+        if (string.Equals(
+                field.Key,
+                WorkflowNodeConfigurationKeys.ProgramName,
+                StringComparison.OrdinalIgnoreCase) &&
+            robotProgramNames is { Count: > 0 })
+        {
+            options = robotProgramNames
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Select(name => name.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .Select(name => new WorkflowInspectorOption(name, name))
+                .ToList();
+        }
 
         if (!field.IsRequired && field.ReferenceKind == WorkflowSchemaReferenceKind.Device)
             options.Insert(0, new WorkflowInspectorOption(string.Empty, "自动选择"));
@@ -462,6 +490,10 @@ public sealed class WorkflowInspectorViewModel : INotifyPropertyChanged
         var requiresControl = definition.SafetyClassification is
             WorkflowSafetyClassification.ControlledDeviceAction or
             WorkflowSafetyClassification.RestrictedDeviceWrite;
+        var designTimeRobotProgram = string.Equals(
+            definition.NodeTypeId,
+            WorkflowGraphNodeTypeIds.RobotExecuteProgram,
+            StringComparison.OrdinalIgnoreCase);
         return profile.GetDevices(field.DeviceFamily ?? string.Empty)
             .OrderBy(device => device.DeviceId, StringComparer.Ordinal)
             .Select(device =>
@@ -469,11 +501,11 @@ public sealed class WorkflowInspectorViewModel : INotifyPropertyChanged
                 var missingCapability = definition.RequiredCapabilityIds.FirstOrDefault(capabilityId =>
                     !device.Provides(capabilityId));
                 var available = device.Enabled &&
-                                (!requiresControl || device.ControlEnabled) &&
+                (!requiresControl || device.ControlEnabled || designTimeRobotProgram) &&
                                 missingCapability is null;
                 var reason = !device.Enabled
                     ? "设备在当前 Profile 中已禁用。"
-                    : requiresControl && !device.ControlEnabled
+                    : requiresControl && !device.ControlEnabled && !designTimeRobotProgram
                         ? "设备控制在当前 Profile 中未启用。"
                         : missingCapability is not null
                             ? $"设备未声明能力 {missingCapability}."
@@ -561,8 +593,17 @@ public sealed class WorkflowInspectorViewModel : INotifyPropertyChanged
         return true;
     }
 
-    private static WorkflowInspectorEditorKind ResolveEditorKind(WorkflowFieldSchema field)
+    private static WorkflowInspectorEditorKind ResolveEditorKind(
+        WorkflowFieldSchema field,
+        IReadOnlyList<WorkflowInspectorOption> options)
     {
+        if (string.Equals(
+                field.Key,
+                WorkflowNodeConfigurationKeys.ProgramName,
+                StringComparison.OrdinalIgnoreCase) &&
+            options.Count > 0)
+            return WorkflowInspectorEditorKind.Selection;
+
         if (field.ReferenceKind != WorkflowSchemaReferenceKind.None || field.AllowedValues.Count > 0)
             return WorkflowInspectorEditorKind.Selection;
         return field.ValueType switch

@@ -15,7 +15,8 @@ public enum WorkflowNodeType
     Dropoff,
     End,
     Custom,
-    InstrumentOperation
+    InstrumentOperation,
+    RobotProgram
 }
 
 public sealed class WorkflowNodeParameter : INotifyPropertyChanged
@@ -125,6 +126,7 @@ public sealed class WorkflowNode : INotifyPropertyChanged
         WorkflowNodeType.Dropoff => "放货",
         WorkflowNodeType.End => "结束",
         WorkflowNodeType.InstrumentOperation => "仪器操作",
+        WorkflowNodeType.RobotProgram => "机械臂程序",
         _ => "自定义"
     };
 

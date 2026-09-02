@@ -19,9 +19,24 @@ public interface IFieldNavigationAcceptanceApplicationService
 
     Task<FieldNavigationAcceptanceResponse> DispatchAsync(Guid acceptanceId, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Dispatches a workflow-linked acceptance after the worker has durably
+    /// claimed the matching node and device operation. This method is not
+    /// exposed as a general-purpose HTTP endpoint.
+    /// </summary>
+    Task<FieldNavigationAcceptanceResponse> DispatchForWorkflowAsync(
+        Guid acceptanceId,
+        Guid workflowNodeExecutionId,
+        Guid workflowDeviceOperationId,
+        CancellationToken cancellationToken);
+
     Task<FieldNavigationAcceptanceResponse> CancelAsync(Guid acceptanceId, CancellationToken cancellationToken);
 
     Task<FieldNavigationAcceptanceDetailResponse?> GetAsync(Guid acceptanceId, CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<FieldNavigationAcceptanceResponse>> ListForWorkflowRunAsync(
+        Guid workflowRunId,
+        CancellationToken cancellationToken);
 }
 
 /// <summary>

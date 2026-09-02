@@ -1,0 +1,16 @@
+{
+  "Adapter": { "RunMode": "read-only-preflight" },
+  "Agv": {
+    "Driver": "vendor-tcp",
+    "Tcp": { "AcquireControl": false, "EnablePush": false, "MinimumConfidence": 0.95 }
+  },
+  "Devices": {
+    "AuboArm": { "Enabled": false, "ControlEnabled": false, "Host": "" },
+    "SampleWorkstation": {
+      "Enabled": false,
+      "ControlEnabled": false,
+      "EquipmentNo": "",
+      "BaseUrl": "http://127.0.0.1:8082/Service/"
+    }
+  }
+}

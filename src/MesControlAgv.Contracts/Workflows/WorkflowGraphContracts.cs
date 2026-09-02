@@ -65,6 +65,8 @@ public static class WorkflowGraphNodeTypeIds
     public const string Custom = "core.custom";
     /// <summary>Legacy free-form instrument operation node.</summary>
     public const string InstrumentOperation = "instrument.operation";
+    /// <summary>Load and run one explicitly approved robot-arm program.</summary>
+    public const string RobotExecuteProgram = "robot.execute-program";
     public const string InstrumentReadStatus = "instrument.read-status";
     public const string InstrumentWaitUntilStable = "instrument.wait-until-stable";
 
@@ -77,6 +79,7 @@ public static class WorkflowGraphNodeTypeIds
         WorkflowNodeType.Dropoff => Dropoff,
         WorkflowNodeType.End => End,
         WorkflowNodeType.InstrumentOperation => InstrumentOperation,
+        WorkflowNodeType.RobotProgram => RobotExecuteProgram,
         _ => Custom
     };
 
@@ -90,6 +93,7 @@ public static class WorkflowGraphNodeTypeIds
             Dropoff => WorkflowNodeType.Dropoff,
             End => WorkflowNodeType.End,
             InstrumentOperation => WorkflowNodeType.InstrumentOperation,
+            RobotExecuteProgram => WorkflowNodeType.RobotProgram,
             _ => WorkflowNodeType.Custom
         };
 }

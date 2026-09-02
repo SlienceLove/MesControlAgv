@@ -105,6 +105,36 @@ public interface IMesClient
         string instrumentId,
         CancellationToken cancellationToken) =>
         Task.FromResult<IonChromatographyControlCenterStatusResponse?>(null);
+    Task<IReadOnlyList<ShineLabDeviceStatusResponse>> GetShineLabDeviceStatusesAsync(
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShineLabDeviceStatusResponse>>([]);
+    Task<ShineLabCommandResponse> SendShineLabConfigAsync(
+        string equipmentCode,
+        ShineLabConfigRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ShineLabCommandResponse>(new NotSupportedException("ShineLab Config is not supported by this MES client."));
+    Task<ShineLabCommandResponse> SendShineLabCommandAsync(
+        string equipmentCode,
+        ShineLabCommandRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ShineLabCommandResponse>(new NotSupportedException("ShineLab Command is not supported by this MES client."));
+    Task<ShineLabTaskResponse> CreateShineLabTaskAsync(
+        ShineLabTaskCreateRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ShineLabTaskResponse>(new NotSupportedException("ShineLab tasks are not supported by this MES client."));
+    Task<ShineLabTaskResponse> ConfigureShineLabTaskAsync(
+        string taskUuid,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ShineLabTaskResponse>(new NotSupportedException("ShineLab task configuration is not supported."));
+    Task<ShineLabTaskResponse> SendShineLabTaskCommandAsync(
+        string taskUuid,
+        ShineLabCommandRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ShineLabTaskResponse>(new NotSupportedException("ShineLab task commands are not supported."));
+    Task<IReadOnlyList<ShineLabTaskResponse>> GetShineLabTasksAsync(
+        int limit,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ShineLabTaskResponse>>([]);
     Task<DashboardPlannedPath> PlanPathAsync(
         string fromStationId,
         string toStationId,
@@ -122,6 +152,87 @@ public interface IMesClient
             .Select(snapshot => new AgvFleetDashboardStatus(snapshot, null))
             .ToList();
     Task<AgvCommandResult?> ExecuteAgvCommandAsync(string agvId, string command, Guid? taskId, CancellationToken cancellationToken) => Task.FromResult<AgvCommandResult?>(null);
+
+    // AUBO program surface.  Defaults keep existing offline/test clients source
+    // compatible while the production MesClient opts into the HTTP routes.
+    Task<AuboArmStatusResponse?> GetAuboArmStatusAsync(
+        string deviceId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<AuboArmStatusResponse?>(null);
+
+    Task<AuboArmReadinessResponse?> GetAuboArmReadinessAsync(
+        string deviceId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<AuboArmReadinessResponse?>(null);
+
+    Task<AuboArmProgramStatusResponse?> GetAuboArmProgramAsync(
+        string deviceId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<AuboArmProgramStatusResponse?>(null);
+
+    Task<AuboArmProgramCatalogResponse?> GetAuboArmProgramCatalogAsync(
+        string deviceId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<AuboArmProgramCatalogResponse?>(null);
+
+    Task<AuboArmProgramOperationResponse> LoadAuboProgramAsync(
+        string deviceId,
+        string programName,
+        string operatorName,
+        Guid operationId,
+        CancellationToken cancellationToken) =>
+        Task.FromException<AuboArmProgramOperationResponse>(
+            new NotSupportedException("AUBO program control is not supported by this MES client."));
+
+    Task<AuboArmProgramOperationResponse> RunAuboProgramAsync(
+        string deviceId,
+        string? programName,
+        string operatorName,
+        Guid operationId,
+        CancellationToken cancellationToken) =>
+        Task.FromException<AuboArmProgramOperationResponse>(
+            new NotSupportedException("AUBO program control is not supported by this MES client."));
+
+    Task<AuboArmProgramOperationResponse> StopAuboProgramAsync(
+        string deviceId,
+        string operatorName,
+        Guid operationId,
+        CancellationToken cancellationToken) =>
+        Task.FromException<AuboArmProgramOperationResponse>(
+            new NotSupportedException("AUBO program control is not supported by this MES client."));
+
+    // More generic aliases make the boundary convenient for callers that refer to
+    // the device family as a robot arm rather than by the AUBO vendor name.
+    Task<AuboArmStatusResponse?> GetRobotArmStatusAsync(string deviceId, CancellationToken cancellationToken) =>
+        GetAuboArmStatusAsync(deviceId, cancellationToken);
+    Task<AuboArmReadinessResponse?> GetRobotArmReadinessAsync(string deviceId, CancellationToken cancellationToken) =>
+        GetAuboArmReadinessAsync(deviceId, cancellationToken);
+    Task<AuboArmProgramStatusResponse?> GetRobotArmProgramAsync(string deviceId, CancellationToken cancellationToken) =>
+        GetAuboArmProgramAsync(deviceId, cancellationToken);
+    Task<AuboArmProgramStatusResponse?> GetRobotArmProgramStatusAsync(string deviceId, CancellationToken cancellationToken) =>
+        GetAuboArmProgramAsync(deviceId, cancellationToken);
+    Task<AuboArmProgramCatalogResponse?> GetRobotArmProgramCatalogAsync(string deviceId, CancellationToken cancellationToken) =>
+        GetAuboArmProgramCatalogAsync(deviceId, cancellationToken);
+    Task<AuboArmProgramOperationResponse> LoadRobotArmProgramAsync(
+        string deviceId,
+        string programName,
+        string operatorName,
+        Guid operationId,
+        CancellationToken cancellationToken) =>
+        LoadAuboProgramAsync(deviceId, programName, operatorName, operationId, cancellationToken);
+    Task<AuboArmProgramOperationResponse> RunRobotArmProgramAsync(
+        string deviceId,
+        string? programName,
+        string operatorName,
+        Guid operationId,
+        CancellationToken cancellationToken) =>
+        RunAuboProgramAsync(deviceId, programName, operatorName, operationId, cancellationToken);
+    Task<AuboArmProgramOperationResponse> StopRobotArmProgramAsync(
+        string deviceId,
+        string operatorName,
+        Guid operationId,
+        CancellationToken cancellationToken) =>
+        StopAuboProgramAsync(deviceId, operatorName, operationId, cancellationToken);
     Task<DashboardTask> CreateTaskAsync(CancellationToken cancellationToken);
     Task<DashboardTask> CreateTaskAsync(int sourceStationCode, int targetStationCode, int priority, string? description, string? externalId, CancellationToken cancellationToken);
     Task<DashboardTask> DispatchTaskAsync(Guid taskId, CancellationToken cancellationToken) =>
@@ -184,6 +295,24 @@ public interface IMesClient
         int limit,
         CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<WorkflowRunTimelineEntry>>([]);
+
+    Task<IReadOnlyList<FieldNavigationAcceptanceResponse>> GetWorkflowFieldNavigationAcceptancesAsync(
+        Guid workflowRunId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<FieldNavigationAcceptanceResponse>>([]);
+
+    Task<FieldNavigationAcceptanceResponse> CreateFieldNavigationAcceptanceAsync(
+        CreateFieldNavigationAcceptanceRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<FieldNavigationAcceptanceResponse>(
+            new NotSupportedException("Field-navigation acceptance APIs are not supported by this MES client."));
+
+    Task<FieldNavigationAcceptanceResponse> AuthorizeFieldNavigationAcceptanceAsync(
+        Guid acceptanceId,
+        AuthorizeFieldNavigationAcceptanceRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<FieldNavigationAcceptanceResponse>(
+            new NotSupportedException("Field-navigation acceptance APIs are not supported by this MES client."));
 
     Task<WorkflowRunControlPermissionsSnapshot> GetWorkflowRunControlPermissionsAsync(
         string actor,

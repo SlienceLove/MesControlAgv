@@ -55,8 +55,16 @@ public sealed class CompoundTaskServiceV2Tests
     public async Task V2_ConcurrencyControl_ShouldRejectSecondTask()
     {
         // Arrange
-        var armDriver = new MockRobotArmDriver();
-        var visionDriver = new MockVisionDriver();
+        var armDriver = new MockRobotArmDriver(new RobotArmDriverOptions(Settings: new Dictionary<string, string>
+        {
+            ["PickFailurePercent"] = "0",
+            ["RandomSeed"] = "1"
+        }));
+        var visionDriver = new MockVisionDriver(new VisionDriverOptions(Settings: new Dictionary<string, string>
+        {
+            ["RecognitionFailurePercent"] = "0",
+            ["RandomSeed"] = "1"
+        }));
         var agvDriver = new MockAgvDriverForTesting();
 
         var options = Options.Create(new CompoundTaskOptions
@@ -186,8 +194,16 @@ public sealed class CompoundTaskServiceV2Tests
     public async Task V2_SuccessfulExecution_ShouldCompleteAllPhases()
     {
         // Arrange
-        var armDriver = new MockRobotArmDriver();
-        var visionDriver = new MockVisionDriver();
+        var armDriver = new MockRobotArmDriver(new RobotArmDriverOptions(Settings: new Dictionary<string, string>
+        {
+            ["PickFailurePercent"] = "0",
+            ["RandomSeed"] = "1"
+        }));
+        var visionDriver = new MockVisionDriver(new VisionDriverOptions(Settings: new Dictionary<string, string>
+        {
+            ["RecognitionFailurePercent"] = "0",
+            ["RandomSeed"] = "1"
+        }));
         var agvDriver = new MockAgvDriverForTesting();
 
         var options = Options.Create(new CompoundTaskOptions

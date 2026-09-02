@@ -26,6 +26,7 @@ using ContractWorkflowParameter = MesControlAgv.Contracts.Workflows.WorkflowPara
 using ContractWorkflowPublishStatus = MesControlAgv.Contracts.Workflows.WorkflowPublishStatus;
 using ContractWorkflowValidationResult = MesControlAgv.Contracts.Workflows.WorkflowValidationResult;
 using ContractWorkflowVersionStatus = MesControlAgv.Contracts.Workflows.WorkflowVersionStatus;
+using ContractAuboArmProgramCatalogResponse = MesControlAgv.Contracts.AuboArmProgramCatalogResponse;
 
 namespace MesControlAgv.Wpf.ViewModels;
 
@@ -39,24 +40,29 @@ public enum WorkflowRemoteState
     Published,
     DryRunAccepted,
     DryRunRejected,
+    SimulatorAccepted,
     Cancelled,
     ServiceUnavailable,
     Error
 }
 
-public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
+public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposable
 {
     private readonly WorkflowStore _store;
     private readonly IMesClient? _mes;
     private readonly Func<string> _actorProvider;
     private readonly WorkflowCatalogSet _catalog;
+    private readonly bool _simulatorExecutionEnabled;
     private ProfileConfiguration _profileConfiguration;
     private WorkflowPublicationContext _publicationContext;
     private readonly Dictionary<string, string> _profileStationNames = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, IReadOnlyList<string>> _robotProgramCatalogs =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly List<ContractWorkflowGraphDocument> _documents = [];
     private readonly ReadOnlyCollection<ContractWorkflowGraphDocument> _documentView;
     private readonly ObservableCollection<WorkflowDefinition> _workflowProjections = [];
     private readonly SemaphoreSlim _remoteGate = new(1, 1);
+    private readonly CancellationTokenSource _shutdown = new();
     private readonly Dictionary<Guid, ContractWorkflowVersion> _remoteVersions = [];
     private readonly ObservableCollection<WorkflowNode> _emptyNodes = [];
     private WorkflowDefinition? _selectedWorkflow;
@@ -65,6 +71,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     private string _message = string.Empty;
     private WorkflowRemoteState _remoteState = WorkflowRemoteState.LocalFallback;
     private string _remoteStatus = "仅使用本地数据";
+    private string _robotProgramCatalogStatus = "尚未刷新";
     private bool _isRemoteBusy;
     private ContractWorkflowValidationResult? _lastValidation;
     private ContractWorkflowExecutionResult? _lastExecution;
@@ -87,13 +94,15 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         IMesClient? mes = null,
         Func<string>? actorProvider = null,
         WorkflowCatalogSet? catalog = null,
-        ProfileConfiguration? profileConfiguration = null)
+        ProfileConfiguration? profileConfiguration = null,
+        bool simulatorExecutionEnabled = false)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _mes = mes;
         _actorProvider = actorProvider ?? (() => "wpf-editor");
         _catalog = catalog ?? BuiltInWorkflowCatalog.Create();
-        _profileConfiguration = profileConfiguration ?? ProfileConfiguration.Default;
+        _simulatorExecutionEnabled = simulatorExecutionEnabled;
+        _profileConfiguration = EnsureRobotArmProfile(profileConfiguration ?? ProfileConfiguration.Default);
         _publicationContext = WorkflowPublicationContext.FromProfile(_profileConfiguration);
         foreach (var station in _profileConfiguration.Stations)
             _profileStationNames[station.StationId] = station.Name;
@@ -108,6 +117,13 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         _lastImportReport = _store.LastLoadReport;
 
         NewWorkflowCommand = new EditorCommand(CreateWorkflow);
+        CreateAuboTemplateCommand = new EditorCommand(CreateAuboTemplate);
+        RefreshRobotProgramsCommand = new AsyncEditorCommand(
+            () => RunRemoteAsync(
+                "刷新机械臂程序目录",
+                () => RefreshRobotProgramsCoreAsync(_shutdown.Token),
+                _shutdown.Token),
+            CanUseRemote);
         CopyWorkflowCommand = new EditorCommand(CopyWorkflow, () => SelectedWorkflow is not null);
         DeleteWorkflowCommand = new EditorCommand(DeleteWorkflow, () => SelectedWorkflow is not null);
         SaveCommand = new EditorCommand(Save);
@@ -120,20 +136,23 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         MoveNodeLeftCommand = new EditorCommand(() => MoveNode(-1), CanMoveNodeLeft);
         MoveNodeRightCommand = new EditorCommand(() => MoveNode(1), CanMoveNodeRight);
         LoadFromMesCommand = new AsyncCommand(
-        () => RunRemoteAsync("加载工作流", () => LoadFromMesCoreAsync(CancellationToken.None), CancellationToken.None),
+        () => RunRemoteAsync("加载工作流", () => LoadFromMesCoreAsync(_shutdown.Token), _shutdown.Token),
             CanUseRemote);
         SaveDraftCommand = new AsyncCommand(
-        () => RunRemoteAsync("保存草稿", () => SaveDraftCoreAsync(CancellationToken.None), CancellationToken.None),
+        () => RunRemoteAsync("保存草稿", () => SaveDraftCoreAsync(_shutdown.Token), _shutdown.Token),
             CanSaveDraft);
         ValidateCommand = new AsyncCommand(
-        () => RunRemoteAsync("校验工作流", () => ValidateCoreAsync(CancellationToken.None), CancellationToken.None),
+        () => RunRemoteAsync("校验工作流", () => ValidateCoreAsync(_shutdown.Token), _shutdown.Token),
             CanValidate);
         PublishCommand = new AsyncCommand(
-        () => RunRemoteAsync("发布工作流", () => PublishCoreAsync(CancellationToken.None), CancellationToken.None),
+        () => RunRemoteAsync("发布工作流", () => PublishCoreAsync(_shutdown.Token), _shutdown.Token),
             CanPublish);
         DryRunCommand = new AsyncCommand(
-        () => RunRemoteAsync("模拟运行工作流", () => DryRunCoreAsync(CancellationToken.None), CancellationToken.None),
+        () => RunRemoteAsync("模拟运行工作流", () => DryRunCoreAsync(_shutdown.Token), _shutdown.Token),
             CanDryRun);
+        ExecuteSimulatorCommand = new AsyncCommand(
+            () => RunRemoteAsync("执行模拟流程", () => ExecuteSimulatorCoreAsync(_shutdown.Token), _shutdown.Token),
+            CanExecuteSimulator);
         RefreshRemoteCommand = LoadFromMesCommand;
 
         SelectedWorkflow = Workflows.FirstOrDefault();
@@ -164,10 +183,12 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 
     public IReadOnlyList<WorkflowNodeTypeOption> NodeTypeOptions { get; }
 
-    public bool ApplyProfileStations(IReadOnlyList<DashboardStation> stations)
+    public bool ApplyProfileStations(
+        IReadOnlyList<DashboardStation> stations,
+        IReadOnlyList<MesControlAgv.Contracts.MapEdgeResponse>? mapEdges = null)
     {
         ArgumentNullException.ThrowIfNull(stations);
-        ApplyInspectorProfileStations(stations);
+        ApplyInspectorProfileStations(stations, mapEdges);
         if (_profileDefaultsApplied || !_store.LastLoadUsedDefaults)
         {
             return false;
@@ -226,7 +247,37 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         return null;
     }
 
-    private void ApplyInspectorProfileStations(IReadOnlyList<DashboardStation> stations)
+    private static ProfileConfiguration EnsureRobotArmProfile(ProfileConfiguration profile)
+    {
+        if ((profile.WorkflowDevices ?? []).Any(device =>
+                string.Equals(device.DeviceFamily, MesControlAgv.Contracts.Workflows.WorkflowDeviceFamilyIds.RobotArm, StringComparison.OrdinalIgnoreCase)))
+        {
+            return profile;
+        }
+
+        return profile with
+        {
+            WorkflowDevices = (profile.WorkflowDevices ?? [])
+                .Concat([
+                    new WorkflowDeviceProfile
+                    {
+                        DeviceId = "ARM-01",
+                        DeviceFamily = MesControlAgv.Contracts.Workflows.WorkflowDeviceFamilyIds.RobotArm,
+                        CapabilityIds = [MesControlAgv.Contracts.Workflows.WorkflowCapabilityIds.RobotExecuteProgram],
+                        Enabled = true,
+                        // Design-time editing is allowed so the operator can
+                        // build a flow; publication/execution still requires
+                        // an explicit control-enabled deployment profile.
+                        ControlEnabled = false
+                    }
+                ])
+                .ToArray()
+        };
+    }
+
+    private void ApplyInspectorProfileStations(
+        IReadOnlyList<DashboardStation> stations,
+        IReadOnlyList<MesControlAgv.Contracts.MapEdgeResponse>? mapEdges = null)
     {
         var profileStations = stations
             .Where(station => !string.IsNullOrWhiteSpace(station.AgvStationId))
@@ -240,7 +291,20 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
                 Enabled = station.Enabled
             })
             .ToArray();
-        _profileConfiguration = _profileConfiguration with { Stations = profileStations };
+        var map = mapEdges is { Count: > 0 }
+            ? new MapProfile
+            {
+                StationIds = profileStations.Select(station => station.AgvStationId).ToArray(),
+                Edges = mapEdges.Select(edge => new MapEdgeProfile
+                {
+                    From = edge.From,
+                    To = edge.To,
+                    Cost = edge.Cost,
+                    Bidirectional = edge.Bidirectional
+                }).ToArray()
+            }
+            : _profileConfiguration.Map;
+        _profileConfiguration = _profileConfiguration with { Stations = profileStations, Map = map };
         _publicationContext = WorkflowPublicationContext.FromProfile(_profileConfiguration);
         _profileStationNames.Clear();
         foreach (var station in profileStations)
@@ -258,7 +322,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.TimedWait,
             MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.ManualConfirmation,
             MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentReadStatus,
-            MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable
+            MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable,
+            MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.RobotExecuteProgram
         };
         return orderedIds.Select(nodeTypeId =>
         {
@@ -302,7 +367,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             var requiresControl = capability.SafetyClassification is
                 MesControlAgv.Contracts.Workflows.WorkflowSafetyClassification.ControlledDeviceAction or
                 MesControlAgv.Contracts.Workflows.WorkflowSafetyClassification.RestrictedDeviceWrite;
-            if (requiresControl && !capability.ControlEnabled)
+            if (requiresControl && !capability.ControlEnabled &&
+                !string.Equals(definition.NodeTypeId, MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.RobotExecuteProgram, StringComparison.OrdinalIgnoreCase))
             {
                 reason = capability.UnavailableReason ?? $"目录能力 {capabilityId} 未启用控制。";
                 return false;
@@ -316,7 +382,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             var providers = _publicationContext.GetDevices(capability.DeviceFamily)
                 .Where(device => device.Enabled && device.Provides(capabilityId));
             if (requiresControl) providers = providers.Where(device => device.ControlEnabled);
-            if (!providers.Any())
+            if (!providers.Any() &&
+                !string.Equals(definition.NodeTypeId, MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.RobotExecuteProgram, StringComparison.OrdinalIgnoreCase))
             {
                 reason = $"当前 Profile 没有可用设备提供 {capabilityId}.";
                 return false;
@@ -341,6 +408,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.TimedWait => WorkflowNodeType.Wait,
         MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentReadStatus => WorkflowNodeType.InstrumentOperation,
         MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable => WorkflowNodeType.InstrumentOperation,
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.RobotExecuteProgram => WorkflowNodeType.RobotProgram,
         _ => WorkflowNodeType.Custom
     };
 
@@ -482,7 +550,84 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         _catalog,
         _publicationContext,
         _profileStationNames,
-        CommitInspectorField);
+        CommitInspectorField,
+        ResolveRobotProgramNames(SelectedNode));
+
+    private IReadOnlyList<string> ResolveRobotProgramNames(WorkflowNode? node)
+    {
+        var deviceId = ResolveRobotDeviceId(node);
+        return _robotProgramCatalogs.TryGetValue(deviceId, out var names)
+            ? names
+            : Array.Empty<string>();
+    }
+
+    private string ResolveRobotDeviceId(WorkflowNode? node)
+    {
+        var configured = node is not null && string.Equals(
+                node.GraphNodeTypeId,
+                MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.RobotExecuteProgram,
+                StringComparison.OrdinalIgnoreCase)
+            ? node.Configuration
+                .FirstOrDefault(pair => string.Equals(
+                    pair.Key,
+                    MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.DeviceId,
+                    StringComparison.OrdinalIgnoreCase))
+                .Value
+            : null;
+        if (!string.IsNullOrWhiteSpace(configured)) return configured.Trim();
+
+        return _profileConfiguration.WorkflowDevices
+                   .FirstOrDefault(device => string.Equals(
+                       device.DeviceFamily,
+                       MesControlAgv.Contracts.Workflows.WorkflowDeviceFamilyIds.RobotArm,
+                       StringComparison.OrdinalIgnoreCase))?.DeviceId
+               ?? AuboArmControlViewModel.DefaultDeviceId;
+    }
+
+    private async Task RefreshRobotProgramsCoreAsync(CancellationToken cancellationToken)
+    {
+        if (_mes is null) return;
+
+        var deviceId = ResolveRobotDeviceId(SelectedNode);
+        ContractAuboArmProgramCatalogResponse? catalog;
+        try
+        {
+            catalog = await _mes.GetAuboArmProgramCatalogAsync(deviceId, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            RobotProgramCatalogStatus = $"{deviceId} 程序目录读取失败：{exception.Message}";
+            Message = "机械臂程序目录读取失败；未自动重试，请确认连接后手动重试。";
+            throw;
+        }
+
+        if (catalog is null)
+        {
+            RobotProgramCatalogStatus = $"{deviceId} 程序目录暂不可用；未修改已有选择";
+            Message = "未读取到机械臂程序目录，请确认连接后再手动刷新。";
+            RefreshInspector();
+            return;
+        }
+
+        var names = catalog.AvailablePrograms
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => name.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        _robotProgramCatalogs[deviceId] = names;
+        RobotProgramCatalogStatus = catalog.IsComplete
+            ? $"{deviceId} 已读取 {names.Length} 个可用程序（预加载槽位/允许列表）"
+            : $"{deviceId} 程序目录部分读取；仍有 {catalog.ReadErrors.Count} 个槽位错误";
+        Message = names.Length == 0
+            ? $"{deviceId} 未返回可选程序；流程节点不会写入程序名。"
+            : $"已将 {deviceId} 的程序目录加载到流程编辑器，可在机械臂节点中选择。";
+        RefreshInspector();
+    }
 
     private void CommitInspectorField(WorkflowInspectorFieldViewModel field, string? value)
     {
@@ -561,6 +706,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         WorkflowRemoteState.ValidationFailed => "MES 校验未通过",
         WorkflowRemoteState.Published => "MES 版本已发布",
         WorkflowRemoteState.DryRunAccepted => "模拟运行已受理，未发送 AGV 指令",
+        WorkflowRemoteState.SimulatorAccepted => "本地模拟流程已受理，正在由隔离 worker 执行",
         WorkflowRemoteState.DryRunRejected => "模拟运行被拒绝",
         WorkflowRemoteState.Cancelled => "MES 工作流请求已取消，本地 JSON 仍可用",
         WorkflowRemoteState.ServiceUnavailable => "MES 不可用，本地 JSON 仍可用",
@@ -569,6 +715,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     };
 
     public bool IsLoading => IsRemoteBusy;
+
+    public bool IsSimulatorExecutionEnabled => _simulatorExecutionEnabled;
 
     public ContractWorkflowVersion? RemoteVersion => SelectedRemoteVersion;
 
@@ -601,6 +749,16 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         ? "运行审计：尚无记录"
         : $"运行审计：{ExecutionAudits.Count} 条；最新：{ExecutionAudits[^1].EventType}";
     public bool IsRemoteAvailable => _mes is not null;
+
+    /// <summary>
+    /// Status of the last explicit read-only AUBO program catalog refresh. The
+    /// catalog is intentionally not queried on every node selection.
+    /// </summary>
+    public string RobotProgramCatalogStatus
+    {
+        get => _robotProgramCatalogStatus;
+        private set => SetField(ref _robotProgramCatalogStatus, value);
+    }
 
     public bool IsRemoteBusy
     {
@@ -636,6 +794,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             : $"无效（{_lastValidation.Issues.Count} 个问题）";
 
     public ICommand NewWorkflowCommand { get; }
+    public ICommand CreateAuboTemplateCommand { get; }
+    public ICommand RefreshRobotProgramsCommand { get; }
     public ICommand CopyWorkflowCommand { get; }
     public ICommand DeleteWorkflowCommand { get; }
     public ICommand SaveCommand { get; }
@@ -644,6 +804,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     public ICommand ValidateCommand { get; }
     public ICommand PublishCommand { get; }
     public ICommand DryRunCommand { get; }
+    public ICommand ExecuteSimulatorCommand { get; }
     public ICommand AddNodeCommand { get; }
     public ICommand DeleteNodeCommand { get; }
     public ICommand AddParameterCommand { get; }
@@ -677,6 +838,49 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         Message = "已新建实验流程。";
     }
 
+    private void CreateAuboTemplate()
+    {
+        var enabled = _profileConfiguration.Stations
+            .Where(station => station.Enabled && !string.IsNullOrWhiteSpace(station.AgvStationId))
+            .ToArray();
+        var origin = enabled.FirstOrDefault(station =>
+                         string.Equals(station.Type, "Charge", StringComparison.OrdinalIgnoreCase))?.AgvStationId
+                     ?? enabled.FirstOrDefault()?.AgvStationId
+                     ?? string.Empty;
+        var reachable = (_profileConfiguration.Map?.Edges ?? [])
+            .Where(edge => string.Equals(edge.From, origin, StringComparison.OrdinalIgnoreCase))
+            .Select(edge => edge.To)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var second = enabled.FirstOrDefault(station =>
+                        !string.Equals(station.AgvStationId, origin, StringComparison.OrdinalIgnoreCase) &&
+                        reachable.Contains(station.AgvStationId) &&
+                        (string.Equals(station.Type, "FieldAcceptance", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(station.Type, "Station", StringComparison.OrdinalIgnoreCase)))?.AgvStationId
+                    ?? enabled.FirstOrDefault(station =>
+                        !string.Equals(station.AgvStationId, origin, StringComparison.OrdinalIgnoreCase) &&
+                        reachable.Contains(station.AgvStationId))?.AgvStationId
+                    ?? enabled.FirstOrDefault(station =>
+                        !string.Equals(station.AgvStationId, origin, StringComparison.OrdinalIgnoreCase))?.AgvStationId
+                    ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(origin) || string.IsNullOrWhiteSpace(second))
+        {
+            Message = "当前站点目录不足两个可用站点，无法创建到站触发模板。";
+            return;
+        }
+        var armDeviceId = _profileConfiguration.WorkflowDevices
+            .FirstOrDefault(device => string.Equals(
+                device.DeviceFamily,
+                MesControlAgv.Contracts.Workflows.WorkflowDeviceFamilyIds.RobotArm,
+                StringComparison.OrdinalIgnoreCase))?.DeviceId;
+        var template = WorkflowStore.CreateAuboStationProgramWorkflow(origin, second, armDeviceId: armDeviceId);
+        var document = WorkflowDocumentMapper.ToGraph(template);
+        _documents.Add(document);
+        var projection = WorkflowDocumentMapper.FromGraph(document);
+        _workflowProjections.Add(projection);
+        SelectedWorkflow = projection;
+        Message = $"已创建 {origin}/{second} 到站触发 AUBO 模板；请刷新目录并为每个节点选择实际程序，发布前需现场开启机械臂控制权限。";
+    }
+
     private void CopyWorkflow()
     {
         if (SelectedGraphDocument is not { } source) return;
@@ -700,8 +904,18 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 
     private void Save()
     {
-        _store.SaveDocuments(_documents);
-        Message = $"已保存到 {_store.FilePath}";
+        try
+        {
+            _store.SaveDocuments(_documents);
+            Message = $"已保存到 {_store.FilePath}";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // EditorCommand is synchronous; let a locked/read-only workflow
+            // file become an in-panel diagnostic instead of an unhandled WPF
+            // dispatcher exception that terminates the control centre.
+            Message = $"本地流程保存失败：{exception.Message}";
+        }
     }
 
     public bool ImportCompatibilityFile(string filePath)
@@ -777,6 +991,11 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         CanUseRemote() &&
         SelectedRemoteVersion is { Status: ContractWorkflowVersionStatus.Published, PublishStatus: ContractWorkflowPublishStatus.Published };
 
+    private bool CanExecuteSimulator() =>
+        _simulatorExecutionEnabled &&
+        CanUseRemote() &&
+        SelectedRemoteVersion is { Status: ContractWorkflowVersionStatus.Published, PublishStatus: ContractWorkflowPublishStatus.Published };
+
     private async Task RunRemoteAsync(string action, Func<Task> operation, CancellationToken cancellationToken)
     {
         if (_mes is null) return;
@@ -821,7 +1040,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
         finally
         {
             IsRemoteBusy = false;
-            _remoteGate.Release();
+            try { _remoteGate.Release(); }
+            catch (ObjectDisposedException) { }
             RefreshCommandStates();
         }
     }
@@ -840,6 +1060,9 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 
     public Task ExecuteDryRunAsync(CancellationToken cancellationToken = default) =>
         RunRemoteAsync("模拟运行工作流", () => DryRunCoreAsync(cancellationToken), cancellationToken);
+
+    public Task ExecuteSimulatorAsync(CancellationToken cancellationToken = default) =>
+        RunRemoteAsync("执行模拟流程", () => ExecuteSimulatorCoreAsync(cancellationToken), cancellationToken);
 
     private async Task LoadFromMesCoreAsync(CancellationToken cancellationToken)
     {
@@ -1037,6 +1260,42 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
                 ? "模拟运行已受理，工作流已到达终点。"
                 : $"模拟运行已受理，下一步：{result.NextStep.NodeName}。"
             : $"模拟运行被拒绝：{result.RejectionCode ?? result.RejectionReason ?? "未知原因"}。";
+        RemoteStatus = Message;
+    }
+
+    private async Task ExecuteSimulatorCoreAsync(CancellationToken cancellationToken)
+    {
+        if (!_simulatorExecutionEnabled || SelectedWorkflow is not { } workflow ||
+            SelectedRemoteVersion is not { } version || _mes is null)
+        {
+            return;
+        }
+
+        var result = await _mes.ExecuteWorkflowAsync(
+            new ContractWorkflowExecutionRequest
+            {
+                WorkflowId = workflow.Id,
+                Version = version.Version,
+                RequestId = Guid.NewGuid(),
+                RequestedBy = Actor,
+                CorrelationId = $"wpf-simulator-{Guid.NewGuid():N}",
+                DryRun = false
+            },
+            cancellationToken);
+        _lastExecution = result;
+        _lastExecutionSnapshot = await ReadExecutionSnapshotAsync(result, cancellationToken);
+        _lastExecutionAudits = await ReadExecutionAuditsAsync(result, cancellationToken);
+        RemoteState = result.IsAccepted ? WorkflowRemoteState.SimulatorAccepted : WorkflowRemoteState.DryRunRejected;
+        OnPropertyChanged(nameof(LastExecution));
+        OnPropertyChanged(nameof(ExecutionSnapshot));
+        OnPropertyChanged(nameof(ExecutionRuntimeSummary));
+        OnPropertyChanged(nameof(ExecutionAudits));
+        OnPropertyChanged(nameof(ExecutionAuditSummary));
+        Message = result.IsAccepted
+            ? result.NextStep is null
+                ? "本地模拟流程已受理并完成。"
+                : $"本地模拟流程已受理，下一步：{result.NextStep.NodeName}。可在流程运行监控中查看执行记录。"
+            : $"本地模拟流程被拒绝：{result.RejectionCode ?? result.RejectionReason ?? "未知原因"}。";
         RemoteStatus = Message;
     }
 
@@ -1388,6 +1647,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
     {
         foreach (var command in new[]
         {
+            CreateAuboTemplateCommand,
             CopyWorkflowCommand,
             DeleteWorkflowCommand,
             AddNodeCommand,
@@ -1400,7 +1660,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             SaveDraftCommand,
             ValidateCommand,
             PublishCommand,
-            DryRunCommand
+            DryRunCommand,
+            ExecuteSimulatorCommand
         }.OfType<EditorCommand>()) command.RaiseCanExecuteChanged();
 
         foreach (var command in new[]
@@ -1409,7 +1670,9 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
             SaveDraftCommand,
             ValidateCommand,
             PublishCommand,
-            DryRunCommand
+            DryRunCommand,
+            ExecuteSimulatorCommand,
+            RefreshRobotProgramsCommand
         }.OfType<AsyncCommand>()) command.RaiseCanExecuteChanged();
     }
 
@@ -1423,13 +1686,29 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged
 
     private void RefreshRemoteCommandStates()
     {
-        foreach (var command in new[] { RefreshRemoteCommand, SaveDraftCommand, ValidateCommand, PublishCommand, DryRunCommand }.OfType<AsyncEditorCommand>())
+        foreach (var command in new[]
+                 {
+                     RefreshRemoteCommand,
+                     SaveDraftCommand,
+                     ValidateCommand,
+                     PublishCommand,
+                     DryRunCommand,
+                     RefreshRobotProgramsCommand
+                 }.OfType<AsyncEditorCommand>())
         {
             command.RaiseCanExecuteChanged();
         }
     }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+
+    public void Dispose()
+    {
+        _shutdown.Cancel();
+        DetachWorkflowProjection();
+        _remoteGate.Dispose();
+        _shutdown.Dispose();
+    }
 
     private void RebuildCanvasForSelection()
     {

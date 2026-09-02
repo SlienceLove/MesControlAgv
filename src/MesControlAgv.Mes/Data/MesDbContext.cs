@@ -42,6 +42,10 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
 
     public DbSet<FieldNavigationAcceptanceAudit> FieldNavigationAcceptanceAudits => Set<FieldNavigationAcceptanceAudit>();
 
+    public DbSet<ShineLabTaskRecord> ShineLabTasks => Set<ShineLabTaskRecord>();
+
+    public DbSet<ShineLabTaskEventRecord> ShineLabTaskEvents => Set<ShineLabTaskEventRecord>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<TransportTask>(entity =>
@@ -286,6 +290,8 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.Property(acceptance => acceptance.DeviceTaskId).HasMaxLength(256);
             entity.Property(acceptance => acceptance.LastError).HasMaxLength(2048);
             entity.HasIndex(acceptance => acceptance.PermitId).IsUnique();
+            entity.HasIndex(acceptance => acceptance.WorkflowNodeExecutionId).IsUnique();
+            entity.HasIndex(acceptance => acceptance.WorkflowRunId);
             entity.HasIndex(acceptance => new { acceptance.Status, acceptance.CreatedAtUtc });
         });
 
@@ -295,6 +301,34 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.Property(audit => audit.EventType).HasMaxLength(128);
             entity.Property(audit => audit.DetailsJson).HasMaxLength(8192);
             entity.HasIndex(audit => new { audit.AcceptanceId, audit.OccurredAtUtc });
+        });
+
+        modelBuilder.Entity<ShineLabTaskRecord>(entity =>
+        {
+            entity.ToTable("ShineLabTasks");
+            entity.HasKey(task => task.Id);
+            entity.Property(task => task.TaskUuid).HasMaxLength(256);
+            entity.Property(task => task.EquipmentCode).HasMaxLength(128);
+            entity.Property(task => task.Status).HasMaxLength(32);
+            entity.Property(task => task.CurrentStage).HasMaxLength(64);
+            entity.Property(task => task.RequestFingerprint).HasMaxLength(64);
+            entity.Property(task => task.ConfigJson).HasMaxLength(65535);
+            entity.Property(task => task.ConfigResponseJson).HasMaxLength(65535);
+            entity.Property(task => task.CommandResponseJson).HasMaxLength(65535);
+            entity.Property(task => task.ResultJson).HasMaxLength(65535);
+            entity.Property(task => task.LastError).HasMaxLength(2048);
+            entity.HasIndex(task => task.TaskUuid).IsUnique();
+            entity.HasIndex(task => new { task.Status, task.UpdatedAtUtc });
+        });
+
+        modelBuilder.Entity<ShineLabTaskEventRecord>(entity =>
+        {
+            entity.ToTable("ShineLabTaskEvents");
+            entity.HasKey(taskEvent => taskEvent.Id);
+            entity.Property(taskEvent => taskEvent.TaskUuid).HasMaxLength(256);
+            entity.Property(taskEvent => taskEvent.EventType).HasMaxLength(128);
+            entity.Property(taskEvent => taskEvent.PayloadJson).HasMaxLength(65535);
+            entity.HasIndex(taskEvent => new { taskEvent.TaskUuid, taskEvent.OccurredAtUtc });
         });
     }
 }

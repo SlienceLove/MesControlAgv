@@ -55,3 +55,21 @@ public interface IPhysicalPreflightAgvGateway
 {
     Task<PhysicalAgvPreflightResponse> GetPhysicalPreflightAsync(CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// Optional AGV digital-I/O gateway used by station handshakes. Navigation and
+/// I/O remain separate capabilities so a simulator or a legacy adapter cannot
+/// accidentally claim to drive physical outputs.
+/// </summary>
+public interface IAgvIoGateway
+{
+    Task<AgvIoSnapshotResponse> GetIoAsync(
+        string agvId,
+        CancellationToken cancellationToken);
+
+    Task<AgvDoWriteResponse> SetDoAsync(
+        string agvId,
+        int id,
+        bool status,
+        CancellationToken cancellationToken);
+}

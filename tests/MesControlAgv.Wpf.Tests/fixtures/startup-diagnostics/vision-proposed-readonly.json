@@ -1,0 +1,14 @@
+{
+  "Adapter": { "RunMode": "read-only-preflight" },
+  "Agv": {
+    "Driver": "vendor-tcp",
+    "Tcp": { "AcquireControl": false, "EnablePush": false, "MinimumConfidence": 0.95 }
+  },
+  "Devices": {
+    "Vision": {
+      "Driver": "vendor-http-read-only",
+      "Enabled": true,
+      "ControlEnabled": false
+    }
+  }
+}

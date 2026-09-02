@@ -26,7 +26,8 @@ public sealed class WorkflowCatalogTests
             WorkflowGraphNodeTypeIds.Subflow,
             WorkflowGraphNodeTypeIds.TimedWait,
             WorkflowGraphNodeTypeIds.InstrumentReadStatus,
-            WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable
+            WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable,
+            WorkflowGraphNodeTypeIds.RobotExecuteProgram
         ],
             catalog.NodeTypes.Definitions.Select(definition => definition.NodeTypeId).ToArray());
         Assert.All(
@@ -37,6 +38,12 @@ public sealed class WorkflowCatalogTests
         Assert.True(WorkflowGraphDocument.IsPublishableSchemaVersion(2));
         Assert.True(WorkflowGraphDocument.IsPublishableSchemaVersion(3));
         Assert.False(WorkflowGraphDocument.IsPublishableSchemaVersion(1));
+
+        var robot = GetNode(catalog.NodeTypes, WorkflowGraphNodeTypeIds.RobotExecuteProgram);
+        Assert.True(robot.Enabled);
+        Assert.Contains(WorkflowCapabilityIds.RobotExecuteProgram, robot.RequiredCapabilityIds);
+        AssertField(robot, WorkflowNodeConfigurationKeys.DeviceId, required: true, defaultValue: null);
+        AssertField(robot, WorkflowNodeConfigurationKeys.ProgramName, required: true, defaultValue: null);
     }
 
     [Fact]

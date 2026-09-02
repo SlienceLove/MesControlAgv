@@ -223,6 +223,96 @@ public sealed class AgvAdapterModule : IDeviceAdapterModule
             });
         });
 
+        endpoints.MapGet("/agv/io", async (
+            IAgvDeviceClient device,
+            CancellationToken cancellationToken) =>
+        {
+            if (device is not IAgvIoDeviceClient io)
+            {
+                return Results.Problem(
+                    "The configured AGV driver does not expose digital I/O.",
+                    statusCode: StatusCodes.Status501NotImplemented);
+            }
+
+            try
+            {
+                return Results.Ok(await io.GetIoAsync(cancellationToken));
+            }
+            catch (AgvApiException exception)
+            {
+                return Results.Problem(exception.Message, statusCode: StatusCodes.Status502BadGateway);
+            }
+            catch (AgvProtocolException exception)
+            {
+                return Results.Problem(exception.Message, statusCode: StatusCodes.Status502BadGateway);
+            }
+            catch (IOException exception)
+            {
+                return Results.Problem(exception.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            catch (TimeoutException exception)
+            {
+                return Results.Problem(exception.Message, statusCode: StatusCodes.Status504GatewayTimeout);
+            }
+        });
+
+        endpoints.MapPost("/agvs/{agvId}/io/do/{id:int}", async (
+            string agvId,
+            int id,
+            AgvDoWriteRequest request,
+            AdapterService service,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                return Results.Ok(await service.SetDoAsync(agvId, id, request.Status, cancellationToken));
+            }
+            catch (KeyNotFoundException exception)
+            {
+                return Results.NotFound(new { detail = exception.Message });
+            }
+            catch (DeviceDisabledException exception)
+            {
+                return Results.Problem(exception.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            catch (DeviceControlDisabledException exception)
+            {
+                return Results.Problem(exception.Message, statusCode: StatusCodes.Status403Forbidden);
+            }
+            catch (NotSupportedException exception)
+            {
+                return Results.Problem(exception.Message, statusCode: StatusCodes.Status501NotImplemented);
+            }
+            catch (ControlUnavailableException exception)
+            {
+                return Results.Conflict(new { detail = exception.Message });
+            }
+            catch (ReadOnlyPreflightModeException)
+            {
+                return Results.StatusCode(StatusCodes.Status405MethodNotAllowed);
+            }
+            catch (AgvApiException exception)
+            {
+                return Results.Problem(exception.Message, statusCode: StatusCodes.Status502BadGateway);
+            }
+            catch (AgvProtocolException exception)
+            {
+                return Results.Problem(exception.Message, statusCode: StatusCodes.Status502BadGateway);
+            }
+            catch (IOException exception)
+            {
+                return Results.Problem(exception.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            catch (TimeoutException exception)
+            {
+                return Results.Problem(exception.Message, statusCode: StatusCodes.Status504GatewayTimeout);
+            }
+            catch (InvalidOperationException exception)
+            {
+                return Results.UnprocessableEntity(new { detail = exception.Message });
+            }
+        });
+
         endpoints.MapPost("/agv/control/release", async (
             AdapterService service,
             CancellationToken cancellationToken) =>

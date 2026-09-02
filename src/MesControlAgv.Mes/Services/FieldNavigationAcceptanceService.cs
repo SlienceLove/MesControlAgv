@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
+using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain;
 using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Mes.Entities;
@@ -20,19 +21,22 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
     private readonly ProfileConfiguration _profile;
     private readonly PathPlanner _planner;
     private readonly TimeProvider _timeProvider;
+    private readonly IWorkflowApplicationService? _workflows;
 
     public FieldNavigationAcceptanceService(
         FieldNavigationAcceptanceRepository repository,
         IAgvGateway gateway,
         ProfileConfiguration profile,
         PathPlanner planner,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IWorkflowApplicationService? workflows = null)
     {
         _repository = repository;
         _gateway = gateway;
         _profile = profile;
         _planner = planner;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _workflows = workflows;
     }
 
     public async Task<FieldNavigationAcceptanceResponse> CreateAsync(
@@ -47,6 +51,8 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
         {
             throw new ArgumentException("The source and target stations must differ.", nameof(request));
         }
+
+        await ValidateWorkflowLinkAsync(request, targetStationId, cancellationToken);
 
         if (!_profile.Agvs.Any(agv => agv.Enabled && StringComparer.Ordinal.Equals(agv.AgvId, agvId)))
         {
@@ -88,6 +94,8 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
             MapMd5 = mapSnapshot.Md5,
             PlannedPathJson = JsonSerializer.Serialize(path),
             Description = NormalizeOptional(request.Description),
+            WorkflowRunId = request.WorkflowRunId,
+            WorkflowNodeExecutionId = request.WorkflowNodeExecutionId,
             CreatedAtUtc = now,
             UpdatedAtUtc = now
         };
@@ -99,7 +107,9 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
             targetStationId,
             mapSnapshot.MapName,
             mapSnapshot.Md5,
-            plannedPath = path
+            plannedPath = path,
+            request.WorkflowRunId,
+            request.WorkflowNodeExecutionId
         }, cancellationToken);
         return ToResponse(acceptance);
     }
@@ -153,6 +163,37 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
         CancellationToken cancellationToken)
     {
         var acceptance = await RequireAcceptanceAsync(acceptanceId, cancellationToken);
+        if (acceptance.WorkflowRunId.HasValue)
+        {
+            throw new InvalidOperationException(
+                "A workflow-linked field-navigation acceptance can only be dispatched by the workflow worker after node claim.");
+        }
+
+        return await DispatchCoreAsync(acceptance, cancellationToken);
+    }
+
+    public async Task<FieldNavigationAcceptanceResponse> DispatchForWorkflowAsync(
+        Guid acceptanceId,
+        Guid workflowNodeExecutionId,
+        Guid workflowDeviceOperationId,
+        CancellationToken cancellationToken)
+    {
+        var acceptance = await RequireAcceptanceAsync(acceptanceId, cancellationToken);
+        if (acceptance.WorkflowRunId is null ||
+            acceptance.WorkflowNodeExecutionId != workflowNodeExecutionId ||
+            acceptance.WorkflowDeviceOperationId != workflowDeviceOperationId)
+        {
+            throw new InvalidOperationException(
+                "The field-navigation acceptance does not match the claimed workflow node/device operation.");
+        }
+
+        return await DispatchCoreAsync(acceptance, cancellationToken);
+    }
+
+    private async Task<FieldNavigationAcceptanceResponse> DispatchCoreAsync(
+        FieldNavigationAcceptance acceptance,
+        CancellationToken cancellationToken)
+    {
         if (!_profile.Features.EnableFieldNavigationAcceptance)
         {
             throw new InvalidOperationException("Field navigation acceptance is disabled by the active profile.");
@@ -313,6 +354,16 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
                 audit.OccurredAtUtc)).ToArray());
     }
 
+    public async Task<IReadOnlyList<FieldNavigationAcceptanceResponse>> ListForWorkflowRunAsync(
+        Guid workflowRunId,
+        CancellationToken cancellationToken)
+    {
+        if (workflowRunId == Guid.Empty) return [];
+        return (await _repository.ListForWorkflowRunAsync(workflowRunId, cancellationToken))
+            .Select(ToResponse)
+            .ToArray();
+    }
+
     private async Task<FieldNavigationAcceptance> RequireAcceptanceAsync(Guid acceptanceId, CancellationToken cancellationToken)
     {
         if (acceptanceId == Guid.Empty)
@@ -322,6 +373,55 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
 
         return await _repository.GetAsync(acceptanceId, cancellationToken)
             ?? throw new KeyNotFoundException($"Field-navigation acceptance '{acceptanceId}' was not found.");
+    }
+
+    private async Task ValidateWorkflowLinkAsync(
+        CreateFieldNavigationAcceptanceRequest request,
+        string targetStationId,
+        CancellationToken cancellationToken)
+    {
+        if (request.WorkflowRunId is null && request.WorkflowNodeExecutionId is null) return;
+        if (request.WorkflowRunId is not { } workflowRunId || workflowRunId == Guid.Empty ||
+            request.WorkflowNodeExecutionId is not { } nodeExecutionId || nodeExecutionId == Guid.Empty)
+        {
+            throw new ArgumentException(
+                "WorkflowRunId and WorkflowNodeExecutionId must be supplied together and must be non-empty.",
+                nameof(request));
+        }
+
+        var workflows = _workflows ?? throw new InvalidOperationException(
+            "Workflow-linked field navigation is not available in this MES deployment.");
+        var run = await workflows.GetExecutionAsync(workflowRunId, cancellationToken)
+            ?? throw new KeyNotFoundException($"Workflow run '{workflowRunId}' was not found.");
+        if (run.RuntimeStatus is not (WorkflowRuntimeStatus.Prepared or WorkflowRuntimeStatus.Running))
+        {
+            throw new InvalidOperationException(
+                $"Workflow run '{workflowRunId}' is {run.RuntimeStatus}; only an active run can receive a field permit.");
+        }
+
+        var node = (await workflows.ListNodeExecutionsAsync(workflowRunId, cancellationToken))
+            .SingleOrDefault(item => item.Id == nodeExecutionId)
+            ?? throw new KeyNotFoundException(
+                $"Workflow node execution '{nodeExecutionId}' was not found in run '{workflowRunId}'.");
+        if (node.Status != WorkflowNodeExecutionStatus.Ready ||
+            !string.Equals(node.NodeTypeId, WorkflowGraphNodeTypeIds.Move, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "A field-navigation permit can be linked only to the Ready Move node of an active workflow run.");
+        }
+        if (!node.Inputs.TryGetValue(WorkflowNodeConfigurationKeys.TargetStation, out var workflowTarget) ||
+            !string.Equals(workflowTarget?.Trim(), targetStationId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                "The field-navigation target does not match the linked workflow Move node.");
+        }
+
+        var existing = await _repository.GetByWorkflowNodeExecutionIdAsync(nodeExecutionId, cancellationToken);
+        if (existing is not null)
+        {
+            throw new InvalidOperationException(
+                "The workflow Move node already has a field-navigation acceptance record.");
+        }
     }
 
     private static FieldNavigationAcceptanceResponse ToResponse(FieldNavigationAcceptance acceptance) => new(
@@ -343,7 +443,12 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
         acceptance.DeviceTaskId,
         acceptance.LastError,
         acceptance.CreatedAtUtc,
-        acceptance.UpdatedAtUtc);
+        acceptance.UpdatedAtUtc)
+    {
+        WorkflowRunId = acceptance.WorkflowRunId,
+        WorkflowNodeExecutionId = acceptance.WorkflowNodeExecutionId,
+        WorkflowDeviceOperationId = acceptance.WorkflowDeviceOperationId
+    };
 
     private static IReadOnlyList<string> DeserializePath(string value) =>
         JsonSerializer.Deserialize<List<string>>(value) ?? [];

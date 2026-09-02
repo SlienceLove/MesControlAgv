@@ -1,4 +1,6 @@
+using System.Text.Json;
 using MesControlAgv.Contracts;
+using MesControlAgv.Wpf.Infrastructure;
 using MesControlAgv.Wpf.Services;
 using MesControlAgv.Wpf.ViewModels;
 
@@ -123,6 +125,8 @@ public class MainViewModelTests
         Assert.Equal(DateOnly.FromDateTime(DateTime.UtcNow), client.LastRequestedDate);
         Assert.Equal(DateOnly.FromDateTime(DateTime.UtcNow), client.LastRequestedKpiDate);
         Assert.Equal(1, viewModel.Kpi.TaskSummary.Total);
+        Assert.Equal(OfflineDataStateKind.Ready, viewModel.OfflineState.Kind);
+        Assert.Equal("已更新", viewModel.OfflineState.StateText);
         Assert.True(viewModel.IsPhysicalMode);
         Assert.False(viewModel.IsManualArrivalAvailable);
         Assert.Contains("Physical", viewModel.RuntimeMode, StringComparison.Ordinal);
@@ -406,6 +410,13 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
     public Exception? RuntimeSettingsException { get; set; }
     public int GetRuntimeSettingsCallCount { get; private set; }
     public IonChromatographyControlCenterStatusResponse? IonChromatographyStatus { get; set; }
+    public IReadOnlyList<ShineLabDeviceStatusResponse> ShineLabDeviceStatuses { get; set; } = [];
+    public ShineLabCommandResponse? LastShineLabResponse { get; set; }
+    public ShineLabConfigRequest? LastShineLabConfig { get; private set; }
+    public ShineLabCommandRequest? LastShineLabCommand { get; private set; }
+    public ShineLabTaskCreateRequest? LastShineLabTaskCreate { get; private set; }
+    public ShineLabTaskResponse? LastShineLabTaskResult { get; set; }
+    public IReadOnlyList<ShineLabTaskResponse> ShineLabTasks { get; set; } = [];
     public (string FromStationId, string ToStationId, IReadOnlyCollection<string>? BlockedStations)? LastPlanRequest { get; private set; }
     public (int SourceStationCode, int TargetStationCode, int Priority, string? Description, string? ExternalId)? LastCreateRequest { get; private set; }
     public IReadOnlyList<DashboardStation> Stations => _stations;
@@ -466,6 +477,53 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
     public Task<IonChromatographyControlCenterStatusResponse?> GetIonChromatographyStatusAsync(
         string instrumentId,
         CancellationToken cancellationToken) => Task.FromResult(IonChromatographyStatus);
+    public Task<IReadOnlyList<ShineLabDeviceStatusResponse>> GetShineLabDeviceStatusesAsync(
+        CancellationToken cancellationToken) => Task.FromResult(ShineLabDeviceStatuses);
+    public Task<ShineLabCommandResponse> SendShineLabConfigAsync(
+        string equipmentCode,
+        ShineLabConfigRequest request,
+        CancellationToken cancellationToken)
+    {
+        LastShineLabConfig = request;
+        return Task.FromResult(LastShineLabResponse ?? SuccessResponse("Config"));
+    }
+    public Task<ShineLabCommandResponse> SendShineLabCommandAsync(
+        string equipmentCode,
+        ShineLabCommandRequest request,
+        CancellationToken cancellationToken)
+    {
+        LastShineLabCommand = request;
+        return Task.FromResult(LastShineLabResponse ?? SuccessResponse("Command"));
+    }
+
+    private static ShineLabCommandResponse SuccessResponse(string method) => new(
+        "str-001", method, "SHA18I", true, "accepted", JsonSerializer.SerializeToElement(new { result = "Success" }));
+    public Task<ShineLabTaskResponse> CreateShineLabTaskAsync(
+        ShineLabTaskCreateRequest request,
+        CancellationToken cancellationToken)
+    {
+        LastShineLabTaskCreate = request;
+        return Task.FromResult(LastShineLabTaskResult ?? TaskResponse(request.TaskUuid, "Created", "Created"));
+    }
+    public Task<ShineLabTaskResponse> ConfigureShineLabTaskAsync(
+        string taskUuid,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(LastShineLabTaskResult ?? TaskResponse(taskUuid, "Configured", "Configured"));
+    public Task<ShineLabTaskResponse> SendShineLabTaskCommandAsync(
+        string taskUuid,
+        ShineLabCommandRequest request,
+        CancellationToken cancellationToken)
+    {
+        LastShineLabCommand = request;
+        return Task.FromResult(LastShineLabTaskResult ?? TaskResponse(taskUuid, "Accepted", "CommandAccepted"));
+    }
+    public Task<IReadOnlyList<ShineLabTaskResponse>> GetShineLabTasksAsync(
+        int limit,
+        CancellationToken cancellationToken) => Task.FromResult(ShineLabTasks);
+
+    private static ShineLabTaskResponse TaskResponse(string taskUuid, string status, string stage) => new(
+        Guid.NewGuid(), taskUuid, "SHA18I", status, stage,
+        DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, null, null, null);
     public Task<DashboardMapSnapshot> GetMapSnapshotAsync(CancellationToken cancellationToken) =>
         ReadinessException is { } exception
             ? Task.FromException<DashboardMapSnapshot>(exception)

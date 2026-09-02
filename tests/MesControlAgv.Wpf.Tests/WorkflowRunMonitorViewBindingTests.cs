@@ -14,7 +14,8 @@ public sealed class WorkflowRunMonitorViewBindingTests
     {
         var fixture = WorkflowRunMonitorFixture.Create();
         var monitor = new WorkflowRunMonitorViewModel(new WorkflowRunMonitorClientStub(fixture));
-        await monitor.LoadAsync(fixture.Run.ExecutionId);
+                await monitor.LoadAsync(fixture.Run.ExecutionId);
+                Assert.False(monitor.HasFailureEvidence, monitor.FailureReasonDisplay);
 
         Exception? failure = null;
         var thread = new Thread(() =>
@@ -45,11 +46,22 @@ public sealed class WorkflowRunMonitorViewBindingTests
                 var cancel = Assert.IsType<Button>(view.FindName("CancelRunButton"));
                 var resolveSucceeded = Assert.IsType<Button>(view.FindName("ResolveUnknownSucceededButton"));
                 var resolveFailed = Assert.IsType<Button>(view.FindName("ResolveUnknownFailedButton"));
+                var fieldAcceptance = Assert.IsType<Button>(view.FindName("CreateFieldAcceptanceButton"));
+                var autoRefresh = Assert.IsType<CheckBox>(view.FindName("AutoRefreshCheckBox"));
+                var progress = Assert.IsType<ProgressBar>(view.FindName("WorkflowRunProgressBar"));
+                var failurePanel = Assert.IsType<Border>(view.FindName("WorkflowFailureEvidencePanel"));
+                var cancellationPanel = Assert.IsType<Border>(view.FindName("WorkflowCancellationPanel"));
                 Assert.Same(monitor.PauseCommand, pause.Command);
                 Assert.Same(monitor.ResumeCommand, resume.Command);
                 Assert.Same(monitor.CancelCommand, cancel.Command);
                 Assert.Same(monitor.ResolveUnknownSucceededCommand, resolveSucceeded.Command);
                 Assert.Same(monitor.ResolveUnknownFailedCommand, resolveFailed.Command);
+                Assert.Same(monitor.CreateAndAuthorizeFieldMoveCommand, fieldAcceptance.Command);
+                Assert.True(autoRefresh.IsChecked);
+                Assert.Contains("自动刷新", autoRefresh.Content.ToString(), StringComparison.Ordinal);
+                Assert.Equal(monitor.ProgressPercent, progress.Value);
+                Assert.Equal(Visibility.Collapsed, failurePanel.Visibility);
+                Assert.Equal(Visibility.Collapsed, cancellationPanel.Visibility);
                 Assert.DoesNotContain("重试", resolveSucceeded.Content.ToString(), StringComparison.Ordinal);
                 Assert.DoesNotContain("重试", resolveFailed.Content.ToString(), StringComparison.Ordinal);
                 window.Close();

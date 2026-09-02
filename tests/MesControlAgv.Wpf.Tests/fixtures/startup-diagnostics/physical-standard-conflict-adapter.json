@@ -1,0 +1,16 @@
+{
+  "Adapter": { "RunMode": "standard" },
+  "Agv": {
+    "Driver": "vendor-tcp",
+    "Tcp": { "AcquireControl": true, "EnablePush": true, "MinimumConfidence": 0.95 }
+  },
+  "Devices": {
+    "AuboArm": { "Enabled": true, "ControlEnabled": true, "Host": "" },
+    "SampleWorkstation": {
+      "Enabled": true,
+      "ControlEnabled": true,
+      "EquipmentNo": "",
+      "BaseUrl": "not-a-url"
+    }
+  }
+}

@@ -20,6 +20,85 @@ WPF-managed Simulator databases are stored under
 managed endpoints. Local service management is Simulator-only and never
 connects to a physical controller.
 
+### Offline startup diagnostics
+
+Before starting or connecting to any service, WPF parses its environment and
+optional local configuration files. The **启动诊断** page shows every result;
+this inspection does not perform ping, HTTP, TCP, or serial probing.
+
+Use these optional variables when a deployment wants the diagnostic page to
+validate the same files that its external services will load:
+
+```powershell
+$env:WPF_ADAPTER_CONFIG_PATH = 'D:\deploy\Adapter\appsettings.PhysicalAcceptance.json'
+$env:WPF_INSTRUMENT_GATEWAY_CONFIG_PATH = 'D:\deploy\InstrumentGateway\appsettings.json'
+```
+
+The Adapter inspection covers the AGV driver/run mode, AUBO arm and sample
+workstation enable/control gates. The current repository has no registered
+visual Adapter module, so visual status is reported as **未注册**; the in-process
+`MockVisionDriver` is not treated as field integration. The instrument gateway
+inspection validates the CIC-D160+ identity and serial settings and always
+reports the gateway write surface as disabled because its HTTP and injected
+transport contracts are read-only.
+
+The same report also exposes the **现场只读预检输入** tab. It maps the static
+`read-only-preflight`, `AcquireControl`, `EnablePush`, and
+`MinimumConfidence` values to machine-readable input codes, then lists the
+controller identity, control owner, current station/idle state, map identity,
+localization, safety gates, authorization, and single-segment route as fields
+that require fresh evidence. An explicitly open mutation gate is an offline
+block. The exported `fieldPreflight` section uses schema
+`mes.field-preflight/1.0`; its `canDetermineGo` value is always `false`.
+This report prepares a handoff only and never changes the physical acceptance
+record's **NO-GO** conclusion.
+
+After reading a prior report, use the **配置差异审阅** tab to compare the
+current local inspection with that imported snapshot. The comparison is keyed
+by diagnostic code (including `FIELD_` preflight inputs), shows only redacted
+values, and is an audit aid rather than a freshness check. A subsequent export
+may include the `configurationDiff` section with schema
+`mes.offline-diagnostic-diff/1.0`; it still cannot determine field GO.
+Use the status dropdown or code/name search to narrow the table. If a human
+reviews the result, enter a short local reviewer label and optional note, then
+choose **记录本次审阅**; this appends one bounded, redacted in-memory audit
+entry. It does not persist automatically or alter either snapshot.
+
+The **快照生命周期** tab scans only a selected directory's
+`mes-offline-diagnostics*.json` files. It reports format, size, age, retention
+candidates, and the active policy (30 days, 3 protected latest files, 100 files,
+50 MB total by default). Scanning never creates the directory and never deletes,
+uploads, or overwrites a file. To process candidates, an operator must check the
+confirmation box and enter the exact phrase shown in the page; the action moves
+only unchanged candidates into `.offline-diagnostics-recycle/<timestamp>/` and
+writes a redacted `manifest.json`, so the files remain recoverable. Incorrect
+confirmation, a changed source file, or a path outside the scan directory is
+rejected. There is no background cleanup.
+
+Invalid JSON or an impossible enabled-module configuration blocks WPF startup.
+Missing optional files remain warnings and do not authorize any field action.
+
+### Offline release gate
+
+Run the release gate from the repository root before packaging or handing off
+an offline build:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-offline-release.ps1
+```
+
+It runs the single-process solution test, checks the diagnostic schema and
+fixture redaction, and requires the physical handoff/acceptance documents to
+retain their `NO-GO` wording. Use `-SkipTests` only for a quick static check;
+the default mode is the release result. The generated JSON report is written
+to the system temporary directory unless `-OutputPath` is provided.
+The report contains aggregated test counts and a `releaseEligible` flag; only
+this JSON should be archived or uploaded by CI. Temporary TRX files and raw
+test output are removed when the gate exits. The CI workflow additionally runs
+`scripts/assert-offline-release-report.ps1`, which rejects unredacted paths,
+credentials, raw-log properties, unexpected skipped tests, and any automatic
+field GO decision before uploading the single JSON artifact.
+
 ## Isolated process verification
 
 `run-local.ps1` starts only the Simulator, Adapter, and MES service processes;

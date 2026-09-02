@@ -1,328 +1,36 @@
 <Window x:Class="MesControlAgv.Wpf.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        xmlns:controls="clr-namespace:MesControlAgv.Wpf.Controls"
+        xmlns:converters="clr-namespace:MesControlAgv.Wpf.Converters"
         xmlns:experiments="clr-namespace:MesControlAgv.Wpf.Experiments"
-        xmlns:local="clr-namespace:MesControlAgv.Wpf"
+        xmlns:views="clr-namespace:MesControlAgv.Wpf.Views"
         xmlns:workflowCanvas="clr-namespace:MesControlAgv.Wpf.WorkflowCanvas"
-        Title="AGV MES 中控"
+        Title="中控运营中心"
         WindowState="Maximized"
         Width="1420"
         Height="860"
-        MinWidth="1180"
-        MinHeight="720">
+        MinWidth="820"
+        MinHeight="480">
     <Window.Resources>
-        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
-        <local:MapBezierGeometryConverter x:Key="MapBezierGeometryConverter" />
-        <local:MapRasterImageSourceConverter x:Key="MapRasterImageSourceConverter" />
-        <local:MapRouteColorConverter x:Key="MapRouteColorConverter" />
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Themes/MesTheme.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+            <converters:StatusBrushConverter x:Key="StatusBrushConverter" />
+            <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+        </ResourceDictionary>
     </Window.Resources>
-        <TabControl x:Name="MainTabs" Margin="20" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"
-                    SelectionChanged="MainTabs_SelectionChanged">
+        <TabControl x:Name="MainTabs" Margin="0"
+                    Style="{StaticResource MainNavigationTabControlStyle}"
+                    ItemContainerStyle="{StaticResource MainNavigationTabItemStyle}"
+                    HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <TabItem Header="任务监控" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
-<Grid Margin="0">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
-
-        <Grid Margin="0,0,0,16">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="220" />
-                <ColumnDefinition Width="220" />
-                <ColumnDefinition Width="240" />
-            </Grid.ColumnDefinitions>
-            <StackPanel>
-                <TextBlock FontSize="28" FontWeight="SemiBold" Text="AGV MES 中控" />
-                <TextBlock Margin="0,6,0,0" Foreground="Gray" Text="按当前站点与路线配置创建运输任务" />
-            </StackPanel>
-            <Border Grid.Column="1" Margin="12,0,0,0" Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
-                <StackPanel>
-                    <TextBlock Foreground="Gray" Text="MES 连接" />
-                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding ConnectionStatus}" />
-                    <TextBlock Margin="0,4,0,0" Foreground="Gray" FontSize="11" TextWrapping="Wrap" Text="{Binding RefreshStatus}" />
-                </StackPanel>
-            </Border>
-            <Border Grid.Column="2" Margin="12,0,0,0" Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
-                <StackPanel>
-                    <TextBlock Foreground="Gray" Text="运行模式" />
-                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding RuntimeMode}" />
-                    <TextBlock Foreground="Gray" FontSize="11" Text="{Binding RuntimeModeDescription}" TextWrapping="Wrap" />
-                </StackPanel>
-            </Border>
-            <Border Grid.Column="3" Margin="12,0,0,0" Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
-                <StackPanel>
-                    <TextBlock Foreground="Gray" Text="AGV 状态 / 当前位置" />
-                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding AgvStatus}" />
-                    <TextBlock Text="{Binding AgvStation}" />
-                    <TextBlock Margin="0,4,0,0" Foreground="Gray" FontSize="11" TextWrapping="Wrap" Text="{Binding AgvExecutionStatus}" />
-                </StackPanel>
-            </Border>
-        </Grid>
-
-        <Border Grid.Row="1" Margin="0,0,0,16" Padding="14" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="1.25*" />
-                    <ColumnDefinition Width="1.25*" />
-                    <ColumnDefinition Width="90" />
-                    <ColumnDefinition Width="1.2*" />
-                    <ColumnDefinition Width="1.1*" />
-                    <ColumnDefinition Width="130" />
-                </Grid.ColumnDefinitions>
-
-                <TextBlock Grid.ColumnSpan="6" FontSize="18" FontWeight="SemiBold" Text="新建运输任务" />
-
-                <StackPanel Grid.Row="1" Margin="0,10,10,0">
-                    <TextBlock Margin="0,0,0,4" Foreground="Gray" Text="起点站" />
-                    <ComboBox MinHeight="30" ItemsSource="{Binding AvailableStations}" SelectedItem="{Binding NewTaskSourceStation}">
-                        <ComboBox.ItemTemplate>
-                            <DataTemplate>
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="{Binding Name}" />
-                                    <TextBlock Margin="6,0,0,0" Foreground="Gray" Text="{Binding AgvStationId}" />
-                                </StackPanel>
-                            </DataTemplate>
-                        </ComboBox.ItemTemplate>
-                    </ComboBox>
-                </StackPanel>
-
-                <StackPanel Grid.Row="1" Grid.Column="1" Margin="0,10,10,0">
-                    <TextBlock Margin="0,0,0,4" Foreground="Gray" Text="终点站" />
-                    <ComboBox MinHeight="30" ItemsSource="{Binding AvailableStations}" SelectedItem="{Binding NewTaskTargetStation}">
-                        <ComboBox.ItemTemplate>
-                            <DataTemplate>
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="{Binding Name}" />
-                                    <TextBlock Margin="6,0,0,0" Foreground="Gray" Text="{Binding AgvStationId}" />
-                                </StackPanel>
-                            </DataTemplate>
-                        </ComboBox.ItemTemplate>
-                    </ComboBox>
-                </StackPanel>
-
-                <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,10,10,0">
-                    <TextBlock Margin="0,0,0,4" Foreground="Gray" Text="优先级" />
-                    <TextBox MinHeight="30" Text="{Binding NewTaskPriority, UpdateSourceTrigger=LostFocus}" />
-                </StackPanel>
-
-                <StackPanel Grid.Row="1" Grid.Column="3" Margin="0,10,10,0">
-                    <TextBlock Margin="0,0,0,4" Foreground="Gray" Text="外部单号" />
-                    <TextBox MinHeight="30" Text="{Binding NewTaskExternalId, UpdateSourceTrigger=PropertyChanged}" />
-                </StackPanel>
-
-                <StackPanel Grid.Row="1" Grid.Column="4" Margin="0,10,10,0">
-                    <TextBlock Margin="0,0,0,4" Foreground="Gray" Text="操作员" />
-                    <TextBox MinHeight="30" Text="{Binding OperatorName, UpdateSourceTrigger=PropertyChanged}" />
-                </StackPanel>
-
-                <StackPanel Grid.Row="1" Grid.RowSpan="2" Grid.Column="5" Margin="0,10,0,0">
-                    <Button MinHeight="32" Command="{Binding PlanRouteCommand}" Content="预览路线" />
-                    <Button Margin="0,8,0,0" MinHeight="38" Command="{Binding CreateTaskCommand}" Content="创建任务" />
-                </StackPanel>
-
-                <StackPanel Grid.Row="2" Grid.ColumnSpan="3" Margin="0,10,10,0">
-                    <TextBlock Margin="0,0,0,4" Foreground="Gray" Text="任务描述" />
-                    <TextBox MinHeight="30" Text="{Binding NewTaskDescription, UpdateSourceTrigger=PropertyChanged}" />
-                </StackPanel>
-
-                <StackPanel Grid.Row="2" Grid.Column="3" Grid.ColumnSpan="2" Margin="0,10,10,0">
-                    <TextBlock Margin="0,0,0,4" Foreground="Gray" Text="路线预览" />
-                    <TextBlock MinHeight="30" VerticalAlignment="Center" Text="{Binding RoutePreview}" TextTrimming="CharacterEllipsis" ToolTip="{Binding RoutePreview}" />
-                    <TextBlock Margin="0,4,0,0" Foreground="Gray" FontSize="11" Text="{Binding TaskFormStatus}" TextWrapping="Wrap" />
-                </StackPanel>
-            </Grid>
-        </Border>
-
-        <Grid Grid.Row="2" MinHeight="0" ClipToBounds="True">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-            </Grid.RowDefinitions>
-            <StackPanel Grid.Row="0" Margin="0,0,0,10" Orientation="Horizontal">
-                <TextBlock Margin="0,0,8,0" VerticalAlignment="Center" Foreground="Gray" Text="日期：" />
-                <DatePicker Width="140" SelectedDate="{Binding TaskFilterDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                <Button Margin="8,0,0,0" Padding="12,4" Command="{Binding QueryTasksCommand}" Content="查询" />
-                <Button Margin="8,0,0,0" Padding="12,4" Command="{Binding RefreshTasksCommand}" Content="刷新" />
-            </StackPanel>
-            <Grid Grid.Row="1" MinHeight="0" ClipToBounds="True">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="310" />
-            </Grid.ColumnDefinitions>
-            <DataGrid Grid.Column="0" ItemsSource="{Binding Tasks}"
-                      SelectedItem="{Binding SelectedTask}"
-                      AutoGenerateColumns="False"
-                      CanUserAddRows="False"
-                      IsReadOnly="True"
-                      SelectionMode="Single">
-                <DataGrid.Columns>
-                    <DataGridTextColumn Width="240" Header="任务 ID" Binding="{Binding Id}" />
-                    <DataGridTextColumn Width="2*" Header="任务内容" Binding="{Binding TaskDescription}" />
-                    <DataGridTextColumn Width="150" Header="起点站" Binding="{Binding SourceStationName}" />
-                    <DataGridTextColumn Width="170" Header="终点站" Binding="{Binding TargetStationName}" />
-                    <DataGridTextColumn Width="140" Header="状态" Binding="{Binding StatusDescription}" />
-                    <DataGridTextColumn Width="145" Header="创建时间" Binding="{Binding CreatedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" />
-                    <DataGridTextColumn Width="145" Header="结束时间" Binding="{Binding EndedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" />
-                    <DataGridTextColumn Width="70" Header="重试" Binding="{Binding RetryCount}" />
-                    <DataGridTextColumn Width="*" Header="错误" Binding="{Binding ErrorDescription}" />
-                </DataGrid.Columns>
-            </DataGrid>
-            <Grid Grid.Column="1" Margin="16,0,0,0" MinHeight="0">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
-
-                <Border Grid.Row="0" Padding="16" Background="#F6F8FA" CornerRadius="6">
-                    <StackPanel>
-                        <TextBlock FontSize="18" FontWeight="SemiBold" Text="所选任务操作" />
-                        <Button Margin="0,16,0,0" MinHeight="36" Command="{Binding DispatchTaskCommand}" Content="派发任务" />
-                        <Button Margin="0,16,0,0" MinHeight="32" Command="{Binding ArriveCommand}" Content="仿真到站并通知 MES" Visibility="{Binding IsManualArrivalAvailable, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                        <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding ConfirmPickupCommand}" Content="确认取货" />
-                        <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding ConfirmDropoffCommand}" Content="确认放货" />
-                        <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding RetryCommand}" Content="失败后重试" />
-                        <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding RecoverCommand}" Content="恢复查询" />
-                        <Button Margin="0,8,0,0" MinHeight="32" Command="{Binding CancelCommand}" Content="取消任务" />
-                        <Separator Margin="0,16,0,12" />
-                        <TextBlock FontWeight="SemiBold" Text="操作结果" />
-                        <TextBlock Margin="0,4,0,0" Foreground="#1769AA" TextWrapping="Wrap" Text="{Binding CurrentAction}" />
-                        <TextBlock Margin="0,4,0,0" Foreground="#176B3A" TextWrapping="Wrap" Text="{Binding ActionStatus}" />
-                        <TextBlock Margin="0,6,0,0" Foreground="#8A6D1D" TextWrapping="Wrap" Text="{Binding OperatorValidationMessage}" />
-                        <TextBlock Margin="0,4,0,0" Foreground="#B42318" TextWrapping="Wrap" Text="{Binding Message}" />
-                    </StackPanel>
-                </Border>
-
-                <Border Grid.Row="1" Margin="0,12,0,0" Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                        </Grid.RowDefinitions>
-                        <TextBlock FontSize="16" FontWeight="SemiBold" Text="任务详情" />
-                        <StackPanel Grid.Row="1" Margin="0,8,0,8">
-                            <TextBlock FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" Text="{Binding SelectedTask.TaskDescription}" />
-                            <TextBlock Margin="0,6,0,0" Foreground="Gray" Text="{Binding SelectedTask.RouteDescription}" />
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Foreground="Gray" Text="任务 ID" />
-                                <TextBlock Text="{Binding SelectedTask.Id}" TextTrimming="CharacterEllipsis" />
-                            </StackPanel>
-                            <StackPanel Margin="0,4,0,0" Orientation="Horizontal">
-                                <TextBlock Foreground="Gray" Text="状态：" />
-                                <TextBlock Text="{Binding SelectedTask.StatusDescription}" />
-                            </StackPanel>
-                            <Grid Margin="0,4,0,0">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="72" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                <TextBlock Foreground="Gray" Text="执行 AGV：" />
-                                <TextBlock Grid.Column="1" Text="{Binding SelectedTask.AssignedAgvDescription}" TextTrimming="CharacterEllipsis" />
-                            </Grid>
-                            <Grid Margin="0,4,0,0">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="72" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                <TextBlock Foreground="Gray" Text="设备任务：" />
-                                <TextBlock Grid.Column="1" Text="{Binding SelectedTask.DeviceTaskDescription}" TextTrimming="CharacterEllipsis" ToolTip="{Binding SelectedTask.DeviceTaskDescription}" />
-                            </Grid>
-                            <Grid Margin="0,4,0,0">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="72" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                <TextBlock Foreground="Gray" Text="当前路径：" />
-                                <TextBlock Grid.Column="1" Text="{Binding SelectedTask.CurrentPathDescription}" TextWrapping="Wrap" />
-                            </Grid>
-                            <TextBlock Margin="0,4,0,0" Foreground="#B42318" TextWrapping="Wrap" Text="{Binding SelectedTask.ErrorDescription}" />
-                        </StackPanel>
-                        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
-                            <ItemsControl ItemsSource="{Binding TaskEvents}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Margin="0,0,0,8" Padding="8" Background="#F6F8FA" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="4">
-                                            <StackPanel>
-                                                <TextBlock FontWeight="SemiBold" Text="{Binding EventType}" />
-                                                <TextBlock Margin="0,2,0,0" Foreground="Gray" Text="{Binding CreatedAt, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" />
-                                                <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding Payload}" />
-                                            </StackPanel>
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </ScrollViewer>
-                    </Grid>
-                </Border>
-
-                <Border Grid.Row="2" Margin="0,12,0,0" Padding="12" Background="#FFF8E1" CornerRadius="6" Visibility="{Binding IsSimulatorPanelVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
-                    <StackPanel>
-                        <TextBlock FontWeight="SemiBold" Text="开发模拟器" />
-                        <WrapPanel Margin="0,8,0,0">
-                            <Button Margin="0,0,6,6" MinWidth="110" Command="{Binding SimulatorArriveCommand}" Content="底层到站" />
-                             <Button Margin="0,0,6,6" MinWidth="90" Command="{Binding SimulatorFailCommand}" Content="下一次失败" />
-                             <Button Margin="0,0,6,6" MinWidth="90" Command="{Binding SimulatorTimeoutCommand}" Content="下一次超时" />
-                            <Button Margin="0,0,6,6" MinWidth="72" Command="{Binding SimulatorOfflineCommand}" Content="离线" />
-                            <Button Margin="0,0,6,6" MinWidth="72" Command="{Binding SimulatorRecoverCommand}" Content="上线" />
-                        </WrapPanel>
-                    </StackPanel>
-                </Border>
-            </Grid>
-        </Grid>
-        </Grid>
-        <TextBlock Grid.Row="3" Margin="0,16,0,0" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False" Foreground="Gray" Text="界面每 2 秒从 MES 刷新；取货与放货需要人工确认后才会推进。" />
-
-
-        </Grid>
+            <views:TaskMonitorView x:Name="TaskMonitorView" />
         </TabItem>
     <TabItem Header="KPI 看板" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
-        <ScrollViewer VerticalScrollBarVisibility="Auto">
-            <Grid Margin="0,12,0,0">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="260" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
-                <UniformGrid Grid.Row="0" Columns="5" Margin="0,0,0,16">
-                    <Border Margin="0,0,10,0" Padding="16" Background="#EAF2FF" CornerRadius="8"><StackPanel><TextBlock Foreground="#3867D6" Text="今日任务" /><TextBlock Margin="0,8,0,0" FontSize="28" FontWeight="SemiBold" Text="{Binding Kpi.TaskSummary.Total}" /></StackPanel></Border>
-                    <Border Margin="0,0,10,0" Padding="16" Background="#E8F7EF" CornerRadius="8"><StackPanel><TextBlock Foreground="#219653" Text="运行中" /><TextBlock Margin="0,8,0,0" FontSize="28" FontWeight="SemiBold" Text="{Binding Kpi.TaskSummary.Running}" /></StackPanel></Border>
-                    <Border Margin="0,0,10,0" Padding="16" Background="#EAF7F0" CornerRadius="8"><StackPanel><TextBlock Foreground="#219653" Text="已完成" /><TextBlock Margin="0,8,0,0" FontSize="28" FontWeight="SemiBold" Text="{Binding Kpi.TaskSummary.Completed}" /></StackPanel></Border>
-                    <Border Margin="0,0,10,0" Padding="16" Background="#FFF0F0" CornerRadius="8"><StackPanel><TextBlock Foreground="#D64545" Text="失败" /><TextBlock Margin="0,8,0,0" FontSize="28" FontWeight="SemiBold" Text="{Binding Kpi.TaskSummary.Failed}" /></StackPanel></Border>
-                    <Border Padding="16" Background="#FFF5E6" CornerRadius="8"><StackPanel><TextBlock Foreground="#B7791F" Text="完成率" /><TextBlock Margin="0,8,0,0" FontSize="28" FontWeight="SemiBold" Text="{Binding Kpi.CompletionRate}" /></StackPanel></Border>
-                </UniformGrid>
-                <Grid Grid.Row="1">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="300" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                    <Border Margin="0,0,16,0" Padding="12" Background="#F6F8FA" CornerRadius="8">
-                        <Grid>
-                            <controls:KpiDonutChart Slices="{Binding Kpi.StatusSlices}" />
-                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"><TextBlock HorizontalAlignment="Center" FontSize="22" FontWeight="SemiBold" Text="{Binding Kpi.TaskSummary.Total}" /><TextBlock Foreground="Gray" Text="任务状态" /></StackPanel>
-                        </Grid>
-                    </Border>
-                    <Border Grid.Column="1" Padding="12" Background="#F6F8FA" CornerRadius="8">
-                        <StackPanel>
-                            <DockPanel><TextBlock FontSize="18" FontWeight="SemiBold" Text="任务趋势" /><TextBlock DockPanel.Dock="Right" Foreground="Gray" Text="创建 / 完成" /></DockPanel>
-                            <controls:KpiTrendChart Height="205" Margin="0,8,0,0" Points="{Binding Kpi.TaskTrend}" />
-                        </StackPanel>
-                    </Border>
-                </Grid>
-                <Grid Grid.Row="2" Margin="0,16,0,0">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                    <Border Margin="0,0,8,0" Padding="16" Background="#F6F8FA" CornerRadius="8">
-                        <StackPanel><TextBlock FontSize="18" FontWeight="SemiBold" Text="样品处理信息" /><TextBlock Margin="0,10,0,0" Text="总量：{Binding Kpi.SampleSummary.Total}" /><TextBlock Margin="0,4,0,0" Text="待处理：{Binding Kpi.SampleSummary.Waiting}" /><TextBlock Margin="0,4,0,0" Text="处理中：{Binding Kpi.SampleSummary.Processing}" /><TextBlock Margin="0,4,0,0" Text="已完成：{Binding Kpi.SampleSummary.Completed}" /><TextBlock Margin="0,10,0,0" Foreground="DarkGoldenrod" TextWrapping="Wrap" Text="{Binding Kpi.SampleSummary.DataSource}" /></StackPanel>
-                    </Border>
-                    <Border Grid.Column="1" Margin="8,0,0,0" Padding="16" Background="#F6F8FA" CornerRadius="8">
-                        <StackPanel><TextBlock FontSize="18" FontWeight="SemiBold" Text="耗材剩余情况" /><ItemsControl Margin="0,8,0,0" ItemsSource="{Binding Kpi.Consumables}"><ItemsControl.ItemTemplate><DataTemplate><Grid Margin="0,4"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="70" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="{Binding Name}" /><ProgressBar Height="8" Margin="0,5,12,0" Maximum="{Binding Capacity}" Value="{Binding Remaining}" /></StackPanel><TextBlock Grid.Column="1" HorizontalAlignment="Right" Text="{Binding Status}" /></Grid></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel>
-                    </Border>
-                </Grid>
-                <Border Grid.Row="3" Margin="0,16,0,0" Padding="16" Background="#F6F8FA" CornerRadius="8">
-                    <StackPanel><DockPanel><TextBlock FontSize="18" FontWeight="SemiBold" Text="仪器运作状态" /><TextBlock DockPanel.Dock="Right" Foreground="Gray" Text="{Binding Kpi.LastUpdated}" /></DockPanel><ItemsControl Margin="0,8,0,0" ItemsSource="{Binding Kpi.Instruments}"><ItemsControl.ItemTemplate><DataTemplate><Grid Margin="0,4"><Grid.ColumnDefinitions><ColumnDefinition Width="180" /><ColumnDefinition Width="90" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Text="{Binding Name}" /><TextBlock Grid.Column="1" FontWeight="SemiBold" Text="{Binding Status}" /><TextBlock Grid.Column="2" Foreground="Gray" TextWrapping="Wrap" Text="{Binding Detail}" /></Grid></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel>
-                </Border>
-            </Grid>
-        </ScrollViewer>
+        <views:KpiDashboardView x:Name="KpiDashboardView" />
     </TabItem>
-    <TabItem Header="离子色谱" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <TabItem Header="离子色谱（已迁移至设备状态查询）" Visibility="Collapsed" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <Grid Margin="0,12,0,0">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
@@ -345,22 +53,18 @@
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <StackPanel Margin="0,0,16,0">
-                    <TextBlock Foreground="Gray" Text="连接" />
-                    <TextBlock Margin="0,5,0,0" FontSize="18" FontWeight="SemiBold" Text="{Binding IonChromatography.ConnectionStatus}" />
-                </StackPanel>
-                <StackPanel Grid.Column="1" Margin="0,0,16,0">
-                    <TextBlock Foreground="Gray" Text="设备状态" />
-                    <TextBlock Margin="0,5,0,0" FontSize="18" FontWeight="SemiBold" Text="{Binding IonChromatography.DeviceState}" />
-                </StackPanel>
-                <StackPanel Grid.Column="2" Margin="0,0,16,0">
-                    <TextBlock Foreground="Gray" Text="任务准入" />
-                    <TextBlock Margin="0,5,0,0" FontSize="18" FontWeight="SemiBold" Foreground="#A63A2B" Text="{Binding IonChromatography.TaskAdmissionStatus}" />
-                </StackPanel>
-                <StackPanel Grid.Column="3">
-                    <TextBlock Foreground="Gray" Text="串口占用" />
-                    <TextBlock Margin="0,5,0,0" FontSize="18" FontWeight="SemiBold" Text="{Binding IonChromatography.PortStatus}" />
-                </StackPanel>
+                <Border Margin="0,0,10,0" Padding="12" Background="#ECFDF3" BorderBrush="#C4EBD6" BorderThickness="1" CornerRadius="8">
+                    <StackPanel><StackPanel Orientation="Horizontal"><Ellipse Width="7" Height="7" Margin="0,0,6,0" VerticalAlignment="Center" Fill="{Binding IonChromatography.ConnectionStatus, Converter={StaticResource StatusBrushConverter}}" /><TextBlock Foreground="#027A48" Text="连接" /></StackPanel><TextBlock Margin="0,5,0,0" FontSize="17" FontWeight="SemiBold" Text="{Binding IonChromatography.ConnectionStatus}" /></StackPanel>
+                </Border>
+                <Border Grid.Column="1" Margin="0,0,10,0" Padding="12" Background="#EEF5FF" BorderBrush="#CFE0FF" BorderThickness="1" CornerRadius="8">
+                    <StackPanel><StackPanel Orientation="Horizontal"><Ellipse Width="7" Height="7" Margin="0,0,6,0" VerticalAlignment="Center" Fill="{Binding IonChromatography.DeviceState, Converter={StaticResource StatusBrushConverter}}" /><TextBlock Foreground="#175CD3" Text="设备状态" /></StackPanel><TextBlock Margin="0,5,0,0" FontSize="17" FontWeight="SemiBold" Text="{Binding IonChromatography.DeviceState}" /></StackPanel>
+                </Border>
+                <Border Grid.Column="2" Margin="0,0,10,0" Padding="12" Background="#FFF6ED" BorderBrush="#FEDFBE" BorderThickness="1" CornerRadius="8">
+                    <StackPanel><StackPanel Orientation="Horizontal"><Ellipse Width="7" Height="7" Margin="0,0,6,0" VerticalAlignment="Center" Fill="{Binding IonChromatography.TaskAdmissionStatus, Converter={StaticResource StatusBrushConverter}}" /><TextBlock Foreground="#B54708" Text="任务准入" /></StackPanel><TextBlock Margin="0,5,0,0" FontSize="17" FontWeight="SemiBold" Foreground="#A63A2B" Text="{Binding IonChromatography.TaskAdmissionStatus}" /></StackPanel>
+                </Border>
+                <Border Grid.Column="3" Padding="12" Background="#F2F4F7" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8">
+                    <StackPanel><TextBlock Foreground="#667085" Text="串口占用" /><TextBlock Margin="0,5,0,0" FontSize="17" FontWeight="SemiBold" Text="{Binding IonChromatography.PortStatus}" /></StackPanel>
+                </Border>
             </Grid>
 
             <Border Grid.Row="2" Padding="16" Background="#F6F8FA" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
@@ -401,6 +105,7 @@
                     <ColumnDefinition Width="24" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
+                <Border Padding="16" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8">
                 <StackPanel>
                     <TextBlock FontSize="17" FontWeight="SemiBold" Text="设备识别" />
                     <Grid Margin="0,12,0,0">
@@ -420,7 +125,9 @@
                         <TextBlock Foreground="Gray" Text="观测时间" /><TextBlock Grid.Column="1" Text="{Binding IonChromatography.ObservedAt}" />
                     </Grid>
                 </StackPanel>
-                <StackPanel Grid.Column="2">
+                </Border>
+                <Border Grid.Column="2" Padding="16" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8">
+                <StackPanel>
                     <TextBlock FontSize="17" FontWeight="SemiBold" Text="执行策略" />
                     <TextBlock Margin="0,12,0,0" Foreground="Gray" Text="已开放操作" />
                     <TextBlock Margin="0,4,0,0" Text="{Binding IonChromatography.EnabledOperations}" TextWrapping="Wrap" />
@@ -428,469 +135,34 @@
                     <TextBlock Margin="0,4,0,0" Text="{Binding IonChromatography.MappingConfidence}" TextWrapping="Wrap" />
                     <TextBlock Margin="0,12,0,0" Foreground="Gray" Text="状态" />
                     <TextBlock Margin="0,4,0,0" Text="{Binding IonChromatography.StatusMessage}" TextWrapping="Wrap" />
+                    <TextBlock Margin="0,4,0,0" FontSize="11"
+                               Foreground="{Binding IonChromatography.OfflineState.StateText, Converter={StaticResource StatusBrushConverter}}"
+                               Text="{Binding IonChromatography.OfflineState.StateText, StringFormat=数据状态：{0}}" />
                 </StackPanel>
+                </Border>
             </Grid>
         </Grid>
     </TabItem>
-    <TabItem Header="AGV 通讯与调度" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
-        <Grid Margin="0,12,0,0">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
-            <DockPanel Margin="0,0,0,12">
-                <StackPanel DockPanel.Dock="Left">
-                    <TextBlock FontSize="22" FontWeight="SemiBold" Text="AGV 通讯与调度" />
-                    <TextBlock Margin="0,4,0,0" Foreground="Gray" Text="查看连接、在线状态、位置和当前任务；控制命令仅作用于当前任务" />
-                </StackPanel>
-                <Button DockPanel.Dock="Right" Padding="14,7" Command="{Binding RefreshAgvCommand}" Content="刷新 AGV 状态" />
-            </DockPanel>
-            <Grid Grid.Row="1">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="280" />
-                </Grid.ColumnDefinitions>
-                <DataGrid Grid.Column="0" ItemsSource="{Binding Agvs}" SelectedItem="{Binding SelectedAgv}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single">
-                    <DataGrid.Columns>
-                        <DataGridTextColumn Width="170" Header="MES 状态" Binding="{Binding MesTaskStatus}" />
-                        <DataGridTextColumn Width="110" Header="设备状态" Binding="{Binding DeviceState}" />
-                        <DataGridTextColumn Width="150" Header="目标站点" Binding="{Binding TargetStationId}" />
-                        <DataGridTextColumn Width="140" Header="AGV ID" Binding="{Binding AgvId}" />
-                        <DataGridTextColumn Width="100" Header="连接状态" Binding="{Binding OnlineText}" />
-                        <DataGridTextColumn Width="120" Header="控制权" Binding="{Binding ControlOwner}" />
-                        <DataGridTextColumn Width="150" Header="当前位置" Binding="{Binding CurrentStationId}" />
-                        <DataGridTextColumn Width="2*" Header="当前任务" Binding="{Binding CurrentTaskText}" />
-                    </DataGrid.Columns>
-                </DataGrid>
-                <Border Grid.Column="1" Margin="16,0,0,0" Padding="16" Background="#F6F8FA" CornerRadius="6">
-                    <StackPanel>
-                        <TextBlock FontSize="18" FontWeight="SemiBold" Text="调度控制" />
-                        <TextBlock Margin="0,12,0,0" Foreground="Gray" Text="选中 AGV" />
-                        <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding SelectedAgv.AgvId}" />
-                        <TextBlock Margin="0,8,0,0" Foreground="Gray" Text="当前任务" />
-                        <TextBlock Text="{Binding SelectedAgv.CurrentTaskText}" TextWrapping="Wrap" />
-                        <TextBlock Margin="0,8,0,0" Foreground="Gray" Text="MES / 设备状态" />
-                        <TextBlock Text="{Binding SelectedAgv.MesTaskStatus}" TextWrapping="Wrap" />
-                        <TextBlock Margin="0,6,0,0" Text="{Binding SelectedAgv.DeviceState}" />
-                        <TextBlock Margin="0,8,0,0" Foreground="Gray" Text="目标 / 路径" />
-                        <TextBlock Text="{Binding SelectedAgv.TargetStationId}" />
-                        <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding SelectedAgv.ExecutionPath}" />
-                        <TextBlock Margin="0,6,0,0" Foreground="#B42318" TextWrapping="Wrap" Text="{Binding SelectedAgv.ExecutionError}" />
-                        <TextBlock Margin="0,6,0,0" Foreground="Gray" Text="{Binding SelectedAgv.CapabilitySummary}" TextWrapping="Wrap" />
-                        <Button Margin="0,18,0,0" MinHeight="34" Command="{Binding PauseAgvCommand}" Content="暂停当前任务" />
-                        <Button Margin="0,8,0,0" MinHeight="34" Command="{Binding ResumeAgvCommand}" Content="恢复当前任务" />
-                        <Button Margin="0,8,0,0" MinHeight="34" Command="{Binding CancelAgvCommand}" Content="取消当前任务" />
-                        <TextBlock Margin="0,18,0,0" Foreground="Gray" Text="说明：无当前任务时不会发送控制指令；真实 AGV 接入后由 Adapter 协议实现具体响应。" TextWrapping="Wrap" />
-                    </StackPanel>
-                </Border>
-            </Grid>
-            <TextBlock Grid.Row="2" Margin="0,12,0,0" Foreground="Gray" Text="当前版本支持暂停、恢复、取消当前任务，以及查看 AGV 在线和连接状态。" />
-        </Grid>
+    <TabItem Header="设备状态查询" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <views:ShineLabDeviceStatusView DataContext="{Binding ShineLabDeviceStatus}" />
+    </TabItem>
+    <TabItem Header="ShineLab 任务下发（实验）" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <views:ShineLabTaskDispatchView DataContext="{Binding ShineLabTaskDispatch}" />
+    </TabItem>
+    <TabItem Header="离子色谱样品任务导入" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <views:ShineLabSequenceImportView x:Name="ShineLabSequenceImportView" />
+    </TabItem>
+    <TabItem x:Name="AgvCommunicationTab" Header="AGV 通讯与调度" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <views:AgvCommunicationView x:Name="AgvCommunicationView" />
+    </TabItem>
+    <TabItem x:Name="AuboArmTab" Header="AUBO 机械臂" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <views:AuboArmControlView DataContext="{Binding AuboArm}" />
     </TabItem>
     <TabItem Header="批量任务导入" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
-        <Grid Margin="0,12,0,0">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-                <RowDefinition Height="150" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
-            <DockPanel Margin="0,0,0,12">
-                <StackPanel DockPanel.Dock="Left">
-                    <TextBlock FontSize="22" FontWeight="SemiBold" Text="批量任务导入" />
-                    <TextBlock Margin="0,4,0,0" Foreground="Gray" Text="支持 CSV / XLSX；导入后按优先级、计划时间自动排序，可直接编辑优先级；站点支持数字编码、AGV 站点 ID 或名称" />
-                </StackPanel>
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                    <Button Margin="6,0,0,0" Padding="14,7" Click="ImportBatch_Click" Content="选择文件" />
-                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding SortBatchCommand}" Content="按优先级排序" />
-                    <Button Margin="6,0,0,0" Padding="14,7" Background="#1769AA" Foreground="White" Command="{Binding SubmitBatchCommand}" Content="批量提交" />
-                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding ClearBatchCommand}" Content="清空" />
-                </StackPanel>
-            </DockPanel>
-            <DataGrid Grid.Row="1" ItemsSource="{Binding BatchTasks}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False" SelectionMode="Single" Margin="0,0,0,12">
-                <DataGrid.Columns>
-                    <DataGridTextColumn Width="70" Header="行号" Binding="{Binding SourceRowNumber}" IsReadOnly="True" />
-                    <DataGridTextColumn Width="180" Header="任务 ID" Binding="{Binding TaskId}" IsReadOnly="True" />
-                    <DataGridTextColumn Width="90" Header="起点" Binding="{Binding SourceStation}" IsReadOnly="True" />
-                    <DataGridTextColumn Width="90" Header="终点" Binding="{Binding TargetStation}" IsReadOnly="True" />
-                    <DataGridTextColumn Width="90" Header="优先级（可编辑）" Binding="{Binding Priority, UpdateSourceTrigger=PropertyChanged}" />
-                    <DataGridTextColumn Width="180" Header="计划时间" Binding="{Binding PlannedTime}" IsReadOnly="True" />
-                    <DataGridTextColumn Width="2*" Header="描述" Binding="{Binding Description}" IsReadOnly="True" />
-                    <DataGridTextColumn Width="140" Header="状态" Binding="{Binding Status}" IsReadOnly="True" />
-                </DataGrid.Columns>
-            </DataGrid>
-            <Border Grid.Row="2" Padding="10" Background="#FFF8E1" BorderBrush="#E8C35A" BorderThickness="1" CornerRadius="4">
-                <ScrollViewer VerticalScrollBarVisibility="Auto">
-                    <ItemsControl ItemsSource="{Binding BatchImportIssues}" />
-                </ScrollViewer>
-            </Border>
-            <TextBlock Grid.Row="3" Margin="0,10,0,0" Foreground="Gray" Text="{Binding BatchStatus}" />
-        </Grid>
-    </TabItem>    <TabItem AutomationProperties.AutomationId="WorkflowManagementTab" Header="实验流程管理" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
-        <Grid Margin="0,12,0,0">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
-            <DockPanel Margin="0,0,0,12">
-                <StackPanel DockPanel.Dock="Left">
-                    <TextBlock FontSize="22" FontWeight="SemiBold" Text="实验流程管理" />
-                    <TextBlock Margin="0,4,0,0" Foreground="Gray" Text="可预设、编辑并通过拖拽编排实验步骤" />
-                </StackPanel>
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.NewWorkflowCommand}" Content="新建流程" />
-                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.CopyWorkflowCommand}" Content="复制" />
-                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.DeleteWorkflowCommand}" Content="删除" />
-                    <Button Margin="6,0,0,0" Padding="14,7" Click="ImportWorkflowCompatibility_Click" Content="兼容导入" ToolTip="导入旧 WPF、旧实验设计器或图文档 JSON" />
-                    <Button Margin="6,0,0,0" Padding="14,7" Background="#1769AA" Foreground="White" Command="{Binding WorkflowEditor.SaveCommand}" Content="保存" />
-                    <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.LoadFromMesCommand}" Content="从 MES 加载" />
-                    <Button AutomationProperties.AutomationId="WorkflowSaveDraftButton" Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.SaveDraftCommand}" Content="保存草稿" />
-                    <Button AutomationProperties.AutomationId="WorkflowValidateButton" Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.ValidateCommand}" Content="校验" />
-                    <Button AutomationProperties.AutomationId="WorkflowPublishButton" Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.PublishCommand}" Content="发布" />
-                    <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.DryRunCommand}" Content="试运行" />
-                </StackPanel>
-            </DockPanel>
-
-            <Grid Grid.Row="1" MinHeight="0" ClipToBounds="True">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="190" />
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="360" />
-                </Grid.ColumnDefinitions>
-
-                <Border Padding="12" Background="#F6F8FA" CornerRadius="6">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                        </Grid.RowDefinitions>
-                        <TextBlock FontSize="16" FontWeight="SemiBold" Text="流程预设" />
-                        <ListBox Grid.Row="1" Margin="0,8,0,16" ItemsSource="{Binding WorkflowEditor.Workflows}" SelectedItem="{Binding WorkflowEditor.SelectedWorkflow}" DisplayMemberPath="Name" />
-                        <TextBlock Grid.Row="2" FontSize="16" FontWeight="SemiBold" Text="步骤工具箱" />
-                        <ListBox x:Name="WorkflowPalette" Grid.Row="3" Margin="0,8,0,0" ItemsSource="{Binding WorkflowEditor.NodeTypeOptions}" DisplayMemberPath="DisplayName" PreviewMouseMove="WorkflowPalette_PreviewMouseMove">
-                            <ListBox.ItemContainerStyle>
-                                <Style TargetType="ListBoxItem">
-                                    <Setter Property="Padding" Value="8,6" />
-                                    <Setter Property="Margin" Value="0,0,0,4" />
-                                    <Setter Property="Background" Value="White" />
-                                    <Setter Property="IsEnabled" Value="{Binding IsAvailable}" />
-                                    <Setter Property="ToolTip" Value="{Binding UnavailableReason}" />
-                                </Style>
-                            </ListBox.ItemContainerStyle>
-                        </ListBox>
-                    </Grid>
-                </Border>
-
-                <Border Grid.Column="1" Margin="12,0" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
-                    <Grid>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <Border Padding="10" Background="#F6F8FA">
-                            <DockPanel LastChildFill="True">
-                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                                    <Button Width="64" Margin="6,0,0,0" Padding="8,5" Command="{Binding WorkflowEditor.CanvasViewModel.UndoCommand}" Content="撤销" ToolTip="撤销画布编辑" />
-                                    <Button Width="64" Margin="6,0,0,0" Padding="8,5" Command="{Binding WorkflowEditor.CanvasViewModel.RedoCommand}" Content="重做" ToolTip="重做画布编辑" />
-                                    <Button Width="76" Margin="6,0,0,0" Padding="8,5" Command="{Binding WorkflowEditor.CanvasViewModel.AutoLayoutCommand}" Content="自动布局" />
-                                    <Button Width="76" Margin="6,0,0,0" Padding="8,5" Click="WorkflowCanvas_FitToContent" Content="适应画布" />
-                                </StackPanel>
-                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock FontSize="17" FontWeight="SemiBold" Text="{Binding WorkflowEditor.SelectedWorkflow.Name}" />
-                                    <TextBlock Margin="12,2,0,0" Foreground="Gray" Text="{Binding WorkflowEditor.RemoteStatus}" />
-                                </StackPanel>
-                            </DockPanel>
-                        </Border>
-                        <workflowCanvas:NodifyCanvasAdapter x:Name="WorkflowCanvasSurface"
-                                                            AutomationProperties.AutomationId="WorkflowCanvasSurface"
-                                                            Grid.Row="1"
-                                                            MinWidth="0"
-                                                            Focusable="True"
-                                                            AllowDrop="True"
-                                                            DragOver="WorkflowCanvas_DragOver"
-                                                            Drop="WorkflowCanvas_Drop"
-                                                            PreviewKeyDown="WorkflowCanvas_PreviewKeyDown" />
-                        <Border Grid.Row="2" Padding="8,6" Background="#F6F8FA" BorderBrush="#D0D7DE" BorderThickness="0,1,0,0">
-                            <DockPanel LastChildFill="True">
-                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                                    <TextBlock Foreground="#667085" Text="{Binding WorkflowEditor.CanvasViewModel.NodeCount, StringFormat={}节点 {0}}" />
-                                    <TextBlock Margin="12,0,0,0" Foreground="#667085" Text="{Binding WorkflowEditor.CanvasViewModel.EdgeCount, StringFormat={}边 {0}}" />
-                                </StackPanel>
-                                <TextBlock Foreground="#475467" TextTrimming="CharacterEllipsis" Text="{Binding WorkflowEditor.CanvasViewModel.Status}" />
-                                <TextBlock Margin="16,0,0,0" Foreground="#7A3E00" TextTrimming="CharacterEllipsis" Text="{Binding WorkflowEditor.CanvasViewModel.LastConnectionMessage}" />
-                            </DockPanel>
-                        </Border>
-                    </Grid>
-                </Border>
-
-                <Border Grid.Column="2" Padding="12" Background="#F6F8FA" CornerRadius="6">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <StackPanel>
-                             <TextBlock FontSize="16" FontWeight="SemiBold" Text="流程属性" />
-                            <TextBlock Margin="0,12,0,4" Foreground="Gray" Text="流程名称" />
-                            <TextBox Text="{Binding WorkflowEditor.SelectedWorkflow.Name, UpdateSourceTrigger=PropertyChanged}" />
-                            <TextBlock Margin="0,10,0,4" Foreground="Gray" Text="流程说明" />
-                            <TextBox MinHeight="54" AcceptsReturn="True" TextWrapping="Wrap" Text="{Binding WorkflowEditor.SelectedWorkflow.Description, UpdateSourceTrigger=PropertyChanged}" />
-                            <Separator Margin="0,14" />
-                             <TextBlock FontSize="16" FontWeight="SemiBold" Text="节点属性" />
-                            <ListBox Margin="0,8,0,10" MaxHeight="120" ItemsSource="{Binding WorkflowEditor.Nodes}" SelectedItem="{Binding WorkflowEditor.SelectedNode}">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <StackPanel Orientation="Horizontal">
-                                            <TextBlock Width="28" Foreground="Gray" Text="{Binding Order}" />
-                                            <TextBlock Text="{Binding Name}" />
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                            <StackPanel Orientation="Horizontal">
-                                <Button Padding="10,5" Command="{Binding WorkflowEditor.MoveNodeLeftCommand}" Content="左移" />
-                                <Button Margin="6,0,0,0" Padding="10,5" Command="{Binding WorkflowEditor.MoveNodeRightCommand}" Content="右移" />
-                                <Button Margin="6,0,0,0" Padding="10,5" Command="{Binding WorkflowEditor.AddNodeCommand}" Content="添加" />
-                                <Button Margin="6,0,0,0" Padding="10,5" Command="{Binding WorkflowEditor.DeleteNodeCommand}" Content="删除" />
-                            </StackPanel>
-                            <TextBlock Margin="0,12,0,4" Foreground="Gray" Text="目录节点" />
-                            <TextBlock FontWeight="SemiBold" Text="{Binding WorkflowEditor.Inspector.NodeTypeDisplayName}" TextWrapping="Wrap" />
-                            <TextBlock Margin="0,2,0,0" FontSize="11" Foreground="#667085" Text="{Binding WorkflowEditor.Inspector.NodeTypeId}" TextWrapping="Wrap" />
-                            <TextBlock Margin="0,2,0,0" FontSize="11" Foreground="#667085">
-                                <Run Text="schema " />
-                                <Run Text="{Binding WorkflowEditor.Inspector.SchemaVersion, Mode=OneWay}" />
-                                <Run Text=" / " />
-                                <Run Text="{Binding WorkflowEditor.Inspector.Category, Mode=OneWay}" />
-                            </TextBlock>
-                            <Border Margin="0,8,0,0"
-                                    Padding="8,6"
-                                    Background="#FFF4E5"
-                                    BorderBrush="#F0B429"
-                                    BorderThickness="1"
-                                    CornerRadius="4"
-                                    Visibility="{Binding WorkflowEditor.Inspector.RequiresMigration, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                <TextBlock Foreground="#7A3E00" Text="{Binding WorkflowEditor.Inspector.CompatibilityMessage}" TextWrapping="Wrap" />
-                            </Border>
-                            <TextBlock Margin="0,10,0,4" Foreground="Gray" Text="节点名称" />
-                            <TextBox Text="{Binding WorkflowEditor.SelectedNode.Name, UpdateSourceTrigger=PropertyChanged}" />
-                            <TextBlock Margin="0,10,0,4" Foreground="Gray" Text="节点说明" />
-                            <TextBox MinHeight="58" AcceptsReturn="True" TextWrapping="Wrap" Text="{Binding WorkflowEditor.SelectedNode.Description, UpdateSourceTrigger=PropertyChanged}" />
-                            <Separator Margin="0,14,0,10" />
-                            <TextBlock FontSize="15" FontWeight="SemiBold" Text="配置参数" />
-                            <ItemsControl ItemsSource="{Binding WorkflowEditor.Inspector.Fields}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <StackPanel Margin="0,9,0,0">
-                                            <DockPanel Margin="0,0,0,4">
-                                                <TextBlock DockPanel.Dock="Right" Foreground="#667085" Text="{Binding Unit}" />
-                                                <StackPanel Orientation="Horizontal">
-                                                    <TextBlock Foreground="#475467" Text="{Binding DisplayName}" />
-                                                    <TextBlock Foreground="#B42318"
-                                                               Text=" *"
-                                                               Visibility="{Binding IsRequired, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                                </StackPanel>
-                                            </DockPanel>
-                                            <Grid>
-                                                <TextBox Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                         Visibility="{Binding IsTextEditor, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                                <TextBox InputScope="Number"
-                                                         Text="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
-                                                         Visibility="{Binding IsNumberEditor, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                                <ComboBox ItemsSource="{Binding Options}"
-                                                          SelectedValuePath="Value"
-                                                          SelectedValue="{Binding Value, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                          Visibility="{Binding IsSelectionEditor, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                                    <ComboBox.ItemTemplate>
-                                                        <DataTemplate>
-                                                            <TextBlock Text="{Binding DisplayName}" TextWrapping="Wrap" />
-                                                        </DataTemplate>
-                                                    </ComboBox.ItemTemplate>
-                                                    <ComboBox.ItemContainerStyle>
-                                                        <Style TargetType="ComboBoxItem">
-                                                            <Setter Property="IsEnabled" Value="{Binding IsAvailable}" />
-                                                            <Setter Property="ToolTip" Value="{Binding UnavailableReason}" />
-                                                        </Style>
-                                                    </ComboBox.ItemContainerStyle>
-                                                </ComboBox>
-                                                <CheckBox VerticalAlignment="Center"
-                                                          IsChecked="{Binding BooleanValue, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                          Content="启用"
-                                                          Visibility="{Binding IsBooleanEditor, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                                <TextBox IsReadOnly="True"
-                                                         Background="#EAECF0"
-                                                         Text="{Binding Value}"
-                                                         TextWrapping="Wrap"
-                                                         Visibility="{Binding IsReadOnlyEditor, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                            </Grid>
-                                            <TextBlock Margin="0,3,0,0"
-                                                       FontSize="11"
-                                                       Foreground="#B42318"
-                                                       Text="{Binding ValidationMessage}"
-                                                       TextWrapping="Wrap"
-                                                       Visibility="{Binding HasValidationMessage, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                            <TextBlock Margin="0,8,0,0" Foreground="#667085" Text="此节点没有配置字段。">
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="Visibility" Value="Visible" />
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding WorkflowEditor.Inspector.HasFields}" Value="True">
-                                                <Setter Property="Visibility" Value="Collapsed" />
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
-                            <Separator Margin="0,14,0,10" />
-                            <TextBlock FontSize="15" FontWeight="SemiBold" Text="执行与能力" />
-                            <Grid Margin="0,7,0,0">
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                </Grid.RowDefinitions>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="88" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Foreground="#667085" Text="执行模式" />
-                                <TextBlock Grid.Column="1" Text="{Binding WorkflowEditor.Inspector.ExecutionMode}" TextWrapping="Wrap" />
-                                <TextBlock Grid.Row="1" Foreground="#667085" Text="安全分类" />
-                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding WorkflowEditor.Inspector.SafetyClassification}" TextWrapping="Wrap" />
-                            </Grid>
-                            <ItemsControl Margin="0,7,0,0" ItemsSource="{Binding WorkflowEditor.Inspector.Capabilities}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <StackPanel Margin="0,0,0,6">
-                                            <TextBlock FontWeight="SemiBold" Text="{Binding DisplayName}" TextWrapping="Wrap" />
-                                            <TextBlock FontSize="11" Foreground="#667085" Text="{Binding CapabilityId}" TextWrapping="Wrap" />
-                                            <TextBlock FontSize="11" Foreground="#475467" Text="{Binding Status}" TextWrapping="Wrap" />
-                                        </StackPanel>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </StackPanel>
-                    </ScrollViewer>
-                </Border>
-            </Grid>
-            <Border Grid.Row="2"
-                    MinHeight="180"
-                    MaxHeight="250"
-                    Margin="0,10,0,0"
-                    BorderBrush="#D0D7DE"
-                    BorderThickness="1"
-                    CornerRadius="4">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
-                    <DockPanel Margin="10,7" LastChildFill="True">
-                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                            <ComboBox Width="112"
-                                      AutomationProperties.AutomationId="WorkflowValidationSeverityFilter"
-                                      ItemsSource="{Binding WorkflowEditor.Validation.SeverityFilters}"
-                                      DisplayMemberPath="DisplayName"
-                                      SelectedItem="{Binding WorkflowEditor.Validation.SelectedSeverityFilter}" />
-                            <ComboBox Width="210"
-                                      AutomationProperties.AutomationId="WorkflowValidationLocationFilter"
-                                      Margin="8,0,0,0"
-                                      ItemsSource="{Binding WorkflowEditor.Validation.LocationFilters}"
-                                      DisplayMemberPath="DisplayName"
-                                      SelectedItem="{Binding WorkflowEditor.Validation.SelectedLocationFilter}" />
-                        </StackPanel>
-                        <StackPanel>
-                            <WrapPanel>
-                                <TextBlock FontWeight="SemiBold" Text="{Binding WorkflowEditor.RemoteStateDescription}" />
-                                <TextBlock Margin="14,0,0,0" Foreground="#315B87" Text="{Binding WorkflowEditor.RemoteVersionDescription}" />
-                                <TextBlock Margin="14,0,0,0" Foreground="#7A3E00" Text="{Binding WorkflowEditor.Validation.Summary}" />
-                            </WrapPanel>
-                            <WrapPanel Margin="0,3,0,0">
-                                <TextBlock FontSize="11" Foreground="#667085" Text="{Binding WorkflowEditor.Validation.ValidatorMetadata}" />
-                                <TextBlock Margin="14,0,0,0" FontSize="11" Foreground="#667085" Text="{Binding WorkflowEditor.Validation.ProfileMetadata}" />
-                            </WrapPanel>
-                            <WrapPanel Margin="0,3,0,0">
-                                <TextBlock FontSize="11" Foreground="#315B87" Text="{Binding WorkflowEditor.ExecutionRuntimeSummary}" />
-                                <TextBlock Margin="14,0,0,0" FontSize="11" Foreground="#7A3E00" Text="{Binding WorkflowEditor.ExecutionAuditSummary}" />
-                            </WrapPanel>
-                        </StackPanel>
-                    </DockPanel>
-                    <TabControl Grid.Row="1" Margin="6,0,6,6">
-                        <TabItem Header="{Binding WorkflowEditor.Validation.IssueTabHeader}">
-                            <Grid>
-                                <DataGrid x:Name="WorkflowValidationGrid"
-                                          AutomationProperties.AutomationId="WorkflowValidationGrid"
-                                          AutoGenerateColumns="False"
-                                          CanUserAddRows="False"
-                                          CanUserDeleteRows="False"
-                                          HeadersVisibility="Column"
-                                          IsReadOnly="True"
-                                          ItemsSource="{Binding WorkflowEditor.Validation.VisibleIssues}"
-                                          SelectedItem="{Binding WorkflowEditor.Validation.SelectedIssue, Mode=TwoWay}"
-                                          SelectionMode="Single"
-                                          SelectionUnit="FullRow">
-                                    <DataGrid.RowStyle>
-                                        <Style TargetType="DataGridRow">
-                                            <Setter Property="ToolTip" Value="{Binding Message}" />
-                                        </Style>
-                                    </DataGrid.RowStyle>
-                                    <DataGrid.Columns>
-                                        <DataGridTemplateColumn Width="66" Header="级别">
-                                            <DataGridTemplateColumn.CellTemplate>
-                                                <DataTemplate>
-                                                    <TextBlock Text="{Binding SeverityDisplayName}">
-                                                        <TextBlock.Style>
-                                                            <Style TargetType="TextBlock">
-                                                                <Setter Property="Foreground" Value="#8A5A00" />
-                                                                <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding IsError}" Value="True">
-                                                                        <Setter Property="Foreground" Value="#B42318" />
-                                                                        <Setter Property="FontWeight" Value="SemiBold" />
-                                                                    </DataTrigger>
-                                                                </Style.Triggers>
-                                                            </Style>
-                                                        </TextBlock.Style>
-                                                    </TextBlock>
-                                                </DataTemplate>
-                                            </DataGridTemplateColumn.CellTemplate>
-                                        </DataGridTemplateColumn>
-                                        <DataGridTextColumn Width="170" Header="代码" Binding="{Binding Code}" />
-                                        <DataGridTextColumn Width="220" Header="节点 / 边" Binding="{Binding Location}" />
-                                        <DataGridTextColumn Width="*" Header="问题" Binding="{Binding Message}" />
-                                        <DataGridTextColumn Width="220" Header="建议处理" Binding="{Binding SuggestedAction}" />
-                                    </DataGrid.Columns>
-                                </DataGrid>
-                                <TextBlock HorizontalAlignment="Center"
-                                           VerticalAlignment="Center"
-                                           Foreground="#667085"
-                                           IsHitTestVisible="False"
-                                           Text="{Binding WorkflowEditor.Validation.EmptyMessage}">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock">
-                                            <Setter Property="Visibility" Value="Visible" />
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding WorkflowEditor.Validation.HasVisibleIssues}" Value="True">
-                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
-                            </Grid>
-                        </TabItem>
-                        <TabItem Header="转换报告"
-                                 Visibility="{Binding WorkflowEditor.HasImportReport, Converter={StaticResource BooleanToVisibilityConverter}}">
-                            <ScrollViewer VerticalScrollBarVisibility="Auto">
-                                <TextBlock Margin="10,7" Foreground="#7A3E00" TextWrapping="Wrap" Text="{Binding WorkflowEditor.ImportReportDetails}" />
-                            </ScrollViewer>
-                        </TabItem>
-                    </TabControl>
-                </Grid>
-            </Border>
-        </Grid>
+        <views:BatchTaskImportView x:Name="BatchTaskImportView" />
+    </TabItem>
+    <TabItem AutomationProperties.AutomationId="WorkflowManagementTab" Header="实验流程管理" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <views:WorkflowManagementView x:Name="WorkflowManagementView" />
     </TabItem>
         <TabItem x:Name="ExperimentPlansTab" AutomationProperties.AutomationId="ExperimentPlansTab"
                  Header="实验方案"
@@ -905,10 +177,14 @@
             <experiments:ExperimentSchedulingView DataContext="{Binding ExperimentScheduling}" />
         </TabItem>
         <TabItem AutomationProperties.AutomationId="WorkflowRunMonitorTab"
-                 Header="流程运行监控"
+                  Header="流程运行监控"
                  HorizontalContentAlignment="Stretch"
                  VerticalContentAlignment="Stretch">
             <workflowCanvas:WorkflowRunMonitorView DataContext="{Binding WorkflowRunMonitor}" />
+        </TabItem>
+        <TabItem x:Name="StartupDiagnosticsTab" Header="启动诊断"
+                 HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+            <views:StartupDiagnosticsView x:Name="StartupDiagnosticsView" DataContext="{Binding Diagnostics}" />
         </TabItem>
         <TabItem Header="就绪 / 地图 / 审计" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
             <Grid Margin="0,12,0,0">
@@ -943,8 +219,11 @@
                                     <TextBlock Margin="0,3,0,0" TextWrapping="Wrap" Text="{Binding Readiness.LiveFingerprint}" />
                                     <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="运行模式" />
                                     <TextBlock Margin="0,3,0,0" Text="{Binding Readiness.OperatingMode}" />
-                                    <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="刷新状态" />
-                                    <TextBlock Margin="0,3,0,0" Foreground="Gray" TextWrapping="Wrap" Text="{Binding Readiness.Status}" />
+                                     <TextBlock Margin="0,10,0,0" Foreground="Gray" Text="刷新状态" />
+                                     <TextBlock Margin="0,3,0,0" Foreground="Gray" TextWrapping="Wrap" Text="{Binding Readiness.Status}" />
+                                     <TextBlock Margin="0,4,0,0" FontSize="11"
+                                                Foreground="{Binding Readiness.OfflineState.StateText, Converter={StaticResource StatusBrushConverter}}"
+                                                Text="{Binding Readiness.OfflineState.StateText, StringFormat=数据状态：{0}}" />
                                 </StackPanel>
                             </Border>
 
@@ -1058,238 +337,8 @@
                 </Grid>
             </Grid>
         </TabItem>
-        <TabItem x:Name="MapTab" Header="地图视图" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
-            <Grid Margin="0,12,0,0">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                </Grid.RowDefinitions>
-                <DockPanel Margin="0,0,0,12">
-                    <StackPanel DockPanel.Dock="Left">
-                        <TextBlock FontSize="22" FontWeight="SemiBold" Text="只读地图视图" />
-                        <TextBlock Margin="0,4,0,0" Foreground="Gray" Text="配置地图几何、实时 AGV 状态和路径叠加" />
-                        <StackPanel Margin="0,8,0,0" Orientation="Horizontal">
-                            <Button Height="28" Padding="10,0" Background="#1769AA" Foreground="White" Content="导入 SMAP 地图" Click="ImportMap_Click" ToolTip="选择 .smap 文件加载地图" AutomationProperties.Name="导入 SMAP 地图文件" />
-                            <Separator Margin="8,0" Width="1" Background="#D0D7DE" />
-                            <Button Width="32" Height="28" Content="−" Click="MapZoomOut_Click" ToolTip="缩小地图" />
-                            <Button Width="32" Height="28" Margin="6,0,0,0" Content="+" Click="MapZoomIn_Click" ToolTip="放大地图" />
-                            <Button Height="28" Margin="6,0,0,0" Padding="10,0" Content="路线区域" Click="MapFitRoute_Click" ToolTip="聚焦站点和可行驶路线" />
-                            <Button Height="28" Margin="6,0,0,0" Padding="10,0" Content="完整地图" Click="MapFit_Click" ToolTip="显示完整 .smap 边界" />
-                            <Button Width="32" Height="28" Margin="6,0,0,0" Content="↺" Click="MapReset_Click" ToolTip="重置视图" />
-                            <Button Height="28" Margin="6,0,0,0" Padding="10,0" Content="导出当前 PNG" Click="MapExportCurrent_Click" ToolTip="导出当前地图视口" AutomationProperties.Name="导出当前地图视口 PNG" />
-                            <Button Height="28" Margin="6,0,0,0" Padding="10,0" Content="导出完整 PNG" Click="MapExportFull_Click" ToolTip="导出未变换的完整地图" AutomationProperties.Name="导出完整地图 PNG" />
-                        </StackPanel>
-                        <WrapPanel Margin="0,8,0,0">
-                            <CheckBox Margin="0,0,12,0" VerticalAlignment="Center" Content="墙线" IsChecked="{Binding Readiness.Map.Layers.ShowWalls, Mode=TwoWay}" />
-                            <CheckBox Margin="0,0,12,0" VerticalAlignment="Center" Content="路线" IsChecked="{Binding Readiness.Map.Layers.ShowRoutes, Mode=TwoWay}" />
-                            <CheckBox Margin="0,0,12,0" VerticalAlignment="Center" Content="站点标签" IsChecked="{Binding Readiness.Map.Layers.ShowStationLabels, Mode=TwoWay}" />
-                            <CheckBox Margin="0,0,12,0" VerticalAlignment="Center" Content="运行叠加"
-                                      IsEnabled="{Binding Readiness.Map.Layers.RuntimeOverlayAllowed}"
-                                      IsChecked="{Binding Readiness.Map.Layers.ShowRuntimeOverlays, Mode=TwoWay}" />
-                            <CheckBox VerticalAlignment="Center" Content="障碍扫描" ToolTip="显示 .smap 的障碍扫描点"
-                                      IsEnabled="{Binding Readiness.Map.Raster.HasData}"
-                                      IsChecked="{Binding Readiness.Map.Layers.ShowRasterBackground, Mode=TwoWay}" />
-                        </WrapPanel>
-                    </StackPanel>
-                    <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
-                        <TextBlock Text="{Binding Readiness.Map.Fingerprint}" />
-                        <TextBlock Margin="0,3,0,0" Foreground="Gray" Text="{Binding Readiness.Map.LiveFingerprint}" />
-                        <TextBlock Margin="0,3,0,0" FontWeight="SemiBold" Text="{Binding Readiness.Map.SyncStatus, StringFormat=地图同步：{0}}" />
-                        <TextBlock Margin="0,3,0,0" FontWeight="SemiBold" Text="{Binding Readiness.MapLayoutVerificationStatus, StringFormat=布局校验：{0}}" />
-                    </StackPanel>
-                </DockPanel>
-                <Grid Grid.Row="1">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="290" />
-                    </Grid.ColumnDefinitions>
-                    <Border x:Name="MapViewportHost" Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6" ClipToBounds="True"
-                            PreviewMouseWheel="MapCanvas_MouseWheel"
-                            PreviewMouseLeftButtonDown="MapCanvas_MouseLeftButtonDown"
-                            PreviewMouseMove="MapCanvas_MouseMove"
-                            PreviewMouseLeftButtonUp="MapCanvas_MouseLeftButtonUp">
-                        <ScrollViewer x:Name="MapScrollViewer" Background="#FBFCFE" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Disabled">
-                            <Canvas x:Name="MapTransformHost"
-                                    Width="{Binding Readiness.Map.CanvasWidth}"
-                                    Height="{Binding Readiness.Map.CanvasHeight}">
-                                <Canvas.RenderTransform>
-                                    <TransformGroup>
-                                        <ScaleTransform ScaleX="{Binding Readiness.Viewport.Scale}" ScaleY="{Binding Readiness.Viewport.Scale}" />
-                                        <TranslateTransform X="{Binding Readiness.Viewport.OffsetX}" Y="{Binding Readiness.Viewport.OffsetY}" />
-                                    </TransformGroup>
-                                </Canvas.RenderTransform>
-                                <Canvas x:Name="MapCanvas"
-                                        Width="{Binding Readiness.Map.CanvasWidth}"
-                                        Height="{Binding Readiness.Map.CanvasHeight}"
-                                        Background="#FBFCFE">
-                                <Image Width="{Binding Readiness.Map.CanvasWidth}"
-                                       Height="{Binding Readiness.Map.CanvasHeight}"
-                                       Stretch="Fill"
-                                       IsHitTestVisible="False"
-                                       Visibility="{Binding DataContext.Readiness.Map.Layers.ShowRasterBackground, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BooleanToVisibilityConverter}}"
-                                       Source="{Binding Readiness.Map.Raster, Converter={StaticResource MapRasterImageSourceConverter}}" />
-                                <ItemsControl ItemsSource="{Binding Readiness.Map.WallSegments}"
-                                              Visibility="{Binding DataContext.Readiness.Map.Layers.ShowWalls, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate><Canvas /></ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Path Data="{Binding Converter={StaticResource MapBezierGeometryConverter}}"
-                                                  Stroke="#64748B" StrokeThickness="0.6" Opacity="0.72"
-                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" />
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                                <ItemsControl ItemsSource="{Binding Readiness.Map.Edges}"
-                                              Visibility="{Binding DataContext.Readiness.Map.Layers.ShowRoutes, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate><Canvas /></ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Path Data="{Binding Converter={StaticResource MapBezierGeometryConverter}}"
-                                                  Stroke="{Binding Bidirectional, Converter={StaticResource MapRouteColorConverter}}" StrokeThickness="1.0"
-                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                                <ItemsControl ItemsSource="{Binding Readiness.Map.Edges}"
-                                              Visibility="{Binding DataContext.Readiness.Map.Layers.ShowRoutes, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate><Canvas /></ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemContainerStyle>
-                                        <Style TargetType="ContentPresenter">
-                                            <Setter Property="Canvas.Left" Value="{Binding ArrowX}" />
-                                            <Setter Property="Canvas.Top" Value="{Binding ArrowY}" />
-                                        </Style>
-                                    </ItemsControl.ItemContainerStyle>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Polygon Points="0,0 -6,-3 -6,3" Fill="#315B87">
-                                                <Polygon.RenderTransform>
-                                                    <RotateTransform Angle="{Binding ArrowAngle}" />
-                                                </Polygon.RenderTransform>
-                                            </Polygon>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                                <ItemsControl ItemsSource="{Binding Readiness.Map.AgvPathSegments}"
-                                              Visibility="{Binding DataContext.Readiness.Map.Layers.ShowRuntimeOverlays, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate><Canvas /></ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Path Data="{Binding Converter={StaticResource MapBezierGeometryConverter}}"
-                                                  Stroke="#D97706" StrokeThickness="1.5" Opacity="0.65" />
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                                <ItemsControl ItemsSource="{Binding Readiness.Map.Nodes}">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate><Canvas /></ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemContainerStyle>
-                                        <Style TargetType="ContentPresenter">
-                                            <Setter Property="Canvas.Left" Value="{Binding X}" />
-                                            <Setter Property="Canvas.Top" Value="{Binding Y}" />
-                                        </Style>
-                                    </ItemsControl.ItemContainerStyle>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Button Width="80" Height="40" Padding="0" Background="Transparent" BorderThickness="0"
-                                                    ToolTip="{Binding Enabled, StringFormat=启用：{0}}"
-                                                    AutomationProperties.Name="{Binding StationId}"
-                                                    Click="MapStation_Click">
-                                                <Canvas Width="80" Height="40" Background="Transparent">
-                                                <Ellipse Width="12" Height="12" Canvas.Left="34" Canvas.Top="14"
-                                                         Fill="#E8F1FF" Stroke="#4285C5" StrokeThickness="1.5" />
-                                                <TextBlock Canvas.Left="6" Canvas.Top="-6" Padding="2,0"
-                                                           Background="#FBFCFE" FontWeight="SemiBold" FontSize="9"
-                                                           Visibility="{Binding DataContext.Readiness.Map.Layers.ShowStationLabels, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BooleanToVisibilityConverter}}"
-                                                           Text="{Binding DisplayText}" />
-                                                </Canvas>
-                                            </Button>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                                <ItemsControl ItemsSource="{Binding Readiness.Map.VisualAgvs}"
-                                              Visibility="{Binding DataContext.Readiness.Map.Layers.ShowRuntimeOverlays, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                    <ItemsControl.ItemsPanel>
-                                        <ItemsPanelTemplate><Canvas /></ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemContainerStyle>
-                                        <Style TargetType="ContentPresenter">
-                                            <Setter Property="Canvas.Left" Value="{Binding X}" />
-                                            <Setter Property="Canvas.Top" Value="{Binding Y}" />
-                                        </Style>
-                                    </ItemsControl.ItemContainerStyle>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Canvas Width="1" Height="1">
-                                                <Polygon Points="0,0 -7,-3.5 -7,3.5" Fill="#D97706">
-                                                    <Polygon.RenderTransform>
-                                                        <RotateTransform Angle="{Binding HeadingDegrees}" />
-                                                    </Polygon.RenderTransform>
-                                                </Polygon>
-                                                <Border Canvas.Left="-4" Canvas.Top="-28" Padding="5" Background="#FFF7ED" BorderBrush="#D97706" BorderThickness="1" CornerRadius="4">
-                                                    <StackPanel>
-                                                        <TextBlock FontWeight="SemiBold" Text="{Binding AgvId}" />
-                                                        <TextBlock FontSize="10" Text="{Binding CurrentStation}" />
-                                                    </StackPanel>
-                                                </Border>
-                                            </Canvas>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                                </Canvas>
-                            </Canvas>
-                        </ScrollViewer>
-                    </Border>
-                    <ScrollViewer Grid.Column="1" Margin="12,0,0,0" VerticalScrollBarVisibility="Auto">
-                        <StackPanel>
-                            <TextBlock FontSize="16" FontWeight="SemiBold" Text="实时叠加" />
-                            <ItemsControl Margin="0,8,0,0" ItemsSource="{Binding Readiness.Map.Agvs}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Margin="0,0,0,8" Padding="8" Background="#F6F8FA" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="4">
-                                            <StackPanel>
-                                                <TextBlock FontWeight="SemiBold" Text="{Binding StatusText}" />
-                                                <TextBlock Margin="0,3,0,0" Foreground="Gray" Text="{Binding CurrentStation}" />
-                                                <TextBlock Margin="0,3,0,0" Foreground="#315B87" TextWrapping="Wrap" Text="{Binding PathText}" />
-                                            </StackPanel>
-                                        </Border>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                            <TextBlock Margin="0,12,0,4" FontWeight="SemiBold" Text="站点详情"
-                                       Visibility="{Binding Readiness.Map.StationSelection.HasSelection, Converter={StaticResource BooleanToVisibilityConverter}}" />
-                            <Border Padding="8" Background="#F6F8FA" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="4"
-                                    Visibility="{Binding Readiness.Map.StationSelection.HasSelection, Converter={StaticResource BooleanToVisibilityConverter}}">
-                                <StackPanel>
-                                    <TextBlock FontWeight="SemiBold" Text="{Binding Readiness.Map.StationSelection.SelectedDetail.DisplayName}" />
-                                    <TextBlock Margin="0,3,0,0" Foreground="Gray" Text="{Binding Readiness.Map.StationSelection.SelectedDetail.SmapStationId, StringFormat=.smap 标记：{0}}" />
-                                    <TextBlock Margin="0,3,0,0" Foreground="Gray" Text="{Binding Readiness.Map.StationSelection.SelectedDetail.MesStationText, StringFormat=MES 站点：{0}}" />
-                                    <TextBlock Margin="0,3,0,0" Foreground="Gray" Text="{Binding Readiness.Map.StationSelection.SelectedDetail.CoordinateText, StringFormat=坐标：{0}}" />
-                                    <TextBlock Margin="0,3,0,0" Foreground="Gray" Text="{Binding Readiness.Map.StationSelection.SelectedDetail.Enabled, StringFormat=启用：{0}}" />
-                                    <TextBlock Margin="0,3,0,0" Foreground="#315B87" TextWrapping="Wrap" Text="{Binding Readiness.Map.StationSelection.SelectedDetail.RouteText, StringFormat=关联路线：{0}}" />
-                                </StackPanel>
-                            </Border>
-                            <TextBlock Margin="0,12,0,4" FontWeight="SemiBold" Text="布局校验详情" />
-                            <TextBlock Foreground="#B42318" TextWrapping="Wrap" Text="{Binding Readiness.MapLayoutVerificationDetails}" />
-                            <TextBlock Margin="0,12,0,4" FontWeight="SemiBold" Text="图例" />
-                            <TextBlock Foreground="#315B87" Text="蓝色：有向路线" />
-                            <TextBlock Foreground="#1E293B" Text="深色：.smap 障碍扫描点" />
-                            <TextBlock Foreground="#64748B" Text="灰蓝：.smap 特征勾勒线" />
-                            <TextBlock Foreground="#D97706" Text="橙色：报告的活动路径" />
-                            <TextBlock Margin="0,12,0,4" FontWeight="SemiBold" Text="安全" />
-                            <TextBlock Foreground="#B42318" TextWrapping="Wrap" Text="此视图不提供派发或 AGV 控制操作。" />
-                        </StackPanel>
-                    </ScrollViewer>
-                </Grid>
-            </Grid>
+        <TabItem Header="地图视图" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+            <views:MapDashboardView x:Name="MapDashboardView" />
         </TabItem>
     </TabControl>
 </Window>

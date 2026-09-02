@@ -8,7 +8,7 @@ namespace MesControlAgv.Domain.Workflows;
 /// </summary>
 public static class BuiltInWorkflowCatalog
 {
-    public const string CurrentCatalogVersion = "1.2";
+    public const string CurrentCatalogVersion = "1.3";
     public const string CurrentSchemaVersion = "1.0";
     public const string CurrentProductId = "MES-AGV";
     public const string AdvancedFlowContractOnlyReason =
@@ -70,6 +70,25 @@ public static class BuiltInWorkflowCatalog
             ExecutionMode = WorkflowExecutionMode.DeviceCommand,
             SafetyClassification = WorkflowSafetyClassification.ControlledDeviceAction,
             RequiredCapabilityIds = [WorkflowCapabilityIds.AgvNavigateToStation],
+            ProfileSupport = CurrentProfile()
+        },
+        new()
+        {
+            NodeTypeId = WorkflowGraphNodeTypeIds.RobotExecuteProgram,
+            SchemaVersion = CurrentSchemaVersion,
+            DisplayName = "Execute Robot Program",
+            Category = "Robot Arm",
+            ConfigurationSchema = RobotProgramConfiguration(),
+            ResultSchema = RobotProgramResult(),
+            Ports = [
+                ControlInput(),
+                SuccessOutput(),
+                FailureOutput(),
+                TimeoutOutput()
+            ],
+            ExecutionMode = WorkflowExecutionMode.DeviceCommand,
+            SafetyClassification = WorkflowSafetyClassification.ControlledDeviceAction,
+            RequiredCapabilityIds = [WorkflowCapabilityIds.RobotExecuteProgram],
             ProfileSupport = CurrentProfile()
         },
         new()
@@ -353,6 +372,23 @@ public static class BuiltInWorkflowCatalog
             },
             new DeviceCapabilityDefinition
             {
+                CapabilityId = WorkflowCapabilityIds.RobotExecuteProgram,
+                SchemaVersion = CurrentSchemaVersion,
+                DisplayName = "Execute Robot Program",
+                DeviceFamily = WorkflowDeviceFamilyIds.RobotArm,
+                ConfigurationSchema = RobotProgramConfiguration(),
+                ResultSchema = RobotProgramResult(),
+                ExecutionMode = WorkflowExecutionMode.DeviceCommand,
+                SafetyClassification = WorkflowSafetyClassification.ControlledDeviceAction,
+                ProfileSupport = CurrentProfile(),
+                Enabled = true,
+                // The deployment device still has to opt into control. Keeping
+                // the catalog capability explicit makes the publication gate
+                // reject a read-only AUBO profile instead of silently running it.
+                ControlEnabled = true
+            },
+            new DeviceCapabilityDefinition
+            {
                 CapabilityId = WorkflowCapabilityIds.InstrumentIdentify,
                 SchemaVersion = CurrentSchemaVersion,
                 DisplayName = "Identify Instrument",
@@ -483,6 +519,34 @@ public static class BuiltInWorkflowCatalog
             StringField("stationId", "Station", required: true),
             StringField("deviceTaskId", "Device Task", required: true),
             DateTimeField("arrivedAtUtc", "Arrived At", required: true)
+        ]
+    };
+
+    private static WorkflowObjectSchema RobotProgramConfiguration() => new()
+    {
+        Fields =
+        [
+            StringField(
+                WorkflowNodeConfigurationKeys.DeviceId,
+                "Robot Arm",
+                required: true,
+                referenceKind: WorkflowSchemaReferenceKind.Device,
+                deviceFamily: WorkflowDeviceFamilyIds.RobotArm),
+            StringField(
+                WorkflowNodeConfigurationKeys.ProgramName,
+                "Program Name",
+                required: true)
+        ]
+    };
+
+    private static WorkflowObjectSchema RobotProgramResult() => new()
+    {
+        Fields =
+        [
+            StringField("deviceId", "Robot Arm", required: true),
+            StringField("programName", "Program Name", required: true),
+            StringField("runtime", "Runtime", required: true),
+            DateTimeField("completedAtUtc", "Completed At", required: true)
         ]
     };
 

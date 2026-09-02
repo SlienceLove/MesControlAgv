@@ -13,10 +13,11 @@
         "endpoint": "tcp://agv-controller.example.invalid:19206",
         "deviceParameters": {
           "controllerHost": "agv-controller.example.invalid",
-          "statusPort": "19204",
-          "commandPort": "19206",
-          "controlPort": "19207",
-          "pushPort": "19301"
+            "statusPort": "19204",
+            "commandPort": "19206",
+            "controlPort": "19207",
+            "otherPort": "19210",
+            "pushPort": "19301"
         },
         "maxLoadKg": 200,
         "maxSpeedMetersPerSecond": 0.3,
@@ -97,10 +98,11 @@
     "Driver": "vendor-tcp",
     "Tcp": {
       "Host": "agv-controller.example.invalid",
-      "StatusPort": 19204,
-      "CommandPort": 19206,
-      "ControlPort": 19207,
-      "PushPort": 19301,
+        "StatusPort": 19204,
+        "CommandPort": 19206,
+        "ControlPort": 19207,
+        "OtherPort": 19210,
+        "PushPort": 19301,
       "NickName": "MesControlAgv.Adapter",
       "AcquireControl": false,
       "EnablePush": false,

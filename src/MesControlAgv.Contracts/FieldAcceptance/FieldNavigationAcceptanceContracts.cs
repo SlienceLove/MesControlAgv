@@ -4,7 +4,15 @@ public sealed record CreateFieldNavigationAcceptanceRequest(
     string AgvId,
     string SourceStationId,
     string TargetStationId,
-    string? Description = null);
+    string? Description = null)
+{
+    /// <summary>
+    /// Optional durable workflow linkage. Both ids must be supplied together;
+    /// the MES validates that the node is the Ready Move node of this run.
+    /// </summary>
+    public Guid? WorkflowRunId { get; init; }
+    public Guid? WorkflowNodeExecutionId { get; init; }
+}
 
 public sealed record AuthorizeFieldNavigationAcceptanceRequest(
     string OperatorName,
@@ -37,7 +45,13 @@ public sealed record FieldNavigationAcceptanceResponse(
     string? DeviceTaskId,
     string? LastError,
     DateTimeOffset CreatedAtUtc,
-    DateTimeOffset UpdatedAtUtc);
+    DateTimeOffset UpdatedAtUtc)
+{
+    public Guid? WorkflowRunId { get; init; }
+    public Guid? WorkflowNodeExecutionId { get; init; }
+    public Guid? WorkflowDeviceOperationId { get; init; }
+    public bool IsWorkflowLinked => WorkflowRunId.HasValue && WorkflowNodeExecutionId.HasValue;
+}
 
 public sealed record FieldNavigationAcceptanceAuditResponse(
     Guid Id,
