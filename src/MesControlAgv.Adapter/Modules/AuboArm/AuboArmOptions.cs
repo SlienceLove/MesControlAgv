@@ -97,6 +97,13 @@ public sealed record AuboArmOptions
     public int ProgramCatalogInterRequestDelayMs { get; init; } = 100;
 
     /// <summary>
+    /// Upper bound for one read-only catalog scan. A controller may expose up to
+    /// 100 slots, so the deadline keeps a stale or slow slot from making the WPF
+    /// refresh appear hung while still returning the approved-name evidence.
+    /// </summary>
+    public int ProgramCatalogScanTimeoutMs { get; init; } = 5000;
+
+    /// <summary>
     /// Explicitly approved controller project names. Read-only deployments may
     /// leave this empty and populate the list only after the controller catalog
     /// has been observed and the site operator has approved the exact names.
@@ -255,6 +262,12 @@ public sealed record AuboArmOptions
         {
             throw new InvalidOperationException(
                 $"{SectionName}:ProgramCatalogInterRequestDelayMs must be between 0 and 5000.");
+        }
+
+        if (options.ProgramCatalogScanTimeoutMs is < 1000 or > 120000)
+        {
+            throw new InvalidOperationException(
+                $"{SectionName}:ProgramCatalogScanTimeoutMs must be between 1000 and 120000.");
         }
 
         if (options.MaximumMessageBytes is < 1024 or > 16 * 1024 * 1024)

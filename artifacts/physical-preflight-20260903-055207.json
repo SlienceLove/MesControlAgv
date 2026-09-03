@@ -1,0 +1,49 @@
+{
+  "capturedAtUtc": "2026-09-03T05:52:07Z",
+  "source": "read-only HTTP/TCP preflight",
+  "network": {
+    "agvStatus": "reachable:192.168.1.2:19204",
+    "agvCommand": "reachable:192.168.1.2:19206",
+    "agvControl": "reachable:192.168.1.2:19207",
+    "auboWebSocket": "reachable:192.168.1.102:9012",
+    "auboDashboard": "reachable:192.168.1.102:29999"
+  },
+  "adapter": {
+    "runMode": "standard",
+    "driver": "vendor-tcp",
+    "agv": { "enabled": true, "controlEnabled": true },
+    "aubo": { "enabled": true, "controlEnabled": true }
+  },
+  "agv": {
+    "agvId": "AGV-01",
+    "online": true,
+    "currentStationId": "LM1",
+    "controlOwner": "none",
+    "currentTaskId": null,
+    "localizationConfidence": 0.9233,
+    "relocationStatus": 1,
+    "emergency": false,
+    "blocked": false,
+    "fatalCount": 0,
+    "errorCount": 0,
+    "dispatchPermitted": false,
+    "blockingReasons": [
+      "adapter_does_not_hold_control",
+      "controller_map_evidence_unavailable",
+      "automatic_dispatch_disabled"
+    ]
+  },
+  "aubo": {
+    "deviceId": "ARM-01",
+    "online": true,
+    "robotMode": "Running",
+    "safetyMode": "Normal",
+    "operationalMode": "Automatic",
+    "runtimeState": "Stopped",
+    "controlEnabled": true,
+    "loadedProgram": "test260814",
+    "readiness": true,
+    "programCatalog": "timed_out"
+  },
+  "decision": "NO-GO: keep one-click batch authorization and device writes disabled until AGV control owner and approved map evidence are confirmed; catalog timeout requires a later read-only retry."
+}

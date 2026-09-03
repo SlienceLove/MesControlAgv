@@ -930,8 +930,132 @@ O24 仍是离线软件能力；任何现场快照都必须人工复核，不能�
 - 新增节点处理进度、当前节点、失败证据汇总和取消后的安全语义提示；设备操作表补充结果/错误
   合并显示，避免失败只留在详情字段中。
 - 主窗口释放时显式释放运行监控 ViewModel；绑定测试覆盖进度条、自动刷新开关、失败/取消面板。
-- 离线证据见 `artifacts/offline-workflow-monitor-20260902.md`；WPF 全量回归 **357 通过、0 失败**，
-  解决方案回归 **935 通过、5 跳过、0 失败**，WPF 项目构建 0 警告/0 错误。
+- simulator 执行被 MES 受理后，主窗口自动把 `ExecutionId` 投影到运行监控；试运行和 physical
+  模式不会触发该联动。
+- 离线证据见 `artifacts/offline-workflow-monitor-20260902.md`；WPF 全量回归 **358 通过、0 失败**，
+  解决方案回归 **936 通过、5 跳过、0 失败**，WPF 项目构建 0 警告/0 错误。
 
 现场设备继续保持充电，未恢复网络、未启动 PhysicalAcceptance；恢复现场时仍须先取得新的
 AGV/AUBO 只读预检和明确授权。
+
+## 2026-09-02 隔离本地流程运行链回归
+
+- 使用新增 `scripts/verify-offline-workflow-simulator-run.ps1` 在 loopback 临时端口和临时
+  SQLite 数据库中实际执行一次 `DryRun=false` 的已发布 Move 工作流，观察到
+  `Prepared → Running → Completed`，并读取到节点/设备操作成功终态。
+- 相同 `RequestId` 再次提交返回同一运行 ID 且 `replayIsIdempotent=true`；运行快照、节点、设备
+  操作和时间线均来自隔离 MES 数据库。
+- 最近一次证据 run 为 `ab1802b7-e0de-468e-953c-778b6bb6a4ec`，包含 5 类时间线事件；机器可读
+  结果保存于 `artifacts/offline-workflow-simulator-run-20260902.json`。
+- 为使本地 Move worker 能推进，本次脚本进程级覆盖 `enableAutomaticDispatch=true`；签入的
+  FieldSimulation 配置和现场配置均未改变，默认仍为 fail-closed。
+- 证据见 `artifacts/offline-workflow-simulator-run-20260902.md` 与同名 JSON；同时确认签入的
+  FieldSimulation 默认关闭自动派发时 worker 会 fail-closed 返回 409，只有隔离脚本进程级
+  override 才允许模拟 Move。回归结束后
+  `6241/6245/6283` 均无监听，未启动 PhysicalAcceptance、未访问 AGV/AUBO。
+- WPF 全量测试 **358 通过、0 失败**；解决方案全量测试 **936 通过、5 跳过、0 失败**。
+
+## 2026-09-02 WPF 在线状态来源明确化
+
+- AGV 与 AUBO 不再单独显示模糊的“在线”：新增“本地模拟器在线 / 物理设备在线 /
+  物理设备未验证 / 来源未验证”投影。
+- AGV 标题徽标、车队连接列、调度面板、汇总状态、MES 连接状态，以及 AUBO 标题徽标和连接
+  卡片均显示同一运行来源。
+- simulator 页面明确标注“非现场设备”，说明 localhost 在线不代表实体设备可达；physical
+  页面继续提示必须以新鲜现场只读预检和授权为准。
+- 证据见 `artifacts/runtime-connection-source-labels-20260902.md`；WPF 全量测试
+  **360 通过、0 失败**，解决方案全量测试 **938 通过、5 跳过、0 失败**，构建 0 警告、0 错误。
+
+本改动不改变自动派发、控制权、AUBO 控制或 PhysicalAcceptance 门禁。
+
+## 2026-09-02 料盘四段标准流程模板
+
+- WPF 流程管理新增“料盘四段标准模板”，顺序固定为：原点前置条件 → 站点1 执行
+  `取料盘.pro` → 站点2 执行 `放料盘.pro` → 返回站点1 执行 `回收料盘.pro` → 返回原点。
+- 模板保留显式 AGV Move 与 AUBO Robot Program 节点，程序名预填为现场提供的三个 `.pro`
+  名称；运行前仍须以现场只读目录和允许列表为准。
+- 现场已确认模板站点映射为原点 `LM1`、站点1 `LM7`、站点2 `LM2`，三个 `.pro` 程序名与模板
+  预填一致；创建消息仍会显示实际 ID。
+- 本次仅完成模板和离线回归，未启动物理 worker、未发送 AGV/AUBO 写命令；现场网络恢复后仍须
+  重新只读预检、逐段授权并由操作员启动实际运行。
+
+证据：[料盘四段标准流程模板](../artifacts/standard-material-handling-workflow-template-20260902.md)。
+
+## 2026-09-02 现场恢复后只读预检
+
+- 网线恢复后，AGV `192.168.1.2:19204/19206`、AUBO `192.168.1.102:9012/29999` TCP 均可达。
+- 同步 Release 现场配置后，AGV 新鲜只读预检确认 `AGV-01 @ LM1`、无活动任务、控制权 `none`；该次
+  预检门槛为 `0.95`，定位置信度 `0.7541`，因此 `dispatchPermitted=false`。随后按现场确认将
+  PhysicalAcceptance/FieldStandard/MES 配置门槛调整为 `0.90`；`0.7541` 仍未达标。
+- AUBO 新鲜只读预检确认 `Running / Normal / Automatic / Stopped`，当前 Dashboard 加载工程为
+  `回收料盘`、预加载槽位为空，与流程首个 `取料盘.pro` 节点不一致。
+- 只读会话已停止；未申请控制权，未发送 AGV 派发、AUBO 加载/启动或运动命令。现场仍保持 NO-GO，
+  详见 [现场运行前检查单](../artifacts/field-standard-workflow-runbook-20260902.md)。
+- 按现场确认将软件门槛同步为 `0.90` 并完成 Release 构建；新配置只读复核的实际定位置信度为
+  `0.8957`，仍略低于门槛，`dispatchPermitted=false`，需现场继续调整后再复检。
+- 门槛调整记录见 [现场 AGV 定位置信度门槛调整记录](../artifacts/field-confidence-threshold-change-20260902.md)；
+  本次未打开任何设备控制门禁。
+- 现场决定暂不实现低置信度自动重定位；继续采用低于 `0.90` 时只读预检阻断并人工处理，详见
+  [AGV 自动重定位延期记录](../artifacts/agv-auto-relocalization-deferred-20260902.md)。
+- 标准流程启动前最新只读复核显示 AGV `LM1 / confidence=0.9625 / reloc_status=1` 已通过定位门槛；
+  AUBO 控制器当前加载 `回收料盘`、预加载为空。现场已确认三个程序名，标准运行配置已登记三项
+  允许列表，但控制器实际加载结果仍需在受控运行时验证，现场继续 NO-GO。
+  综合证据：[AGV/AUBO 只读复核](../artifacts/physical-acceptance/agv-aubo-readonly-preflight-20260902-standard-flow.json)。
+- 允许列表登记后的新鲜复核返回三项合并可用程序，AGV 置信度 `0.9675`；AUBO 当前加载仍为
+  `回收料盘`，这是自动模式下的当前工程显示，不代表首节点不能请求 `取料盘`。实际 load/run 仍以
+  控制器回执为准，见 [目录确认复核](../artifacts/physical-acceptance/agv-aubo-readonly-preflight-20260902-catalog-confirmed.json)。
+- 启动前最新只读复核仍为 `AGV @ LM1 / confidence=0.9675`，三项 AUBO 允许列表均可见；标准写入会话
+  尚未启动，等待本次运行的操作员、安全监护人和唯一许可编号。
+
+## 2026-09-02 现场标准运行收尾与下一阶段
+
+- 已完成一次完整的已发布料盘标准工作流运行：`9f0a99c8-7e53-4285-91b5-3abf29cf82b5`，
+  `Completed`，7/7 节点完成；AGV 回到 `LM1`，控制权释放，机械臂停止且无故障。
+- 现场运行收尾证据：[material-wpf-20260902-final-run.md](../artifacts/physical-acceptance/material-wpf-20260902-final-run.md)。
+- 已修复目录扫描超时/进行中提示、程序列表滚动布局、运行画布最小高度与首次适配、
+  PhysicalAcceptance `admin` 权限和 ARM-01 工作流控制门禁。Adapter/MES/WPF 相关测试均通过。
+- WPF 已关闭；现场 MES/Adapter 保持安全空闲，不自动启动新流程。
+- 关闭 WPF 后完成隔离 Simulator 下一阶段回归：`Prepared→Running→Completed`，同 RequestId
+  幂等回放成功（最新 run `ad941a2f-1662-4d1e-82b8-370e229dd273`）。证据：[offline-workflow-simulator-run-20260902-next.md](../artifacts/offline-workflow-simulator-run-20260902-next.md)。
+- 后续继续开发仍使用独立 Simulator 数据/端口；恢复现场操作前必须重新只读预检并取得新的授权。
+
+## 2026-09-02 现场标准模板一键执行（离线能力）
+
+- 为满足现场不逐段点击的目标，WPF 新增受显式配置保护的“一键现场执行”命令，仅针对已发布
+  料盘标准模板；一次提交操作者、监护人、许可前缀和有效期。
+- `WorkflowExecutionRequest` 增加 `PhysicalAuthorization`；MES Move worker 可选地在 Ready
+  节点读取当前 AGV 快照后自动生成唯一节点验收许可，再继续原有物理预检和派发流程。
+- 默认配置仍关闭批量 worker、自动许可和自动派发；没有新鲜只读预检与独立授权时按钮不出现
+  或请求被拒绝。Unknown、阻挡、过期和连接异常不自动重试。
+- 设计及现场启用门禁见 [一键执行设计](../artifacts/physical-batch-workflow-one-click-20260902.md)。
+- 完整解决方案 Release 回归：937 通过、5 个既有 E2E 场景跳过、0 失败；现场服务未重启。
+
+## 2026-09-02 运行监控全屏查看
+
+- 监控页新增“全屏查看”按钮，打开独立最大化窗口复用同一只读运行数据，完整显示流程图、当前节点、
+  节点执行、设备操作和时间线；关闭后返回原页面，镜像窗口不改变自动刷新或设备状态。
+- 新版 WPF 已同步到 Release 启动目录并以 physical 只读模式启动，未启用批量物理执行。
+- 全屏按钮增加单实例保护：打开后立即禁用，只有独立窗口 `Closed` 后恢复；重复点击只激活已有窗口。
+
+## 2026-09-03 断网期间离线优化与自动重定位评估
+
+- 已记录 Roboshop“自动重定位”按钮对应接口的待确认事项；当前仅确认 `1021` 为只读定位状态查询，未确认重定位写命令，网络恢复前不向 AGV 发送任何相关请求。详见 [自动重定位接口评估](../artifacts/agv-auto-relocalization-assessment-20260903.md)。
+- 流程管理顶部命令栏改为自适应换行，窗口较窄时不再裁剪“发布、试运行、执行模拟”等末尾按钮。
+- AUBO 工作流服务重启恢复时，若控制器已停止但无法证明本次程序完成，改记为 `Unknown` 并要求人工核销，避免把中断或手动停止误判为成功。
+- 物理 Move 预检增加“无阻断原因但明确未通过”保护，防止异常驱动以空原因绕过安全门禁。
+- MES/WPF/Adapter 继续保持离线开发和物理写入关闭；网络恢复后先重新执行只读预检，再确认是否启用现场 worker。
+
+## 2026-09-03 料盘标准流程一键执行韧性加固
+
+- MES 增加物理批次启动门槛、标准模板精确校验、同 AGV 单活动批次约束和授权幂等校验；未启用现场导航、自动许可或 AUBO worker 时立即拒绝。现场验收流程继续保持通用自动派发关闭，避免绕过验收单。
+- AGV 对下发前瞬态条件做限时只读复核，兼容临时 `paused`/状态读取失败且不重复派发；最终返回 LM1 后在流程完成前单次释放控制权。
+- AUBO 增加启动前就绪稳定等待、启动后只读状态恢复和安全终态稳定判定；写入结果不明继续进入 `Unknown`，不重发 load/run。
+- WPF 增加 AGV/AUBO 当前节点告警、一次性弹窗、许可过期提示和窄屏命令区换行；一键入口只提交本次授权，不负责打开服务写权限。
+- 回归：WPF 364、MES 147、Adapter 221、工作流契约 71，均为 0 失败；整个解决方案 946 通过、5 个既有 E2E 跳过、0 失败。随后新增 Adapter 3066/1110 超时结构化 Unknown 修复回归为 222 通过。隔离部署见 `bin/Verify/PhysicalOneClickResilienceDeploy/`，详细记录见 [离线加固记录](../artifacts/physical-one-click-resilience-20260903.md)。
+
+## 2026-09-03 断网/回执异常边界修复
+
+- Adapter 增加统一 transport 异常边界：AGV 状态、预检和派发遇到超时、控制器错误、连接断开时分别返回可识别的 504/502/503，不再把设备不可达冒成 HTTP 500。
+- 3066 导航请求进入写入边界后，若 1110 只读回执仍不可确认，持久化 `Unknown` 并禁止自动重派；MES/WPF 仅显示等待或人工核销提示。
+- WPF 对预检超时与 Adapter/AGV 不可达显示独立网络告警，保持当前节点暂停并等待只读恢复。
+- Adapter 222、MES 147 回归通过；最新部署见 `bin/Verify/PhysicalOneClickResilienceDeployFinal/`。当前现场因以太网链路断开，未启动新 MES、未创建新流程。

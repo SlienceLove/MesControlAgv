@@ -19,6 +19,10 @@ public static class WorkflowExecutionRejectionCodes
     public const string BranchUnsupported = "WORKFLOW_BRANCH_UNSUPPORTED";
     public const string CycleDetected = "WORKFLOW_CYCLE_DETECTED";
     public const string ProfileMismatch = "WORKFLOW_PROFILE_MISMATCH";
+    public const string PhysicalAuthorizationInvalid = "WORKFLOW_PHYSICAL_AUTHORIZATION_INVALID";
+    public const string PhysicalAgvBusy = "WORKFLOW_PHYSICAL_AGV_BUSY";
+    public const string PhysicalExecutionDisabled = "WORKFLOW_PHYSICAL_EXECUTION_DISABLED";
+    public const string PhysicalTemplateRequired = "WORKFLOW_PHYSICAL_TEMPLATE_REQUIRED";
 }
 
 /// <summary>
@@ -70,7 +74,15 @@ public sealed class WorkflowRuntimeExecutor : IWorkflowRuntimeExecutor
         }
 
         WorkflowExecutionResult result;
-        if (request.WorkflowId == Guid.Empty || request.Version <= 0)
+        var physicalAuthorizationError = ValidatePhysicalAuthorization(request);
+        if (physicalAuthorizationError is not null)
+        {
+            result = Reject(
+                request,
+                WorkflowExecutionRejectionCodes.PhysicalAuthorizationInvalid,
+                physicalAuthorizationError);
+        }
+        else if (request.WorkflowId == Guid.Empty || request.Version <= 0)
         {
             result = Reject(
                 request,
@@ -87,6 +99,36 @@ public sealed class WorkflowRuntimeExecutor : IWorkflowRuntimeExecutor
         }
 
         return StoreOrReplay(request, fingerprint, result);
+    }
+
+    private string? ValidatePhysicalAuthorization(WorkflowExecutionRequest request)
+    {
+        if (request.DryRun || request.PhysicalAuthorization is not { } authorization)
+            return null;
+
+        if (string.IsNullOrWhiteSpace(authorization.AgvId) ||
+            string.IsNullOrWhiteSpace(authorization.OperatorName) ||
+            string.IsNullOrWhiteSpace(authorization.SafetyObserverName) ||
+            string.IsNullOrWhiteSpace(authorization.PermitPrefix))
+        {
+            return "Physical batch authorization requires an AGV, operator, safety observer, and permit prefix.";
+        }
+
+        if (!string.Equals(
+                request.RequestedBy?.Trim(),
+                authorization.OperatorName.Trim(),
+                StringComparison.Ordinal))
+        {
+            return "Physical batch authorization operator must match the workflow requester.";
+        }
+
+        var remaining = authorization.ExpiresAtUtc - _timeProvider.GetUtcNow();
+        if (remaining <= TimeSpan.Zero)
+            return "Physical batch authorization has already expired.";
+        if (remaining < TimeSpan.FromMinutes(30))
+            return "Physical batch authorization must remain valid for at least 30 minutes.";
+
+        return null;
     }
 
     private WorkflowExecutionResult Evaluate(
@@ -432,7 +474,17 @@ public sealed class WorkflowRuntimeExecutor : IWorkflowRuntimeExecutor
             .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
             .ThenBy(pair => pair.Key, StringComparer.Ordinal)
             .Select(pair => $"{pair.Key.Length}:{pair.Key}={pair.Value?.Length ?? -1}:{pair.Value}");
-        return string.Join(
+        var authorization = request.DryRun ? null : request.PhysicalAuthorization;
+        var authorizationPart = authorization is null
+            ? string.Empty
+            : string.Join(
+                '\u001e',
+                FingerprintValue(authorization.AgvId),
+                FingerprintValue(authorization.OperatorName),
+                FingerprintValue(authorization.SafetyObserverName),
+                FingerprintValue(authorization.PermitPrefix),
+                authorization.ExpiresAtUtc.ToUniversalTime().Ticks);
+        var baseFingerprint = string.Join(
             '\u001f',
             request.WorkflowId,
             request.Version,
@@ -440,7 +492,13 @@ public sealed class WorkflowRuntimeExecutor : IWorkflowRuntimeExecutor
             request.CorrelationId,
             request.DryRun,
             string.Join('\u001e', parameterPart));
+        return authorization is null
+            ? baseFingerprint
+            : $"{baseFingerprint}\u001f{authorizationPart}";
     }
+
+    private static string FingerprintValue(string? value) =>
+        $"{value?.Length ?? -1}:{value}";
 
     private static IReadOnlyDictionary<string, string?> ReadOnlyDetails(
         params (string Key, string? Value)[] values)

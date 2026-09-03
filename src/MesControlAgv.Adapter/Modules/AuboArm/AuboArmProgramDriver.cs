@@ -217,8 +217,13 @@ public sealed class AuboArmProgramDriver : IAuboArmProgramDriver, IDisposable
                 cancellationToken).ConfigureAwait(false);
         }
 
-        var after = await ReadStatusAfterMutationAsync(
-            operationId, deviceId, normalized, "load", mayHaveWritten, cancellationToken).ConfigureAwait(false);
+        // The controller acknowledges RuntimeMachine.loadProgram before its
+        // dashboard/preload read becomes consistent.  Poll the read-only state
+        // for the bounded operation window instead of turning that normal
+        // propagation delay into an Unknown outcome (and forcing a manual
+        // operator recovery).
+        var after = await ReadStatusAfterLoadAsync(
+            operationId, deviceId, normalized, mayHaveWritten, cancellationToken).ConfigureAwait(false);
         var loaded = string.Equals(after.LoadedProgram, normalized, StringComparison.Ordinal);
         return new AuboArmProgramOperationResponse(
             operationId,
@@ -314,13 +319,15 @@ public sealed class AuboArmProgramDriver : IAuboArmProgramDriver, IDisposable
                 cancellationToken).ConfigureAwait(false);
         }
 
-        var after = await ReadStatusAfterMutationAsync(
-            operationId, deviceId, loaded, "run", mayHaveWritten, cancellationToken).ConfigureAwait(false);
+        // AUBO may acknowledge runProgram while the runtime is still stopped
+        // for a short startup interval. Wait for an observable Running state;
+        // treating an immediate Stopped read as success would let the workflow
+        // advance before the robot had actually begun moving.
+        var after = await ReadStatusAfterRunAsync(
+            operationId, deviceId, loaded, mayHaveWritten, cancellationToken).ConfigureAwait(false);
         var state = after.RuntimeState == AuboArmRuntimeState.Running
             ? AuboArmProgramOperationState.Running
-            : after.RuntimeState == AuboArmRuntimeState.Stopped
-                ? AuboArmProgramOperationState.Accepted
-                : AuboArmProgramOperationState.Unknown;
+            : AuboArmProgramOperationState.Unknown;
         return new AuboArmProgramOperationResponse(
             operationId,
             deviceId,
@@ -333,7 +340,7 @@ public sealed class AuboArmProgramDriver : IAuboArmProgramDriver, IDisposable
             after.LoadedProgram,
             resultCode,
             state == AuboArmProgramOperationState.Unknown
-                ? "AUBO accepted run but the runtime state is not yet known."
+                ? "AUBO acknowledged run but the runtime did not enter Running within the confirmation window."
                 : null,
             mayHaveWritten,
             _timeProvider.GetUtcNow());
@@ -497,6 +504,76 @@ public sealed class AuboArmProgramDriver : IAuboArmProgramDriver, IDisposable
         {
             throw Unknown(operationId, deviceId, program, operation, exception.Message, mayHaveWritten);
         }
+    }
+
+    private async Task<AuboArmProgramStatusResponse> ReadStatusAfterLoadAsync(
+        Guid operationId,
+        string deviceId,
+        string program,
+        bool mayHaveWritten,
+        CancellationToken cancellationToken)
+    {
+        var deadline = _timeProvider.GetUtcNow().AddMilliseconds(_options.ProgramOperationTimeoutMs);
+        AuboArmProgramStatusResponse after;
+        do
+        {
+            try
+            {
+                after = await ReadProgramStatusAsync(deviceId, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw Unknown(operationId, deviceId, program, "load", "status read after load timed out", mayHaveWritten);
+            }
+            catch (Exception exception) when (exception is TimeoutException or WebSocketException or IOException or AuboArmProtocolException or AuboArmRpcException)
+            {
+                throw Unknown(operationId, deviceId, program, "load", exception.Message, mayHaveWritten);
+            }
+
+            if (string.Equals(after.LoadedProgram, program, StringComparison.Ordinal))
+                return after;
+
+            if (_timeProvider.GetUtcNow() >= deadline) break;
+            await Task.Delay(TimeSpan.FromMilliseconds(100), _timeProvider, cancellationToken).ConfigureAwait(false);
+        }
+        while (_timeProvider.GetUtcNow() < deadline);
+
+        return after;
+    }
+
+    private async Task<AuboArmProgramStatusResponse> ReadStatusAfterRunAsync(
+        Guid operationId,
+        string deviceId,
+        string program,
+        bool mayHaveWritten,
+        CancellationToken cancellationToken)
+    {
+        var deadline = _timeProvider.GetUtcNow().AddMilliseconds(_options.ProgramOperationTimeoutMs);
+        AuboArmProgramStatusResponse after;
+        do
+        {
+            try
+            {
+                after = await ReadProgramStatusAsync(deviceId, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                throw Unknown(operationId, deviceId, program, "run", "status read after run timed out", mayHaveWritten);
+            }
+            catch (Exception exception) when (exception is TimeoutException or WebSocketException or IOException or AuboArmProtocolException or AuboArmRpcException)
+            {
+                throw Unknown(operationId, deviceId, program, "run", exception.Message, mayHaveWritten);
+            }
+
+            if (after.RuntimeState is AuboArmRuntimeState.Running or AuboArmRuntimeState.Unknown)
+                return after;
+
+            if (_timeProvider.GetUtcNow() >= deadline) break;
+            await Task.Delay(TimeSpan.FromMilliseconds(100), _timeProvider, cancellationToken).ConfigureAwait(false);
+        }
+        while (_timeProvider.GetUtcNow() < deadline);
+
+        return after;
     }
 
     private async Task<JsonElement> InvokeAsync(

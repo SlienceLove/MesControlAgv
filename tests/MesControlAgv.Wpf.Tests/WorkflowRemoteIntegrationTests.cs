@@ -21,6 +21,49 @@ namespace MesControlAgv.Wpf.Tests;
 public sealed class WorkflowRemoteIntegrationTests
 {
     [Fact]
+    public async Task Accepted_simulator_execution_is_loaded_into_the_run_monitor()
+    {
+        using var fixture = new TempWorkflowFile();
+        var client = new FakeWorkflowMesClient
+        {
+            ExecutionSnapshot = null
+        };
+        var startup = new StartupConfigurationReport
+        {
+            DiagnosticRuleVersion = "test",
+            RuntimeMode = "simulator",
+            ManageLocalServices = false,
+            MesBaseUrl = new Uri("http://127.0.0.1:5045/"),
+            SimulatorBaseUrl = new Uri("http://127.0.0.1:5183/"),
+            AdapterBaseUrl = new Uri("http://127.0.0.1:5041/"),
+            AdapterDriver = "simulator",
+            AdapterRunMode = "standard",
+            RealWriteAccess = "simulator-only",
+            Items = []
+        };
+        using var main = new MainViewModel(
+            client,
+            workflowStore: new WorkflowStore(fixture.Path),
+            startupConfiguration: startup);
+
+        await main.WorkflowEditor.LoadRemoteAsync();
+        await main.WorkflowEditor.SaveDraftAsync();
+        await main.WorkflowEditor.ValidateRemoteAsync();
+        await main.WorkflowEditor.PublishRemoteAsync();
+        await main.WorkflowEditor.ExecuteSimulatorAsync();
+
+        await WaitUntilAsync(() => client.LastExecutionId is not null &&
+                                    main.WorkflowRunMonitor.Run?.ExecutionId == client.LastExecutionId &&
+                                    !main.WorkflowRunMonitor.IsBusy);
+
+        var executionId = client.LastExecutionId ?? throw new InvalidOperationException("The test execution was not accepted.");
+        Assert.Equal(executionId, main.WorkflowRunMonitor.Run!.ExecutionId);
+        Assert.Equal(executionId.ToString("D"), main.WorkflowRunMonitor.RunIdText);
+        Assert.Equal("等待执行", main.WorkflowRunMonitor.RunStatusDisplay);
+        Assert.Contains("运行监控已自动加载", main.WorkflowEditor.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Save_draft_persists_local_json_when_mes_is_unavailable()
     {
         using var fixture = new TempWorkflowFile();
@@ -213,6 +256,17 @@ public sealed class WorkflowRemoteIntegrationTests
             if (Directory.Exists(_directory)) Directory.Delete(_directory, recursive: true);
         }
     }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        for (var attempt = 0; attempt < 200; attempt++)
+        {
+            if (condition()) return;
+            await Task.Delay(10);
+        }
+
+        Assert.Fail("The accepted simulator execution was not loaded into the run monitor.");
+    }
 }
 
 internal sealed class FakeWorkflowMesClient : IMesClient
@@ -241,7 +295,8 @@ internal sealed class FakeWorkflowMesClient : IMesClient
     public int PublishCallCount { get; private set; }
     public int ExecuteCallCount { get; private set; }
     public int ExecutionSnapshotCallCount { get; private set; }
-    public ContractWorkflowExecutionSnapshot? ExecutionSnapshot { get; init; }
+    public ContractWorkflowExecutionSnapshot? ExecutionSnapshot { get; set; }
+    public Guid? LastExecutionId { get; private set; }
     public IReadOnlyList<ContractWorkflowAuditResponse> WorkflowAudits { get; init; } = [];
     public ContractWorkflowValidationResult ValidationResult { get; init; } =
         ContractWorkflowValidationResult.Valid("fake");
@@ -300,6 +355,14 @@ internal sealed class FakeWorkflowMesClient : IMesClient
     public Task<IReadOnlyList<ContractWorkflowVersion>> GetWorkflowVersionsAsync(Guid workflowId, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<ContractWorkflowVersion>>([_version]);
 
+    public Task<ContractWorkflowVersion?> GetWorkflowVersionAsync(
+        Guid workflowId,
+        int version,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<ContractWorkflowVersion?>(_version.WorkflowId == workflowId && _version.Version == version
+            ? _version
+            : null);
+
     public Task<ContractWorkflowVersion> CreateWorkflowDraftAsync(
         ContractWorkflowDefinition definition,
         string actor,
@@ -355,11 +418,24 @@ internal sealed class FakeWorkflowMesClient : IMesClient
         CancellationToken cancellationToken)
     {
         ExecuteCallCount++;
+        var executionId = Guid.NewGuid();
+        LastExecutionId = executionId;
+        ExecutionSnapshot ??= new ContractWorkflowExecutionSnapshot
+        {
+            RequestId = request.RequestId,
+            ExecutionId = executionId,
+            WorkflowId = request.WorkflowId,
+            Version = request.Version,
+            RuntimeStatus = ContractWorkflowRuntimeStatus.Prepared,
+            DryRun = request.DryRun,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
         return Task.FromResult(new ContractWorkflowExecutionResult
         {
             Status = ContractWorkflowExecutionStatus.Accepted,
             RequestId = request.RequestId,
-            ExecutionId = Guid.NewGuid(),
+            ExecutionId = executionId,
             WorkflowId = request.WorkflowId,
             Version = request.Version,
             RequestedAt = request.RequestedAt,

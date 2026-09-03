@@ -281,6 +281,30 @@ public class AdapterServiceTests
     }
 
     [Fact]
+    public async Task Field_navigation_timeout_after_write_returns_unknown_without_http_style_failure()
+    {
+        var simulator = CreateReadyPhysicalSimulator();
+        simulator.Snapshot = simulator.Snapshot with { ControlOwner = "none" };
+        simulator.AcquireControlOnEnsure = true;
+        simulator.MarkNavigationAttemptBeforeException = true;
+        simulator.NavigationException = new TimeoutException("3066 response timed out after write");
+        simulator.StatusException = new TimeoutException("1110 status timed out");
+        var service = CreatePhysicalAcceptanceService(simulator);
+        var acceptanceId = Guid.NewGuid();
+
+        var result = await service.DispatchFieldNavigationAcceptanceAsync(
+            acceptanceId,
+            new FieldNavigationDispatchCommand("AGV-01", "LM1", "LM2", ["LM1", "LM2"]),
+            CancellationToken.None);
+
+        Assert.Equal("unknown", result.State);
+        Assert.Contains("navigation_outcome_unconfirmed", result.LastError, StringComparison.Ordinal);
+        Assert.Equal(1, simulator.NavigateCalls);
+        Assert.Equal(1, simulator.StatusCalls);
+        Assert.Equal(0, simulator.ReleaseControlCalls);
+    }
+
+    [Fact]
     public async Task Field_navigation_failure_does_not_release_control_inherited_by_the_session()
     {
         var simulator = CreateReadyPhysicalSimulator();
@@ -1286,6 +1310,7 @@ internal sealed class FakeSimulatorClient : ISimulatorClient, IPhysicalAgvDevice
     public AgvSafetyReadinessResponse Readiness { get; set; } = null!;
     public ControllerMapEvidenceResponse? MapEvidence { get; set; }
     public AgvTaskResponse? ReconciledTask { get; init; }
+    public Exception? StatusException { get; set; }
     public TaskCompletionSource<bool>? NavigationStarted { get; set; }
     public TaskCompletionSource<bool>? AllowNavigation { get; set; }
     public TaskCompletionSource<bool>? PostControlReadinessStarted { get; set; }
@@ -1350,6 +1375,8 @@ internal sealed class FakeSimulatorClient : ISimulatorClient, IPhysicalAgvDevice
     public Task<AgvTaskResponse?> GetTaskAsync(Guid taskId, CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref _statusCalls);
+        if (StatusException is not null)
+            return Task.FromException<AgvTaskResponse?>(StatusException);
         return Task.FromResult(ReconciledTask);
     }
 

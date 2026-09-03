@@ -54,7 +54,7 @@ public sealed class ControlCenterBoundaryTests
                 SupportsBarcode: false,
                 SupportsStationConfirmation: true));
 
-        var row = new AgvRowViewModel(snapshot);
+        var row = new AgvRowViewModel(snapshot, RuntimeConnectionSource.LocalSimulator);
 
         Assert.False(row.SupportsPause);
         Assert.True(row.SupportsResume);
@@ -62,6 +62,7 @@ public sealed class ControlCenterBoundaryTests
         Assert.Contains("\u5347\u964D", row.CapabilitySummary);
         Assert.False(row.Supports("pause"));
         Assert.True(row.Supports("resume"));
+        Assert.Equal("本地模拟器在线", row.ConnectionStatusDisplay);
     }
 
     private sealed class TestModule(ControlCenterModuleDescriptor descriptor) : IControlCenterModule

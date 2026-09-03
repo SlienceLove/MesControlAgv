@@ -45,12 +45,25 @@ builder.Services.AddHttpClient<IAuboArmGateway, AdapterAuboArmClient>(client =>
 builder.Services.AddSingleton(builder.Configuration
     .GetSection("AgvAuboSequence")
     .Get<AgvAuboSequenceOptions>() ?? new AgvAuboSequenceOptions());
-builder.Services.AddSingleton(builder.Configuration
+var workflowAuboWorkerOptions = builder.Configuration
     .GetSection("WorkflowAuboWorker")
-    .Get<WorkflowAuboProgramWorkerOptions>() ?? new WorkflowAuboProgramWorkerOptions());
-builder.Services.AddSingleton(builder.Configuration
+    .Get<WorkflowAuboProgramWorkerOptions>() ?? new WorkflowAuboProgramWorkerOptions();
+var workflowFieldNavigationWorkerOptions = builder.Configuration
     .GetSection("WorkflowFieldNavigationWorker")
-    .Get<WorkflowFieldNavigationWorkerOptions>() ?? new WorkflowFieldNavigationWorkerOptions());
+    .Get<WorkflowFieldNavigationWorkerOptions>() ?? new WorkflowFieldNavigationWorkerOptions();
+builder.Services.AddSingleton(workflowAuboWorkerOptions);
+builder.Services.AddSingleton(workflowFieldNavigationWorkerOptions);
+var physicalBatchEnabled = !profile.Features.UseSimulator &&
+                           profile.Features.EnableFieldNavigationAcceptance &&
+                           workflowFieldNavigationWorkerOptions.Enabled &&
+                           workflowFieldNavigationWorkerOptions.AutoAuthorizeFromRunRequest &&
+                           workflowAuboWorkerOptions.Enabled;
+builder.Services.AddSingleton(new WorkflowPhysicalBatchAdmissionGate(
+    physicalBatchEnabled,
+    physicalBatchEnabled
+        ? "现场批量 worker 已启用。"
+        : "MES 启动时未同时启用现场导航、自动许可和 AUBO worker，因此拒绝一键现场执行。"));
+builder.Services.AddSingleton<WorkflowFieldNavigationRetryState>();
 builder.Services.AddHttpClient<ISampleWorkstationReader, SampleWorkstationAdapterClient>(client =>
     client.BaseAddress = new Uri(
         builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5041/"));

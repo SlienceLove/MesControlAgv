@@ -56,6 +56,15 @@ public interface IWorkflowApplicationService : IWorkflowVersionReader, IWorkflow
         Guid requestId,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Reads the immutable execution request used at admission. Runtime workers
+    /// use this only to retrieve an explicitly supplied batch authorization; it
+    /// never advances a node or contacts a device.
+    /// </summary>
+    Task<WorkflowExecutionRequest?> GetExecutionRequestAsync(
+        Guid executionId,
+        CancellationToken cancellationToken);
+
     /// <summary>Returns the durable attempt history for one workflow run.</summary>
     Task<IReadOnlyList<WorkflowNodeExecutionSnapshot>> ListNodeExecutionsAsync(
         Guid workflowRunId,

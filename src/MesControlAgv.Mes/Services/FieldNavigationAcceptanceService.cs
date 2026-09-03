@@ -457,7 +457,11 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
     {
         "accepted" => FieldNavigationAcceptanceStatuses.Accepted,
         "moving" => FieldNavigationAcceptanceStatuses.Moving,
-        "arrived" => FieldNavigationAcceptanceStatuses.Arrived,
+        // A vendor pause commonly represents a temporary obstacle stop. Keep
+        // the already-dispatched operation in flight; the recovery worker will
+        // continue read-only reconciliation and no new navigation is sent.
+        "paused" => FieldNavigationAcceptanceStatuses.Moving,
+        "arrived" or "completed" => FieldNavigationAcceptanceStatuses.Arrived,
         "cancelled" => FieldNavigationAcceptanceStatuses.Cancelled,
         "failed" => FieldNavigationAcceptanceStatuses.Failed,
         _ => FieldNavigationAcceptanceStatuses.Unknown

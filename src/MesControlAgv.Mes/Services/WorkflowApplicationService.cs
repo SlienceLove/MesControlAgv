@@ -12,6 +12,13 @@ using Microsoft.EntityFrameworkCore;
 namespace MesControlAgv.Mes.Services;
 
 /// <summary>
+/// Startup-time snapshot of the independent switches required for one-click
+/// physical workflow execution. It prevents MES from accepting a batch that
+/// would remain Ready forever because one of its workers is disabled.
+/// </summary>
+public sealed record WorkflowPhysicalBatchAdmissionGate(bool Enabled, string Reason);
+
+/// <summary>
 /// EF Core backed version reader used by the runtime executor.  Definitions are
 /// stored as immutable JSON snapshots so changes to the WPF editor model do not
 /// mutate an already pinned workflow version.
@@ -48,6 +55,7 @@ public sealed class MesWorkflowVersionReader(MesDbContext database) : IWorkflowV
 /// </summary>
 public sealed partial class WorkflowApplicationService : IWorkflowApplicationService
 {
+    private static readonly SemaphoreSlim PhysicalExecutionAdmissionGate = new(1, 1);
     private readonly MesDbContext _database;
     private readonly IWorkflowVersionReader _versionReader;
     private readonly WorkflowRuntimeExecutor _runtimeExecutor;
@@ -55,6 +63,7 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
     private readonly TimeProvider _timeProvider;
     private readonly IWorkflowRunControlAuthorizer _controlAuthorizer;
     private readonly ExperimentRuntimeLeaseLifecycle _experimentRuntimeLeaseLifecycle;
+    private readonly WorkflowPhysicalBatchAdmissionGate? _physicalBatchAdmissionGate;
 
     public WorkflowApplicationService(
         MesDbContext database,
@@ -63,7 +72,8 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
         WorkflowValidator validator,
         TimeProvider? timeProvider = null,
         IWorkflowRunControlAuthorizer? controlAuthorizer = null,
-        ExperimentRuntimeLeaseLifecycle? experimentRuntimeLeaseLifecycle = null)
+        ExperimentRuntimeLeaseLifecycle? experimentRuntimeLeaseLifecycle = null,
+        WorkflowPhysicalBatchAdmissionGate? physicalBatchAdmissionGate = null)
     {
         _database = database;
         _versionReader = versionReader;
@@ -75,6 +85,7 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
                 Microsoft.Extensions.Options.Options.Create(new WorkflowRunControlAuthorizationOptions()));
         _experimentRuntimeLeaseLifecycle = experimentRuntimeLeaseLifecycle ??
             new ExperimentRuntimeLeaseLifecycle(database, _timeProvider);
+        _physicalBatchAdmissionGate = physicalBatchAdmissionGate;
     }
 
     public async Task<IReadOnlyList<WorkflowDefinition>> ListAsync(CancellationToken cancellationToken)
@@ -165,6 +176,31 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
             .AsNoTracking()
             .SingleOrDefaultAsync(item => item.RequestId == requestId, cancellationToken);
         return record is null ? null : WorkflowPersistence.ToExecutionSnapshot(record);
+    }
+
+    public async Task<WorkflowExecutionRequest?> GetExecutionRequestAsync(
+        Guid executionId,
+        CancellationToken cancellationToken)
+    {
+        if (executionId == Guid.Empty) return null;
+
+        var requestJson = await _database.WorkflowExecutions
+            .AsNoTracking()
+            .Where(item => item.ExecutionId == executionId)
+            .Select(item => item.RequestJson)
+            .SingleOrDefaultAsync(cancellationToken);
+        if (string.IsNullOrWhiteSpace(requestJson)) return null;
+
+        try
+        {
+            return WorkflowPersistence.DeserializeRequest(requestJson);
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+        {
+            // A legacy/corrupt request must not become permission to create a
+            // physical permit. The worker will leave the node for manual review.
+            return null;
+        }
     }
 
     public async Task<IReadOnlyList<WorkflowExecutionSnapshot>> ListRecoverableExecutionsAsync(
@@ -571,6 +607,25 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
 
+        if (request.DryRun || request.PhysicalAuthorization is null)
+            return await ExecuteCoreAsync(request, cancellationToken);
+
+        await PhysicalExecutionAdmissionGate.WaitAsync(cancellationToken);
+        try
+        {
+            return await ExecuteCoreAsync(request, cancellationToken);
+        }
+        finally
+        {
+            PhysicalExecutionAdmissionGate.Release();
+        }
+    }
+
+    private async Task<WorkflowExecutionResult> ExecuteCoreAsync(
+        WorkflowExecutionRequest request,
+        CancellationToken cancellationToken)
+    {
+
         if (request.RequestId != Guid.Empty)
         {
             var fingerprint = CreateFingerprint(request);
@@ -579,7 +634,8 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
                 .SingleOrDefaultAsync(item => item.RequestId == request.RequestId, cancellationToken);
             if (prior is not null)
             {
-                if (StringComparer.Ordinal.Equals(prior.Fingerprint, fingerprint))
+                if (StringComparer.Ordinal.Equals(prior.Fingerprint, fingerprint) ||
+                    IsLegacyPhysicalFingerprintMatch(prior, request))
                 {
                     return WorkflowPersistence.DeserializeResult(prior.ResultJson) with { IsIdempotentReplay = true };
                 }
@@ -593,7 +649,41 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
                 return reused;
             }
 
-            var result = await _runtimeExecutor.ExecuteAsync(request, cancellationToken);
+            WorkflowExecutionResult result;
+            var activePhysicalRun = request.PhysicalAuthorization is null
+                ? null
+                : await FindActivePhysicalRunAsync(
+                    request.PhysicalAuthorization.AgvId,
+                    cancellationToken);
+            if (request.PhysicalAuthorization is not null &&
+                _physicalBatchAdmissionGate is { Enabled: false } batchGate)
+            {
+                result = CreateRejection(
+                    request,
+                    WorkflowExecutionRejectionCodes.PhysicalExecutionDisabled,
+                    batchGate.Reason);
+            }
+            else if (activePhysicalRun is not null)
+            {
+                result = CreateRejection(
+                    request,
+                    WorkflowExecutionRejectionCodes.PhysicalAgvBusy,
+                    $"AGV '{request.PhysicalAuthorization!.AgvId}' already has active physical workflow run '{activePhysicalRun.ExecutionId}'. Resolve or complete it before starting another batch.");
+            }
+            else
+            {
+                result = await _runtimeExecutor.ExecuteAsync(request, cancellationToken);
+                if (result.IsAccepted &&
+                    request.PhysicalAuthorization is not null &&
+                    _physicalBatchAdmissionGate is { Enabled: true } &&
+                    !await IsApprovedStandardMaterialWorkflowAsync(request, cancellationToken))
+                {
+                    result = CreateRejection(
+                        request,
+                        WorkflowExecutionRejectionCodes.PhysicalTemplateRequired,
+                        "One-click physical execution only accepts the approved LM1→LM7→LM2→LM7→LM1 material workflow with 取料盘/放料盘/回收料盘 programs.");
+                }
+            }
             var executionRecord = await CreateExecutionRecordAsync(
                 request,
                 fingerprint,
@@ -631,7 +721,8 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
                     throw;
                 }
 
-                if (StringComparer.Ordinal.Equals(concurrentlyPersisted.Fingerprint, fingerprint))
+                if (StringComparer.Ordinal.Equals(concurrentlyPersisted.Fingerprint, fingerprint) ||
+                    IsLegacyPhysicalFingerprintMatch(concurrentlyPersisted, request))
                 {
                     return WorkflowPersistence.DeserializeResult(concurrentlyPersisted.ResultJson) with
                     {
@@ -654,6 +745,109 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
         await _database.SaveChangesAsync(cancellationToken);
         return invalidRequest;
     }
+
+    private async Task<WorkflowExecutionRecord?> FindActivePhysicalRunAsync(
+        string agvId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(agvId)) return null;
+
+        var candidates = await _database.WorkflowExecutions
+            .AsNoTracking()
+            .Where(item => item.RuntimeStatus == WorkflowRuntimeStatus.Prepared.ToString() ||
+                           item.RuntimeStatus == WorkflowRuntimeStatus.Running.ToString() ||
+                           item.RuntimeStatus == WorkflowRuntimeStatus.Paused.ToString() ||
+                           item.RuntimeStatus == WorkflowRuntimeStatus.Unknown.ToString())
+            .OrderBy(item => item.CreatedAtUtc)
+            .ToListAsync(cancellationToken);
+        foreach (var candidate in candidates)
+        {
+            try
+            {
+                var activeRequest = WorkflowPersistence.DeserializeRequest(candidate.RequestJson);
+                if (!activeRequest.DryRun &&
+                    activeRequest.PhysicalAuthorization is { } authorization &&
+                    string.Equals(
+                        authorization.AgvId.Trim(),
+                        agvId.Trim(),
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    return candidate;
+                }
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or JsonException)
+            {
+                // A malformed legacy request cannot claim a physical AGV. Its
+                // own recovery path remains independent from batch admission.
+            }
+        }
+
+        return null;
+    }
+
+    private async Task<bool> IsApprovedStandardMaterialWorkflowAsync(
+        WorkflowExecutionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var version = await _versionReader.GetVersionAsync(
+            request.WorkflowId,
+            request.Version,
+            cancellationToken);
+        if (version is null) return false;
+
+        var nodes = (version.Definition.Nodes ?? [])
+            .OrderBy(node => node.Order)
+            .ToArray();
+        var expectedTypes = new[]
+        {
+            WorkflowNodeType.Start,
+            WorkflowNodeType.Move,
+            WorkflowNodeType.RobotProgram,
+            WorkflowNodeType.Move,
+            WorkflowNodeType.RobotProgram,
+            WorkflowNodeType.Move,
+            WorkflowNodeType.RobotProgram,
+            WorkflowNodeType.Move,
+            WorkflowNodeType.End
+        };
+        if (nodes.Length != expectedTypes.Length ||
+            nodes.Where((node, index) => node.Type != expectedTypes[index]).Any())
+            return false;
+
+        for (var index = 0; index < nodes.Length; index++)
+        {
+            var expectedNext = index + 1 < nodes.Length ? nodes[index + 1].Id : (Guid?)null;
+            var actualNext = nodes[index].NextNodeIds?.ToArray() ?? [];
+            if (expectedNext is null ? actualNext.Length != 0 :
+                actualNext.Length != 1 || actualNext[0] != expectedNext.Value)
+                return false;
+        }
+
+        var expectedStations = new[] { "LM7", "LM2", "LM7", "LM1" };
+        var moveNodes = nodes.Where(node => node.Type == WorkflowNodeType.Move).ToArray();
+        if (moveNodes.Where((node, index) => !string.Equals(
+                ReadNodeValue(node, WorkflowNodeConfigurationKeys.TargetStation) ?? node.TargetStation,
+                expectedStations[index],
+                StringComparison.OrdinalIgnoreCase)).Any())
+            return false;
+
+        var expectedPrograms = new[] { "取料盘.pro", "放料盘.pro", "回收料盘.pro" };
+        var programNodes = nodes.Where(node => node.Type == WorkflowNodeType.RobotProgram).ToArray();
+        return programNodes.Select((node, index) => new
+            {
+                DeviceId = ReadNodeValue(node, WorkflowNodeConfigurationKeys.DeviceId),
+                Program = ReadNodeValue(node, WorkflowNodeConfigurationKeys.ProgramName),
+                Expected = expectedPrograms[index]
+            })
+            .All(item =>
+                string.Equals(item.DeviceId, "ARM-01", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(item.Program, item.Expected, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string? ReadNodeValue(WorkflowNode node, string key) =>
+        node.Configuration.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value)
+            ? value.Trim()
+            : null;
 
     private async Task<WorkflowExecutionRecord> CreateExecutionRecordAsync(
         WorkflowExecutionRequest request,
@@ -854,7 +1048,17 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
             .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
             .ThenBy(pair => pair.Key, StringComparer.Ordinal)
             .Select(pair => $"{pair.Key.Length}:{pair.Key}={pair.Value?.Length ?? -1}:{pair.Value}");
-        return string.Join(
+        var authorization = request.DryRun ? null : request.PhysicalAuthorization;
+        var authorizationPart = authorization is null
+            ? string.Empty
+            : string.Join(
+                '\u001e',
+                FingerprintValue(authorization.AgvId),
+                FingerprintValue(authorization.OperatorName),
+                FingerprintValue(authorization.SafetyObserverName),
+                FingerprintValue(authorization.PermitPrefix),
+                authorization.ExpiresAtUtc.ToUniversalTime().Ticks);
+        var baseFingerprint = string.Join(
             '\u001f',
             request.WorkflowId,
             request.Version,
@@ -862,6 +1066,33 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
             request.CorrelationId,
             request.DryRun,
             string.Join('\u001e', parameterPart));
+        return authorization is null
+            ? baseFingerprint
+            : $"{baseFingerprint}\u001f{authorizationPart}";
+    }
+
+    private static string FingerprintValue(string? value) =>
+        $"{value?.Length ?? -1}:{value}";
+
+    private static bool IsLegacyPhysicalFingerprintMatch(
+        WorkflowExecutionRecord persisted,
+        WorkflowExecutionRequest request)
+    {
+        if (request.DryRun || request.PhysicalAuthorization is null ||
+            !StringComparer.Ordinal.Equals(
+                persisted.Fingerprint,
+                CreateFingerprint(request with { PhysicalAuthorization = null })))
+            return false;
+
+        try
+        {
+            var persistedRequest = WorkflowPersistence.DeserializeRequest(persisted.RequestJson);
+            return persistedRequest.PhysicalAuthorization == request.PhysicalAuthorization;
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or JsonException)
+        {
+            return false;
+        }
     }
 }
 
@@ -1070,6 +1301,7 @@ internal static class WorkflowPersistence
     public static WorkflowExecutionSnapshot ToExecutionSnapshot(WorkflowExecutionRecord record)
     {
         var result = DeserializeResult(record.ResultJson);
+        var request = DeserializeRequest(record.RequestJson);
         var runtimeStatus = GetRuntimeStatus(record, result);
         var pendingStep = DeserializePendingStep(record.PendingStepJson) ?? result.NextStepRequest;
         var createdAt = new DateTimeOffset(DateTime.SpecifyKind(record.CreatedAtUtc, DateTimeKind.Utc));
@@ -1096,6 +1328,7 @@ internal static class WorkflowPersistence
             LastError = record.LastError,
             RejectionCode = result.RejectionCode,
             RejectionReason = result.RejectionReason,
+            PhysicalAuthorization = request.DryRun ? null : request.PhysicalAuthorization,
             CreatedAt = createdAt,
             UpdatedAt = updatedAt
         };

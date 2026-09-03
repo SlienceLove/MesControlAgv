@@ -181,6 +181,27 @@ public sealed record WorkflowVersion
 /// positive version; executing an unversioned mutable draft is intentionally not
 /// part of this contract.
 /// </summary>
+public sealed record WorkflowPhysicalRunAuthorization
+{
+    /// <summary>AGV identity approved for every Move node in this run.</summary>
+    public string AgvId { get; init; } = string.Empty;
+
+    /// <summary>Operator identity used for the run-level authorization audit.</summary>
+    public string OperatorName { get; init; } = string.Empty;
+
+    /// <summary>Safety observer identity recorded on each generated Move permit.</summary>
+    public string SafetyObserverName { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Prefix for deterministic, unique per-segment permit ids. The worker appends
+    /// the run/node/attempt suffix and never reuses a consumed permit.
+    /// </summary>
+    public string PermitPrefix { get; init; } = string.Empty;
+
+    /// <summary>One expiry shared by the batch; every generated permit must remain valid.</summary>
+    public DateTimeOffset ExpiresAtUtc { get; init; }
+}
+
 public sealed record WorkflowExecutionRequest
 {
     public Guid WorkflowId { get; init; }
@@ -192,6 +213,13 @@ public sealed record WorkflowExecutionRequest
     public Guid RequestId { get; init; } = Guid.NewGuid();
     public DateTimeOffset RequestedAt { get; init; } = DateTimeOffset.UtcNow;
     public bool DryRun { get; init; }
+
+    /// <summary>
+    /// Optional explicit physical batch authorization. It is ignored for dry runs
+    /// and is accepted only when the deployment enables the separate automatic
+    /// physical worker gate.
+    /// </summary>
+    public WorkflowPhysicalRunAuthorization? PhysicalAuthorization { get; init; }
 }
 
 /// <summary>The admission outcome returned by the workflow runtime.</summary>
@@ -337,6 +365,12 @@ public sealed record WorkflowExecutionSnapshot
     public string? LastError { get; init; }
     public string? RejectionCode { get; init; }
     public string? RejectionReason { get; init; }
+    /// <summary>
+    /// Run-level physical authorization retained for operator visibility and
+    /// expiry diagnostics. It grants no capability by itself; workers still
+    /// enforce their independent startup and device gates.
+    /// </summary>
+    public WorkflowPhysicalRunAuthorization? PhysicalAuthorization { get; init; }
     public DateTimeOffset CreatedAt { get; init; }
     public DateTimeOffset UpdatedAt { get; init; }
 }

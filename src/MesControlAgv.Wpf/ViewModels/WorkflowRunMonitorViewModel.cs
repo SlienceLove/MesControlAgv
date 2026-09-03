@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
 using MesControlAgv.Contracts;
@@ -26,6 +27,8 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     private readonly AsyncCommand _resolveSucceededCommand;
     private readonly AsyncCommand _resolveFailedCommand;
     private readonly AsyncCommand _createAndAuthorizeFieldMoveCommand;
+    private readonly IWorkflowRuntimeAlertPresenter _alertPresenter;
+    private readonly bool _physicalRuntime;
     private CancellationTokenSource? _autoRefreshCancellation;
     private Task? _autoRefreshLoop;
     private bool _autoRefreshViewAttached;
@@ -60,13 +63,20 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     private string _fieldPermitId = string.Empty;
     private string _fieldPermitMinutes = "30";
     private string _fieldDescription = string.Empty;
+    private string _physicalGateStatus = "现场条件尚未读取";
+    private string _physicalGateWarning = string.Empty;
+    private string? _lastPhysicalGateWarningKey;
 
     public WorkflowRunMonitorViewModel(
         IMesClient mes,
-        IWorkflowRunControlConfirmation? confirmation = null)
+        IWorkflowRunControlConfirmation? confirmation = null,
+        IWorkflowRuntimeAlertPresenter? alertPresenter = null,
+        bool physicalRuntime = false)
     {
         _mes = mes ?? throw new ArgumentNullException(nameof(mes));
         _confirmation = confirmation ?? MessageBoxWorkflowRunControlConfirmation.Instance;
+        _alertPresenter = alertPresenter ?? MessageBoxWorkflowRuntimeAlertPresenter.Instance;
+        _physicalRuntime = physicalRuntime;
         _refreshCommand = new AsyncCommand(RefreshFromInputAsync, CanRefresh);
         _checkPermissionsCommand = new AsyncCommand(CheckPermissionsAsync, CanCheckPermissions);
         _pauseCommand = new AsyncCommand(PauseAsync, () => CanPause);
@@ -204,6 +214,25 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         get => _permissionStatus;
         private set => SetField(ref _permissionStatus, value);
     }
+
+    /// <summary>Latest read-only physical gate summary for the pending Move.</summary>
+    public string PhysicalGateStatus
+    {
+        get => _physicalGateStatus;
+        private set => SetField(ref _physicalGateStatus, value);
+    }
+
+    public string PhysicalGateWarning
+    {
+        get => _physicalGateWarning;
+        private set
+        {
+            if (!SetField(ref _physicalGateWarning, value)) return;
+            OnPropertyChanged(nameof(HasPhysicalGateWarning));
+        }
+    }
+
+    public bool HasPhysicalGateWarning => !string.IsNullOrWhiteSpace(PhysicalGateWarning);
 
     public string GrantedPermissionsDisplay => _grantedPermissions.Count == 0
         ? "无运行控制权限"
@@ -513,19 +542,36 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         ? string.Empty
         : $"开始 {Run.CreatedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}  /  更新 {Run.UpdatedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}";
 
-    public int TotalNodeCount => Nodes.Count;
+    private IReadOnlyList<WorkflowRunNodeItemViewModel> ProgressNodes =>
+        Nodes
+            .GroupBy(node => node.NodeId)
+            .Select(group => group
+                .OrderByDescending(node => node.Attempt)
+                .ThenByDescending(node => node.UpdatedAt)
+                .First())
+            .Where(node => Version?.Definition.Nodes.Any(definitionNode =>
+                definitionNode.Id == node.NodeId &&
+                definitionNode.Type is not (WorkflowNodeType.Start or WorkflowNodeType.End)) ?? true)
+            .ToArray();
 
-    public int CompletedNodeCount => Nodes.Count(node => node.Status is
+    private int DefinedExecutableNodeCount => Version?.Definition.Nodes.Count(node =>
+        node.Type is not (WorkflowNodeType.Start or WorkflowNodeType.End)) ?? 0;
+
+    public int TotalNodeCount => DefinedExecutableNodeCount > 0
+        ? DefinedExecutableNodeCount
+        : ProgressNodes.Count;
+
+    public int CompletedNodeCount => ProgressNodes.Count(node => node.Status is
         WorkflowNodeExecutionStatus.Succeeded or WorkflowNodeExecutionStatus.Skipped);
 
-    public int FailedNodeCount => Nodes.Count(node => node.Status is
+    public int FailedNodeCount => ProgressNodes.Count(node => node.Status is
         WorkflowNodeExecutionStatus.Failed or WorkflowNodeExecutionStatus.TimedOut);
 
-    public int CancelledNodeCount => Nodes.Count(node => node.Status == WorkflowNodeExecutionStatus.Cancelled);
+    public int CancelledNodeCount => ProgressNodes.Count(node => node.Status == WorkflowNodeExecutionStatus.Cancelled);
 
-    public int UnknownNodeCount => Nodes.Count(node => node.Status == WorkflowNodeExecutionStatus.Unknown);
+    public int UnknownNodeCount => ProgressNodes.Count(node => node.Status == WorkflowNodeExecutionStatus.Unknown);
 
-    public int TerminalNodeCount => Nodes.Count(node => node.Status is
+    public int TerminalNodeCount => ProgressNodes.Count(node => node.Status is
         WorkflowNodeExecutionStatus.Succeeded or WorkflowNodeExecutionStatus.Skipped or
         WorkflowNodeExecutionStatus.Failed or WorkflowNodeExecutionStatus.TimedOut or
         WorkflowNodeExecutionStatus.Unknown or WorkflowNodeExecutionStatus.Cancelled);
@@ -575,6 +621,15 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
                          entry.Outcome.Contains("reject", StringComparison.OrdinalIgnoreCase) ||
                          entry.EventType.Contains("Failed", StringComparison.OrdinalIgnoreCase)))
                 AddReason(reasons, entry.Reason);
+
+            if (reasons.Count == 0 &&
+                (Run.RuntimeStatus is WorkflowRuntimeStatus.Failed or WorkflowRuntimeStatus.Rejected ||
+                 Nodes.Any(node => node.Status is WorkflowNodeExecutionStatus.Failed or WorkflowNodeExecutionStatus.TimedOut) ||
+                 DeviceOperations.Any(operation => operation.Status is
+                     WorkflowDeviceOperationStatus.Rejected or WorkflowDeviceOperationStatus.Failed)))
+            {
+                return "MES 未提供失败原因，请核对设备证据和时间线。";
+            }
 
             return string.Join("；", reasons);
         }
@@ -627,6 +682,7 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
             ValidateReadModel(run, version, nodes, operations, timeline);
             ValidateFieldAcceptances(run, nodes, acceptances);
             ApplyReadModel(run, version, nodes, operations, timeline, acceptances);
+            await RefreshPhysicalGateAsync(cancellationToken);
             await RefreshPermissionsAsync(cancellationToken, reportFailure: false);
             RefreshedAt = DateTimeOffset.Now;
             StatusMessage = $"已读取 {Nodes.Count} 次节点执行、{DeviceOperations.Count} 次设备操作、{FieldAcceptances.Count} 张现场验收单和 {Timeline.Count} 条时间线记录。";
@@ -644,6 +700,410 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     {
         if (Run?.ExecutionId is not { } workflowRunId || workflowRunId == Guid.Empty) return;
         await LoadAsync(workflowRunId, cancellationToken);
+    }
+
+    private async Task RefreshPhysicalGateAsync(CancellationToken cancellationToken)
+    {
+        if (!_physicalRuntime || Run is null || Run.DryRun)
+        {
+            ClearPhysicalGate();
+            return;
+        }
+
+        if (Run.IsTerminal)
+        {
+            if (Run.RuntimeStatus == WorkflowRuntimeStatus.Completed &&
+                Run.PhysicalAuthorization is not null)
+                await RefreshCompletedPhysicalCleanupAsync(cancellationToken);
+            else
+                ClearPhysicalGate();
+            return;
+        }
+
+        if (Run.PhysicalAuthorization is { } authorization &&
+            authorization.ExpiresAtUtc <= DateTimeOffset.UtcNow)
+        {
+            PhysicalGateStatus = "本次现场批量许可已过期，流程不会继续派发";
+            UpdatePhysicalGateWarning(
+                "physical-authorization-expired",
+                $"本次现场批量许可已于 {authorization.ExpiresAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss} 过期。系统不会复用或自动延长许可；请由操作员核对当前现场状态后重新处置。",
+                "现场批量许可告警");
+            return;
+        }
+
+        var nodeTypeId = Run.PendingStepRequest?.NodeTypeId;
+        if (string.Equals(
+                nodeTypeId,
+                WorkflowGraphNodeTypeIds.RobotExecuteProgram,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            await RefreshAuboPhysicalGateAsync(cancellationToken);
+            return;
+        }
+
+        if (!string.Equals(nodeTypeId, WorkflowGraphNodeTypeIds.Move, StringComparison.OrdinalIgnoreCase))
+        {
+            ClearPhysicalGate();
+            return;
+        }
+
+        PhysicalAgvPreflightResponse? assessment;
+        try
+        {
+            assessment = await _mes.GetPhysicalPreflightAsync(cancellationToken);
+        }
+        catch (NotSupportedException)
+        {
+            PhysicalGateStatus = "当前 MES 未提供现场预检接口";
+            PhysicalGateWarning = string.Empty;
+            _lastPhysicalGateWarningKey = null;
+            return;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (TaskCanceledException exception)
+        {
+            UpdatePhysicalGateWarning(
+                "preflight-timeout",
+                $"AGV 现场预检超时，流程保持暂停并等待只读重试：{exception.Message}",
+                "AGV 网络预检告警");
+            PhysicalGateStatus = "AGV 现场预检超时";
+            return;
+        }
+        catch (HttpRequestException exception)
+        {
+            UpdatePhysicalGateWarning(
+                "preflight-unreachable",
+                $"AGV/Adapter 只读预检不可达，流程保持暂停：{exception.Message}。请检查现场以太网和 Adapter 服务。",
+                "AGV 网络预检告警");
+            PhysicalGateStatus = "AGV 网络或 Adapter 不可达";
+            return;
+        }
+        catch (Exception exception)
+        {
+            UpdatePhysicalGateWarning(
+                "preflight-read-failed",
+                $"现场状态读取失败，流程保持暂停并等待重试：{exception.Message}");
+            PhysicalGateStatus = "现场预检读取失败";
+            return;
+        }
+
+        if (assessment is null)
+        {
+            UpdatePhysicalGateWarning(
+                "preflight-empty",
+                "现场预检没有返回有效结果，流程保持暂停并等待重试。");
+            PhysicalGateStatus = "现场预检结果为空";
+            return;
+        }
+
+        var keys = new List<string>();
+        var messages = new List<string>();
+        var snapshot = assessment.Snapshot;
+        var readiness = assessment.Readiness;
+        var pendingNodeId = Run.PendingStepRequest?.NodeId;
+        var currentMove = pendingNodeId is null
+            ? null
+            : Nodes.Where(node => node.NodeId == pendingNodeId.Value)
+                .OrderByDescending(node => node.Attempt)
+                .ThenByDescending(node => node.UpdatedAt)
+                .FirstOrDefault();
+        var activeMove = currentMove?.Status is WorkflowNodeExecutionStatus.Claimed or
+            WorkflowNodeExecutionStatus.Running;
+
+        void Add(string key, string message)
+        {
+            if (!keys.Contains(key, StringComparer.OrdinalIgnoreCase)) keys.Add(key);
+            if (!messages.Contains(message, StringComparer.OrdinalIgnoreCase)) messages.Add(message);
+        }
+
+        if (!snapshot.Online) Add("offline", "AGV 离线");
+        if (!activeMove && snapshot.CurrentTaskId is not null)
+            Add("active-task", "AGV 仍有未结束任务");
+        if (!string.IsNullOrWhiteSpace(snapshot.ControlOwner) &&
+            !string.Equals(snapshot.ControlOwner, "none", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(snapshot.ControlOwner, "adapter", StringComparison.OrdinalIgnoreCase))
+            Add("external-control", $"AGV 控制权被 {snapshot.ControlOwner} 占用");
+
+        if (readiness is null)
+        {
+            Add("safety-unavailable", "AGV 安全状态暂不可读取");
+        }
+        else
+        {
+            if (readiness.Emergency == true) Add("emergency", "AGV 急停有效");
+            if (readiness.Blocked == true) Add("blocked", "AGV 被阻挡");
+            if (readiness.ManualBlock == true) Add("manual-block", "AGV 手动阻挡有效");
+            if (readiness.FatalCount > 0) Add("fatal", $"AGV 有 {readiness.FatalCount} 个致命故障");
+            if (readiness.ErrorCount > 0) Add("error", $"AGV 有 {readiness.ErrorCount} 个错误");
+            if (readiness.RelocationStatus is not 1)
+                Add("relocation", $"AGV 重定位状态未成功（{readiness.RelocationStatus?.ToString() ?? "未知"}）");
+            if (readiness.LocalizationConfidence is not { } confidence ||
+                !double.IsFinite(confidence) || confidence < 0.9)
+                Add("confidence", $"AGV 定位置信度不足（{readiness.LocalizationConfidence?.ToString("0.###") ?? "未知"} < 0.9）");
+        }
+
+        if (assessment.MapEvidence is null)
+            Add("map-evidence", "AGV 地图证据暂不可读取");
+
+        foreach (var reason in assessment.BlockingReasons)
+        {
+            if (reason.Equals("automatic_dispatch_disabled", StringComparison.OrdinalIgnoreCase) ||
+                reason.Equals("adapter_does_not_hold_control", StringComparison.OrdinalIgnoreCase) ||
+                reason.Equals("blocked_status_not_clear", StringComparison.OrdinalIgnoreCase) ||
+                reason.Equals("controller_faults_active", StringComparison.OrdinalIgnoreCase) ||
+                reason.Equals("agv_has_active_task", StringComparison.OrdinalIgnoreCase) ||
+                reason.Equals("localization_confidence_below_threshold", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            Add($"preflight:{reason}", DescribePhysicalPreflightReason(reason));
+        }
+
+        if (messages.Count == 0)
+        {
+            PhysicalGateStatus = readiness?.LocalizationConfidence is { } confidence
+                ? $"现场条件正常：{snapshot.CurrentStationId ?? "未知站点"}，定位置信度 {confidence:0.###}"
+                : "现场条件正常，可继续流程";
+            PhysicalGateWarning = string.Empty;
+            _lastPhysicalGateWarningKey = null;
+            return;
+        }
+
+        PhysicalGateStatus = "现场条件未满足，流程暂停等待自动复核";
+        UpdatePhysicalGateWarning(
+            string.Join("|", keys),
+            $"现场条件未满足，流程保持暂停并在限定窗口内自动复核：{string.Join("；", messages)}。条件恢复后将继续，未恢复则保持暂停，不会绕过安全门槛。");
+    }
+
+    private async Task RefreshCompletedPhysicalCleanupAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var assessment = await _mes.GetPhysicalPreflightAsync(cancellationToken);
+            var owner = assessment?.Snapshot.ControlOwner;
+            if (string.Equals(owner, "adapter", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(owner, "MesControlAgv.Adapter", StringComparison.OrdinalIgnoreCase))
+            {
+                PhysicalGateStatus = "流程已完成，但 AGV 控制权释放尚未确认";
+                UpdatePhysicalGateWarning(
+                    "completed:control-release-unconfirmed",
+                    "流程节点已全部完成，但 AGV 控制权仍显示由 Adapter 持有。系统不会自动重复发送释放命令，请先读取现场控制权后再开始下一批。",
+                    "AGV 控制权清理告警");
+                return;
+            }
+
+            PhysicalGateStatus = string.Equals(owner, "none", StringComparison.OrdinalIgnoreCase)
+                ? "流程已完成，AGV 控制权已释放"
+                : $"流程已完成，AGV 当前控制权：{owner ?? "未知"}";
+            PhysicalGateWarning = string.Empty;
+            _lastPhysicalGateWarningKey = null;
+        }
+        catch (NotSupportedException)
+        {
+            PhysicalGateStatus = "流程已完成，当前 MES 不支持控制权复核";
+            PhysicalGateWarning = string.Empty;
+            _lastPhysicalGateWarningKey = null;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            PhysicalGateStatus = "流程已完成，AGV 控制权状态未确认";
+            UpdatePhysicalGateWarning(
+                "completed:control-read-failed",
+                $"流程已完成，但无法读取 AGV 控制权状态：{exception.Message}。请先人工复核，系统不会自动重发释放命令。",
+                "AGV 控制权清理告警");
+        }
+    }
+
+    private async Task RefreshAuboPhysicalGateAsync(CancellationToken cancellationToken)
+    {
+        var pending = Run?.PendingStepRequest;
+        var currentNode = pending is null
+            ? null
+            : Nodes.Where(node => node.NodeId == pending.NodeId)
+                .OrderByDescending(node => node.Attempt)
+                .ThenByDescending(node => node.UpdatedAt)
+                .FirstOrDefault();
+        var inputs = currentNode?.Snapshot.Inputs;
+        var deviceId = ReadNodeInput(
+            pending?.Parameters,
+            inputs,
+            WorkflowNodeConfigurationKeys.DeviceId) ?? "ARM-01";
+        var programName = ReadNodeInput(
+            pending?.Parameters,
+            inputs,
+            WorkflowNodeConfigurationKeys.ProgramName);
+
+        AuboArmProgramStatusResponse? status;
+        try
+        {
+            status = await _mes.GetAuboArmProgramAsync(deviceId, cancellationToken);
+        }
+        catch (NotSupportedException)
+        {
+            UpdatePhysicalGateWarning(
+                "aubo:status-not-supported",
+                "当前 MES 未提供机械臂程序状态接口，流程不会在缺少现场状态时自动启动机械臂。",
+                "AUBO 现场条件告警");
+            PhysicalGateStatus = "机械臂程序状态接口不可用";
+            return;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            UpdatePhysicalGateWarning(
+                "aubo:status-read-failed",
+                $"机械臂状态读取失败，流程保持等待并仅重试只读状态：{exception.Message}",
+                "AUBO 现场条件告警");
+            PhysicalGateStatus = "机械臂状态读取失败";
+            return;
+        }
+
+        if (status is null)
+        {
+            UpdatePhysicalGateWarning(
+                "aubo:status-empty",
+                "机械臂没有返回程序状态，流程保持等待，不会发送加载或启动命令。",
+                "AUBO 现场条件告警");
+            PhysicalGateStatus = "机械臂程序状态为空";
+            return;
+        }
+
+        var keys = new List<string>();
+        var messages = new List<string>();
+        var activeProgramNode = currentNode?.Status is WorkflowNodeExecutionStatus.Claimed or
+            WorkflowNodeExecutionStatus.Running;
+
+        void Add(string key, string message)
+        {
+            if (!keys.Contains(key, StringComparer.OrdinalIgnoreCase)) keys.Add(key);
+            if (!messages.Contains(message, StringComparer.OrdinalIgnoreCase)) messages.Add(message);
+        }
+
+        if (!status.Online) Add("offline", "机械臂离线");
+        if (!status.ControlEnabled) Add("control-disabled", "机械臂程序控制未启用");
+        if (status.RobotMode != AuboArmMode.Running)
+            Add("robot-mode", $"机械臂模式为 {status.RobotMode}，需要 Running");
+        if (status.SafetyMode != AuboArmSafetyMode.Normal)
+            Add("safety-mode", $"机械臂安全模式为 {status.SafetyMode}，需要 Normal");
+        if (status.OperationalMode != AuboArmOperationalMode.Automatic)
+            Add("operational-mode", $"机械臂运行模式为 {status.OperationalMode}，需要 Automatic");
+
+        if (!activeProgramNode && status.RuntimeState != AuboArmRuntimeState.Stopped)
+        {
+            Add(
+                "runtime-not-stopped",
+                $"机械臂解释器为 {status.RuntimeStatus ?? status.RuntimeState.ToString()}，启动前需要 Stopped");
+        }
+        else if (activeProgramNode && status.RuntimeState is
+                 AuboArmRuntimeState.Unknown or
+                 AuboArmRuntimeState.Pausing or
+                 AuboArmRuntimeState.Paused or
+                 AuboArmRuntimeState.Stopping or
+                 AuboArmRuntimeState.Aborting or
+                 AuboArmRuntimeState.Retracting)
+        {
+            Add(
+                "runtime-transition",
+                $"机械臂程序当前为 {status.RuntimeStatus ?? status.RuntimeState.ToString()}，等待恢复或人工核销");
+        }
+
+        if (activeProgramNode && status.RuntimeState == AuboArmRuntimeState.Running &&
+            !string.IsNullOrWhiteSpace(programName) &&
+            !string.Equals(
+                NormalizeProgramName(status.LoadedProgram),
+                NormalizeProgramName(programName),
+                StringComparison.Ordinal))
+        {
+            Add(
+                "loaded-program-mismatch",
+                $"机械臂运行工程为 {status.LoadedProgram ?? "未知"}，当前节点要求 {programName}");
+        }
+
+        if (messages.Count == 0)
+        {
+            PhysicalGateStatus = status.RuntimeState switch
+            {
+                AuboArmRuntimeState.Running =>
+                    $"机械臂正在执行 {status.LoadedProgram ?? programName ?? "当前工程"}",
+                AuboArmRuntimeState.Stopped when activeProgramNode =>
+                    "机械臂已停止，等待 MES 完成状态确认",
+                _ => $"机械臂现场条件正常：{deviceId} / {status.RuntimeState}"
+            };
+            PhysicalGateWarning = string.Empty;
+            _lastPhysicalGateWarningKey = null;
+            return;
+        }
+
+        PhysicalGateStatus = "机械臂现场条件未满足，流程等待自动复核";
+        UpdatePhysicalGateWarning(
+            $"aubo:{string.Join("|", keys)}",
+            $"机械臂现场条件未满足：{string.Join("；", messages)}。系统只重试状态读取；条件恢复后继续，已发送但结果不明确的加载/启动命令不会自动重发。",
+            "AUBO 现场条件告警");
+    }
+
+    private static string? ReadNodeInput(
+        IReadOnlyDictionary<string, string?>? pendingInputs,
+        IReadOnlyDictionary<string, string?>? executionInputs,
+        string key)
+    {
+        if (pendingInputs is not null && pendingInputs.TryGetValue(key, out var pending) &&
+            !string.IsNullOrWhiteSpace(pending))
+            return pending.Trim();
+        if (executionInputs is not null && executionInputs.TryGetValue(key, out var execution) &&
+            !string.IsNullOrWhiteSpace(execution))
+            return execution.Trim();
+        return null;
+    }
+
+    private static string? NormalizeProgramName(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var normalized = value.Trim();
+        return normalized.EndsWith(".pro", StringComparison.OrdinalIgnoreCase) ||
+               normalized.EndsWith(".lua", StringComparison.OrdinalIgnoreCase)
+            ? normalized[..^4]
+            : normalized;
+    }
+
+    private void ClearPhysicalGate()
+    {
+        PhysicalGateStatus = string.Empty;
+        PhysicalGateWarning = string.Empty;
+        _lastPhysicalGateWarningKey = null;
+    }
+
+    private static string DescribePhysicalPreflightReason(string reason) => reason switch
+    {
+        "controller_map_evidence_unavailable" => "AGV 地图证据不可用",
+        "controller_map_name_mismatch" => "控制器地图名称与批准地图不一致",
+        "controller_map_version_mismatch" => "控制器地图版本与批准版本不一致",
+        "controller_map_md5_mismatch" => "控制器地图 MD5 与批准值不一致",
+        "controller_map_station_mismatch" => "控制器站点目录与批准目录不一致",
+        "controller_map_route_mismatch" => "控制器路线与批准路线不一致",
+        _ => $"现场预检阻断：{reason}"
+    };
+
+    private void UpdatePhysicalGateWarning(
+        string key,
+        string message,
+        string title = "AGV 现场条件告警")
+    {
+        PhysicalGateWarning = message;
+        if (string.Equals(_lastPhysicalGateWarningKey, key, StringComparison.Ordinal)) return;
+
+        _lastPhysicalGateWarningKey = key;
+        _alertPresenter.ShowWarning(title, message);
     }
 
     private void EnsureAutoRefreshLoop()
@@ -1139,6 +1599,9 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         SelectedFieldAcceptance = null;
         CanvasViewModel = null;
         RefreshedAt = null;
+        PhysicalGateStatus = "现场条件尚未读取";
+        PhysicalGateWarning = string.Empty;
+        _lastPhysicalGateWarningKey = null;
         OnPropertyChanged(nameof(Run));
         OnPropertyChanged(nameof(Version));
         NotifyRunSummaryChanged();

@@ -8,13 +8,22 @@ namespace MesControlAgv.Wpf.ViewModels;
 public sealed class AgvRowViewModel : INotifyPropertyChanged
 {
     private AgvFleetDashboardStatus _status;
+    private RuntimeConnectionSource _connectionSource;
 
-    public AgvRowViewModel(AgvDashboardSnapshot snapshot)
-        : this(new AgvFleetDashboardStatus(snapshot, null))
+    public AgvRowViewModel(
+        AgvDashboardSnapshot snapshot,
+        RuntimeConnectionSource connectionSource = RuntimeConnectionSource.Unverified)
+        : this(new AgvFleetDashboardStatus(snapshot, null), connectionSource)
     {
     }
 
-    public AgvRowViewModel(AgvFleetDashboardStatus status) => _status = status;
+    public AgvRowViewModel(
+        AgvFleetDashboardStatus status,
+        RuntimeConnectionSource connectionSource = RuntimeConnectionSource.Unverified)
+    {
+        _status = status;
+        _connectionSource = connectionSource;
+    }
 
     private AgvDashboardSnapshot Snapshot => _status.Snapshot;
     private AgvActiveTaskStatus? ActiveTask => _status.ActiveTask;
@@ -22,6 +31,10 @@ public sealed class AgvRowViewModel : INotifyPropertyChanged
     public string AgvId => Snapshot.AgvId;
     public bool Online => Snapshot.Online;
     public string OnlineText => Online ? "\u5728\u7EBF" : "\u79BB\u7EBF";
+    public RuntimeConnectionSource ConnectionSource => _connectionSource;
+    public string ConnectionStatusDisplay => RuntimeConnectionSourcePresentation.DescribeConnection(
+        ConnectionSource,
+        Online);
     public string ControlOwner => string.IsNullOrWhiteSpace(Snapshot.ControlOwner) ? "-" : Snapshot.ControlOwner;
     public string CurrentStationId => Snapshot.CurrentStationId ?? "-";
     public Guid? CurrentTaskId => Snapshot.CurrentTaskId;
@@ -64,6 +77,14 @@ public sealed class AgvRowViewModel : INotifyPropertyChanged
     {
         _status = status;
         OnPropertyChanged(string.Empty);
+    }
+
+    public void SetConnectionSource(RuntimeConnectionSource connectionSource)
+    {
+        if (_connectionSource == connectionSource) return;
+        _connectionSource = connectionSource;
+        OnPropertyChanged(nameof(ConnectionSource));
+        OnPropertyChanged(nameof(ConnectionStatusDisplay));
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

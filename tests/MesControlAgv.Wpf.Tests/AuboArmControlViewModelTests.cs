@@ -10,11 +10,14 @@ public sealed class AuboArmControlViewModelTests
     public async Task Refresh_projects_the_four_controller_states_and_loaded_program()
     {
         var client = new FakeMesClientForArm();
-        using var viewModel = new AuboArmControlViewModel(client);
+        using var viewModel = new AuboArmControlViewModel(client, "simulator");
 
         await viewModel.RefreshAsync();
 
         Assert.Equal("在线", viewModel.ConnectionStatus);
+        Assert.Equal("本地模拟器在线", viewModel.ConnectionStatusDisplay);
+        Assert.Contains("非现场设备", viewModel.ConnectionSourceDisplay, StringComparison.Ordinal);
+        Assert.Contains("不代表实体", viewModel.ConnectionSourceDetail, StringComparison.Ordinal);
         Assert.Equal("rob1", viewModel.RobotName);
         Assert.Equal("Running", viewModel.RobotMode);
         Assert.Equal("Normal", viewModel.SafetyMode);
@@ -23,6 +26,21 @@ public sealed class AuboArmControlViewModelTests
         Assert.Equal("测试", viewModel.LoadedProgram);
         Assert.Equal("就绪", viewModel.Readiness);
         Assert.True(viewModel.RunProgramCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task Physical_source_is_unverified_until_a_live_status_is_read()
+    {
+        var client = new FakeMesClientForArm();
+        using var viewModel = new AuboArmControlViewModel(client, "physical");
+
+        Assert.Equal("物理设备未验证", viewModel.ConnectionStatusDisplay);
+
+        await viewModel.RefreshAsync();
+
+        Assert.Equal("物理设备在线", viewModel.ConnectionStatusDisplay);
+        Assert.Equal("数据来源：物理设备", viewModel.ConnectionSourceDisplay);
+        Assert.Contains("现场只读预检", viewModel.ConnectionSourceDetail, StringComparison.Ordinal);
     }
 
     [Fact]

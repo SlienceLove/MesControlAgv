@@ -416,6 +416,105 @@ public sealed class WorkflowRunMonitorViewModelTests
         monitor.Dispose();
     }
 
+    [Fact]
+    public async Task Physical_robot_node_warns_once_for_unready_arm_and_clears_after_recovery()
+    {
+        var baseline = WorkflowRunMonitorFixture.Create();
+        var robotNode = baseline.Version.Definition.Nodes.Single(node => node.Id == baseline.MoveNodeId) with
+        {
+            Type = WorkflowNodeType.RobotProgram,
+            NodeTypeId = WorkflowGraphNodeTypeIds.RobotExecuteProgram,
+            Name = "运行 取料盘",
+            TargetStation = null,
+            Configuration = new Dictionary<string, string?>
+            {
+                [WorkflowNodeConfigurationKeys.DeviceId] = "ARM-01",
+                [WorkflowNodeConfigurationKeys.ProgramName] = "取料盘.pro"
+            }
+        };
+        var fixture = baseline with
+        {
+            Run = baseline.Run with
+            {
+                RuntimeStatus = WorkflowRuntimeStatus.Prepared,
+                PendingStepRequest = new WorkflowNextStepRequest
+                {
+                    StepRequestId = baseline.NodeExecution.StepRequestId,
+                    ExecutionId = baseline.Run.ExecutionId,
+                    WorkflowId = baseline.Run.WorkflowId,
+                    Version = baseline.Run.Version,
+                    NodeId = baseline.MoveNodeId,
+                    NodeType = WorkflowNodeType.RobotProgram,
+                    NodeTypeId = WorkflowGraphNodeTypeIds.RobotExecuteProgram,
+                    NodeName = "运行 取料盘",
+                    Parameters = robotNode.Configuration
+                }
+            },
+            Version = baseline.Version with
+            {
+                Definition = baseline.Version.Definition with
+                {
+                    Nodes = baseline.Version.Definition.Nodes
+                        .Select(node => node.Id == baseline.MoveNodeId ? robotNode : node)
+                        .ToArray()
+                }
+            },
+            NodeExecution = baseline.NodeExecution with
+            {
+                NodeTypeId = WorkflowGraphNodeTypeIds.RobotExecuteProgram,
+                NodeName = "运行 取料盘",
+                Status = WorkflowNodeExecutionStatus.Ready,
+                Inputs = robotNode.Configuration,
+                StartedAt = null
+            },
+            DeviceOperation = baseline.DeviceOperation with
+            {
+                CapabilityId = WorkflowCapabilityIds.RobotExecuteProgram,
+                Status = WorkflowDeviceOperationStatus.Prepared
+            }
+        };
+        var client = new WorkflowRunMonitorClientStub(fixture)
+        {
+            AuboProgramStatus = new AuboArmProgramStatusResponse(
+                "ARM-01",
+                false,
+                "回收料盘",
+                AuboArmRuntimeState.Unknown,
+                "Unknown",
+                DateTimeOffset.UtcNow)
+        };
+        var alerts = new WorkflowRuntimeAlertPresenterStub();
+        var monitor = new WorkflowRunMonitorViewModel(
+            client,
+            alertPresenter: alerts,
+            physicalRuntime: true);
+
+        await monitor.LoadAsync(fixture.Run.ExecutionId);
+        await monitor.LoadAsync(fixture.Run.ExecutionId);
+
+        Assert.True(monitor.HasPhysicalGateWarning);
+        Assert.Contains("机械臂离线", monitor.PhysicalGateWarning, StringComparison.Ordinal);
+        Assert.Single(alerts.Messages);
+
+        client.AuboProgramStatus = new AuboArmProgramStatusResponse(
+            "ARM-01",
+            true,
+            "取料盘",
+            AuboArmRuntimeState.Stopped,
+            "Stopped",
+            DateTimeOffset.UtcNow)
+        {
+            RobotMode = AuboArmMode.Running,
+            SafetyMode = AuboArmSafetyMode.Normal,
+            OperationalMode = AuboArmOperationalMode.Automatic,
+            ControlEnabled = true
+        };
+        await monitor.LoadAsync(fixture.Run.ExecutionId);
+
+        Assert.False(monitor.HasPhysicalGateWarning);
+        Assert.Contains("现场条件正常", monitor.PhysicalGateStatus, StringComparison.Ordinal);
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         var deadline = DateTime.UtcNow.AddSeconds(3);
@@ -443,6 +542,7 @@ internal sealed class WorkflowRunMonitorClientStub : IMesClient
     public IReadOnlyList<WorkflowDeviceOperationSnapshot> DeviceOperations { get; set; }
     public IReadOnlyList<WorkflowRunTimelineEntry> Timeline { get; set; }
     public IReadOnlyList<FieldNavigationAcceptanceResponse> FieldAcceptances { get; set; } = [];
+    public AuboArmProgramStatusResponse? AuboProgramStatus { get; set; }
     public IReadOnlyList<string> GrantedPermissions { get; set; } = [];
     public List<WorkflowRunControlRequest> PauseRequests { get; } = [];
     public List<WorkflowRunControlRequest> ResumeRequests { get; } = [];
@@ -481,6 +581,10 @@ internal sealed class WorkflowRunMonitorClientStub : IMesClient
     public Task<IReadOnlyList<FieldNavigationAcceptanceResponse>> GetWorkflowFieldNavigationAcceptancesAsync(
         Guid workflowRunId,
         CancellationToken cancellationToken) => Task.FromResult(FieldAcceptances);
+
+    public Task<AuboArmProgramStatusResponse?> GetAuboArmProgramAsync(
+        string deviceId,
+        CancellationToken cancellationToken) => Task.FromResult(AuboProgramStatus);
 
     public Task<FieldNavigationAcceptanceResponse> CreateFieldNavigationAcceptanceAsync(
         CreateFieldNavigationAcceptanceRequest request,
@@ -648,6 +752,13 @@ internal sealed class WorkflowRunControlConfirmationStub(bool result = true) : I
         Messages.Add(message);
         return result;
     }
+}
+
+internal sealed class WorkflowRuntimeAlertPresenterStub : IWorkflowRuntimeAlertPresenter
+{
+    public List<(string Title, string Message)> Messages { get; } = [];
+
+    public void ShowWarning(string title, string message) => Messages.Add((title, message));
 }
 
 internal sealed record WorkflowRunMonitorFixture(

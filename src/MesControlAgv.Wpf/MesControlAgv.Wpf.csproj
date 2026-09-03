@@ -30,7 +30,7 @@
           CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
-  <Target Name="BuildLocalServices" BeforeTargets="Build;Publish">
+  <Target Name="BuildLocalServices" BeforeTargets="Build;Publish" Condition="'$(SkipLocalServiceBuild)' != 'true'">
     <MSBuild Projects="@(LocalServiceProjects)" Targets="Build" Properties="Configuration=$(Configuration);Platform=$(Platform)" />
   </Target>
 

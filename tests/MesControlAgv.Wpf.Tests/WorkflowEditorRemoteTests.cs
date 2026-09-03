@@ -164,6 +164,52 @@ public sealed class WorkflowEditorRemoteTests
 
         Assert.False(editor.IsSimulatorExecutionEnabled);
         Assert.False(editor.ExecuteSimulatorCommand.CanExecute(null));
+        Assert.False(editor.IsPhysicalBatchExecutionEnabled);
+        Assert.False(editor.ExecutePhysicalBatchCommand.CanExecute(null));
+    }
+
+    [Fact]
+    public async Task Published_standard_material_workflow_can_submit_one_physical_batch_authorization()
+    {
+        using var fixture = new TempWorkflowFile();
+        var client = new WorkflowEditorClientStub(CreateStandardMaterialContractWorkflow());
+        var editor = new WorkflowEditorViewModel(
+            new WorkflowStore(fixture.Path),
+            client,
+            () => "admin",
+            physicalBatchExecutionEnabled: true,
+            confirmation: new AlwaysConfirm());
+
+        editor.LoadFromMesCommand.Execute(null);
+        await WaitUntilAsync(() => !editor.IsRemoteBusy && editor.SelectedRemoteVersion is not null);
+        editor.ValidateCommand.Execute(null);
+        await WaitUntilAsync(() => !editor.IsRemoteBusy && editor.LastValidation is not null);
+        editor.PublishCommand.Execute(null);
+        await WaitUntilAsync(() => !editor.IsRemoteBusy && editor.SelectedRemoteVersion?.PublishStatus == ContractWorkflowPublishStatus.Published);
+
+        editor.PhysicalBatchSafetyObserverName = "admin";
+        editor.PhysicalBatchPermitPrefix = "material-test";
+        editor.PhysicalBatchPermitMinutes = "60";
+        Assert.True(editor.ExecutePhysicalBatchCommand.CanExecute(null));
+
+        editor.ExecutePhysicalBatchCommand.Execute(null);
+        await WaitUntilAsync(() => !editor.IsRemoteBusy && client.LastExecutionRequest is not null);
+
+        var request = client.LastExecutionRequest!;
+        Assert.False(request.DryRun);
+        Assert.Equal("admin", request.RequestedBy);
+        Assert.Equal("AGV-01", request.PhysicalAuthorization!.AgvId);
+        Assert.Equal("admin", request.PhysicalAuthorization.OperatorName);
+        Assert.Equal("admin", request.PhysicalAuthorization.SafetyObserverName);
+        Assert.Equal("material-test", request.PhysicalAuthorization.PermitPrefix);
+        Assert.True(request.PhysicalAuthorization.ExpiresAtUtc > DateTimeOffset.UtcNow);
+        Assert.Contains("现场批量流程已受理", editor.Message, StringComparison.Ordinal);
+
+        var programNode = editor.SelectedWorkflow!.Nodes
+            .First(node => node.Type == MesControlAgv.Wpf.Workflows.WorkflowNodeType.RobotProgram);
+        programNode.Configuration[MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.ProgramName] =
+            "取料盘.lua";
+        Assert.False(editor.ExecutePhysicalBatchCommand.CanExecute(null));
     }
 
     private static ContractWorkflowDefinition CreateContractWorkflow()
@@ -182,6 +228,77 @@ public sealed class WorkflowEditorRemoteTests
                 new ContractWorkflowNode { Id = moveId, Type = ContractWorkflowNodeType.Move, Name = "Move", TargetStation = "SAMPLE_01", Order = 2, NextNodeIds = [endId] },
                 new ContractWorkflowNode { Id = endId, Type = ContractWorkflowNodeType.End, Name = "End", Order = 3 }
             ]
+        };
+    }
+
+    private static ContractWorkflowDefinition CreateStandardMaterialContractWorkflow()
+    {
+        var nodes = new List<ContractWorkflowNode>();
+        var targets = new[] { "LM7", null, "LM2", null, "LM7", null, "LM1" };
+        var types = new[]
+        {
+            ContractWorkflowNodeType.Start,
+            ContractWorkflowNodeType.Move,
+            ContractWorkflowNodeType.RobotProgram,
+            ContractWorkflowNodeType.Move,
+            ContractWorkflowNodeType.RobotProgram,
+            ContractWorkflowNodeType.Move,
+            ContractWorkflowNodeType.RobotProgram,
+            ContractWorkflowNodeType.Move,
+            ContractWorkflowNodeType.End
+        };
+        for (var index = 0; index < types.Length; index++)
+        {
+            var id = Guid.NewGuid();
+            var next = index + 1 < types.Length ? Guid.Empty : Guid.Empty;
+            var node = new ContractWorkflowNode
+            {
+                Id = id,
+                Type = types[index],
+                Name = index switch
+                {
+                    0 => "从原点开始",
+                    8 => "结束",
+                    _ => $"节点 {index + 1}"
+                },
+                TargetStation = index is 1 or 3 or 5 or 7 ? targets[index - 1] : null,
+                Order = index + 1,
+                NextNodeIds = []
+            };
+            if (types[index] == ContractWorkflowNodeType.RobotProgram)
+            {
+                node = node with
+                {
+                    Configuration = new Dictionary<string, string?>
+                    {
+                        [MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.DeviceId] = "ARM-01",
+                        [MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.ProgramName] = index switch
+                        {
+                            2 => "取料盘.pro",
+                            4 => "放料盘.pro",
+                            _ => "回收料盘.pro"
+                        }
+                    }
+                };
+            }
+            nodes.Add(node);
+        }
+        for (var index = 0; index < nodes.Count - 1; index++)
+            nodes[index] = nodes[index] with { NextNodeIds = [nodes[index + 1].Id] };
+
+        return new ContractWorkflowDefinition
+        {
+            Id = Guid.NewGuid(),
+            Name = "料盘标准流程（LM1→LM7→LM2→LM7→LM1）",
+            Description = "标准料盘现场流程",
+            Nodes = nodes,
+            Edges = nodes.Zip(nodes.Skip(1), (source, target) => new MesControlAgv.Contracts.Workflows.WorkflowEdgeDefinition
+            {
+                SourceNodeId = source.Id,
+                TargetNodeId = target.Id,
+                SourcePort = "success",
+                TargetPort = "in"
+            }).ToArray()
         };
     }
 
@@ -296,6 +413,11 @@ public sealed class WorkflowEditorRemoteTests
             _version = _version with { Definition = value, CreatedBy = actor };
             return Task.FromResult(_version);
         }
+    }
+
+    private sealed class AlwaysConfirm : IWorkflowRunControlConfirmation
+    {
+        public bool Confirm(string title, string message) => true;
     }
 
     private sealed class TempWorkflowFile : IDisposable

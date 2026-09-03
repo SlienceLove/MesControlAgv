@@ -64,6 +64,20 @@ public sealed class FieldNavigationAcceptanceServiceTests
     }
 
     [Fact]
+    public async Task Temporary_vendor_pause_remains_in_flight_without_a_second_dispatch()
+    {
+        var adapter = new FieldAcceptanceAdapter { DispatchState = "paused" };
+        var service = CreateService(adapter);
+        var authorized = await CreateAuthorizedAsync(service, "permit-paused");
+
+        var paused = await service.DispatchAsync(authorized.Id, CancellationToken.None);
+
+        Assert.Equal(FieldNavigationAcceptanceStatuses.Moving, paused.Status);
+        Assert.Equal(1, adapter.DispatchCalls);
+        Assert.NotEqual(FieldNavigationAcceptanceStatuses.Unknown, paused.Status);
+    }
+
+    [Fact]
     public async Task Route_not_present_in_the_approved_directed_edge_snapshot_is_rejected_offline()
     {
         var adapter = new FieldAcceptanceAdapter();

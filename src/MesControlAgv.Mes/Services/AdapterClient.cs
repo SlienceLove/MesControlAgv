@@ -18,7 +18,7 @@ public sealed class AdapterHttpException(HttpStatusCode responseStatusCode, stri
             : $"Adapter returned HTTP {(int)statusCode} ({statusCode}): {detail}";
 }
 
-public sealed class AdapterClient(HttpClient client) : IAgvGateway, IPathAwareAgvGateway, IFleetAwareAgvGateway, IAdapterRuntimeIdentityGateway, IPhysicalPreflightAgvGateway, IFieldNavigationAcceptanceGateway
+public sealed class AdapterClient(HttpClient client) : IAgvGateway, IPathAwareAgvGateway, IFleetAwareAgvGateway, IAdapterRuntimeIdentityGateway, IPhysicalPreflightAgvGateway, IPhysicalAgvControlGateway, IFieldNavigationAcceptanceGateway
 {
     public async Task<AgvTaskResponse> DispatchAsync(Guid operationId, string targetStationId, CancellationToken cancellationToken)
         => await DispatchAsync(operationId, null, targetStationId, cancellationToken);
@@ -100,6 +100,17 @@ public sealed class AdapterClient(HttpClient client) : IAgvGateway, IPathAwareAg
     public async Task<PhysicalAgvPreflightResponse> GetPhysicalPreflightAsync(CancellationToken cancellationToken) =>
         await client.GetFromJsonAsync<PhysicalAgvPreflightResponse>("physical/preflight", cancellationToken)
         ?? throw new InvalidOperationException("Adapter returned no physical preflight result.");
+
+    public async Task<bool> ReleaseControlAsync(CancellationToken cancellationToken)
+    {
+        using var response = await client.PostAsync("agv/control/release", content: null, cancellationToken);
+        if (response.StatusCode == HttpStatusCode.Conflict) return false;
+        await EnsureSuccessAsync(response, cancellationToken);
+        using var body = await response.Content.ReadFromJsonAsync<JsonDocument>(cancellationToken)
+            ?? throw new InvalidOperationException("Adapter returned no control-release result.");
+        return body.RootElement.TryGetProperty("released", out var released) &&
+               released.ValueKind is JsonValueKind.True;
+    }
 
     public async Task<AgvTaskResponse> DispatchFieldNavigationAcceptanceAsync(
         Guid acceptanceId,

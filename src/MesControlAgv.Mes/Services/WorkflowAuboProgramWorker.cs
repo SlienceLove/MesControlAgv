@@ -16,6 +16,29 @@ public sealed class WorkflowAuboProgramWorkerOptions
     public bool Enabled { get; init; }
     public int PollIntervalMs { get; init; } = 1000;
     public int CompletionTimeoutMs { get; init; } = 60000;
+
+    /// <summary>
+    /// Read-only wait budget before a physical robot-program node is claimed.
+    /// Zero preserves the legacy immediate-claim behavior; physical production
+    /// profiles should opt in so transient offline/manual/safety states leave
+    /// the node Ready and can recover without restarting the workflow.
+    /// </summary>
+    public int ReadinessRetryWindowMs { get; init; }
+
+    /// <summary>Interval for read-only AUBO readiness observations.</summary>
+    public int ReadinessRetryIntervalMs { get; init; } = 2000;
+
+    /// <summary>Continuous healthy interval required before load/run is allowed.</summary>
+    public int ReadyStabilityWindowMs { get; init; }
+
+    /// <summary>
+    /// Maximum continuous read-only status outage tolerated after runProgram
+    /// has been confirmed Running. No mutating operation is replayed.
+    /// </summary>
+    public int StatusReadRetryWindowMs { get; init; } = 60000;
+
+    /// <summary>Stable Stopped interval required before recording completion.</summary>
+    public int TerminalStabilityWindowMs { get; init; }
 }
 
 /// <summary>
@@ -29,9 +52,11 @@ public sealed class WorkflowAuboProgramDispatcher(
     IAuboArmGateway arm,
     ProfileConfiguration profile,
     WorkflowAuboProgramWorkerOptions options,
-    TimeProvider? timeProvider = null)
+    TimeProvider? timeProvider = null,
+    ILogger? logger = null)
 {
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+    private readonly ILogger? _logger = logger;
 
     public async Task ProcessAsync(CancellationToken cancellationToken)
     {
@@ -39,6 +64,9 @@ public sealed class WorkflowAuboProgramDispatcher(
 
         foreach (var workItem in await workflows.ListAuboProgramDispatchableNodesAsync(cancellationToken))
         {
+            if (!await WaitForPhysicalReadinessAsync(workItem, cancellationToken))
+                continue;
+
             var claimed = await workflows.ClaimNodeExecutionAsync(
                 workItem.NodeExecution.Id,
                 cancellationToken);
@@ -63,6 +91,92 @@ public sealed class WorkflowAuboProgramDispatcher(
             device.CapabilityIds.Contains(
                 WorkflowCapabilityIds.RobotExecuteProgram,
                 StringComparer.OrdinalIgnoreCase));
+
+    private async Task<bool> WaitForPhysicalReadinessAsync(
+        WorkflowNodeExecutionWorkItem workItem,
+        CancellationToken cancellationToken)
+    {
+        if (profile.Features.UseSimulator || options.ReadinessRetryWindowMs <= 0)
+            return true;
+
+        var armId = ResolveArmId(workItem.NodeExecution.Inputs);
+        if (string.IsNullOrWhiteSpace(armId))
+            return true; // deterministic configuration failure is handled after claim
+
+        var deadline = _timeProvider.GetUtcNow().AddMilliseconds(options.ReadinessRetryWindowMs);
+        var interval = TimeSpan.FromMilliseconds(Math.Max(100, options.ReadinessRetryIntervalMs));
+        var stableWindow = TimeSpan.FromMilliseconds(Math.Max(0, options.ReadyStabilityWindowMs));
+        DateTimeOffset? readySince = null;
+        string? lastWarning = null;
+
+        while (true)
+        {
+            IReadOnlyList<string> blockers;
+            try
+            {
+                var status = await arm.GetProgramAsync(armId, cancellationToken);
+                blockers = GetPhysicalReadinessBlockers(status);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                blockers = [$"机械臂状态读取失败：{exception.Message}"];
+            }
+
+            var now = _timeProvider.GetUtcNow();
+            if (blockers.Count == 0)
+            {
+                readySince ??= now;
+                if (stableWindow <= TimeSpan.Zero || now - readySince >= stableWindow)
+                    return true;
+            }
+            else
+            {
+                readySince = null;
+                var warning = string.Join("; ", blockers);
+                if (!string.Equals(lastWarning, warning, StringComparison.Ordinal))
+                {
+                    _logger?.LogWarning(
+                        "Workflow AUBO node {NodeExecutionId} remains Ready while waiting for physical readiness: {Reasons}",
+                        workItem.NodeExecution.Id,
+                        warning);
+                    lastWarning = warning;
+                }
+            }
+
+            var remaining = deadline - now;
+            if (remaining <= TimeSpan.Zero)
+            {
+                _logger?.LogWarning(
+                    "Workflow AUBO node {NodeExecutionId} exhausted its read-only readiness window and remains Ready for a later worker cycle.",
+                    workItem.NodeExecution.Id);
+                return false;
+            }
+
+            await Task.Delay(remaining < interval ? remaining : interval, _timeProvider, cancellationToken);
+        }
+    }
+
+    private static IReadOnlyList<string> GetPhysicalReadinessBlockers(AuboArmProgramStatusResponse status)
+    {
+        var blockers = new List<string>();
+        if (!status.Online)
+            blockers.Add("机械臂离线");
+        if (!status.ControlEnabled)
+            blockers.Add("机械臂程序控制未启用");
+        if (status.RobotMode != AuboArmMode.Running)
+            blockers.Add($"机械臂模式为 {status.RobotMode}，需要 Running");
+        if (status.SafetyMode != AuboArmSafetyMode.Normal)
+            blockers.Add($"机械臂安全模式为 {status.SafetyMode}，需要 Normal");
+        if (status.OperationalMode != AuboArmOperationalMode.Automatic)
+            blockers.Add($"机械臂运行模式为 {status.OperationalMode}，需要 Automatic");
+        if (status.RuntimeState != AuboArmRuntimeState.Stopped)
+            blockers.Add($"机械臂解释器为 {status.RuntimeStatus ?? status.RuntimeState.ToString()}，需要 Stopped");
+        return blockers;
+    }
 
     private async Task ExecuteClaimedAsync(
         WorkflowNodeExecutionWorkItem workItem,
@@ -204,11 +318,124 @@ public sealed class WorkflowAuboProgramDispatcher(
         CancellationToken cancellationToken)
     {
         var deadline = _timeProvider.GetUtcNow().AddMilliseconds(options.CompletionTimeoutMs);
+        var pollInterval = TimeSpan.FromMilliseconds(Math.Max(50, options.PollIntervalMs));
+        var readRetryWindow = TimeSpan.FromMilliseconds(Math.Max(0, options.StatusReadRetryWindowMs));
+        var terminalStabilityWindow = TimeSpan.FromMilliseconds(Math.Max(0, options.TerminalStabilityWindowMs));
+        DateTimeOffset? unavailableSince = null;
+        DateTimeOffset? stoppedSince = null;
+        var completionBecameAmbiguous = false;
+        string? lastObservationWarning = null;
+
         while (_timeProvider.GetUtcNow() < deadline)
         {
-            var status = await arm.GetProgramAsync(armId, cancellationToken);
+            AuboArmProgramStatusResponse status;
+            try
+            {
+                status = await arm.GetProgramAsync(armId, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                var now = _timeProvider.GetUtcNow();
+                unavailableSince ??= now;
+                lastObservationWarning = exception.Message;
+                _logger?.LogWarning(
+                    exception,
+                    "AUBO status observation for workflow node {NodeExecutionId} failed; retrying read-only status without replaying load/run.",
+                    workItem.NodeExecution.Id);
+                if (readRetryWindow <= TimeSpan.Zero || now - unavailableSince >= readRetryWindow)
+                {
+                    await CompleteAsync(
+                        workItem,
+                        WorkflowStepCompletionOutcome.Unknown,
+                        $"AUBO status remained unavailable after run was confirmed; no command was replayed: {lastObservationWarning}",
+                        cancellationToken);
+                    return;
+                }
+
+                await Task.Delay(pollInterval, _timeProvider, cancellationToken);
+                continue;
+            }
+
+            var observedAt = _timeProvider.GetUtcNow();
+            if (!status.Online || status.RuntimeState == AuboArmRuntimeState.Unknown)
+            {
+                unavailableSince ??= observedAt;
+                lastObservationWarning = !status.Online
+                    ? "机械臂离线"
+                    : "机械臂运行状态未知";
+                if (readRetryWindow <= TimeSpan.Zero || observedAt - unavailableSince >= readRetryWindow)
+                {
+                    await CompleteAsync(
+                        workItem,
+                        WorkflowStepCompletionOutcome.Unknown,
+                        $"AUBO status remained unavailable after run was confirmed; no command was replayed: {lastObservationWarning}",
+                        cancellationToken);
+                    return;
+                }
+
+                await Task.Delay(pollInterval, _timeProvider, cancellationToken);
+                continue;
+            }
+
+            unavailableSince = null;
+            lastObservationWarning = null;
+
+            var controllerSafe = profile.Features.UseSimulator ||
+                                 (status.RobotMode == AuboArmMode.Running &&
+                                  status.SafetyMode == AuboArmSafetyMode.Normal &&
+                                  status.OperationalMode == AuboArmOperationalMode.Automatic &&
+                                  status.ControlEnabled);
+
+            if (status.RuntimeState == AuboArmRuntimeState.Running && controllerSafe)
+            {
+                // A paused/protective state that genuinely resumed to Running
+                // is no longer ambiguous; continue observing the same program.
+                completionBecameAmbiguous = false;
+                stoppedSince = null;
+            }
+            else if (status.RuntimeState != AuboArmRuntimeState.Stopped || !controllerSafe)
+            {
+                completionBecameAmbiguous = true;
+                stoppedSince = null;
+            }
+
             if (status.RuntimeState == AuboArmRuntimeState.Stopped)
             {
+                if (!string.Equals(
+                        NormalizeLoadedProgram(status.LoadedProgram),
+                        programName,
+                        StringComparison.Ordinal))
+                {
+                    await CompleteAsync(
+                        workItem,
+                        WorkflowStepCompletionOutcome.Unknown,
+                        $"AUBO stopped with loaded project '{status.LoadedProgram ?? "none"}', expected '{programName}'.",
+                        cancellationToken);
+                    return;
+                }
+
+                if (!controllerSafe || completionBecameAmbiguous)
+                {
+                    await CompleteAsync(
+                        workItem,
+                        WorkflowStepCompletionOutcome.Unknown,
+                        "AUBO stopped after a paused, safety, mode, or control transition; program completion requires manual reconciliation.",
+                        cancellationToken);
+                    return;
+                }
+
+                stoppedSince ??= observedAt;
+                if (terminalStabilityWindow > TimeSpan.Zero &&
+                    observedAt - stoppedSince < terminalStabilityWindow)
+                {
+                    await Task.Delay(pollInterval, _timeProvider, cancellationToken);
+                    continue;
+                }
+
                 await CompleteAsync(
                     workItem,
                     WorkflowStepCompletionOutcome.Succeeded,
@@ -224,20 +451,7 @@ public sealed class WorkflowAuboProgramDispatcher(
                 return;
             }
 
-            if (status.RuntimeState == AuboArmRuntimeState.Unknown)
-            {
-                await CompleteAsync(
-                    workItem,
-                    WorkflowStepCompletionOutcome.Unknown,
-                    "The AUBO runtime state became unknown; do not retry automatically.",
-                    cancellationToken);
-                return;
-            }
-
-            await Task.Delay(
-                TimeSpan.FromMilliseconds(Math.Max(50, options.PollIntervalMs)),
-                _timeProvider,
-                cancellationToken);
+            await Task.Delay(pollInterval, _timeProvider, cancellationToken);
         }
 
         await CompleteAsync(
@@ -267,10 +481,16 @@ public sealed class WorkflowAuboProgramDispatcher(
                 var status = await arm.GetProgramAsync(armId, cancellationToken);
                 if (status.RuntimeState == AuboArmRuntimeState.Stopped)
                 {
+                    // A stopped controller after a process restart is not
+                    // proof that this workflow program completed. It may have
+                    // been stopped manually, interrupted by a safety event,
+                    // or never started before the response was lost. Keep the
+                    // run Unknown so an operator can reconcile it explicitly;
+                    // never turn an ambiguous physical write into success.
                     await CompleteAsync(
                         workItem,
-                        WorkflowStepCompletionOutcome.Succeeded,
-                        null,
+                        WorkflowStepCompletionOutcome.Unknown,
+                        "The AUBO controller is stopped after restart; program completion cannot be proven and requires manual reconciliation.",
                         cancellationToken,
                         new Dictionary<string, string?>
                         {
@@ -279,20 +499,57 @@ public sealed class WorkflowAuboProgramDispatcher(
                                 workItem.NodeExecution.Inputs,
                                 WorkflowNodeConfigurationKeys.ProgramName),
                             ["runtime"] = status.RuntimeStatus ?? status.RuntimeState.ToString(),
+                            ["loadedProgram"] = status.LoadedProgram,
                             ["reconciledAtUtc"] = _timeProvider.GetUtcNow().ToString("O", CultureInfo.InvariantCulture)
                         });
                 }
                 else if (status.RuntimeState == AuboArmRuntimeState.Running)
                 {
-                    if (workItem.DeviceOperation is { } operation)
+                    if (!TryReadInput(
+                            workItem.NodeExecution.Inputs,
+                            WorkflowNodeConfigurationKeys.ProgramName,
+                            out var requestedProgram))
                     {
+                        await CompleteAsync(
+                            workItem,
+                            WorkflowStepCompletionOutcome.Unknown,
+                            "A running AUBO program has no recoverable programName input.",
+                            cancellationToken);
+                        continue;
+                    }
+
+                    var normalizedProgram = NormalizeProgramName(requestedProgram);
+                    if (!string.Equals(
+                            NormalizeLoadedProgram(status.LoadedProgram),
+                            normalizedProgram,
+                            StringComparison.Ordinal))
+                    {
+                        await CompleteAsync(
+                            workItem,
+                            WorkflowStepCompletionOutcome.Unknown,
+                            $"AUBO is running project '{status.LoadedProgram ?? "none"}' after restart, expected '{normalizedProgram}'.",
+                            cancellationToken);
+                        continue;
+                    }
+
+                    if (workItem.DeviceOperation is { } operation)
                         await workflows.RecordDeviceOperationProgressAsync(
                             workItem.NodeExecution.Id,
                             operation.OperationId,
                             WorkflowDeviceOperationStatus.Running,
                             null,
                             cancellationToken);
-                    }
+
+                    // Seeing the requested project Running after restart is
+                    // fresh controller evidence. Continue the same read-only
+                    // terminal observation in this worker cycle; do not wait
+                    // for a later cycle that might see only Stopped and lose
+                    // the proof that the program resumed.
+                    await ObserveUntilTerminalAsync(
+                        workItem,
+                        armId,
+                        normalizedProgram,
+                        cancellationToken);
                 }
                 else
                 {
@@ -418,7 +675,8 @@ public sealed class WorkflowAuboProgramWorker(
                     scope.ServiceProvider.GetRequiredService<IAuboArmGateway>(),
                     profile,
                     options,
-                    timeProvider);
+                    timeProvider,
+                    logger);
                 await dispatcher.ProcessAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

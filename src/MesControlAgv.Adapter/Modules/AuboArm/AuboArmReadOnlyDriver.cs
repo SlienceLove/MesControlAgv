@@ -124,14 +124,29 @@ public sealed class AuboArmReadOnlyDriver(
         var slots = new List<AuboArmProgramSlot>();
         var errors = new List<string>();
         var current = await ReadLoadedProgramAsync(deviceId, cancellationToken);
+        var scanDeadline = timeProvider.GetUtcNow().AddMilliseconds(options.ProgramCatalogScanTimeoutMs);
+        var scanTimedOut = false;
         for (var index = 0; index < options.ProgramCatalogMaxSlots; index++)
         {
+            if (timeProvider.GetUtcNow() >= scanDeadline)
+            {
+                scanTimedOut = true;
+                break;
+            }
+
             if (index > 0 && options.ProgramCatalogInterRequestDelayMs > 0)
             {
                 await Task.Delay(
                     options.ProgramCatalogInterRequestDelayMs,
                     cancellationToken);
             }
+
+            if (timeProvider.GetUtcNow() >= scanDeadline)
+            {
+                scanTimedOut = true;
+                break;
+            }
+
             try
             {
                 var value = await TryReadStringAsync(
@@ -157,6 +172,9 @@ public sealed class AuboArmReadOnlyDriver(
                 errors.Add($"slot {index}: {exception.Message}");
             }
         }
+
+        if (scanTimedOut)
+            errors.Add($"program catalog scan timed out after {options.ProgramCatalogScanTimeoutMs} ms");
 
         return new AuboArmProgramCatalogResponse(
             options.DeviceId,

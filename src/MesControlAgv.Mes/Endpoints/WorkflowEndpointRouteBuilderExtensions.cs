@@ -172,7 +172,8 @@ public static class WorkflowEndpointRouteBuilderExtensions
             return result.RejectionCode switch
             {
                 WorkflowExecutionRejectionCodes.VersionNotFound => Results.NotFound(result),
-                WorkflowExecutionRejectionCodes.RequestIdReused => Results.Conflict(result),
+                WorkflowExecutionRejectionCodes.RequestIdReused or
+                WorkflowExecutionRejectionCodes.PhysicalAgvBusy => Results.Conflict(result),
                 _ => Results.UnprocessableEntity(result)
             };
         });

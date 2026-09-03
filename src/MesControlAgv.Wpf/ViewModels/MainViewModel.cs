@@ -14,6 +14,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 {
     private readonly IMesClient _mes;
     private readonly ISimulatorControlClient? _simulator;
+    private readonly RuntimeConnectionSource _connectionSource;
     private readonly ControlCenterCommandCoordinator _commands;
     private readonly ControlCenterViewModel _modules;
     private PeriodicTimer? _timer;
@@ -30,7 +31,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     private int _newTaskPriority;
     private string _newTaskDescription = string.Empty;
     private string _newTaskExternalId = string.Empty;
-    private string _operatorName = Environment.UserName;
+    private string _operatorName =
+        Environment.GetEnvironmentVariable("WORKFLOW_OPERATOR") ?? Environment.UserName;
     private DashboardPlannedPath? _plannedRoute;
     private string _routePreview = "\u8BF7\u9009\u62E9\u8D77\u70B9\u548C\u7EC8\u70B9\u540E\u9884\u89C8\u8DEF\u7EBF\u3002";
     private IReadOnlyList<DashboardStation> _stationCatalog = [];
@@ -50,28 +52,36 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         IMapLayoutSource? mapLayoutSource = null,
         WorkflowStore? workflowStore = null,
         StartupConfigurationReport? startupConfiguration = null,
-        OfflineDiagnosticAuditTrail? diagnosticAudit = null)
+        OfflineDiagnosticAuditTrail? diagnosticAudit = null,
+        bool physicalBatchExecutionEnabled = false)
     {
         _mes = mes;
         _simulator = simulator;
         _commands = new ControlCenterCommandCoordinator(mes, simulator);
         ModuleRegistry = moduleRegistry ?? ControlCenterModuleRegistry.CreateStandard();
         StartupDiagnostics = startupConfiguration ?? StartupConfigurationReport.Unknown;
+        var effectiveRuntimeMode = ResolveRuntimeMode(StartupDiagnostics.RuntimeMode, simulator is not null);
+        _connectionSource = RuntimeConnectionSourcePresentation.Resolve(effectiveRuntimeMode);
         WorkflowEditor = new WorkflowEditorViewModel(
             workflowStore ?? new WorkflowStore(),
             _mes,
             () => OperatorName,
-            simulatorExecutionEnabled: StartupDiagnostics.RuntimeMode.Equals("simulator", StringComparison.OrdinalIgnoreCase));
+            simulatorExecutionEnabled: StartupDiagnostics.RuntimeMode.Equals("simulator", StringComparison.OrdinalIgnoreCase),
+            physicalBatchExecutionEnabled: physicalBatchExecutionEnabled);
+        WorkflowEditor.PropertyChanged += WorkflowEditor_PropertyChanged;
         ExperimentPlans = new ExperimentPlanManagementViewModel(_mes);
         ExperimentScheduling = new ExperimentSchedulingViewModel(_mes);
-        WorkflowRunMonitor = new WorkflowRunMonitorViewModel(_mes);
+        WorkflowRunMonitor = new WorkflowRunMonitorViewModel(
+            _mes,
+            physicalRuntime: !effectiveRuntimeMode.Equals("simulator", StringComparison.OrdinalIgnoreCase));
         Readiness = new ReadinessViewModel(_mes, mapLayoutSource);
-        AuboArm = new AuboArmControlViewModel(_mes);
+        AuboArm = new AuboArmControlViewModel(_mes, effectiveRuntimeMode);
         IonChromatography = new IonChromatographyViewModel(_mes);
         ShineLabDeviceStatus = new ShineLabDeviceStatusViewModel(_mes);
         ShineLabTaskDispatch = new ShineLabTaskDispatchViewModel(_mes);
         ShineLabSequenceImport = new ShineLabSequenceImportViewModel();
         _modules = new ControlCenterViewModel(WorkflowEditor, ModuleRegistry);
+        _modules.AgvCommunication.ConfigureRuntimeMode(effectiveRuntimeMode);
         DiagnosticAudit = diagnosticAudit ?? new OfflineDiagnosticAuditTrail();
         Diagnostics = new DiagnosticsCenterViewModel(StartupDiagnostics, DiagnosticAudit);
         ObserveOfflineState("dashboard", OfflineState);
@@ -371,6 +381,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         : IsSimulatorMode
             ? "Release \u5B89\u5168\u67E5\u770B\uFF1A\u4EFF\u771F\u63A7\u5236\u5DF2\u7981\u7528"
             : "\u624B\u5DE5\u5230\u7AD9\u4E0E\u5BFC\u822A\u63A7\u5236\u5DF2\u7981\u7528";
+    public RuntimeConnectionSource ConnectionSource => _connectionSource;
+    public string ConnectionSourceDisplay => RuntimeConnectionSourcePresentation.SourceDisplay(ConnectionSource);
+    public string ConnectionSourceDetail => RuntimeConnectionSourcePresentation.SourceDetail(ConnectionSource);
 
     public ICommand CreateTaskCommand { get; }
     public ICommand DispatchTaskCommand { get; }
@@ -464,9 +477,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             // and AGV data; a failed AUBO read is shown in its panel and does not
             // make the unrelated AGV snapshot stale.
             await AuboArm.RefreshAsync(_shutdown.Token);
-            ConnectionStatus = "MES \u5DF2\u8FDE\u63A5";
+            ConnectionStatus = RuntimeConnectionSourcePresentation.DescribeMesConnection(ConnectionSource, connected: true);
             var primary = fleetStatus.FirstOrDefault()?.Snapshot;
-            AgvStatus = primary is null ? "\u65E0 AGV \u6570\u636E" : primary.Online ? $"\u5728\u7EBF / {primary.ControlOwner}" : "\u79BB\u7EBF";
+            AgvStatus = _modules.AgvCommunication.DescribePrimaryConnection(primary);
             AgvStation = primary?.CurrentStationId ?? "-";
             var primaryStatus = fleetStatus.FirstOrDefault();
             AgvExecutionStatus = primaryStatus?.ActiveTask is not { } active
@@ -486,7 +499,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         }
         catch (Exception exception)
         {
-            ConnectionStatus = "MES \u4E0D\u53EF\u7528";
+            ConnectionStatus = RuntimeConnectionSourcePresentation.DescribeMesConnection(ConnectionSource, connected: false);
             Message = exception.Message;
             IsDataStale = true;
             if (LastRefreshAt is not null)
@@ -936,6 +949,44 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         };
     }
 
+    private static string ResolveRuntimeMode(string? configuredRuntimeMode, bool hasSimulatorClient)
+    {
+        var normalized = configuredRuntimeMode?.Trim().ToLowerInvariant();
+        return normalized is "simulator" or "physical"
+            ? normalized
+            : hasSimulatorClient ? "simulator" : "physical";
+    }
+
+    private void WorkflowEditor_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(WorkflowEditorViewModel.LastExecution))
+        {
+            return;
+        }
+
+        var execution = WorkflowEditor.LastExecution;
+        if (execution is null || !execution.IsAccepted || execution.DryRun || execution.ExecutionId == Guid.Empty)
+        {
+            return;
+        }
+
+        var isSimulatorExecution = StartupDiagnostics.RuntimeMode.Equals(
+            "simulator",
+            StringComparison.OrdinalIgnoreCase);
+        var isPhysicalBatchExecution = WorkflowEditor.IsPhysicalBatchExecutionEnabled &&
+            WorkflowEditor.RemoteState == WorkflowRemoteState.PhysicalBatchAccepted;
+        if (!isSimulatorExecution && !isPhysicalBatchExecution)
+        {
+            return;
+        }
+
+        // The editor has already persisted the execution snapshot and audits
+        // before raising LastExecution. Reuse the monitor's normal read path so
+        // the UI shows the same server-side evidence as a manually entered run ID.
+        WorkflowRunMonitor.RunIdText = execution.ExecutionId.ToString("D");
+        WorkflowRunMonitor.RefreshCommand.Execute(null);
+    }
+
     private void RequestTaskDetailRefresh()
     {
         CancelPendingDetailRefresh();
@@ -985,6 +1036,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _timer?.Dispose();
         ExperimentPlans.Dispose();
         ExperimentScheduling.Dispose();
+        WorkflowEditor.PropertyChanged -= WorkflowEditor_PropertyChanged;
         WorkflowEditor.Dispose();
         WorkflowRunMonitor.Dispose();
         AuboArm.Dispose();

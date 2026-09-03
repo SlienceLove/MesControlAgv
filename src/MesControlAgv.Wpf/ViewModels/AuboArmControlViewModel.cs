@@ -20,6 +20,7 @@ public sealed class AuboArmControlViewModel : INotifyPropertyChanged, IDisposabl
 
     private readonly IMesClient _mes;
     private readonly Dispatcher? _uiDispatcher;
+    private readonly RuntimeConnectionSource _connectionSource;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly SemaphoreSlim _operationGate = new(1, 1);
     private string _deviceId = DefaultDeviceId;
@@ -38,11 +39,13 @@ public sealed class AuboArmControlViewModel : INotifyPropertyChanged, IDisposabl
     private string _errorMessage = string.Empty;
     private bool _isBusy;
     private DateTimeOffset? _observedAt;
+    private string _lastObservedLoadedProgram = string.Empty;
     private string _programCatalogStatus = "尚未刷新";
 
-    public AuboArmControlViewModel(IMesClient mes)
+    public AuboArmControlViewModel(IMesClient mes, string? runtimeMode = null)
     {
         _mes = mes ?? throw new ArgumentNullException(nameof(mes));
+        _connectionSource = RuntimeConnectionSourcePresentation.Resolve(runtimeMode);
         // Network continuations may run on a pool thread (the dashboard refresh
         // timer does so by design). Capture the WPF dispatcher once and marshal
         // every notification/command-state change back to it.
@@ -92,7 +95,24 @@ public sealed class AuboArmControlViewModel : INotifyPropertyChanged, IDisposabl
         }
     }
 
-    public string ConnectionStatus { get => _connectionStatus; private set => SetField(ref _connectionStatus, value); }
+    public string ConnectionStatus
+    {
+        get => _connectionStatus;
+        private set
+        {
+            if (!SetField(ref _connectionStatus, value)) return;
+            OnPropertyChanged(nameof(ConnectionStatusDisplay));
+        }
+    }
+    public RuntimeConnectionSource ConnectionSource => _connectionSource;
+    public string ConnectionSourceDisplay => RuntimeConnectionSourcePresentation.SourceDisplay(ConnectionSource);
+    public string ConnectionSourceDetail => RuntimeConnectionSourcePresentation.SourceDetail(ConnectionSource);
+    public string ConnectionSourceBrush => RuntimeConnectionSourcePresentation.SourceBrush(ConnectionSource);
+    public string ConnectionSourceForeground => RuntimeConnectionSourcePresentation.SourceForeground(ConnectionSource);
+    public string ConnectionStatusDisplay => RuntimeConnectionSourcePresentation.DescribeConnection(
+        ConnectionSource,
+        IsOnline,
+        ConnectionStatus);
     public string RobotName { get => _robotName; private set => SetField(ref _robotName, value); }
     public string RobotMode { get => _robotMode; private set => SetField(ref _robotMode, value); }
     public string SafetyMode { get => _safetyMode; private set => SetField(ref _safetyMode, value); }
@@ -189,8 +209,11 @@ public sealed class AuboArmControlViewModel : INotifyPropertyChanged, IDisposabl
                 OperationalMode = status.OperationalMode.ToString();
                 Runtime = runtime;
                 LoadedProgram = loadedProgram;
-                if (string.IsNullOrWhiteSpace(ProgramName) && loadedProgram != "-")
+                if (loadedProgram != "-" &&
+                    (string.IsNullOrWhiteSpace(ProgramName) ||
+                     string.Equals(ProgramName, _lastObservedLoadedProgram, StringComparison.OrdinalIgnoreCase)))
                     ProgramName = loadedProgram;
+                _lastObservedLoadedProgram = loadedProgram == "-" ? string.Empty : loadedProgram;
                 ObservedAt = observedAt;
                 ControlEnabled = controlEnabled;
                 Readiness = readinessText;
@@ -221,6 +244,11 @@ public sealed class AuboArmControlViewModel : INotifyPropertyChanged, IDisposabl
 
     private async Task RefreshProgramCatalogCoreAsync(CancellationToken cancellationToken)
     {
+        InvokeOnUi(() =>
+        {
+            ProgramCatalogStatus = "正在读取控制器程序目录…";
+            ErrorMessage = string.Empty;
+        });
         var catalog = await _mes.GetAuboArmProgramCatalogAsync(DeviceId, cancellationToken).ConfigureAwait(false);
         InvokeOnUi(() =>
         {
@@ -232,9 +260,18 @@ public sealed class AuboArmControlViewModel : INotifyPropertyChanged, IDisposabl
                     AvailablePrograms.Add(program);
                 ProgramCatalogStatus = catalog.IsComplete
                     ? $"已读取 {AvailablePrograms.Count} 个程序（含配置允许列表）"
-                    : $"程序列表部分读取：{catalog.ReadErrors.Count} 个槽位失败";
+                    : catalog.ReadErrors.Any(error =>
+                        error.Contains("program catalog scan timed out", StringComparison.OrdinalIgnoreCase))
+                        ? $"程序目录读取超时，已显示当前/允许列表（另有 {catalog.ReadErrors.Count} 条读取信息）"
+                        : $"程序列表部分读取：{catalog.ReadErrors.Count} 个槽位失败";
                 if (!string.IsNullOrWhiteSpace(catalog.CurrentProgram))
+                {
                     LoadedProgram = catalog.CurrentProgram!;
+                    if (string.IsNullOrWhiteSpace(ProgramName) ||
+                        string.Equals(ProgramName, _lastObservedLoadedProgram, StringComparison.OrdinalIgnoreCase))
+                        ProgramName = catalog.CurrentProgram!;
+                    _lastObservedLoadedProgram = catalog.CurrentProgram!;
+                }
                 ObservedAt = catalog.ObservedAtUtc;
             }
             else

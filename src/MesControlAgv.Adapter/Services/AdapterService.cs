@@ -395,8 +395,50 @@ public sealed class AdapterService
                 || _device is not INavigationAttemptState navigationAttempt
                 || navigationAttempt.MayHaveWrittenNavigation(taskId))
             {
-                response = await GetTaskFromDeviceAsync(assignment.AgvId, taskId, path, cancellationToken)
-                    ?? new AgvTaskResponse(taskId, taskId.ToString("N"), targetStationId, "unknown", "timeout", assignment.AgvId, path);
+                try
+                {
+                    response = await GetTaskFromDeviceAsync(assignment.AgvId, taskId, path, cancellationToken)
+                        ?? CreateUnknownNavigationResponse(
+                            taskId,
+                            targetStationId,
+                            assignment.AgvId,
+                            path,
+                            "navigation_outcome_unconfirmed_after_timeout");
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (TimeoutException exception)
+                {
+                    // The navigation request may already have reached the
+                    // controller. A failed 1110 reconciliation must not turn
+                    // into HTTP 500 or trigger a second navigation write.
+                    response = CreateUnknownNavigationResponse(
+                        taskId,
+                        targetStationId,
+                        assignment.AgvId,
+                        path,
+                        $"navigation_outcome_unconfirmed_after_timeout: {exception.Message}");
+                }
+                catch (IOException exception)
+                {
+                    response = CreateUnknownNavigationResponse(
+                        taskId,
+                        targetStationId,
+                        assignment.AgvId,
+                        path,
+                        $"navigation_outcome_unconfirmed_after_read_error: {exception.Message}");
+                }
+                catch (AgvApiException exception)
+                {
+                    response = CreateUnknownNavigationResponse(
+                        taskId,
+                        targetStationId,
+                        assignment.AgvId,
+                        path,
+                        $"navigation_outcome_unconfirmed_after_controller_error: {exception.Message}");
+                }
             }
 
             task.DeviceTaskId = response.DeviceTaskId;
@@ -832,6 +874,21 @@ public sealed class AdapterService
         _fleet is not null
             ? await _fleet.GetTaskAsync(agvId, taskId, path, cancellationToken)
             : await _device.GetTaskAsync(taskId, path, cancellationToken);
+
+    private static AgvTaskResponse CreateUnknownNavigationResponse(
+        Guid taskId,
+        string targetStationId,
+        string agvId,
+        IReadOnlyList<string>? path,
+        string reason) =>
+        new(
+            taskId,
+            taskId.ToString("N"),
+            targetStationId,
+            "unknown",
+            reason,
+            agvId,
+            path);
 
     private void ReleaseCompletedRoute(Guid taskId, string state)
     {

@@ -27,6 +27,10 @@ public sealed class FieldStandardConfigurationTests
         Assert.False(configuration.GetValue<bool>("Agv:Tcp:EnablePush"));
         Assert.Equal("9012", configuration["Devices:AuboArm:Port"]);
         Assert.Equal("standard", configuration["Adapter:RunMode"]);
+        Assert.Equal(
+            new[] { "取料盘.pro", "放料盘.pro", "回收料盘.pro" },
+            configuration.GetSection("Devices:AuboArm:AllowedProgramNames").Get<string[]>());
+        Assert.False(configuration.GetValue<bool>("Devices:AuboArm:ControlEnabled"));
 
         // AddServices only builds registrations; no driver call means no network
         // connection is opened during this configuration smoke test.

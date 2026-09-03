@@ -20,13 +20,28 @@
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
-            <DockPanel Margin="0,0,0,12">
-                <StackPanel DockPanel.Dock="Left">
+            <Grid Margin="0,0,0,12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <StackPanel Grid.Row="0">
                     <TextBlock FontSize="22" FontWeight="SemiBold" Text="实验流程管理" />
                     <TextBlock Margin="0,4,0,0" Foreground="Gray" Text="可预设、编辑并通过拖拽编排实验步骤" />
+                    <Button x:Name="WorkflowPhysicalBatchExecuteButton"
+                            AutomationProperties.AutomationId="WorkflowPhysicalBatchExecuteButton"
+                            Margin="0,8,0,0"
+                            Padding="12,6"
+                            HorizontalAlignment="Left"
+                            Background="#8A5A00"
+                            Foreground="White"
+                            Visibility="{Binding WorkflowEditor.IsPhysicalBatchExecutionEnabled, Converter={StaticResource BooleanToVisibilityConverter}}"
+                            Command="{Binding WorkflowEditor.ExecutePhysicalBatchCommand}"
+                            Content="一键现场执行"
+                            ToolTip="仅显式启用现场批量执行配置；需要一次总授权，执行中仍逐段复核安全状态" />
                 </StackPanel>
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.CreateAuboTemplateCommand}" Content="LM1/LM4 AUBO模板" ToolTip="到达 LM1 和 LM4 后运行界面中选择的程序" />
+                <WrapPanel x:Name="WorkflowCommandToolbar" Grid.Row="1" Margin="0,10,0,0" Orientation="Horizontal">
+                    <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.CreateAuboTemplateCommand}" Content="料盘四段标准模板" ToolTip="原点→站点1取料盘→站点2放料盘→站点1回收料盘→原点" />
                     <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.NewWorkflowCommand}" Content="新建流程" />
                     <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.CopyWorkflowCommand}" Content="复制" />
                     <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.DeleteWorkflowCommand}" Content="删除" />
@@ -41,11 +56,12 @@
                             AutomationProperties.AutomationId="WorkflowSimulatorExecuteButton"
                             Margin="6,0,0,0"
                             Padding="10,7"
+                            Visibility="{Binding WorkflowEditor.IsSimulatorExecutionEnabled, Converter={StaticResource BooleanToVisibilityConverter}}"
                             Command="{Binding WorkflowEditor.ExecuteSimulatorCommand}"
                             Content="执行模拟"
                             ToolTip="仅 simulator 模式；进入本地隔离服务并执行已发布流程" />
-                </StackPanel>
-            </DockPanel>
+                </WrapPanel>
+            </Grid>
 
             <Grid Grid.Row="1" MinHeight="0" ClipToBounds="True">
                 <Grid.ColumnDefinitions>
@@ -280,6 +296,57 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
+                            <Border Margin="0,12,0,0"
+                                    Padding="8"
+                                    Background="#FFF8E7"
+                                    BorderBrush="#F0B429"
+                                    BorderThickness="1"
+                                    CornerRadius="4"
+                                    Visibility="{Binding WorkflowEditor.IsPhysicalBatchExecutionEnabled, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                <StackPanel>
+                                    <TextBlock FontWeight="SemiBold" Text="现场批量执行授权" />
+                                    <TextBlock Margin="0,3,0,7"
+                                               FontSize="11"
+                                               Foreground="#7A3E00"
+                                               Text="一次确认后由 MES 按标准模板逐段执行；临时条件自动复核，结果不明的设备写入不会重发。"
+                                               TextWrapping="Wrap" />
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="88" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock VerticalAlignment="Center" Foreground="#667085" Text="安全监护人" />
+                                        <TextBox Grid.Column="1"
+                                                 AutomationProperties.AutomationId="WorkflowPhysicalBatchObserverInput"
+                                                 Text="{Binding WorkflowEditor.PhysicalBatchSafetyObserverName, UpdateSourceTrigger=PropertyChanged}" />
+                                    </Grid>
+                                    <Grid Margin="0,6,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="88" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock VerticalAlignment="Center" Foreground="#667085" Text="许可前缀" />
+                                        <TextBox Grid.Column="1"
+                                                 AutomationProperties.AutomationId="WorkflowPhysicalBatchPermitPrefixInput"
+                                                 Text="{Binding WorkflowEditor.PhysicalBatchPermitPrefix, UpdateSourceTrigger=PropertyChanged}" />
+                                    </Grid>
+                                    <Grid Margin="0,6,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="88" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock VerticalAlignment="Center" Foreground="#667085" Text="有效分钟(30+)" />
+                                        <TextBox Grid.Column="1"
+                                                 AutomationProperties.AutomationId="WorkflowPhysicalBatchPermitMinutesInput"
+                                                 Text="{Binding WorkflowEditor.PhysicalBatchPermitMinutes, UpdateSourceTrigger=PropertyChanged}" />
+                                    </Grid>
+                                    <TextBlock Margin="0,6,0,0"
+                                               FontSize="11"
+                                               Foreground="#7A3E00"
+                                               Text="{Binding WorkflowEditor.PhysicalBatchExecutionStatus}"
+                                               TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
                         </StackPanel>
                     </ScrollViewer>
                 </Border>

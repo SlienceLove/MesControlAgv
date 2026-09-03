@@ -119,8 +119,10 @@ public class MainViewModelTests
 
         await viewModel.RefreshAsync();
 
-        Assert.Equal("MES 已连接", viewModel.ConnectionStatus);
-        Assert.Equal("在线 / adapter", viewModel.AgvStatus);
+        Assert.Equal("物理 MES 已连接", viewModel.ConnectionStatus);
+        Assert.Equal("物理设备在线 / adapter", viewModel.AgvStatus);
+        Assert.Equal(RuntimeConnectionSource.PhysicalDevice, viewModel.ConnectionSource);
+        Assert.Contains("物理设备", viewModel.AgvCommunication.ConnectionSourceDisplay, StringComparison.Ordinal);
         Assert.Single(viewModel.Tasks);
         Assert.Equal(DateOnly.FromDateTime(DateTime.UtcNow), client.LastRequestedDate);
         Assert.Equal(DateOnly.FromDateTime(DateTime.UtcNow), client.LastRequestedKpiDate);
@@ -289,6 +291,8 @@ public class MainViewModelTests
         await viewModel.RefreshAsync();
 
         Assert.True(viewModel.IsSimulatorMode);
+        Assert.Equal(RuntimeConnectionSource.LocalSimulator, viewModel.ConnectionSource);
+        Assert.Contains("本地模拟器", viewModel.AgvCommunication.ConnectionSourceDisplay, StringComparison.Ordinal);
 #if DEBUG
         Assert.True(viewModel.IsManualArrivalAvailable);
         Assert.True(viewModel.ArriveCommand.CanExecute(null));

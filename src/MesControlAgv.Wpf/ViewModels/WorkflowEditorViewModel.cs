@@ -15,6 +15,7 @@ using ContractWorkflowDefinition = MesControlAgv.Contracts.Workflows.WorkflowDef
 using ContractWorkflowGraphDocument = MesControlAgv.Contracts.Workflows.WorkflowGraphDocument;
 using ContractWorkflowCanvasViewport = MesControlAgv.Contracts.Workflows.WorkflowCanvasViewport;
 using ContractWorkflowNode = MesControlAgv.Contracts.Workflows.WorkflowNode;
+using ContractWorkflowNodeConfigurationKeys = MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys;
 using ContractWorkflowExecutionRequest = MesControlAgv.Contracts.Workflows.WorkflowExecutionRequest;
 using ContractWorkflowExecutionResult = MesControlAgv.Contracts.Workflows.WorkflowExecutionResult;
 using ContractWorkflowExecutionSnapshot = MesControlAgv.Contracts.Workflows.WorkflowExecutionSnapshot;
@@ -23,6 +24,7 @@ using ContractWorkflowRuntimeStatus = MesControlAgv.Contracts.Workflows.Workflow
 using ContractWorkflowAuditResponse = MesControlAgv.Contracts.Workflows.WorkflowAuditResponse;
 using ContractWorkflowVersion = MesControlAgv.Contracts.Workflows.WorkflowVersion;
 using ContractWorkflowParameter = MesControlAgv.Contracts.Workflows.WorkflowParameter;
+using ContractWorkflowPhysicalRunAuthorization = MesControlAgv.Contracts.Workflows.WorkflowPhysicalRunAuthorization;
 using ContractWorkflowPublishStatus = MesControlAgv.Contracts.Workflows.WorkflowPublishStatus;
 using ContractWorkflowValidationResult = MesControlAgv.Contracts.Workflows.WorkflowValidationResult;
 using ContractWorkflowVersionStatus = MesControlAgv.Contracts.Workflows.WorkflowVersionStatus;
@@ -41,6 +43,8 @@ public enum WorkflowRemoteState
     DryRunAccepted,
     DryRunRejected,
     SimulatorAccepted,
+    PhysicalBatchAccepted,
+    PhysicalBatchRejected,
     Cancelled,
     ServiceUnavailable,
     Error
@@ -53,6 +57,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
     private readonly Func<string> _actorProvider;
     private readonly WorkflowCatalogSet _catalog;
     private readonly bool _simulatorExecutionEnabled;
+    private readonly bool _physicalBatchExecutionEnabled;
+    private readonly IWorkflowRunControlConfirmation _confirmation;
     private ProfileConfiguration _profileConfiguration;
     private WorkflowPublicationContext _publicationContext;
     private readonly Dictionary<string, string> _profileStationNames = new(StringComparer.OrdinalIgnoreCase);
@@ -88,6 +94,12 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
     private bool _isApplyingCanvasDocument;
     private bool _isSynchronizingCanvasSelection;
     private WorkflowImportReport? _lastImportReport;
+    private string _physicalBatchSafetyObserverName =
+        Environment.GetEnvironmentVariable("WORKFLOW_SAFETY_OBSERVER") ?? string.Empty;
+    private string _physicalBatchPermitPrefix =
+        Environment.GetEnvironmentVariable("WORKFLOW_PERMIT_PREFIX") ?? "material-batch";
+    private string _physicalBatchPermitMinutes =
+        Environment.GetEnvironmentVariable("WORKFLOW_PERMIT_MINUTES") ?? "1440";
 
     public WorkflowEditorViewModel(
         WorkflowStore store,
@@ -95,13 +107,17 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
         Func<string>? actorProvider = null,
         WorkflowCatalogSet? catalog = null,
         ProfileConfiguration? profileConfiguration = null,
-        bool simulatorExecutionEnabled = false)
+        bool simulatorExecutionEnabled = false,
+        bool physicalBatchExecutionEnabled = false,
+        IWorkflowRunControlConfirmation? confirmation = null)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _mes = mes;
         _actorProvider = actorProvider ?? (() => "wpf-editor");
         _catalog = catalog ?? BuiltInWorkflowCatalog.Create();
         _simulatorExecutionEnabled = simulatorExecutionEnabled;
+        _physicalBatchExecutionEnabled = physicalBatchExecutionEnabled;
+        _confirmation = confirmation ?? MessageBoxWorkflowRunControlConfirmation.Instance;
         _profileConfiguration = EnsureRobotArmProfile(profileConfiguration ?? ProfileConfiguration.Default);
         _publicationContext = WorkflowPublicationContext.FromProfile(_profileConfiguration);
         foreach (var station in _profileConfiguration.Stations)
@@ -153,6 +169,9 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
         ExecuteSimulatorCommand = new AsyncCommand(
             () => RunRemoteAsync("执行模拟流程", () => ExecuteSimulatorCoreAsync(_shutdown.Token), _shutdown.Token),
             CanExecuteSimulator);
+        ExecutePhysicalBatchCommand = new AsyncCommand(
+            () => RunRemoteAsync("一键现场执行", () => ExecutePhysicalBatchCoreAsync(_shutdown.Token), _shutdown.Token),
+            CanExecutePhysicalBatch);
         RefreshRemoteCommand = LoadFromMesCommand;
 
         SelectedWorkflow = Workflows.FirstOrDefault();
@@ -707,6 +726,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
         WorkflowRemoteState.Published => "MES 版本已发布",
         WorkflowRemoteState.DryRunAccepted => "模拟运行已受理，未发送 AGV 指令",
         WorkflowRemoteState.SimulatorAccepted => "本地模拟流程已受理，正在由隔离 worker 执行",
+        WorkflowRemoteState.PhysicalBatchAccepted => "现场批量流程已受理，等待已授权 worker 按顺序执行",
+        WorkflowRemoteState.PhysicalBatchRejected => "现场批量流程被拒绝",
         WorkflowRemoteState.DryRunRejected => "模拟运行被拒绝",
         WorkflowRemoteState.Cancelled => "MES 工作流请求已取消，本地 JSON 仍可用",
         WorkflowRemoteState.ServiceUnavailable => "MES 不可用，本地 JSON 仍可用",
@@ -717,6 +738,42 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
     public bool IsLoading => IsRemoteBusy;
 
     public bool IsSimulatorExecutionEnabled => _simulatorExecutionEnabled;
+
+    public bool IsPhysicalBatchExecutionEnabled => _physicalBatchExecutionEnabled;
+
+    public string PhysicalBatchExecutionStatus => _physicalBatchExecutionEnabled
+        ? "现场一键执行已显式启用；仅限标准模板，有效期 30–1440 分钟，仍需 MES worker 和现场预检。"
+        : "现场一键执行默认关闭；完成现场预检后由启动配置显式启用。";
+
+    public string PhysicalBatchSafetyObserverName
+    {
+        get => _physicalBatchSafetyObserverName;
+        set
+        {
+            if (SetField(ref _physicalBatchSafetyObserverName, value ?? string.Empty))
+                RefreshCommandStates();
+        }
+    }
+
+    public string PhysicalBatchPermitPrefix
+    {
+        get => _physicalBatchPermitPrefix;
+        set
+        {
+            if (SetField(ref _physicalBatchPermitPrefix, value ?? string.Empty))
+                RefreshCommandStates();
+        }
+    }
+
+    public string PhysicalBatchPermitMinutes
+    {
+        get => _physicalBatchPermitMinutes;
+        set
+        {
+            if (SetField(ref _physicalBatchPermitMinutes, value ?? string.Empty))
+                RefreshCommandStates();
+        }
+    }
 
     public ContractWorkflowVersion? RemoteVersion => SelectedRemoteVersion;
 
@@ -805,6 +862,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
     public ICommand PublishCommand { get; }
     public ICommand DryRunCommand { get; }
     public ICommand ExecuteSimulatorCommand { get; }
+    public ICommand ExecutePhysicalBatchCommand { get; }
     public ICommand AddNodeCommand { get; }
     public ICommand DeleteNodeCommand { get; }
     public ICommand AddParameterCommand { get; }
@@ -847,24 +905,11 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
                          string.Equals(station.Type, "Charge", StringComparison.OrdinalIgnoreCase))?.AgvStationId
                      ?? enabled.FirstOrDefault()?.AgvStationId
                      ?? string.Empty;
-        var reachable = (_profileConfiguration.Map?.Edges ?? [])
-            .Where(edge => string.Equals(edge.From, origin, StringComparison.OrdinalIgnoreCase))
-            .Select(edge => edge.To)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var second = enabled.FirstOrDefault(station =>
-                        !string.Equals(station.AgvStationId, origin, StringComparison.OrdinalIgnoreCase) &&
-                        reachable.Contains(station.AgvStationId) &&
-                        (string.Equals(station.Type, "FieldAcceptance", StringComparison.OrdinalIgnoreCase) ||
-                         string.Equals(station.Type, "Station", StringComparison.OrdinalIgnoreCase)))?.AgvStationId
-                    ?? enabled.FirstOrDefault(station =>
-                        !string.Equals(station.AgvStationId, origin, StringComparison.OrdinalIgnoreCase) &&
-                        reachable.Contains(station.AgvStationId))?.AgvStationId
-                    ?? enabled.FirstOrDefault(station =>
-                        !string.Equals(station.AgvStationId, origin, StringComparison.OrdinalIgnoreCase))?.AgvStationId
-                    ?? string.Empty;
-        if (string.IsNullOrWhiteSpace(origin) || string.IsNullOrWhiteSpace(second))
+        var station1 = ResolveNumberedFieldStation(enabled, origin, "站点1", "LM7", 7);
+        var station2 = ResolveNumberedFieldStation(enabled, origin, "站点2", "LM2", 2, station1);
+        if (string.IsNullOrWhiteSpace(origin) || string.IsNullOrWhiteSpace(station1) || string.IsNullOrWhiteSpace(station2))
         {
-            Message = "当前站点目录不足两个可用站点，无法创建到站触发模板。";
+            Message = "当前站点目录不足原点、站点1和站点2三个可用站点，无法创建料盘标准模板。";
             return;
         }
         var armDeviceId = _profileConfiguration.WorkflowDevices
@@ -872,13 +917,40 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
                 device.DeviceFamily,
                 MesControlAgv.Contracts.Workflows.WorkflowDeviceFamilyIds.RobotArm,
                 StringComparison.OrdinalIgnoreCase))?.DeviceId;
-        var template = WorkflowStore.CreateAuboStationProgramWorkflow(origin, second, armDeviceId: armDeviceId);
+        var template = WorkflowStore.CreateStandardMaterialHandlingWorkflow(
+            origin,
+            station1,
+            station2,
+            armDeviceId: armDeviceId);
         var document = WorkflowDocumentMapper.ToGraph(template);
         _documents.Add(document);
         var projection = WorkflowDocumentMapper.FromGraph(document);
         _workflowProjections.Add(projection);
         SelectedWorkflow = projection;
-        Message = $"已创建 {origin}/{second} 到站触发 AUBO 模板；请刷新目录并为每个节点选择实际程序，发布前需现场开启机械臂控制权限。";
+        Message = $"已创建料盘标准模板：原点 {origin} → 站点1 {station1}（取料盘.pro）→ 站点2 {station2}（放料盘.pro）→ 站点1 {station1}（回收料盘.pro）→ 原点 {origin}。请只读刷新目录并确认三个实际程序名，发布前需现场开启机械臂控制权限。";
+    }
+
+    private static string? ResolveNumberedFieldStation(
+        IReadOnlyList<StationProfile> stations,
+        string origin,
+        string displayName,
+        string fallbackStationId,
+        int fallbackCode,
+        string? excludedStationId = null)
+    {
+        bool IsCandidate(StationProfile station) =>
+            station.Enabled &&
+            !string.Equals(station.AgvStationId, origin, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(station.AgvStationId, excludedStationId, StringComparison.OrdinalIgnoreCase);
+
+        return stations.FirstOrDefault(station => IsCandidate(station) &&
+                (string.Equals(station.Name?.Trim(), displayName, StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(station.StationId?.Trim(), displayName, StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(station.AgvStationId?.Trim(), displayName, StringComparison.OrdinalIgnoreCase)))?.AgvStationId
+            ?? stations.FirstOrDefault(station => IsCandidate(station) &&
+                string.Equals(station.AgvStationId, fallbackStationId, StringComparison.OrdinalIgnoreCase))?.AgvStationId
+            ?? stations.FirstOrDefault(station => IsCandidate(station) && station.Code == fallbackCode)?.AgvStationId
+            ?? stations.Where(IsCandidate).OrderBy(station => station.Code).ThenBy(station => station.AgvStationId, StringComparer.OrdinalIgnoreCase).FirstOrDefault()?.AgvStationId;
     }
 
     private void CopyWorkflow()
@@ -995,6 +1067,15 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
         _simulatorExecutionEnabled &&
         CanUseRemote() &&
         SelectedRemoteVersion is { Status: ContractWorkflowVersionStatus.Published, PublishStatus: ContractWorkflowPublishStatus.Published };
+
+    private bool CanExecutePhysicalBatch() =>
+        _physicalBatchExecutionEnabled &&
+        CanUseRemote() &&
+        IsStandardMaterialWorkflow(SelectedWorkflow) &&
+        SelectedRemoteVersion is { Status: ContractWorkflowVersionStatus.Published, PublishStatus: ContractWorkflowPublishStatus.Published } &&
+        !string.IsNullOrWhiteSpace(PhysicalBatchSafetyObserverName) &&
+        !string.IsNullOrWhiteSpace(PhysicalBatchPermitPrefix) &&
+        int.TryParse(PhysicalBatchPermitMinutes, out var minutes) && minutes is >= 30 and <= 1440;
 
     private async Task RunRemoteAsync(string action, Func<Task> operation, CancellationToken cancellationToken)
     {
@@ -1293,11 +1374,142 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
         OnPropertyChanged(nameof(ExecutionAuditSummary));
         Message = result.IsAccepted
             ? result.NextStep is null
-                ? "本地模拟流程已受理并完成。"
-                : $"本地模拟流程已受理，下一步：{result.NextStep.NodeName}。可在流程运行监控中查看执行记录。"
+                ? "本地模拟流程已受理并完成；运行监控已自动加载。"
+                : $"本地模拟流程已受理，下一步：{result.NextStep.NodeName}。运行监控已自动加载。"
             : $"本地模拟流程被拒绝：{result.RejectionCode ?? result.RejectionReason ?? "未知原因"}。";
         RemoteStatus = Message;
     }
+
+    private async Task ExecutePhysicalBatchCoreAsync(CancellationToken cancellationToken)
+    {
+        if (!_physicalBatchExecutionEnabled || _mes is null ||
+            SelectedWorkflow is not { } workflow ||
+            SelectedRemoteVersion is not { } version ||
+            !int.TryParse(PhysicalBatchPermitMinutes, out var permitMinutes) ||
+            permitMinutes is < 30 or > 1440)
+        {
+            return;
+        }
+
+        var operatorName = Actor;
+        var observerName = PhysicalBatchSafetyObserverName.Trim();
+        var permitPrefix = PhysicalBatchPermitPrefix.Trim();
+        var expiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(permitMinutes);
+        if (!_confirmation.Confirm(
+                "确认一键现场执行",
+                $"将按已发布标准模板一次性提交完整现场流程，并由 MES 按节点顺序自动创建/授权 Move 许可。\n" +
+                $"操作者：{operatorName}\n安全监护人：{observerName}\n许可前缀：{permitPrefix}\n" +
+                "现场 worker 会在每个 AGV/机械臂节点前重新读取设备状态；可恢复条件只重试只读检查，已发送但结果不明确的命令不会自动重发。确认继续？"))
+        {
+            return;
+        }
+
+        var agvId = _profileConfiguration.Agvs
+            .FirstOrDefault(agv => agv.Enabled)?.AgvId ?? string.Empty;
+        var result = await _mes.ExecuteWorkflowAsync(
+            new ContractWorkflowExecutionRequest
+            {
+                WorkflowId = workflow.Id,
+                Version = version.Version,
+                RequestId = Guid.NewGuid(),
+                RequestedBy = operatorName,
+                CorrelationId = $"wpf-physical-batch-{Guid.NewGuid():N}",
+                DryRun = false,
+                PhysicalAuthorization = new ContractWorkflowPhysicalRunAuthorization
+                {
+                    AgvId = agvId,
+                    OperatorName = operatorName,
+                    SafetyObserverName = observerName,
+                    PermitPrefix = permitPrefix,
+                    ExpiresAtUtc = expiresAtUtc
+                }
+            },
+            cancellationToken);
+        _lastExecution = result;
+        _lastExecutionSnapshot = await ReadExecutionSnapshotAsync(result, cancellationToken);
+        _lastExecutionAudits = await ReadExecutionAuditsAsync(result, cancellationToken);
+        RemoteState = result.IsAccepted ? WorkflowRemoteState.PhysicalBatchAccepted : WorkflowRemoteState.PhysicalBatchRejected;
+        OnPropertyChanged(nameof(LastExecution));
+        OnPropertyChanged(nameof(ExecutionSnapshot));
+        OnPropertyChanged(nameof(ExecutionAudits));
+        OnPropertyChanged(nameof(ExecutionAuditSummary));
+        Message = result.IsAccepted
+            ? "现场批量流程已受理；后续 Move/AUBO 节点由已启用的 MES worker 按标准顺序执行。"
+            : DescribePhysicalBatchRejection(result);
+        RemoteStatus = Message;
+    }
+
+    private static string DescribePhysicalBatchRejection(ContractWorkflowExecutionResult result) =>
+        result.RejectionCode switch
+        {
+            "WORKFLOW_PHYSICAL_AGV_BUSY" =>
+                $"现场批量流程被拒绝：已有未结束的现场流程占用 AGV，请先在运行监控中完成或核销。{result.RejectionReason}",
+            "WORKFLOW_PHYSICAL_EXECUTION_DISABLED" =>
+                $"现场批量流程被拒绝：MES 现场 worker 尚未全部启用。{result.RejectionReason}",
+            "WORKFLOW_PHYSICAL_TEMPLATE_REQUIRED" =>
+                "现场批量流程被拒绝：所选发布版本不是批准的 LM1→LM7→LM2→LM7→LM1 料盘标准模板。",
+            "WORKFLOW_PHYSICAL_AUTHORIZATION_INVALID" =>
+                $"现场批量流程被拒绝：操作者、监护人或许可有效期无效。{result.RejectionReason}",
+            _ => $"现场批量流程被拒绝：{result.RejectionCode ?? result.RejectionReason ?? "未知原因"}。"
+        };
+
+    private static bool IsStandardMaterialWorkflow(WorkflowDefinition? workflow)
+    {
+        if (workflow is null ||
+            !workflow.Name.Contains("料盘标准流程", StringComparison.Ordinal))
+            return false;
+
+        var nodes = workflow.Nodes.OrderBy(node => node.Order).ToArray();
+        var expectedTypes = new[]
+        {
+            WorkflowNodeType.Start,
+            WorkflowNodeType.Move,
+            WorkflowNodeType.RobotProgram,
+            WorkflowNodeType.Move,
+            WorkflowNodeType.RobotProgram,
+            WorkflowNodeType.Move,
+            WorkflowNodeType.RobotProgram,
+            WorkflowNodeType.Move,
+            WorkflowNodeType.End
+        };
+        if (nodes.Length != expectedTypes.Length ||
+            nodes.Where((node, index) => node.Type != expectedTypes[index]).Any())
+            return false;
+
+        for (var index = 0; index < nodes.Length; index++)
+        {
+            var expectedNext = index + 1 < nodes.Length ? nodes[index + 1].Id : (Guid?)null;
+            var actualNext = nodes[index].NextNodeIds?.ToArray() ?? [];
+            if (expectedNext is null ? actualNext.Length != 0 :
+                actualNext.Length != 1 || actualNext[0] != expectedNext.Value)
+                return false;
+        }
+
+        var expectedStations = new[] { "LM7", "LM2", "LM7", "LM1" };
+        var moveNodes = nodes.Where(node => node.Type == WorkflowNodeType.Move).ToArray();
+        if (moveNodes.Where((node, index) => !string.Equals(
+                ReadWorkflowNodeValue(node, ContractWorkflowNodeConfigurationKeys.TargetStation) ?? node.TargetStation,
+                expectedStations[index],
+                StringComparison.OrdinalIgnoreCase)).Any())
+            return false;
+
+        var expectedPrograms = new[] { "取料盘.pro", "放料盘.pro", "回收料盘.pro" };
+        var programNodes = nodes.Where(node => node.Type == WorkflowNodeType.RobotProgram).ToArray();
+        return programNodes.Select((node, index) => new
+            {
+                DeviceId = ReadWorkflowNodeValue(node, ContractWorkflowNodeConfigurationKeys.DeviceId),
+                Program = ReadWorkflowNodeValue(node, ContractWorkflowNodeConfigurationKeys.ProgramName),
+                Expected = expectedPrograms[index]
+            })
+            .All(item =>
+                string.Equals(item.DeviceId, "ARM-01", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(item.Program, item.Expected, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string? ReadWorkflowNodeValue(WorkflowNode node, string key) =>
+        node.Configuration.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value)
+            ? value.Trim()
+            : null;
 
     private async Task<ContractWorkflowExecutionSnapshot?> ReadExecutionSnapshotAsync(
         ContractWorkflowExecutionResult result,
@@ -1661,7 +1873,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
             ValidateCommand,
             PublishCommand,
             DryRunCommand,
-            ExecuteSimulatorCommand
+            ExecuteSimulatorCommand,
+            ExecutePhysicalBatchCommand
         }.OfType<EditorCommand>()) command.RaiseCanExecuteChanged();
 
         foreach (var command in new[]
@@ -1672,6 +1885,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
             PublishCommand,
             DryRunCommand,
             ExecuteSimulatorCommand,
+            ExecutePhysicalBatchCommand,
             RefreshRobotProgramsCommand
         }.OfType<AsyncCommand>()) command.RaiseCanExecuteChanged();
     }

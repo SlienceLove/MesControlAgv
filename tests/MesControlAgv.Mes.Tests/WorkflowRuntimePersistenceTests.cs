@@ -166,6 +166,130 @@ public sealed class WorkflowRuntimePersistenceTests
     }
 
     [Fact]
+    public async Task Active_physical_batch_blocks_a_second_run_and_authorization_changes_are_not_idempotent()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<MesDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var database = new MesDbContext(options);
+        await database.Database.EnsureCreatedAsync();
+        var workflowId = Guid.NewGuid();
+        var service = CreateService(database);
+        var draft = await service.CreateDraftAsync(
+            CreateValidWorkflow(workflowId),
+            "planner",
+            CancellationToken.None);
+        await service.ValidateVersionAsync(workflowId, draft.Version, CancellationToken.None);
+        await service.PublishAsync(workflowId, draft.Version, "planner", CancellationToken.None);
+        var request = new WorkflowExecutionRequest
+        {
+            WorkflowId = workflowId,
+            Version = draft.Version,
+            RequestId = Guid.NewGuid(),
+            RequestedBy = "operator",
+            PhysicalAuthorization = new WorkflowPhysicalRunAuthorization
+            {
+                AgvId = "AGV-01",
+                OperatorName = "operator",
+                SafetyObserverName = "observer-a",
+                PermitPrefix = "batch-a",
+                ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(1)
+            }
+        };
+
+        var first = await service.ExecuteAsync(request, CancellationToken.None);
+        var legacyRecord = await database.WorkflowExecutions.SingleAsync();
+        legacyRecord.Fingerprint = legacyRecord.Fingerprint[..legacyRecord.Fingerprint.LastIndexOf('\u001f')];
+        await database.SaveChangesAsync();
+        var restartedService = CreateService(database);
+        var replay = await restartedService.ExecuteAsync(request, CancellationToken.None);
+        var changedAuthorization = await restartedService.ExecuteAsync(
+            request with
+            {
+                PhysicalAuthorization = request.PhysicalAuthorization with
+                {
+                    SafetyObserverName = "observer-b"
+                }
+            },
+            CancellationToken.None);
+        var second = await restartedService.ExecuteAsync(
+            request with
+            {
+                RequestId = Guid.NewGuid(),
+                CorrelationId = "second-physical-batch",
+                PhysicalAuthorization = request.PhysicalAuthorization with
+                {
+                    PermitPrefix = "batch-b"
+                }
+            },
+            CancellationToken.None);
+        var disabledService = CreateService(
+            database,
+            physicalBatchAdmissionGate: new WorkflowPhysicalBatchAdmissionGate(
+                false,
+                "physical batch workers are disabled"));
+        var disabled = await disabledService.ExecuteAsync(
+            request with
+            {
+                RequestId = Guid.NewGuid(),
+                CorrelationId = "disabled-physical-batch"
+            },
+            CancellationToken.None);
+
+        Assert.True(first.IsAccepted);
+        Assert.True(replay.IsIdempotentReplay);
+        Assert.Equal(first.ExecutionId, replay.ExecutionId);
+        var firstSnapshot = await restartedService.GetExecutionAsync(first.ExecutionId, CancellationToken.None);
+        Assert.Equal("observer-a", firstSnapshot!.PhysicalAuthorization!.SafetyObserverName);
+        Assert.Equal(WorkflowExecutionRejectionCodes.RequestIdReused, changedAuthorization.RejectionCode);
+        Assert.Equal(WorkflowExecutionRejectionCodes.PhysicalAgvBusy, second.RejectionCode);
+        Assert.Contains(first.ExecutionId.ToString(), second.RejectionReason, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(WorkflowExecutionRejectionCodes.PhysicalExecutionDisabled, disabled.RejectionCode);
+        Assert.Equal(3, await database.WorkflowExecutions.CountAsync());
+    }
+
+    [Fact]
+    public async Task Enabled_physical_batch_gate_rejects_a_nonstandard_published_workflow()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<MesDbContext>().UseSqlite(connection).Options;
+        await using var database = new MesDbContext(options);
+        await database.Database.EnsureCreatedAsync();
+        var workflowId = Guid.NewGuid();
+        var service = CreateService(
+            database,
+            physicalBatchAdmissionGate: new WorkflowPhysicalBatchAdmissionGate(true, "enabled"));
+        var draft = await service.CreateDraftAsync(
+            CreateValidWorkflow(workflowId),
+            "planner",
+            CancellationToken.None);
+        await service.ValidateVersionAsync(workflowId, draft.Version, CancellationToken.None);
+        await service.PublishAsync(workflowId, draft.Version, "planner", CancellationToken.None);
+
+        var result = await service.ExecuteAsync(new WorkflowExecutionRequest
+        {
+            WorkflowId = workflowId,
+            Version = draft.Version,
+            RequestId = Guid.NewGuid(),
+            RequestedBy = "operator",
+            PhysicalAuthorization = new WorkflowPhysicalRunAuthorization
+            {
+                AgvId = "AGV-01",
+                OperatorName = "operator",
+                SafetyObserverName = "observer",
+                PermitPrefix = "wrong-template",
+                ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(1)
+            }
+        }, CancellationToken.None);
+
+        Assert.Equal(WorkflowExecutionRejectionCodes.PhysicalTemplateRequired, result.RejectionCode);
+        Assert.Empty(database.WorkflowNodeExecutions);
+    }
+
+    [Fact]
     public async Task Durable_runtime_fields_override_admission_state_after_a_restart()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
@@ -701,7 +825,8 @@ public sealed class WorkflowRuntimePersistenceTests
     private static WorkflowApplicationService CreateService(
         MesDbContext database,
         ProfileConfiguration? runtimeProfile = null,
-        ProfileConfiguration? publicationProfile = null)
+        ProfileConfiguration? publicationProfile = null,
+        WorkflowPhysicalBatchAdmissionGate? physicalBatchAdmissionGate = null)
     {
         var validator = new WorkflowValidator(
             publicationContext: WorkflowPublicationContext.FromProfile(
@@ -715,7 +840,8 @@ public sealed class WorkflowRuntimePersistenceTests
                 reader,
                 validator,
                 admissionPolicies: [new ActiveProfileWorkflowAdmissionPolicy(activeProfile)]),
-            validator);
+            validator,
+            physicalBatchAdmissionGate: physicalBatchAdmissionGate);
     }
 
     private static WorkflowDefinition CreateValidWorkflow(Guid workflowId) =>

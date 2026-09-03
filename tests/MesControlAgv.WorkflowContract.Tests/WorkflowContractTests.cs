@@ -318,6 +318,51 @@ public sealed class WorkflowContractTests
         Assert.Equal(WorkflowExecutionRejectionCodes.RequestIdReused, reused.RejectionCode);
     }
 
+    [Fact]
+    public async Task Physical_authorization_is_validated_and_participates_in_idempotency()
+    {
+        var workflowId = Guid.NewGuid();
+        var executor = new WorkflowRuntimeExecutor(new InMemoryVersionReader(
+            CreatePublishedVersion(workflowId, CreateValidWorkflow() with { Id = workflowId })));
+        var request = CreateRequest(workflowId) with
+        {
+            RequestedBy = "operator",
+            PhysicalAuthorization = new WorkflowPhysicalRunAuthorization
+            {
+                AgvId = "AGV-01",
+                OperatorName = "operator",
+                SafetyObserverName = "observer-a",
+                PermitPrefix = "batch-a",
+                ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(1)
+            }
+        };
+
+        var first = await executor.ExecuteAsync(request, CancellationToken.None);
+        var changedAuthorization = await executor.ExecuteAsync(
+            request with
+            {
+                PhysicalAuthorization = request.PhysicalAuthorization with
+                {
+                    SafetyObserverName = "observer-b"
+                }
+            },
+            CancellationToken.None);
+        var expired = await executor.ExecuteAsync(
+            request with
+            {
+                RequestId = Guid.NewGuid(),
+                PhysicalAuthorization = request.PhysicalAuthorization with
+                {
+                    ExpiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1)
+                }
+            },
+            CancellationToken.None);
+
+        Assert.True(first.IsAccepted);
+        Assert.Equal(WorkflowExecutionRejectionCodes.RequestIdReused, changedAuthorization.RejectionCode);
+        Assert.Equal(WorkflowExecutionRejectionCodes.PhysicalAuthorizationInvalid, expired.RejectionCode);
+    }
+
     private static WorkflowExecutionRequest CreateRequest(Guid workflowId) => new()
     {
         WorkflowId = workflowId,

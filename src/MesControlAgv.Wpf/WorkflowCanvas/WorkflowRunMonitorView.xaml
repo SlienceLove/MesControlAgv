@@ -10,8 +10,8 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="240" />
+            <RowDefinition Height="2*" MinHeight="240" />
+            <RowDefinition Height="*" MinHeight="160" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
@@ -33,7 +33,7 @@
                 </StackPanel>
                 <TextBlock Margin="0,4,0,0" Foreground="#475467" Text="{Binding RunIdentity}" />
                 <TextBlock Margin="0,2,0,0" FontSize="11" Foreground="#667085" Text="{Binding RunTimeSummary}" />
-                <Grid Margin="0,8,0,0" MaxWidth="660">
+                <Grid Margin="0,8,0,0" MaxWidth="900">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
@@ -47,7 +47,10 @@
                     <StackPanel Grid.Column="1" Orientation="Horizontal">
                         <TextBlock Foreground="#475467" Text="{Binding ProgressDisplay}" />
                         <TextBlock Margin="12,0,0,0" Foreground="#667085" Text="当前：" />
-                        <TextBlock Foreground="#475467" Text="{Binding CurrentNodeDisplay}" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Foreground="#475467"
+                                   MaxWidth="430"
+                                   Text="{Binding CurrentNodeDisplay}"
+                                   TextWrapping="Wrap" />
                     </StackPanel>
                 </Grid>
             </StackPanel>
@@ -64,6 +67,14 @@
                             AutomationProperties.AutomationId="WorkflowRunRefreshButton"
                             Command="{Binding RefreshCommand}"
                             Content="加载 / 刷新" />
+                    <Button x:Name="WorkflowRunFullscreenButton"
+                            MinWidth="88"
+                            Margin="8,0,0,0"
+                            Padding="12,5"
+                            AutomationProperties.AutomationId="WorkflowRunFullscreenButton"
+                            Click="OpenFullscreen_Click"
+                            Content="全屏查看"
+                            ToolTip="在独立大屏窗口查看流程图、当前节点、节点执行、设备操作和时间线" />
                 </StackPanel>
                 <StackPanel Margin="0,7,0,0" Orientation="Horizontal" HorizontalAlignment="Right">
                     <CheckBox x:Name="AutoRefreshCheckBox"
@@ -216,6 +227,24 @@
                     Background="#FFF8E7"
                     BorderBrush="#F79009"
                     BorderThickness="1"
+                    CornerRadius="4"
+                    Visibility="{Binding HasPhysicalGateWarning, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <StackPanel>
+                    <TextBlock Foreground="#8A5A00"
+                               FontWeight="SemiBold"
+                               Text="现场条件告警：流程暂不推进，等待自动复核" />
+                    <TextBlock Margin="0,3,0,0"
+                               Foreground="#8A5A00"
+                               Text="{Binding PhysicalGateWarning}"
+                               TextWrapping="Wrap" />
+                </StackPanel>
+            </Border>
+
+            <Border Margin="0,8,0,0"
+                    Padding="10,8"
+                    Background="#FFF8E7"
+                    BorderBrush="#F79009"
+                    BorderThickness="1"
                     CornerRadius="4">
                 <StackPanel>
                     <DockPanel>
@@ -225,6 +254,10 @@
                         <TextBlock Margin="12,0,0,0"
                                    Foreground="#8A5A00"
                                    Text="{Binding FieldAcceptanceStatus}"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock Margin="12,0,0,0"
+                                   Foreground="#475467"
+                                   Text="{Binding PhysicalGateStatus}"
                                    TextTrimming="CharacterEllipsis" />
                     </DockPanel>
                     <Grid Margin="0,7,0,0">
@@ -320,13 +353,17 @@
             </Border>
         </StackPanel>
 
-        <Grid Grid.Row="2" MinHeight="0">
+        <Grid Grid.Row="2" MinHeight="240">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="2*" />
                 <ColumnDefinition Width="390" />
             </Grid.ColumnDefinitions>
 
-            <Border BorderBrush="#D0D5DD" BorderThickness="1" CornerRadius="4" ClipToBounds="True">
+            <Border MinHeight="220"
+                    BorderBrush="#D0D5DD"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    ClipToBounds="True">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />

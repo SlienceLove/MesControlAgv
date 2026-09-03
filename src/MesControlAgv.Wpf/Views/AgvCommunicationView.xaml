@@ -23,8 +23,26 @@
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
             <StackPanel>
-                <TextBlock FontSize="22" FontWeight="SemiBold" Text="AGV 通讯与调度" />
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock FontSize="22" FontWeight="SemiBold" Text="AGV 通讯与调度" />
+                    <Border x:Name="AgvConnectionSourceBadge"
+                            Margin="12,1,0,0"
+                            Padding="8,3"
+                            VerticalAlignment="Top"
+                            Background="{Binding AgvCommunication.ConnectionSourceBrush}"
+                            CornerRadius="3">
+                        <TextBlock Foreground="{Binding AgvCommunication.ConnectionSourceForeground}"
+                                   FontWeight="SemiBold"
+                                   Text="{Binding AgvCommunication.ConnectionSourceDisplay}" />
+                    </Border>
+                </StackPanel>
                 <TextBlock Margin="0,4,0,0" Foreground="Gray" TextWrapping="Wrap" Text="查看连接、在线状态、位置和当前任务；控制命令仅作用于当前任务" />
+                <TextBlock x:Name="AgvConnectionSourceDetail"
+                           Margin="0,3,0,0"
+                           FontSize="11"
+                           Foreground="{Binding AgvCommunication.ConnectionSourceForeground}"
+                           Text="{Binding AgvCommunication.ConnectionSourceDetail}"
+                           TextWrapping="Wrap" />
             </StackPanel>
             <StackPanel Grid.Row="1" Margin="0,8,0,0" HorizontalAlignment="Right" Orientation="Horizontal">
                 <Button Padding="14,7" Click="ResetAgvGridLayout_Click" Content="恢复列布局" ToolTip="恢复 AGV 表默认列宽和顺序" />
@@ -60,7 +78,7 @@
                         <DataGridTextColumn Width="110" Header="设备状态" Binding="{Binding DeviceState}" />
                         <DataGridTextColumn Width="150" Header="目标站点" Binding="{Binding TargetStationId}" />
                         <DataGridTextColumn Width="140" Header="AGV ID" Binding="{Binding AgvId}" />
-                        <DataGridTextColumn Width="100" Header="连接状态" Binding="{Binding OnlineText}" />
+                        <DataGridTextColumn Width="150" Header="来源 / 连接状态" Binding="{Binding ConnectionStatusDisplay}" />
                         <DataGridTextColumn Width="120" Header="控制权" Binding="{Binding ControlOwner}" />
                         <DataGridTextColumn Width="150" Header="当前位置" Binding="{Binding CurrentStationId}" />
                         <DataGridTextColumn Width="2*" Header="当前任务" Binding="{Binding CurrentTaskText}" />
@@ -82,6 +100,12 @@
                 <ScrollViewer x:Name="AgvControlScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel>
                     <TextBlock FontSize="18" FontWeight="SemiBold" Text="调度控制" />
+                    <TextBlock Margin="0,5,0,0"
+                               FontSize="11"
+                               FontWeight="SemiBold"
+                               Foreground="{Binding AgvCommunication.ConnectionSourceForeground}"
+                               Text="{Binding AgvCommunication.ConnectionSourceDisplay}"
+                               TextWrapping="Wrap" />
                     <TextBlock Margin="0,12,0,0" Foreground="Gray" Text="选中 AGV" />
                     <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding SelectedAgv.AgvId}" />
                     <TextBlock Margin="0,8,0,0" Foreground="Gray" Text="当前任务" />
@@ -103,6 +127,7 @@
             </Border>
         </Grid>
 
-        <TextBlock Grid.Row="2" Margin="0,12,0,0" Foreground="Gray" Text="当前版本支持暂停、恢复、取消当前任务，以及查看 AGV 在线和连接状态。" />
+        <TextBlock Grid.Row="2" Margin="0,12,0,0" Foreground="Gray"
+                   Text="在线状态必须结合上方数据来源判断；本地模拟器在线不代表实体 AGV 可达。" />
     </Grid>
 </UserControl>

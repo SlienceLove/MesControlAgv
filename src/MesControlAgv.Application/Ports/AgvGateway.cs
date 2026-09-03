@@ -57,6 +57,16 @@ public interface IPhysicalPreflightAgvGateway
 }
 
 /// <summary>
+/// Optional physical-session cleanup capability. Implementations release only
+/// control currently owned by the Adapter and must never acquire control as a
+/// side effect of cleanup.
+/// </summary>
+public interface IPhysicalAgvControlGateway
+{
+    Task<bool> ReleaseControlAsync(CancellationToken cancellationToken);
+}
+
+/// <summary>
 /// Optional AGV digital-I/O gateway used by station handshakes. Navigation and
 /// I/O remain separate capabilities so a simulator or a legacy adapter cannot
 /// accidentally claim to drive physical outputs.

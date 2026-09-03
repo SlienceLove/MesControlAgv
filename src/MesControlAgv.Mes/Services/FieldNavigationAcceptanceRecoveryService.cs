@@ -42,34 +42,98 @@ public sealed class FieldNavigationAcceptanceRecoveryService(
             try
             {
                 var task = await gateway.GetTaskAsync(acceptance.Id, cancellationToken);
-                if (task is null) continue;
-                var next = ToStatus(task.State);
+                if (task is null)
+                {
+                    await RecordTransientObservationAsync(
+                        repository,
+                        acceptance,
+                        "adapter_task_temporarily_unavailable",
+                        "AdapterTaskTemporarilyUnavailable",
+                        cancellationToken);
+                    continue;
+                }
+
+                var next = ToStatus(task.State, acceptance.Status);
+                var lastError = NormalizeTransientError(task.State, task.LastError);
                 if (acceptance.DeviceTaskId == task.DeviceTaskId
                     && StringComparer.Ordinal.Equals(acceptance.Status, next)
-                    && StringComparer.Ordinal.Equals(acceptance.LastError, task.LastError)) continue;
+                    && StringComparer.Ordinal.Equals(acceptance.LastError, lastError)) continue;
                 acceptance.DeviceTaskId = task.DeviceTaskId ?? acceptance.DeviceTaskId;
                 acceptance.Status = next;
-                acceptance.LastError = task.LastError;
+                acceptance.LastError = lastError;
                 await repository.SaveWithAuditAsync(acceptance, "AdapterStateReconciled", new
                 {
                     source = "adapter-task-poll",
                     task.DeviceTaskId,
                     task.State,
-                    task.LastError
+                    lastError
                 }, cancellationToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
-            { logger.LogWarning(ex, "Unable to reconcile field-navigation acceptance {AcceptanceId}.", acceptance.Id); }
+            {
+                logger.LogWarning(ex, "Unable to reconcile field-navigation acceptance {AcceptanceId}.", acceptance.Id);
+                try
+                {
+                    await RecordTransientObservationAsync(
+                        repository,
+                        acceptance,
+                        $"adapter_task_status_read_failed: {ex.Message}",
+                        "AdapterTaskReadFailed",
+                        cancellationToken);
+                }
+                catch (Exception persistenceException) when (persistenceException is not OperationCanceledException)
+                {
+                    logger.LogWarning(
+                        persistenceException,
+                        "Unable to persist the transient reconciliation warning for acceptance {AcceptanceId}.",
+                        acceptance.Id);
+                }
+            }
         }
     }
 
-    private static string ToStatus(string? state) => state?.Trim().ToLowerInvariant() switch
+    private static async Task RecordTransientObservationAsync(
+        FieldNavigationAcceptanceRepository repository,
+        Entities.FieldNavigationAcceptance acceptance,
+        string warning,
+        string eventType,
+        CancellationToken cancellationToken)
+    {
+        if (StringComparer.Ordinal.Equals(acceptance.LastError, warning)) return;
+        acceptance.LastError = warning;
+        await repository.SaveWithAuditAsync(
+            acceptance,
+            eventType,
+            new { warning },
+            cancellationToken);
+    }
+
+    private static string? NormalizeTransientError(string? state, string? error)
+    {
+        var normalized = state?.Trim().ToLowerInvariant();
+        if (!string.IsNullOrWhiteSpace(error)) return error;
+        return normalized switch
+        {
+            "paused" => "agv_task_paused_waiting_for_recovery",
+            "unknown" => "agv_task_status_temporarily_unknown",
+            _ => null
+        };
+    }
+
+    private static string ToStatus(string? state, string currentStatus) => state?.Trim().ToLowerInvariant() switch
     {
         "accepted" => FieldNavigationAcceptanceStatuses.Accepted,
         "moving" => FieldNavigationAcceptanceStatuses.Moving,
+        "paused" => FieldNavigationAcceptanceStatuses.Moving,
         "arrived" or "completed" => FieldNavigationAcceptanceStatuses.Arrived,
         "cancelled" => FieldNavigationAcceptanceStatuses.Cancelled,
         "failed" => FieldNavigationAcceptanceStatuses.Failed,
+        // Once motion was confirmed, one missing/unknown task observation is
+        // not evidence that the write outcome became Unknown. Keep the
+        // operation in flight and reconcile again; only the initial dispatch
+        // boundary may classify an unconfirmed write as Unknown.
+        "unknown" when currentStatus is FieldNavigationAcceptanceStatuses.Accepted or
+            FieldNavigationAcceptanceStatuses.Moving => currentStatus,
         _ => FieldNavigationAcceptanceStatuses.Unknown
     };
 }

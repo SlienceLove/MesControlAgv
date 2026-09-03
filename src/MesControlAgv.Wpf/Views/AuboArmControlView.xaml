@@ -11,8 +11,26 @@
 
         <DockPanel Margin="0,0,0,16">
             <StackPanel DockPanel.Dock="Left">
-                <TextBlock FontSize="22" FontWeight="SemiBold" Text="AUBO 机械臂" />
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock FontSize="22" FontWeight="SemiBold" Text="AUBO 机械臂" />
+                    <Border x:Name="AuboConnectionSourceBadge"
+                            Margin="12,1,0,0"
+                            Padding="8,3"
+                            VerticalAlignment="Top"
+                            Background="{Binding ConnectionSourceBrush}"
+                            CornerRadius="3">
+                        <TextBlock Foreground="{Binding ConnectionSourceForeground}"
+                                   FontWeight="SemiBold"
+                                   Text="{Binding ConnectionSourceDisplay}" />
+                    </Border>
+                </StackPanel>
                 <TextBlock Margin="0,4,0,0" Foreground="Gray" Text="通过 MES 控制面读取状态和执行已确认工程" />
+                <TextBlock x:Name="AuboConnectionSourceDetail"
+                           Margin="0,3,0,0"
+                           FontSize="11"
+                           Foreground="{Binding ConnectionSourceForeground}"
+                           Text="{Binding ConnectionSourceDetail}"
+                           TextWrapping="Wrap" />
             </StackPanel>
             <Button DockPanel.Dock="Right" Padding="14,7" Command="{Binding RefreshCommand}" Content="刷新状态" />
         </DockPanel>
@@ -27,8 +45,12 @@
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
                 <StackPanel>
-                    <TextBlock Foreground="Gray" Text="连接" />
-                    <TextBlock Margin="0,4,0,0" FontWeight="SemiBold" Text="{Binding ConnectionStatus}" />
+                    <TextBlock Foreground="Gray" Text="来源 / 连接" />
+                    <TextBlock x:Name="AuboConnectionStatusText"
+                               Margin="0,4,0,0"
+                               FontWeight="SemiBold"
+                               Foreground="{Binding ConnectionSourceForeground}"
+                               Text="{Binding ConnectionStatusDisplay}" />
                 </StackPanel>
                 <StackPanel Grid.Column="1">
                     <TextBlock Foreground="Gray" Text="RobotMode" />
@@ -68,6 +90,7 @@
                         <Grid.ColumnDefinitions><ColumnDefinition Width="90" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                         <TextBlock VerticalAlignment="Center" Foreground="Gray" Text="脚本/工程名" />
                         <TextBox Grid.Column="1" AutomationProperties.AutomationId="AuboProgramNameTextBox"
+                                 ToolTip="请求启动的工程名必须与当前工程一致；程序节点会先加载后启动。"
                                  Text="{Binding ProgramName, UpdateSourceTrigger=PropertyChanged}" />
                     </Grid>
                     <Grid Margin="0,10,0,0">
@@ -89,7 +112,23 @@
             </Border>
 
             <Border Grid.Column="2" Padding="16" Background="#FBFCFE" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="7">
-                <StackPanel>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                    <Border Padding="8" Background="#F8FAFC" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="4">
+                        <StackPanel>
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Left" FontWeight="SemiBold" Text="可用程序（预加载槽位/允许列表）" TextWrapping="Wrap" />
+                                <Button DockPanel.Dock="Right" Padding="8,3" Command="{Binding RefreshProgramsCommand}" Content="刷新列表" />
+                            </DockPanel>
+                            <TextBlock Margin="0,4,0,0" Foreground="Gray" FontSize="11" TextWrapping="Wrap" Text="{Binding ProgramCatalogStatus}" />
+                            <ListBox AutomationProperties.AutomationId="AuboAvailableProgramsList"
+                                     Margin="0,6,0,0" Height="150" MinHeight="110" MaxHeight="180"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                     ItemsSource="{Binding AvailablePrograms}"
+                                     SelectedItem="{Binding ProgramName, Mode=TwoWay}" />
+                        </StackPanel>
+                    </Border>
+                    <Separator Margin="0,14,0,0" />
                     <TextBlock FontSize="17" FontWeight="SemiBold" Text="响应与门禁" />
                     <TextBlock Margin="0,14,0,0" Foreground="Gray" Text="机器人" />
                     <TextBlock Margin="0,4,0,0" Text="{Binding RobotName}" />
@@ -100,17 +139,10 @@
                     <TextBlock Margin="0,12,0,0" Foreground="Gray" Text="最后响应" />
                     <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding LastResponse}" />
                     <TextBlock Margin="0,12,0,0" Foreground="#B42318" TextWrapping="Wrap" Text="{Binding ErrorMessage}" />
-                    <DockPanel Margin="0,18,0,0">
-                        <TextBlock DockPanel.Dock="Left" FontWeight="SemiBold" Text="可用程序（预加载槽位/允许列表）" />
-                        <Button DockPanel.Dock="Right" Padding="8,3" Command="{Binding RefreshProgramsCommand}" Content="刷新列表" />
-                    </DockPanel>
-                    <TextBlock Margin="0,4,0,0" Foreground="Gray" FontSize="11" TextWrapping="Wrap" Text="{Binding ProgramCatalogStatus}" />
-                    <ListBox AutomationProperties.AutomationId="AuboAvailableProgramsList"
-                             Margin="0,6,0,0" MaxHeight="150" ItemsSource="{Binding AvailablePrograms}"
-                             SelectedItem="{Binding ProgramName, Mode=TwoWay}" />
                     <TextBlock Margin="0,18,0,0" FontSize="11" Foreground="Gray"
                                Text="未知结果必须人工对账；界面不会自动重发启动或停止。" TextWrapping="Wrap" />
-                </StackPanel>
+                    </StackPanel>
+                </ScrollViewer>
             </Border>
         </Grid>
     </Grid>

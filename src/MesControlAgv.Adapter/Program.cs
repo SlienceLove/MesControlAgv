@@ -1,5 +1,6 @@
 using MesControlAgv.Adapter;
 using MesControlAgv.Adapter.Modules;
+using MesControlAgv.Adapter.Services;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
 using Microsoft.Data.Sqlite;
@@ -41,6 +42,54 @@ var runMode = app.Services.GetRequiredService<AdapterRunMode>();
 var modules = app.Services.GetRequiredService<DeviceAdapterModuleCatalog>();
 var devices = app.Services.GetRequiredService<DeviceAdapterRegistry>();
 
+// Keep driver transport uncertainty explicit at the HTTP boundary. In
+// particular, a navigation request that crossed the write boundary but whose
+// 1110 confirmation timed out must not surface as an opaque HTTP 500 or invite
+// a caller to replay the command.
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+    {
+        throw;
+    }
+    catch (TaskCanceledException exception) when (!context.Response.HasStarted)
+    {
+        await WriteGatewayProblemAsync(context, StatusCodes.Status504GatewayTimeout, exception.Message);
+    }
+    catch (TimeoutException exception) when (!context.Response.HasStarted)
+    {
+        await WriteGatewayProblemAsync(context, StatusCodes.Status504GatewayTimeout, exception.Message);
+    }
+    catch (AgvApiException exception) when (!context.Response.HasStarted)
+    {
+        await WriteGatewayProblemAsync(context, StatusCodes.Status502BadGateway, exception.Message);
+    }
+    catch (IOException exception) when (!context.Response.HasStarted)
+    {
+        await WriteGatewayProblemAsync(context, StatusCodes.Status503ServiceUnavailable, exception.Message);
+    }
+    catch (HttpRequestException exception) when (!context.Response.HasStarted)
+    {
+        await WriteGatewayProblemAsync(context, StatusCodes.Status503ServiceUnavailable, exception.Message);
+    }
+    catch (KeyNotFoundException exception) when (!context.Response.HasStarted)
+    {
+        await WriteGatewayProblemAsync(context, StatusCodes.Status404NotFound, exception.Message);
+    }
+    catch (ArgumentException exception) when (!context.Response.HasStarted)
+    {
+        await WriteGatewayProblemAsync(context, StatusCodes.Status400BadRequest, exception.Message);
+    }
+    catch (InvalidOperationException exception) when (!context.Response.HasStarted)
+    {
+        await WriteGatewayProblemAsync(context, StatusCodes.Status422UnprocessableEntity, exception.Message);
+    }
+});
+
 app.Use(async (context, next) =>
 {
     if (runMode.IsReadOnlyPreflight
@@ -79,6 +128,22 @@ app.MapGet("/api/adapter/devices", () => Results.Ok(
 modules.MapEndpoints(app);
 
 app.Run();
+
+static async Task WriteGatewayProblemAsync(
+    HttpContext context,
+    int statusCode,
+    string detail)
+{
+    context.Response.StatusCode = statusCode;
+    context.Response.ContentType = "application/problem+json";
+    await context.Response.WriteAsJsonAsync(new
+    {
+        type = "https://httpstatuses.com/" + statusCode,
+        title = "Device gateway request could not be confirmed",
+        status = statusCode,
+        detail
+    });
+}
 
 static AdapterDeviceIdentityResponse ToIdentityResponse(DeviceAdapterRegistration device) => new(
     device.DeviceId,

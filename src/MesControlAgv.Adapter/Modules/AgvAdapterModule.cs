@@ -172,6 +172,24 @@ public sealed class AgvAdapterModule : IDeviceAdapterModule
             {
                 return Results.UnprocessableEntity(new { detail = exception.Message, reasons = exception.Reasons });
             }
+            catch (TimeoutException exception)
+            {
+                return Results.Problem(
+                    detail: $"AGV field-navigation dispatch could not be confirmed: {exception.Message}",
+                    statusCode: StatusCodes.Status504GatewayTimeout);
+            }
+            catch (AgvApiException exception)
+            {
+                return Results.Problem(
+                    detail: $"AGV field-navigation dispatch could not be confirmed: {exception.Message}",
+                    statusCode: StatusCodes.Status502BadGateway);
+            }
+            catch (IOException exception)
+            {
+                return Results.Problem(
+                    detail: $"AGV field-navigation dispatch could not be confirmed: {exception.Message}",
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
             catch (KeyNotFoundException exception) { return Results.UnprocessableEntity(new { detail = exception.Message }); }
             catch (InvalidOperationException exception) { return Results.UnprocessableEntity(new { detail = exception.Message }); }
         });
@@ -181,8 +199,29 @@ public sealed class AgvAdapterModule : IDeviceAdapterModule
             AdapterService service,
             CancellationToken cancellationToken) =>
         {
-            var task = await service.GetAsync(taskId, cancellationToken);
-            return task is null ? Results.NotFound() : Results.Ok(task);
+            try
+            {
+                var task = await service.GetAsync(taskId, cancellationToken);
+                return task is null ? Results.NotFound() : Results.Ok(task);
+            }
+            catch (TimeoutException exception)
+            {
+                return Results.Problem(
+                    detail: $"AGV task status could not be reconciled: {exception.Message}",
+                    statusCode: StatusCodes.Status504GatewayTimeout);
+            }
+            catch (IOException exception)
+            {
+                return Results.Problem(
+                    detail: $"AGV task status could not be reconciled: {exception.Message}",
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            catch (AgvApiException exception)
+            {
+                return Results.Problem(
+                    detail: $"AGV task status could not be reconciled: {exception.Message}",
+                    statusCode: StatusCodes.Status502BadGateway);
+            }
         });
 
         endpoints.MapPost("/tasks/{taskId:guid}/{action}", async (

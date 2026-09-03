@@ -5,6 +5,7 @@ using ContractWorkflowConditionOperator = MesControlAgv.Contracts.Workflows.Work
 using ContractWorkflowConditionValueSource = MesControlAgv.Contracts.Workflows.WorkflowConditionValueSource;
 using ContractWorkflowNodeLayout = MesControlAgv.Contracts.Workflows.WorkflowNodeLayout;
 using ContractWorkflowViewport = MesControlAgv.Contracts.Workflows.WorkflowCanvasViewport;
+using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Wpf.Services;
 using MesControlAgv.Wpf.ViewModels;
 using MesControlAgv.Wpf.Workflows;
@@ -71,6 +72,71 @@ public sealed class WorkflowEditorTests
         Assert.Equal("现场程序B", nodes[4].Configuration[MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.ProgramName]);
         Assert.All(new[] { nodes[2], nodes[4] }, node =>
             Assert.Equal("ARM-02", node.Configuration[MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.DeviceId]));
+    }
+
+    [Fact]
+    public void Standard_material_handling_template_has_the_four_leg_sequence_and_programs()
+    {
+        var workflow = WorkflowStore.CreateStandardMaterialHandlingWorkflow(
+            "LM1",
+            "LM7",
+            "LM2",
+            armDeviceId: "ARM-02");
+
+        var nodes = workflow.Nodes.OrderBy(node => node.Order).ToArray();
+        Assert.Equal(9, nodes.Length);
+        Assert.Equal(
+            new[] { null, "LM7", null, "LM2", null, "LM7", null, "LM1", null },
+            nodes.Select(node => node.TargetStation));
+        Assert.Equal(
+            new[] { "取料盘.pro", "放料盘.pro", "回收料盘.pro" },
+            nodes.Where(node => node.Type == WorkflowNodeType.RobotProgram)
+                .Select(node => node.Configuration[MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.ProgramName]));
+        Assert.Equal(8, workflow.Edges.Count);
+        Assert.Equal("从原点开始", nodes[0].Name);
+        Assert.Equal("结束", nodes[^1].Name);
+        Assert.All(nodes.Zip(nodes.Skip(1)), pair =>
+            Assert.Equal(pair.Second.Id, Assert.Single(pair.First.NextNodeIds)));
+    }
+
+    [Fact]
+    public void Editor_standard_template_resolves_numbered_field_stations_and_reports_mapping()
+    {
+        using var fixture = new TempWorkflowFile();
+        var profile = ProfileConfiguration.Default with
+        {
+            Stations =
+            [
+                new StationProfile { Code = 1, StationId = "LM1", AgvStationId = "LM1", Name = "充电原点", Type = "Charge", Enabled = true },
+                new StationProfile { Code = 7, StationId = "LM7", AgvStationId = "LM7", Name = "站点1", Type = "Station", Enabled = true },
+                new StationProfile { Code = 2, StationId = "LM2", AgvStationId = "LM2", Name = "LM2", Type = "Station", Enabled = true }
+            ],
+            Map = new MapProfile
+            {
+                StationIds = ["LM1", "LM7", "LM2"],
+                Edges =
+                [
+                    new MapEdgeProfile { From = "LM1", To = "LM7" },
+                    new MapEdgeProfile { From = "LM7", To = "LM2" },
+                    new MapEdgeProfile { From = "LM2", To = "LM7" },
+                    new MapEdgeProfile { From = "LM7", To = "LM1" }
+                ]
+            }
+        };
+        var editor = new WorkflowEditorViewModel(
+            new WorkflowStore(fixture.Path),
+            profileConfiguration: profile);
+
+        editor.CreateAuboTemplateCommand.Execute(null);
+
+        var workflow = editor.SelectedWorkflow!;
+        var nodes = workflow.Nodes.OrderBy(node => node.Order).ToArray();
+        Assert.Equal(new[] { "LM7", "LM2", "LM7", "LM1" }, nodes
+            .Where(node => node.Type == WorkflowNodeType.Move)
+            .Select(node => node.TargetStation));
+        Assert.Contains("原点 LM1", editor.Message, StringComparison.Ordinal);
+        Assert.Contains("站点1 LM7", editor.Message, StringComparison.Ordinal);
+        Assert.Contains("站点2 LM2", editor.Message, StringComparison.Ordinal);
     }
 
     [Fact]

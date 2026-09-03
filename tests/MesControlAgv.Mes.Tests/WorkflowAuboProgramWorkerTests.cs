@@ -49,7 +49,7 @@ public sealed class WorkflowAuboProgramWorkerTests
         Assert.True(execution.IsAccepted);
 
         var agv = new ImmediateArrivalAgvGateway();
-        var arm = new RecordingArmGateway();
+        var arm = new RecordingArmGateway { FailOneObservationRead = true };
         var sim = new WorkflowSimulatorDispatcher(
             workflows,
             agv,
@@ -77,6 +77,7 @@ public sealed class WorkflowAuboProgramWorkerTests
         Assert.Equal(["LM1", "LM4"], agv.Targets);
         Assert.Equal(["测试1", "测试2"], arm.RunPrograms);
         Assert.Equal(2, arm.RunCalls);
+        Assert.Equal(1, arm.FailedObservationReads);
         Assert.All(
             await workflows.ListDeviceOperationsAsync(execution.ExecutionId, CancellationToken.None),
             operation => Assert.Equal(WorkflowDeviceOperationStatus.Succeeded, operation.Status));
@@ -111,6 +112,104 @@ public sealed class WorkflowAuboProgramWorkerTests
         await dispatcher.ProcessAsync(CancellationToken.None);
 
         Assert.Empty(arm.RunPrograms);
+    }
+
+    [Fact]
+    public async Task Restarted_stopped_robot_program_is_unknown_until_operator_reconciles()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var dbOptions = new DbContextOptionsBuilder<MesDbContext>().UseSqlite(connection).Options;
+        await using var database = new MesDbContext(dbOptions);
+        await database.Database.EnsureCreatedAsync();
+
+        var profile = CreateProfile();
+        var validator = new WorkflowValidator(
+            BuiltInWorkflowCatalog.Create(),
+            WorkflowPublicationContext.FromProfile(profile));
+        var reader = new MesWorkflowVersionReader(database);
+        var workflows = new WorkflowApplicationService(
+            database,
+            reader,
+            new WorkflowRuntimeExecutor(
+                reader,
+                validator,
+                admissionPolicies: [new ActiveProfileWorkflowAdmissionPolicy(profile)]),
+            validator);
+        var draft = await workflows.CreateDraftAsync(CreateWorkflow(), "test", CancellationToken.None);
+        Assert.True((await workflows.ValidateVersionAsync(draft.WorkflowId, draft.Version, CancellationToken.None)).IsValid);
+        await workflows.PublishAsync(draft.WorkflowId, draft.Version, "test", CancellationToken.None);
+        var execution = await workflows.ExecuteAsync(new WorkflowExecutionRequest
+        {
+            WorkflowId = draft.WorkflowId,
+            Version = draft.Version,
+            RequestId = Guid.NewGuid(),
+            RequestedBy = "test"
+        }, CancellationToken.None);
+        Assert.True(execution.IsAccepted);
+
+        // Advance the first Move node in the simulator, then claim the first
+        // robot node to model a process restart after a possible AUBO write.
+        var simulator = new WorkflowSimulatorDispatcher(
+            workflows,
+            new ImmediateArrivalAgvGateway(),
+            profile,
+            new WorkflowSimulatorWorkerOptions { Enabled = true });
+        await simulator.ProcessAsync(CancellationToken.None);
+        var robot = Assert.Single(await workflows.ListAuboProgramDispatchableNodesAsync(CancellationToken.None));
+        var claimed = await workflows.ClaimNodeExecutionAsync(robot.NodeExecution.Id, CancellationToken.None);
+        Assert.NotNull(claimed.DeviceOperation);
+
+        var dispatcher = new WorkflowAuboProgramDispatcher(
+            workflows,
+            new RecordingArmGateway(),
+            profile,
+            new WorkflowAuboProgramWorkerOptions { Enabled = true });
+        await dispatcher.RecoverAsync(CancellationToken.None);
+
+        var snapshot = await workflows.GetExecutionAsync(execution.ExecutionId, CancellationToken.None);
+        Assert.Equal(WorkflowRuntimeStatus.Unknown, snapshot!.RuntimeStatus);
+        var node = (await workflows.ListNodeExecutionsAsync(execution.ExecutionId, CancellationToken.None))
+            .Single(item => item.Id == robot.NodeExecution.Id);
+        Assert.Equal(WorkflowNodeExecutionStatus.Unknown, node.Status);
+        Assert.Contains("completion cannot be proven", node.LastError, StringComparison.OrdinalIgnoreCase);
+
+        var resumedExecution = await workflows.ExecuteAsync(new WorkflowExecutionRequest
+        {
+            WorkflowId = draft.WorkflowId,
+            Version = draft.Version,
+            RequestId = Guid.NewGuid(),
+            RequestedBy = "test"
+        }, CancellationToken.None);
+        await simulator.ProcessAsync(CancellationToken.None);
+        var resumedRobot = (await workflows.ListAuboProgramDispatchableNodesAsync(CancellationToken.None))
+            .Single(item => item.NodeExecution.WorkflowRunId == resumedExecution.ExecutionId);
+        await workflows.ClaimNodeExecutionAsync(resumedRobot.NodeExecution.Id, CancellationToken.None);
+        var recoveringArm = new RecordingArmGateway();
+        recoveringArm.ProgramStatuses.Enqueue(new AuboArmProgramStatusResponse(
+            "ARM-01", true, "测试1", AuboArmRuntimeState.Running, "Running", DateTimeOffset.UtcNow));
+        recoveringArm.ProgramStatuses.Enqueue(new AuboArmProgramStatusResponse(
+            "ARM-01", true, "测试1", AuboArmRuntimeState.Stopped, "Stopped", DateTimeOffset.UtcNow));
+        var recoveringDispatcher = new WorkflowAuboProgramDispatcher(
+            workflows,
+            recoveringArm,
+            profile,
+            new WorkflowAuboProgramWorkerOptions
+            {
+                Enabled = true,
+                PollIntervalMs = 10,
+                CompletionTimeoutMs = 1000
+            });
+
+        await recoveringDispatcher.RecoverAsync(CancellationToken.None);
+
+        var recovered = await workflows.GetExecutionAsync(resumedExecution.ExecutionId, CancellationToken.None);
+        Assert.Equal(WorkflowRuntimeStatus.Prepared, recovered!.RuntimeStatus);
+        Assert.Equal(WorkflowNodeType.Move, recovered.PendingStepRequest!.NodeType);
+        Assert.Equal(
+            WorkflowNodeExecutionStatus.Succeeded,
+            (await workflows.ListNodeExecutionsAsync(resumedExecution.ExecutionId, CancellationToken.None))
+                .Single(item => item.Id == resumedRobot.NodeExecution.Id).Status);
     }
 
     private static ProfileConfiguration CreateProfile() => new()
@@ -237,14 +336,35 @@ public sealed class WorkflowAuboProgramWorkerTests
     private sealed class RecordingArmGateway : IAuboArmGateway
     {
         public List<string> RunPrograms { get; } = [];
+        public Queue<AuboArmProgramStatusResponse> ProgramStatuses { get; } = [];
         public int RunCalls { get; private set; }
+        public bool FailOneObservationRead { get; init; }
+        public int FailedObservationReads { get; private set; }
         private string? _loaded;
         public Task<AuboArmStatusResponse> GetStatusAsync(string deviceId, CancellationToken cancellationToken) => Task.FromResult(Status(deviceId));
         public Task<AuboArmReadinessResponse> GetReadinessAsync(string deviceId, CancellationToken cancellationToken) => Task.FromResult(new AuboArmReadinessResponse(deviceId, true, [], Status(deviceId), _loaded, DateTimeOffset.UtcNow));
         public Task<AuboArmVariableResponse> GetVariableAsync(string deviceId, string key, CancellationToken cancellationToken) => Task.FromResult(new AuboArmVariableResponse(deviceId, key, false, null, null, null, null, null, DateTimeOffset.UtcNow));
         public Task<AuboArmHandshakeSnapshotResponse> GetHandshakeSnapshotAsync(string deviceId, CancellationToken cancellationToken) => Task.FromResult(new AuboArmHandshakeSnapshotResponse(deviceId, AuboArmHandshakeState.Idle, null, null, null, null, null, DateTimeOffset.UtcNow));
         public Task<AuboArmHandshakeResultResponse> DispatchAsync(string deviceId, Guid operationId, int commandCode, CancellationToken cancellationToken) => throw new NotSupportedException();
-        public Task<AuboArmProgramStatusResponse> GetProgramAsync(string deviceId, CancellationToken cancellationToken) => Task.FromResult(new AuboArmProgramStatusResponse(deviceId, true, _loaded, AuboArmRuntimeState.Stopped, "Stopped", DateTimeOffset.UtcNow));
+        public Task<AuboArmProgramStatusResponse> GetProgramAsync(string deviceId, CancellationToken cancellationToken)
+        {
+            if (ProgramStatuses.Count > 0)
+                return Task.FromResult(ProgramStatuses.Dequeue());
+
+            if (FailOneObservationRead && RunCalls > 0 && FailedObservationReads == 0)
+            {
+                FailedObservationReads++;
+                throw new HttpRequestException("transient AUBO status outage");
+            }
+
+            return Task.FromResult(new AuboArmProgramStatusResponse(
+                deviceId,
+                true,
+                _loaded,
+                AuboArmRuntimeState.Stopped,
+                "Stopped",
+                DateTimeOffset.UtcNow));
+        }
         public Task<AuboArmProgramOperationResponse> LoadProgramAsync(string deviceId, string programName, string operatorName, Guid operationId, CancellationToken cancellationToken)
         {
             _loaded = programName;

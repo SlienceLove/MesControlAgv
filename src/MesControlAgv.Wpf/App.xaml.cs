@@ -111,7 +111,12 @@ public partial class App : Application
                 moduleRegistry,
                 mapLayoutSource,
                 workflowStore,
-                startupConfiguration);
+                startupConfiguration,
+                physicalBatchExecutionEnabled: !isSimulator &&
+                    string.Equals(
+                        Environment.GetEnvironmentVariable("WPF_ENABLE_PHYSICAL_BATCH"),
+                        "true",
+                        StringComparison.OrdinalIgnoreCase));
             var window = new MainWindow { DataContext = _viewModel };
             window.Closed += (_, _) =>
             {

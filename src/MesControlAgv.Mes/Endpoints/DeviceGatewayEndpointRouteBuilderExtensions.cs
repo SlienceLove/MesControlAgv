@@ -129,7 +129,9 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
         endpoints.MapGet("/api/agv", async (
             IAgvGateway adapter,
             CancellationToken cancellationToken) =>
-            Results.Ok(await adapter.GetSnapshotAsync(cancellationToken)));
+            await ExecuteAgvReadAsync(
+                () => adapter.GetSnapshotAsync(cancellationToken),
+                "AGV snapshot is unavailable."));
 
         endpoints.MapGet("/api/physical/preflight", async (
             IAgvGateway adapter,
@@ -140,7 +142,9 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
                 return Results.NotFound(new { detail = "The configured AGV gateway does not support physical preflight." });
             }
 
-            return Results.Ok(await physical.GetPhysicalPreflightAsync(cancellationToken));
+            return await ExecuteAgvReadAsync(
+                () => physical.GetPhysicalPreflightAsync(cancellationToken),
+                "AGV physical preflight is unavailable.");
         });
 
         endpoints.MapGet("/api/agvs/fleet", async (
@@ -149,10 +153,14 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
         {
             if (adapter is IFleetAwareAgvGateway fleet)
             {
-                return Results.Ok(await fleet.GetFleetSnapshotAsync(cancellationToken));
+                return await ExecuteAgvReadAsync(
+                    () => fleet.GetFleetSnapshotAsync(cancellationToken),
+                    "AGV fleet status is unavailable.");
             }
 
-            return Results.Ok(new[] { await adapter.GetSnapshotAsync(cancellationToken) });
+            return await ExecuteAgvReadAsync(
+                async () => new[] { await adapter.GetSnapshotAsync(cancellationToken) },
+                "AGV fleet status is unavailable.");
         });
 
         endpoints.MapGet("/api/agvs/fleet/status", async (
@@ -371,6 +379,48 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
         });
 
         return endpoints;
+    }
+
+    private static async Task<IResult> ExecuteAgvReadAsync<T>(
+        Func<Task<T>> operation,
+        string unavailableMessage)
+    {
+        try
+        {
+            return Results.Ok(await operation());
+        }
+        catch (AdapterHttpException exception)
+        {
+            return Results.Json(
+                new { detail = exception.Detail ?? exception.Message },
+                statusCode: (int)exception.ResponseStatusCode);
+        }
+        catch (TimeoutException exception)
+        {
+            return Results.Problem(
+                $"{unavailableMessage} {exception.Message}",
+                statusCode: StatusCodes.Status504GatewayTimeout);
+        }
+        catch (HttpRequestException exception)
+        {
+            return Results.Problem(
+                $"{unavailableMessage} {exception.Message}",
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+        catch (TaskCanceledException exception)
+        {
+            return Results.Problem(
+                $"{unavailableMessage} {exception.Message}",
+                statusCode: StatusCodes.Status504GatewayTimeout);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (InvalidOperationException exception)
+        {
+            return Results.UnprocessableEntity(new { detail = exception.Message });
+        }
     }
 
     private static async Task<IResult> ExecuteArmReadAsync<T>(Func<Task<T>> operation)

@@ -185,6 +185,47 @@ public sealed class WorkflowStore
             ]);
     }
 
+    /// <summary>
+    /// Creates the standard material-tray handling sequence requested for the
+    /// field: start at the origin, visit station 1 and run the pickup program,
+    /// visit station 2 and run the placement program, return to station 1 and
+    /// run the recovery program, then return to the origin.  Program names are
+    /// stored with the operator-provided display suffix; the AUBO adapter
+    /// normalizes the suffix before authorization and dispatch.
+    /// </summary>
+    public static WorkflowDefinition CreateStandardMaterialHandlingWorkflow(
+        string originStationId = "LM1",
+        string station1Id = "LM7",
+        string station2Id = "LM2",
+        string firstProgramName = "取料盘.pro",
+        string secondProgramName = "放料盘.pro",
+        string thirdProgramName = "回收料盘.pro",
+        string? armDeviceId = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(originStationId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(station1Id);
+        ArgumentException.ThrowIfNullOrWhiteSpace(station2Id);
+        ArgumentException.ThrowIfNullOrWhiteSpace(firstProgramName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(secondProgramName);
+        ArgumentException.ThrowIfNullOrWhiteSpace(thirdProgramName);
+
+        var normalizedArmDeviceId = string.IsNullOrWhiteSpace(armDeviceId) ? "ARM-01" : armDeviceId.Trim();
+        return CreateLinearWorkflow(
+            $"料盘标准流程（{originStationId}→{station1Id}→{station2Id}→{station1Id}→{originStationId}）",
+            $"从原点 {originStationId} 出发，到站点1 {station1Id} 执行 {firstProgramName}，到站点2 {station2Id} 执行 {secondProgramName}，返回站点1执行 {thirdProgramName}，最后回到原点。程序节点均为单次执行。",
+            [
+                Node(WorkflowNodeType.Start, "从原点开始", $"前置条件：AGV 已位于原点 {originStationId}，现场区域安全", null, 0, 600, 1),
+                Node(WorkflowNodeType.Move, $"前往站点1（{station1Id}）", $"AGV 从原点前往站点1 {station1Id}", station1Id, 180, 600, 2),
+                RobotProgramNode($"站点1：{firstProgramName}", firstProgramName, normalizedArmDeviceId, 360, 600, 3),
+                Node(WorkflowNodeType.Move, $"前往站点2（{station2Id}）", $"AGV 从站点1前往站点2 {station2Id}", station2Id, 540, 600, 4),
+                RobotProgramNode($"站点2：{secondProgramName}", secondProgramName, normalizedArmDeviceId, 720, 600, 5),
+                Node(WorkflowNodeType.Move, $"返回站点1（{station1Id}）", $"AGV 从站点2返回站点1 {station1Id}", station1Id, 900, 600, 6),
+                RobotProgramNode($"站点1：{thirdProgramName}", thirdProgramName, normalizedArmDeviceId, 1080, 600, 7),
+                Node(WorkflowNodeType.Move, $"返回原点（{originStationId}）", $"AGV 返回原点 {originStationId}", originStationId, 1260, 600, 8),
+                Node(WorkflowNodeType.End, "结束", "料盘取料、放料、回收及回原点完成", null, 1440, 600, 9)
+            ]);
+    }
+
     private static WorkflowDefinition CreateLinearWorkflow(
         string name,
         string description,

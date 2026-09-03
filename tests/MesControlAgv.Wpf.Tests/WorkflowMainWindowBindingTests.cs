@@ -55,10 +55,17 @@ public sealed class WorkflowMainWindowBindingTests
                 var workflowView = Assert.IsType<WorkflowManagementView>(window.FindName("WorkflowManagementView"));
                 var surface = Assert.IsType<NodifyCanvasAdapter>(workflowView.FindName("WorkflowCanvasSurface"));
                 var simulatorExecute = Assert.IsType<Button>(workflowView.FindName("WorkflowSimulatorExecuteButton"));
+                var commandToolbar = Assert.IsType<WrapPanel>(workflowView.FindName("WorkflowCommandToolbar"));
                 surface.Attach(Assert.IsType<WorkflowCanvasSpikeViewModel>(editor.CanvasViewModel));
                 PumpDispatcher(window.Dispatcher);
                 Assert.Same(editor.ExecuteSimulatorCommand, simulatorExecute.Command);
                 Assert.False(simulatorExecute.IsEnabled);
+                Assert.Contains(commandToolbar.Children.OfType<Button>(), button =>
+                    Equals(button.Content, "发布"));
+                Assert.Contains(commandToolbar.Children.OfType<Button>(), button =>
+                    Equals(button.Content, "试运行"));
+                Assert.Contains(commandToolbar.Children.OfType<Button>(), button =>
+                    Equals(button.Content, "执行模拟"));
                 var validationGrid = Assert.IsType<DataGrid>(workflowView.FindName("WorkflowValidationGrid"));
                 validationGrid.SelectedItem = Assert.Single(
                     validationGrid.Items.OfType<WorkflowValidationIssueItemViewModel>());

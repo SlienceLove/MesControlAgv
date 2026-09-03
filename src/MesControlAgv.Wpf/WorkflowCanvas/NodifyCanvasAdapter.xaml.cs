@@ -48,6 +48,16 @@ public partial class NodifyCanvasAdapter : UserControl, IWorkflowCanvasSurface
         _viewModel.PropertyChanged += ViewModelPropertyChanged;
         DataContext = viewModel;
         ApplyViewport(viewModel.Document.Viewport);
+        if (viewModel.CanvasMode == WorkflowCanvasMode.Runtime)
+        {
+            // Runtime documents often persist an editor viewport that is too
+            // zoomed out for a monitor window. Fit once after WPF has measured
+            // the surface; operators can still use the explicit fit button or
+            // pan/zoom afterwards without the refresh loop resetting it.
+            Dispatcher.BeginInvoke(
+                DispatcherPriority.Loaded,
+                new Action(FitToContent));
+        }
     }
 
     public Point GetGraphLocation(DragEventArgs args) => Editor.GetLocationInsideEditor(args);
