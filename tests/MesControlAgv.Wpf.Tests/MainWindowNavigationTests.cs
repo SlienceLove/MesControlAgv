@@ -282,6 +282,55 @@ public sealed class MainWindowNavigationTests
         Assert.Null(failure);
     }
 
+    [Fact]
+    public void Shine_lab_dispatch_stacks_command_panel_in_compact_window()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var window = new MainWindow
+                {
+                    WindowState = WindowState.Normal,
+                    Width = 820,
+                    Height = 480
+                };
+                window.Show();
+                var tabs = Assert.IsType<TabControl>(window.FindName("MainTabs"));
+                tabs.SelectedItem = Assert.IsType<TabItem>(window.FindName("ShineLabTaskDispatchTab"));
+                window.Measure(new Size(820, 480));
+                window.Arrange(new Rect(0, 0, 820, 480));
+                window.UpdateLayout();
+
+                var view = Assert.Single(FindVisualChildren<Views.ShineLabTaskDispatchView>(window));
+                var workspace = Assert.IsType<Grid>(view.FindName("DispatchWorkspaceGrid"));
+                var commandPanel = Assert.IsType<Border>(view.FindName("DispatchCommandPanel"));
+
+                Assert.Equal(1, Grid.GetRow(commandPanel));
+                Assert.Equal(0, Grid.GetColumn(commandPanel));
+                Assert.Equal(3, Grid.GetColumnSpan(commandPanel));
+                Assert.True(workspace.ActualWidth < 900);
+
+                window.Close();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                Dispatcher.CurrentDispatcher.InvokeShutdown();
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "WPF compact ShineLab dispatch layout test did not complete.");
+        Assert.Null(failure);
+    }
+
     private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root)
         where T : DependencyObject
     {

@@ -15,10 +15,17 @@ public sealed class BatchImportViewModel : INotifyPropertyChanged
 {
     private readonly BatchTaskImportParser _parser = new();
     private string _batchStatus = "请选择 CSV 或 XLSX 文件导入任务";
+    private BatchTaskRowViewModel? _selectedTask;
 
     public ObservableCollection<BatchTaskRowViewModel> BatchTasks { get; } = [];
     public ObservableCollection<string> BatchImportIssues { get; } = [];
     public OfflineDataStateViewModel OfflineState { get; } = new();
+
+    public BatchTaskRowViewModel? SelectedTask
+    {
+        get => _selectedTask;
+        set => SetField(ref _selectedTask, value);
+    }
 
     public string BatchStatus
     {
@@ -33,9 +40,11 @@ public sealed class BatchImportViewModel : INotifyPropertyChanged
         {
             var result = _parser.Parse(filePath);
             BatchTasks.Clear();
+            SelectedTask = null;
             BatchImportIssues.Clear();
             foreach (var issue in result.Issues) BatchImportIssues.Add($"第 {issue.SourceRowNumber} 行：{issue.Message}");
             foreach (var task in result.Tasks) BatchTasks.Add(new BatchTaskRowViewModel(task));
+            SelectedTask = BatchTasks.FirstOrDefault();
             BatchStatus = $"已导入 {BatchTasks.Count} 条任务，发现 {BatchImportIssues.Count} 条问题；可编辑优先级后提交";
             OfflineState.MarkReady(
                 BatchTasks.Count > 0,
@@ -51,6 +60,7 @@ public sealed class BatchImportViewModel : INotifyPropertyChanged
     public void Clear()
     {
         BatchTasks.Clear();
+        SelectedTask = null;
         BatchImportIssues.Clear();
         BatchStatus = "已清空导入列表";
         OfflineState.MarkReady(hasData: false, "已清空导入列表。");
@@ -65,6 +75,7 @@ public sealed class BatchImportViewModel : INotifyPropertyChanged
             .ToList();
         BatchTasks.Clear();
         foreach (var task in sorted) BatchTasks.Add(task);
+        SelectedTask ??= BatchTasks.FirstOrDefault();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

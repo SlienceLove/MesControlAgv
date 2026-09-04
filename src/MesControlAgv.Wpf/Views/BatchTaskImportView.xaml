@@ -32,27 +32,53 @@
             </WrapPanel>
         </Grid>
 
-        <DataGrid x:Name="BatchTaskGrid" Grid.Row="1" ItemsSource="{Binding BatchTasks}" AutoGenerateColumns="False"
-                  CanUserAddRows="False" IsReadOnly="False" SelectionMode="Single" Margin="0,0,0,12"
+        <DataGrid x:Name="BatchTaskGrid" Grid.Row="1" MinWidth="0"
+                  ItemsSource="{Binding BatchTasks}"
+                  SelectedItem="{Binding BatchImport.SelectedTask, Mode=TwoWay}"
+                  AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False"
+                  SelectionMode="Single" Margin="0,0,0,12"
+                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                  ScrollViewer.VerticalScrollBarVisibility="Auto"
                   local:DataGridLayoutPersistence.LayoutKey="BatchTaskImport"
                   local:DataGridLayoutPersistence.PersistLayout="True">
             <DataGrid.Columns>
-                <DataGridTextColumn Width="70" Header="行号" Binding="{Binding SourceRowNumber}" IsReadOnly="True" />
-                <DataGridTextColumn Width="180" Header="任务 ID" Binding="{Binding TaskId}" IsReadOnly="True" />
-                <DataGridTextColumn Width="90" Header="起点" Binding="{Binding SourceStation}" IsReadOnly="True" />
-                <DataGridTextColumn Width="90" Header="终点" Binding="{Binding TargetStation}" IsReadOnly="True" />
-                <DataGridTextColumn Width="90" Header="优先级（可编辑）" Binding="{Binding Priority, UpdateSourceTrigger=PropertyChanged}" />
-                <DataGridTextColumn Width="180" Header="计划时间" Binding="{Binding PlannedTime}" IsReadOnly="True" />
-                <DataGridTextColumn Width="2*" Header="描述" Binding="{Binding Description}" IsReadOnly="True" />
-                <DataGridTextColumn Width="140" Header="状态" Binding="{Binding Status}" IsReadOnly="True" />
+                <!-- Keep only fields needed to sort and submit in the table;
+                     description and schedule details are shown for the selected row. -->
+                <DataGridTextColumn Width="70" MinWidth="58" Header="行号" Binding="{Binding SourceRowNumber}" IsReadOnly="True" />
+                <DataGridTextColumn Width="1.6*" MinWidth="110" Header="任务 ID" Binding="{Binding TaskId}" IsReadOnly="True" />
+                <DataGridTextColumn Width="1*" MinWidth="70" Header="起点" Binding="{Binding SourceStation}" IsReadOnly="True" />
+                <DataGridTextColumn Width="1*" MinWidth="70" Header="终点" Binding="{Binding TargetStation}" IsReadOnly="True" />
+                <DataGridTextColumn Width="1*" MinWidth="90" Header="优先级（可编辑）" Binding="{Binding Priority, UpdateSourceTrigger=PropertyChanged}" />
+                <DataGridTextColumn Width="1.3*" MinWidth="90" Header="状态" Binding="{Binding Status}" IsReadOnly="True" />
             </DataGrid.Columns>
         </DataGrid>
 
-        <Border Grid.Row="2" Padding="10" Background="#FFF8E1" BorderBrush="#E8C35A" BorderThickness="1" CornerRadius="4">
-            <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <ItemsControl ItemsSource="{Binding BatchImportIssues}" />
-            </ScrollViewer>
-        </Border>
+        <Grid Grid.Row="2" MinWidth="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.15*" MinWidth="0" />
+                <ColumnDefinition Width="1*" MinWidth="0" />
+            </Grid.ColumnDefinitions>
+            <Border Padding="10" Background="#FFF8E1" BorderBrush="#E8C35A" BorderThickness="1" CornerRadius="4">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel>
+                        <TextBlock FontWeight="SemiBold" Text="导入问题" />
+                        <ItemsControl Margin="0,8,0,0" ItemsSource="{Binding BatchImportIssues}" />
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+            <Border Grid.Column="1" Margin="12,0,0,0" Padding="10" Background="#F6F8FA"
+                    BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="4">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel>
+                        <TextBlock FontWeight="SemiBold" Text="选中任务详情" />
+                        <TextBlock Margin="0,8,0,0" Text="{Binding BatchImport.SelectedTask.TaskId, StringFormat=任务 ID：{0}}" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Margin="0,4,0,0" Text="{Binding BatchImport.SelectedTask.Description}" TextWrapping="Wrap" />
+                        <TextBlock Margin="0,6,0,0" Foreground="Gray" Text="{Binding BatchImport.SelectedTask.PlannedTime, StringFormat=计划时间：{0}}" />
+                        <TextBlock Margin="0,4,0,0" Foreground="Gray" Text="{Binding BatchImport.SelectedTask.Status, StringFormat=状态：{0}}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Grid>
         <DockPanel Grid.Row="3" Margin="0,10,0,0">
             <Button DockPanel.Dock="Right" Padding="10,4" Click="ResetBatchGridLayout_Click" Content="恢复列布局" ToolTip="恢复批量任务表默认列宽和顺序" />
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">

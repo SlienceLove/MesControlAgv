@@ -11,13 +11,18 @@
             <TextBlock Margin="0,4,0,0" Foreground="Gray"
                        Text="中控通过 MES TCP Server 向常驻 ShineLab Client 发送 Config/Command，不直接访问串口" />
         </StackPanel>
-        <Grid Grid.Row="1">
+        <Grid x:Name="DispatchWorkspaceGrid" Grid.Row="1" MinWidth="0"
+              SizeChanged="DispatchWorkspaceGrid_SizeChanged">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" MinHeight="0" />
+                <RowDefinition Height="0" />
+            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="420" />
+                <ColumnDefinition Width="420" MinWidth="0" />
                 <ColumnDefinition Width="16" />
-                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" MinWidth="0" />
             </Grid.ColumnDefinitions>
-            <Border Padding="16" Background="White" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
+            <Border x:Name="DispatchFormPanel" Grid.Row="0" Grid.Column="0" Padding="16" Background="White" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
                 <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel>
                         <TextBlock FontSize="17" FontWeight="SemiBold" Text="任务与样品" />
@@ -63,7 +68,8 @@
                     </StackPanel>
                 </ScrollViewer>
             </Border>
-            <Border Grid.Column="2" Padding="16" Background="White" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
+            <Border x:Name="DispatchCommandPanel" Grid.Row="0" Grid.Column="2" Padding="16" Background="White" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
+                <ScrollViewer x:Name="DispatchCommandScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel>
                     <TextBlock FontSize="17" FontWeight="SemiBold" Text="控制命令" />
                     <TextBlock Margin="0,12,0,4" Foreground="Gray" Text="Action（按 ShineLab 协议）" />
@@ -78,8 +84,11 @@
                     <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Text="{Binding LastResponseText}" />
                     <TextBlock Margin="0,12,0,0" Foreground="#176B3A" TextWrapping="Wrap" Text="{Binding Message}" />
                     <Button Margin="0,16,0,0" MinHeight="34" Command="{Binding RefreshTasksCommand}" Content="刷新任务记录" />
-                    <DataGrid Height="240" Margin="0,10,0,0" ItemsSource="{Binding Tasks}"
-                              AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                    <DataGrid x:Name="DispatchTaskGrid" Height="240" Margin="0,10,0,0" MinWidth="0"
+                              ItemsSource="{Binding Tasks}" AutoGenerateColumns="False"
+                              IsReadOnly="True" CanUserAddRows="False"
+                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                              ScrollViewer.VerticalScrollBarVisibility="Auto">
                         <DataGrid.Columns>
                             <DataGridTextColumn Width="170" Header="任务号" Binding="{Binding TaskUuid}" />
                             <DataGridTextColumn Width="100" Header="状态" Binding="{Binding Status}" />
@@ -90,6 +99,7 @@
                     <TextBlock Margin="0,14,0,0" Foreground="#A63A2B" FontSize="11" TextWrapping="Wrap"
                                Text="实验阶段仅用于接口联调；真正执行前必须由 ShineLab 提供并确认 Action、方法字段和设备互锁规则。" />
                 </StackPanel>
+                </ScrollViewer>
             </Border>
         </Grid>
     </Grid>
