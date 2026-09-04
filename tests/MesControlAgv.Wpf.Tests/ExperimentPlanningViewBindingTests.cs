@@ -47,6 +47,8 @@ public sealed class ExperimentPlanningViewBindingTests
                 planView.Dispatcher.Invoke(() => verifiedFilter.IsChecked = true);
                 PumpDispatcher(planView.Dispatcher);
                 Assert.True(plans.ShowVerifiedWorkflowTemplatesOnly);
+                Assert.Contains("能力：", Assert.IsType<TextBlock>(planView.FindName("WorkflowTemplateMetadataText")).Text, StringComparison.Ordinal);
+                Assert.Equal(plans.WorkflowStepsValidationSummary, Assert.IsType<TextBlock>(planView.FindName("WorkflowStepsValidationHint")).Text);
                 Assert.Single(Assert.IsType<DataGrid>(planView.FindName("WorkflowStepGrid")).Items);
                 Assert.Single(Assert.IsType<DataGrid>(planView.FindName("PlanGrid")).Items);
                 Assert.Single(Assert.IsType<DataGrid>(planView.FindName("PlanVersionGrid")).Items);

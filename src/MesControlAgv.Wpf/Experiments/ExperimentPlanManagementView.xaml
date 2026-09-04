@@ -333,7 +333,7 @@
                                 </WrapPanel>
                                 <TextBlock Margin="0,6,0,0" Foreground="#475467" TextWrapping="Wrap" Text="{Binding WorkflowStepsSummary}" />
                                 <TextBlock Margin="0,6,0,0" FontWeight="SemiBold" Foreground="#344054" Text="选中模板信息" />
-                                <TextBlock Margin="0,3,0,0" Foreground="#667085" TextWrapping="Wrap"
+                                <TextBlock x:Name="WorkflowTemplateMetadataText" Margin="0,3,0,0" Foreground="#667085" TextWrapping="Wrap"
                                            Text="{Binding SelectedWorkflowStep.WorkflowMetadataSummary}" />
                                 <TextBlock x:Name="WorkflowStepsValidationHint" Margin="0,6,0,0" Foreground="#B54708"
                                            TextWrapping="Wrap" Text="{Binding WorkflowStepsValidationSummary}" />
