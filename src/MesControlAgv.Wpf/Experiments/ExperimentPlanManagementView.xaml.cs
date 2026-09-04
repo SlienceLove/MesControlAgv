@@ -27,7 +27,12 @@ public partial class ExperimentPlanManagementView : UserControl
             return;
         }
 
-        var isCompact = PlanWorkspaceGrid.ActualWidth < 1100;
+        // The WPF width is measured in device-independent pixels. On a
+        // 125%-scaled 1280px display the usable workspace is roughly 1024 DIP,
+        // while a maximized 1366px display can still report just over 1100 DIP.
+        // Start the proportional layout early enough that the detail pane does
+        // not get pushed outside the visible client area on either screen.
+        var isCompact = PlanWorkspaceGrid.ActualWidth < 1500;
         if (_isCompactLayout == isCompact)
         {
             return;

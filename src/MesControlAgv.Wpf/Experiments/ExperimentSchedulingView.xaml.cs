@@ -27,7 +27,9 @@ public partial class ExperimentSchedulingView : UserControl
             return;
         }
 
-        var isCompact = SchedulingWorkspaceGrid.ActualWidth < 1000;
+        // Keep the task pool and timeline usable on 125%-scaled 1280/1366px
+        // displays; the timeline itself retains a horizontal viewport.
+        var isCompact = SchedulingWorkspaceGrid.ActualWidth < 1400;
         if (_isCompactLayout == isCompact)
         {
             return;

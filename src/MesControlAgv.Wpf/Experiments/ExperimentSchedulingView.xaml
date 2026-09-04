@@ -77,7 +77,13 @@
                           ScrollViewer.VerticalScrollBarVisibility="Auto"
                           ItemsSource="{Binding TaskPool}" SelectedItem="{Binding SelectedJob}">
                     <DataGrid.Columns>
-                        <DataGridTextColumn Width="*" Header="样品批次" Binding="{Binding SampleBatchId}" />
+                        <DataGridTextColumn Width="*" Header="样品批次" Binding="{Binding SampleBatchId}">
+                            <DataGridTextColumn.ElementStyle>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+                                </Style>
+                            </DataGridTextColumn.ElementStyle>
+                        </DataGridTextColumn>
                         <DataGridTextColumn Width="66" Header="优先级" Binding="{Binding PriorityText}" />
                         <DataGridTextColumn Width="72" Header="状态" Binding="{Binding Status}" />
                         <DataGridTextColumn Width="75" Header="计划" Binding="{Binding PlanName}" />
