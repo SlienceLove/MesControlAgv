@@ -1,0 +1,629 @@
+﻿{
+    "schema":  "mes.physical-workflow-cancel-record/1.0",
+    "recordedAtUtc":  "\/Date(1788427630403)\/",
+    "executionId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+    "run":  {
+                "requestId":  "0860fa63-b245-4c8c-8058-9f9971078fcb",
+                "executionId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                "workflowId":  "9c5c56e3-d91e-477e-ad97-6b96595fba92",
+                "version":  1,
+                "runtimeStatus":  8,
+                "dryRun":  false,
+                "isTerminal":  true,
+                "currentNodeId":  "5400e0fb-bf27-473a-9882-fed1458a00a3",
+                "pendingNodeId":  null,
+                "pendingStepRequest":  null,
+                "transportOperationId":  "ee04873b-24c3-9709-53e4-27082a34cbde",
+                "attempt":  1,
+                "lastError":  "Cancelled",
+                "rejectionCode":  null,
+                "rejectionReason":  null,
+                "physicalAuthorization":  {
+                                              "agvId":  "AGV-01",
+                                              "operatorName":  "33206",
+                                              "safetyObserverName":  "admin",
+                                              "permitPrefix":  "material-batch",
+                                              "expiresAtUtc":  "2026-09-04T09:16:11.3315486+00:00"
+                                          },
+                "createdAt":  "2026-09-03T09:16:13.1870236+00:00",
+                "updatedAt":  "2026-09-03T09:22:54.5998537+00:00"
+            },
+    "nodes":  {
+                  "value":  [
+                                {
+                                    "id":  "1ec5ead5-45dd-46be-be80-0f8c89a20c14",
+                                    "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                    "workflowId":  "9c5c56e3-d91e-477e-ad97-6b96595fba92",
+                                    "version":  1,
+                                    "stepRequestId":  "5466864e-4b9b-483e-94e0-5401fce943e0",
+                                    "nodeId":  "7beae82e-d692-4b4f-a516-b352db02cbaa",
+                                    "nodeTypeId":  "agv.move",
+                                    "nodeName":  "前往站点1（LM7）",
+                                    "attempt":  1,
+                                    "status":  6,
+                                    "inputs":  {
+                                                   "$targetStation":  "LM7"
+                                               },
+                                    "outputs":  {
+                                                    "acceptanceId":  "01907ace-2f19-4901-ba65-ad04923221c9",
+                                                    "permitId":  "material-batch-a6a6e311616a466e9dbfbb208d057973-7beae82ed6924b4fa516b352db02cbaa-a1",
+                                                    "deviceTaskId":  "01907ace2f194901ba65ad04923221c9",
+                                                    "stationId":  "LM7",
+                                                    "arrivedAtUtc":  "2026-09-03T09:17:20.3926470+00:00",
+                                                    "outcome":  "Succeeded",
+                                                    "error":  null
+                                                },
+                                    "startedAt":  "2026-09-03T09:16:20.8768349+00:00",
+                                    "completedAt":  "2026-09-03T09:17:20.4095773+00:00",
+                                    "lastError":  null,
+                                    "createdAt":  "2026-09-03T09:16:13.1870236+00:00",
+                                    "updatedAt":  "2026-09-03T09:17:20.4095773+00:00"
+                                },
+                                {
+                                    "id":  "fb2c3943-036c-40d7-a55f-505d31e5020e",
+                                    "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                    "workflowId":  "9c5c56e3-d91e-477e-ad97-6b96595fba92",
+                                    "version":  1,
+                                    "stepRequestId":  "2b461200-33b6-40a4-b579-e94f7d0ff671",
+                                    "nodeId":  "16d2297f-dfa1-4c2f-852d-371aa54753ff",
+                                    "nodeTypeId":  "robot.execute-program",
+                                    "nodeName":  "站点1：取料盘.pro",
+                                    "attempt":  1,
+                                    "status":  6,
+                                    "inputs":  {
+                                                   "deviceId":  "ARM-01",
+                                                   "programName":  "取料盘.pro"
+                                               },
+                                    "outputs":  {
+                                                    "deviceId":  "ARM-01",
+                                                    "programName":  "取料盘",
+                                                    "runtime":  "Stopped",
+                                                    "completedAtUtc":  "2026-09-03T09:18:04.4589932+00:00",
+                                                    "outcome":  "Succeeded",
+                                                    "error":  null
+                                                },
+                                    "startedAt":  "2026-09-03T09:17:26.7527561+00:00",
+                                    "completedAt":  "2026-09-03T09:18:04.4605818+00:00",
+                                    "lastError":  null,
+                                    "createdAt":  "2026-09-03T09:17:20.4095773+00:00",
+                                    "updatedAt":  "2026-09-03T09:18:04.4605818+00:00"
+                                },
+                                {
+                                    "id":  "64ffd817-dd97-4169-b912-0e59c0691ed5",
+                                    "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                    "workflowId":  "9c5c56e3-d91e-477e-ad97-6b96595fba92",
+                                    "version":  1,
+                                    "stepRequestId":  "554e708a-ad0c-4837-8819-9caf08c17baa",
+                                    "nodeId":  "5400e0fb-bf27-473a-9882-fed1458a00a3",
+                                    "nodeTypeId":  "agv.move",
+                                    "nodeName":  "前往站点2（LM2）",
+                                    "attempt":  1,
+                                    "status":  11,
+                                    "inputs":  {
+                                                   "$targetStation":  "LM2"
+                                               },
+                                    "outputs":  {
+                                                    "acceptanceId":  "ba20263b-a1ec-484a-9d6a-44f318f0d783",
+                                                    "permitId":  "material-batch-a6a6e311616a466e9dbfbb208d057973-5400e0fbbf27473a9882fed1458a00a3-a1",
+                                                    "deviceTaskId":  "ba20263ba1ec484a9d6a44f318f0d783",
+                                                    "stationId":  "LM2",
+                                                    "arrivedAtUtc":  null,
+                                                    "outcome":  "Cancelled",
+                                                    "error":  null
+                                                },
+                                    "startedAt":  "2026-09-03T09:18:10.1064655+00:00",
+                                    "completedAt":  "2026-09-03T09:22:54.5998537+00:00",
+                                    "lastError":  null,
+                                    "createdAt":  "2026-09-03T09:18:04.4605818+00:00",
+                                    "updatedAt":  "2026-09-03T09:22:54.5998537+00:00"
+                                }
+                            ],
+                  "Count":  3
+              },
+    "deviceOperations":  {
+                             "value":  [
+                                           {
+                                               "operationId":  "fd5f8673-9c65-02a2-e51c-ac0b3de0ef67",
+                                               "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                               "nodeExecutionId":  "1ec5ead5-45dd-46be-be80-0f8c89a20c14",
+                                               "requestId":  "0860fa63-b245-4c8c-8058-9f9971078fcb",
+                                               "attempt":  1,
+                                               "capabilityId":  "agv.navigate-to-station",
+                                               "deviceId":  null,
+                                               "idempotencyKey":  "fd5f86739c6502a2e51cac0b3de0ef67",
+                                               "correlationId":  "wpf-physical-batch-e804891ad28b46679eb7dd9159e3e44a",
+                                               "status":  3,
+                                               "requestSummary":  {
+                                                                      "nodeExecutionId":  "1ec5ead5-45dd-46be-be80-0f8c89a20c14",
+                                                                      "nodeId":  "7beae82e-d692-4b4f-a516-b352db02cbaa",
+                                                                      "stepRequestId":  "5466864e-4b9b-483e-94e0-5401fce943e0",
+                                                                      "targetStation":  "LM7",
+                                                                      "deviceId":  null,
+                                                                      "programName":  null
+                                                                  },
+                                               "resultSummary":  {
+                                                                     "acceptanceId":  "01907ace-2f19-4901-ba65-ad04923221c9",
+                                                                     "permitId":  "material-batch-a6a6e311616a466e9dbfbb208d057973-7beae82ed6924b4fa516b352db02cbaa-a1",
+                                                                     "deviceTaskId":  "01907ace2f194901ba65ad04923221c9",
+                                                                     "stationId":  "LM7",
+                                                                     "arrivedAtUtc":  "2026-09-03T09:17:20.3926470+00:00",
+                                                                     "outcome":  "Succeeded",
+                                                                     "error":  null
+                                                                 },
+                                               "requestedAt":  "2026-09-03T09:16:20.8768349+00:00",
+                                               "completedAt":  "2026-09-03T09:17:20.4095773+00:00",
+                                               "reconciledAt":  "2026-09-03T09:17:20.4095773+00:00",
+                                               "lastError":  null,
+                                               "updatedAt":  "2026-09-03T09:17:20.4095773+00:00"
+                                           },
+                                           {
+                                               "operationId":  "de528fc0-271d-f070-15b6-7fae8250ab2a",
+                                               "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                               "nodeExecutionId":  "fb2c3943-036c-40d7-a55f-505d31e5020e",
+                                               "requestId":  "0860fa63-b245-4c8c-8058-9f9971078fcb",
+                                               "attempt":  1,
+                                               "capabilityId":  "robot.execute-program",
+                                               "deviceId":  "ARM-01",
+                                               "idempotencyKey":  "de528fc0271df07015b67fae8250ab2a",
+                                               "correlationId":  "wpf-physical-batch-e804891ad28b46679eb7dd9159e3e44a",
+                                               "status":  3,
+                                               "requestSummary":  {
+                                                                      "nodeExecutionId":  "fb2c3943-036c-40d7-a55f-505d31e5020e",
+                                                                      "nodeId":  "16d2297f-dfa1-4c2f-852d-371aa54753ff",
+                                                                      "stepRequestId":  "2b461200-33b6-40a4-b579-e94f7d0ff671",
+                                                                      "targetStation":  null,
+                                                                      "deviceId":  "ARM-01",
+                                                                      "programName":  "取料盘.pro"
+                                                                  },
+                                               "resultSummary":  {
+                                                                     "deviceId":  "ARM-01",
+                                                                     "programName":  "取料盘",
+                                                                     "runtime":  "Stopped",
+                                                                     "completedAtUtc":  "2026-09-03T09:18:04.4589932+00:00",
+                                                                     "outcome":  "Succeeded",
+                                                                     "error":  null
+                                                                 },
+                                               "requestedAt":  "2026-09-03T09:17:26.7527561+00:00",
+                                               "completedAt":  "2026-09-03T09:18:04.4605818+00:00",
+                                               "reconciledAt":  "2026-09-03T09:18:04.4605818+00:00",
+                                               "lastError":  null,
+                                               "updatedAt":  "2026-09-03T09:18:04.4605818+00:00"
+                                           },
+                                           {
+                                               "operationId":  "ee04873b-24c3-9709-53e4-27082a34cbde",
+                                               "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                               "nodeExecutionId":  "64ffd817-dd97-4169-b912-0e59c0691ed5",
+                                               "requestId":  "0860fa63-b245-4c8c-8058-9f9971078fcb",
+                                               "attempt":  1,
+                                               "capabilityId":  "agv.navigate-to-station",
+                                               "deviceId":  null,
+                                               "idempotencyKey":  "ee04873b24c3970953e427082a34cbde",
+                                               "correlationId":  "wpf-physical-batch-e804891ad28b46679eb7dd9159e3e44a",
+                                               "status":  6,
+                                               "requestSummary":  {
+                                                                      "nodeExecutionId":  "64ffd817-dd97-4169-b912-0e59c0691ed5",
+                                                                      "nodeId":  "5400e0fb-bf27-473a-9882-fed1458a00a3",
+                                                                      "stepRequestId":  "554e708a-ad0c-4837-8819-9caf08c17baa",
+                                                                      "targetStation":  "LM2",
+                                                                      "deviceId":  null,
+                                                                      "programName":  null
+                                                                  },
+                                               "resultSummary":  {
+                                                                     "acceptanceId":  "ba20263b-a1ec-484a-9d6a-44f318f0d783",
+                                                                     "permitId":  "material-batch-a6a6e311616a466e9dbfbb208d057973-5400e0fbbf27473a9882fed1458a00a3-a1",
+                                                                     "deviceTaskId":  "ba20263ba1ec484a9d6a44f318f0d783",
+                                                                     "stationId":  "LM2",
+                                                                     "arrivedAtUtc":  null,
+                                                                     "outcome":  "Cancelled",
+                                                                     "error":  null
+                                                                 },
+                                               "requestedAt":  "2026-09-03T09:18:10.1064655+00:00",
+                                               "completedAt":  "2026-09-03T09:22:54.5998537+00:00",
+                                               "reconciledAt":  "2026-09-03T09:22:54.5998537+00:00",
+                                               "lastError":  null,
+                                               "updatedAt":  "2026-09-03T09:22:54.5998537+00:00"
+                                           }
+                                       ],
+                             "Count":  3
+                         },
+    "timeline":  {
+                     "value":  [
+                                   {
+                                       "id":  "5dfc9152-3a27-4707-99f6-2e83ecc46df6",
+                                       "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                       "nodeExecutionId":  null,
+                                       "deviceOperationId":  null,
+                                       "eventType":  "WorkflowExecutionAccepted",
+                                       "outcome":  "Accepted",
+                                       "code":  null,
+                                       "reason":  null,
+                                       "actor":  "33206",
+                                       "correlationId":  "wpf-physical-batch-e804891ad28b46679eb7dd9159e3e44a",
+                                       "details":  {
+                                                       "dryRun":  "False",
+                                                       "validationVersion":  "workflow-contract-v1"
+                                                   },
+                                       "occurredAt":  "2026-09-03T09:16:13.1738333+00:00"
+                                   },
+                                   {
+                                       "id":  "d42f1a06-8e7e-4b26-b1e2-e591358773ea",
+                                       "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                       "nodeExecutionId":  "1ec5ead5-45dd-46be-be80-0f8c89a20c14",
+                                       "deviceOperationId":  null,
+                                       "eventType":  "WorkflowNodePrepared",
+                                       "outcome":  "Ready",
+                                       "code":  null,
+                                       "reason":  null,
+                                       "actor":  "33206",
+                                       "correlationId":  "wpf-physical-batch-e804891ad28b46679eb7dd9159e3e44a",
+                                       "details":  {
+                                                       "nodeExecutionId":  "1ec5ead5-45dd-46be-be80-0f8c89a20c14",
+                                                       "nodeId":  "7beae82e-d692-4b4f-a516-b352db02cbaa",
+                                                       "attempt":  "1"
+                                                   },
+                                       "occurredAt":  "2026-09-03T09:16:13.2656892+00:00"
+                                   },
+                                   {
+                                       "id":  "681579bc-629e-43aa-bfaa-c86bfbc79697",
+                                       "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                       "nodeExecutionId":  "1ec5ead5-45dd-46be-be80-0f8c89a20c14",
+                                       "deviceOperationId":  "fd5f8673-9c65-02a2-e51c-ac0b3de0ef67",
+                                       "eventType":  "WorkflowStepClaimed",
+                                       "outcome":  "Running",
+                                       "code":  null,
+                                       "reason":  null,
+                                       "actor":  "33206",
+                                       "correlationId":  "wpf-physical-batch-e804891ad28b46679eb7dd9159e3e44a",
+                                       "details":  {
+                                                       "nodeExecutionId":  "1ec5ead5-45dd-46be-be80-0f8c89a20c14",
+                                                       "nodeId":  "7beae82e-d692-4b4f-a516-b352db02cbaa",
+                                                       "transportOperationId":  "fd5f8673-9c65-02a2-e51c-ac0b3de0ef67",
+                                                       "deviceOperationId":  "fd5f8673-9c65-02a2-e51c-ac0b3de0ef67",
+                                                       "attempt":  "1"
+                                                   },
+                                       "occurredAt":  "2026-09-03T09:16:20.9125874+00:00"
+                                   },
+                                   {
+                                       "id":  "30e16397-2e3d-4949-ac1e-d97947f63c95",
+                                       "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                       "nodeExecutionId":  "1ec5ead5-45dd-46be-be80-0f8c89a20c14",
+                                       "deviceOperationId":  "fd5f8673-9c65-02a2-e51c-ac0b3de0ef67",
+                                       "eventType":  "WorkflowDeviceOperationUpdated",
+                                       "outcome":  "Running",
+                                       "code":  null,
+                                       "reason":  null,
+                                       "actor":  "33206",
+                                       "correlationId":  "wpf-physical-batch-e804891ad28b46679eb7dd9159e3e44a",
+                                       "details":  {
+                                                       "nodeExecutionId":  "1ec5ead5-45dd-46be-be80-0f8c89a20c14",
+                                                       "nodeId":  "7beae82e-d692-4b4f-a516-b352db02cbaa",
+                                                       "deviceOperationId":  "fd5f8673-9c65-02a2-e51c-ac0b3de0ef67",
+                                                       "attempt":  "1"
+                                                   },
+                                       "occurredAt":  "2026-09-03T09:16:22.0510632+00:00"
+                                   },
+                                   {
+                                       "id":  "34f36f21-35c5-44c0-8623-708d60a39e76",
+                                       "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                       "nodeExecutionId":  "fb2c3943-036c-40d7-a55f-505d31e5020e",
+                                       "deviceOperationId":  null,
+                                       "eventType":  "WorkflowNodePrepared",
+                                       "outcome":  "Ready",
+                                       "code":  null,
+                                       "reason":  null,
+                                       "actor":  "33206",
+                                       "correlationId":  "wpf-physical-batch-e804891ad28b46679eb7dd9159e3e44a",
+                                       "details":  {
+                                                       "nodeExecutionId":  "fb2c3943-036c-40d7-a55f-505d31e5020e",
+                                                       "nodeId":  "16d2297f-dfa1-4c2f-852d-371aa54753ff",
+                                                       "attempt":  "1"
+                                                   },
+                                       "occurredAt":  "2026-09-03T09:17:20.4180362+00:00"
+                                   },
+                                   {
+                                       "id":  "fd64a4ad-1e36-45bc-9cc6-c0d472f26346",
+                                       "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                       "nodeExecutionId":  "1ec5ead5-45dd-46be-be80-0f8c89a20c14",
+                                       "deviceOperationId":  "fd5f8673-9c65-02a2-e51c-ac0b3de0ef67",
+                                       "eventType":  "WorkflowStepCompleted",
+                                       "outcome":  "Prepared",
+                                       "code":  null,
+                                       "reason":  null,
+                                       "actor":  "33206",
+                                       "correlationId":  "wpf-physical-batch-e804891ad28b46679eb7dd9159e3e44a",
+                                       "details":  {
+                                                       "nodeExecutionId":  "1ec5ead5-45dd-46be-be80-0f8c89a20c14",
+                                                       "nodeId":  "7beae82e-d692-4b4f-a516-b352db02cbaa",
+                                                       "transportOperationId":  "fd5f8673-9c65-02a2-e51c-ac0b3de0ef67",
+                                                       "deviceOperationId":  "fd5f8673-9c65-02a2-e51c-ac0b3de0ef67",
+                                                       "nextNodeId":  "16d2297f-dfa1-4c2f-852d-371aa54753ff"
+                                                   },
+                                       "occurredAt":  "2026-09-03T09:17:20.4189144+00:00"
+                                   },
+                                   {
+                                       "id":  "8bc7a2c9-9b80-4646-8a12-f404e52a5573",
+                                       "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                       "nodeExecutionId":  "fb2c3943-036c-40d7-a55f-505d31e5020e",
+                                       "deviceOperationId":  "de528fc0-271d-f070-15b6-7fae8250ab2a",
+                                       "eventType":  "WorkflowStepClaimed",
+                                       "outcome":  "Running",
+                                       "code":  null,
+                                       "reason":  null,
+                                       "actor":  "33206",
+                                       "correlationId":  "wpf-physical-batch-e804891ad28b46679eb7dd9159e3e44a",
+                                       "details":  {
+                                                       "nodeExecutionId":  "fb2c3943-036c-40d7-a55f-505d31e5020e",
+                                                       "nodeId":  "16d2297f-dfa1-4c2f-852d-371aa54753ff",
+                                                       "transportOperationId":  "de528fc0-271d-f070-15b6-7fae8250ab2a",
+                                                       "deviceOperationId":  "de528fc0-271d-f070-15b6-7fae8250ab2a",
+                                                       "attempt":  "1"
+                                                   },
+                                       "occurredAt":  "2026-09-03T09:17:26.7532664+00:00"
+                                   },
+                                   {
+                                       "id":  "38f6fe8a-2815-4244-97e2-60c8c9d9e913",
+                                       "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                       "nodeExecutionId":  "fb2c3943-036c-40d7-a55f-505d31e5020e",
+                                       "deviceOperationId":  "de528fc0-271d-f070-15b6-7fae8250ab2a",
+                                       "eventType":  "WorkflowDeviceOperationUpdated",
+                                       "outcome":  "Running",
+                                       "code":  null,
+                                       "reason":  null,
+                                       "actor":  "33206",
+                                       "correlationId":  "wpf-physical-batch-e804891ad28b46679eb7dd9159e3e44a",
+                                       "details":  {
+                                                       "nodeExecutionId":  "fb2c3943-036c-40d7-a55f-505d31e5020e",
+                                                       "nodeId":  "16d2297f-dfa1-4c2f-852d-371aa54753ff",
+                                                       "deviceOperationId":  "de528fc0-271d-f070-15b6-7fae8250ab2a",
+                                                       "attempt":  "1"
+                                                   },
+                                       "occurredAt":  "2026-09-03T09:17:27.3523607+00:00"
+                                   },
+                                   {
+                                       "id":  "4160f587-253a-4f32-aee7-443d0c783ad4",
+                                       "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                       "nodeExecutionId":  "64ffd817-dd97-4169-b912-0e59c0691ed5",
+                                       "deviceOperationId":  null,
+                                       "eventType":  "WorkflowNodePrepared",
+                                       "outcome":  "Ready",
+                                       "code":  null,
+                                       "reason":  null,
+                                       "actor":  "33206",
+                                       "correlationId":  "wpf-physical-batch-e804891ad28b46679eb7dd9159e3e44a",
+                                       "details":  {
+                                                       "nodeExecutionId":  "64ffd817-dd97-4169-b912-0e59c0691ed5",
+                                                       "nodeId":  "5400e0fb-bf27-473a-9882-fed1458a00a3",
+                                                       "attempt":  "1"
+                                                   },
+                                       "occurredAt":  "2026-09-03T09:18:04.4611408+00:00"
+                                   },
+                                   {
+                                       "id":  "0bdf5f37-b08f-48c0-8fd3-98f1ab835317",
+                                       "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                       "nodeExecutionId":  "fb2c3943-036c-40d7-a55f-505d31e5020e",
+                                       "deviceOperationId":  "de528fc0-271d-f070-15b6-7fae8250ab2a",
+                                       "eventType":  "WorkflowStepCompleted",
+                                       "outcome":  "Prepared",
+                                       "code":  null,
+                                       "reason":  null,
+                                       "actor":  "33206",
+                                       "correlationId":  "wpf-physical-batch-e804891ad28b46679eb7dd9159e3e44a",
+                                       "details":  {
+                                                       "nodeExecutionId":  "fb2c3943-036c-40d7-a55f-505d31e5020e",
+                                                       "nodeId":  "16d2297f-dfa1-4c2f-852d-371aa54753ff",
+                                                       "transportOperationId":  "de528fc0-271d-f070-15b6-7fae8250ab2a",
+                                                       "deviceOperationId":  "de528fc0-271d-f070-15b6-7fae8250ab2a",
+                                                       "nextNodeId":  "5400e0fb-bf27-473a-9882-fed1458a00a3"
+                                                   },
+                                       "occurredAt":  "2026-09-03T09:18:04.46117+00:00"
+                                   },
+                                   {
+                                       "id":  "e7cab08a-88f6-4861-b71f-b7b1144c23b1",
+                                       "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                       "nodeExecutionId":  "64ffd817-dd97-4169-b912-0e59c0691ed5",
+                                       "deviceOperationId":  "ee04873b-24c3-9709-53e4-27082a34cbde",
+                                       "eventType":  "WorkflowStepClaimed",
+                                       "outcome":  "Running",
+                                       "code":  null,
+                                       "reason":  null,
+                                       "actor":  "33206",
+                                       "correlationId":  "wpf-physical-batch-e804891ad28b46679eb7dd9159e3e44a",
+                                       "details":  {
+                                                       "nodeExecutionId":  "64ffd817-dd97-4169-b912-0e59c0691ed5",
+                                                       "nodeId":  "5400e0fb-bf27-473a-9882-fed1458a00a3",
+                                                       "transportOperationId":  "ee04873b-24c3-9709-53e4-27082a34cbde",
+                                                       "deviceOperationId":  "ee04873b-24c3-9709-53e4-27082a34cbde",
+                                                       "attempt":  "1"
+                                                   },
+                                       "occurredAt":  "2026-09-03T09:18:10.1070375+00:00"
+                                   },
+                                   {
+                                       "id":  "b3271a98-fe9e-4f90-bfba-0a61dd2bd9b4",
+                                       "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                       "nodeExecutionId":  "64ffd817-dd97-4169-b912-0e59c0691ed5",
+                                       "deviceOperationId":  "ee04873b-24c3-9709-53e4-27082a34cbde",
+                                       "eventType":  "WorkflowDeviceOperationUpdated",
+                                       "outcome":  "Running",
+                                       "code":  null,
+                                       "reason":  null,
+                                       "actor":  "33206",
+                                       "correlationId":  "wpf-physical-batch-e804891ad28b46679eb7dd9159e3e44a",
+                                       "details":  {
+                                                       "nodeExecutionId":  "64ffd817-dd97-4169-b912-0e59c0691ed5",
+                                                       "nodeId":  "5400e0fb-bf27-473a-9882-fed1458a00a3",
+                                                       "deviceOperationId":  "ee04873b-24c3-9709-53e4-27082a34cbde",
+                                                       "attempt":  "1"
+                                                   },
+                                       "occurredAt":  "2026-09-03T09:18:10.8286271+00:00"
+                                   },
+                                   {
+                                       "id":  "94236392-c174-4570-a7f2-59f71cba8718",
+                                       "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                       "nodeExecutionId":  "64ffd817-dd97-4169-b912-0e59c0691ed5",
+                                       "deviceOperationId":  "ee04873b-24c3-9709-53e4-27082a34cbde",
+                                       "eventType":  "WorkflowStepReconciled",
+                                       "outcome":  "Cancelled",
+                                       "code":  null,
+                                       "reason":  "Cancelled",
+                                       "actor":  "33206",
+                                       "correlationId":  "wpf-physical-batch-e804891ad28b46679eb7dd9159e3e44a",
+                                       "details":  {
+                                                       "nodeExecutionId":  "64ffd817-dd97-4169-b912-0e59c0691ed5",
+                                                       "nodeId":  "5400e0fb-bf27-473a-9882-fed1458a00a3",
+                                                       "transportOperationId":  "ee04873b-24c3-9709-53e4-27082a34cbde",
+                                                       "deviceOperationId":  "ee04873b-24c3-9709-53e4-27082a34cbde",
+                                                       "nextNodeId":  null
+                                                   },
+                                       "occurredAt":  "2026-09-03T09:22:54.6000511+00:00"
+                                   }
+                               ],
+                     "Count":  13
+                 },
+    "acceptances":  {
+                        "value":  [
+                                      {
+                                          "id":  "01907ace-2f19-4901-ba65-ad04923221c9",
+                                          "status":  "arrived",
+                                          "agvId":  "AGV-01",
+                                          "sourceStationId":  "LM1",
+                                          "targetStationId":  "LM7",
+                                          "mapName":  "guangzhou606",
+                                          "mapMd5":  "9bd67a8b01f4da2617ce67e5f8a8d6b1",
+                                          "plannedPath":  [
+                                                              "LM1",
+                                                              "LM7"
+                                                          ],
+                                          "description":  "批量现场流程 a6a6e311-616a-466e-9dbf-bb208d057973 / 前往站点1（LM7）",
+                                          "operatorName":  "33206",
+                                          "safetyObserverName":  "admin",
+                                          "permitId":  "material-batch-a6a6e311616a466e9dbfbb208d057973-7beae82ed6924b4fa516b352db02cbaa-a1",
+                                          "authorizedAtUtc":  "2026-09-03T09:16:20.842257+00:00",
+                                          "expiresAtUtc":  "2026-09-04T09:16:11.3315486+00:00",
+                                          "permitConsumedAtUtc":  "2026-09-03T09:16:20.9922744+00:00",
+                                          "deviceTaskId":  "01907ace2f194901ba65ad04923221c9",
+                                          "lastError":  null,
+                                          "createdAtUtc":  "2026-09-03T09:16:20.7042287+00:00",
+                                          "updatedAtUtc":  "2026-09-03T09:17:19.8961819+00:00",
+                                          "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                          "workflowNodeExecutionId":  "1ec5ead5-45dd-46be-be80-0f8c89a20c14",
+                                          "workflowDeviceOperationId":  "fd5f8673-9c65-02a2-e51c-ac0b3de0ef67",
+                                          "isWorkflowLinked":  true
+                                      },
+                                      {
+                                          "id":  "ba20263b-a1ec-484a-9d6a-44f318f0d783",
+                                          "status":  "cancelled",
+                                          "agvId":  "AGV-01",
+                                          "sourceStationId":  "LM7",
+                                          "targetStationId":  "LM2",
+                                          "mapName":  "guangzhou606",
+                                          "mapMd5":  "9bd67a8b01f4da2617ce67e5f8a8d6b1",
+                                          "plannedPath":  [
+                                                              "LM7",
+                                                              "LM6",
+                                                              "LM2"
+                                                          ],
+                                          "description":  "批量现场流程 a6a6e311-616a-466e-9dbf-bb208d057973 / 前往站点2（LM2）",
+                                          "operatorName":  "33206",
+                                          "safetyObserverName":  "admin",
+                                          "permitId":  "material-batch-a6a6e311616a466e9dbfbb208d057973-5400e0fbbf27473a9882fed1458a00a3-a1",
+                                          "authorizedAtUtc":  "2026-09-03T09:18:10.1035271+00:00",
+                                          "expiresAtUtc":  "2026-09-04T09:16:11.3315486+00:00",
+                                          "permitConsumedAtUtc":  "2026-09-03T09:18:10.1118683+00:00",
+                                          "deviceTaskId":  "ba20263ba1ec484a9d6a44f318f0d783",
+                                          "lastError":  null,
+                                          "createdAtUtc":  "2026-09-03T09:18:10.0643326+00:00",
+                                          "updatedAtUtc":  "2026-09-03T09:22:54.5585968+00:00",
+                                          "workflowRunId":  "a6a6e311-616a-466e-9dbf-bb208d057973",
+                                          "workflowNodeExecutionId":  "64ffd817-dd97-4169-b912-0e59c0691ed5",
+                                          "workflowDeviceOperationId":  "ee04873b-24c3-9709-53e4-27082a34cbde",
+                                          "isWorkflowLinked":  true
+                                      }
+                                  ],
+                        "Count":  2
+                    },
+    "agv":  {
+                "online":  false,
+                "controlOwner":  "unknown",
+                "currentStationId":  null,
+                "currentTaskId":  null,
+                "agvId":  "AGV-01",
+                "capabilities":  {
+                                     "supportsPause":  true,
+                                     "supportsResume":  true,
+                                     "supportsCancel":  true,
+                                     "supportsEmergencyStop":  false,
+                                     "supportsLift":  false,
+                                     "supportsBarcode":  false,
+                                     "supportsStationConfirmation":  true
+                                 },
+                "safetyReadiness":  null
+            },
+    "aubo":  {
+                 "readError":  "远程服务器返回错误: (504) 网关超时。"
+             },
+    "adapterHealth":  {
+                          "service":  "adapter",
+                          "status":  "ok",
+                          "runMode":  "standard",
+                          "driver":  "vendor-tcp",
+                          "modules":  [
+                                          {
+                                              "moduleId":  "agv",
+                                              "deviceType":  "agv",
+                                              "supportedTransports":  [
+                                                                          "Simulator",
+                                                                          "Tcp"
+                                                                      ]
+                                          },
+                                          {
+                                              "moduleId":  "aubo-arm",
+                                              "deviceType":  "robot-arm",
+                                              "supportedTransports":  [
+                                                                          "Tcp"
+                                                                      ]
+                                          },
+                                          {
+                                              "moduleId":  "sample-workstation",
+                                              "deviceType":  "sample-workstation",
+                                              "supportedTransports":  [
+                                                                          "Http"
+                                                                      ]
+                                          }
+                                      ],
+                          "devices":  [
+                                          {
+                                              "deviceId":  "AGV-01",
+                                              "deviceType":  "agv",
+                                              "moduleId":  "agv",
+                                              "driverId":  "vendor-tcp",
+                                              "transport":  "Tcp",
+                                              "enabled":  true,
+                                              "controlEnabled":  true
+                                          },
+                                          {
+                                              "deviceId":  "ARM-01",
+                                              "deviceType":  "robot-arm",
+                                              "moduleId":  "aubo-arm",
+                                              "driverId":  "aubo-websocket-jsonrpc",
+                                              "transport":  "Tcp",
+                                              "enabled":  true,
+                                              "controlEnabled":  true
+                                          },
+                                          {
+                                              "deviceId":  "SAMPLE-WORKSTATION-01",
+                                              "deviceType":  "sample-workstation",
+                                              "moduleId":  "sample-workstation",
+                                              "driverId":  "vendor-http-read-only",
+                                              "transport":  "Http",
+                                              "enabled":  false,
+                                              "controlEnabled":  false
+                                          }
+                                      ]
+                      },
+    "releaseAttempt":  {
+                           "requested":  true,
+                           "endpoint":  "/agv/control/release",
+                           "confirmed":  false,
+                           "note":  "Adapter could not read controller ownership because the AGV status channel was unavailable; no retry was issued."
+                       }
+}
