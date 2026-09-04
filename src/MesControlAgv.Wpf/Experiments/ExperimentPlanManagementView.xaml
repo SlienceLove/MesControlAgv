@@ -280,6 +280,14 @@
                                     <TextBlock FontSize="15" FontWeight="SemiBold" Text="固定流程执行顺序" />
                                     <TextBlock Margin="0,3,0,0" Foreground="#667085" Text="只允许引用已发布、已验证的流程模板；方案发布后版本不可变。" TextWrapping="Wrap" />
                                 </StackPanel>
+                                <StackPanel DockPanel.Dock="Right" Margin="12,0,0,0" VerticalAlignment="Center">
+                                    <CheckBox x:Name="VerifiedWorkflowTemplatesOnlyCheckBox"
+                                              AutomationProperties.AutomationId="ExperimentPlanVerifiedWorkflowFilter"
+                                              Content="仅系统/已验证模板"
+                                              IsChecked="{Binding ShowVerifiedWorkflowTemplatesOnly, Mode=TwoWay}" />
+                                    <TextBlock Margin="0,3,0,0" HorizontalAlignment="Right" Foreground="#667085"
+                                               Text="{Binding WorkflowTemplateFilterSummary}" />
+                                </StackPanel>
                                 <Button x:Name="AddWorkflowStepButton" DockPanel.Dock="Right" Padding="10,5"
                                         Command="{Binding AddWorkflowStepCommand}" Content="添加流程" />
                             </DockPanel>

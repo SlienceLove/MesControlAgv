@@ -116,6 +116,75 @@ public sealed class ExperimentPlanManagementViewModelTests
     }
 
     [Fact]
+    public async Task Verified_template_filter_hides_unselected_templates_and_keeps_current_selection()
+    {
+        var fixture = PlanFixture.Empty();
+        var unverifiedId = fixture.Client.AddWorkflowTemplate("User workflow", isPreset: false, version: 4);
+        var verifiedId = fixture.Client.AddWorkflowTemplate("Verified workflow", isPreset: true, version: 5);
+        using var viewModel = new ExperimentPlanManagementViewModel(fixture.Client)
+        {
+            Reason = "Filter workflow catalog"
+        };
+
+        await viewModel.RefreshAsync();
+        viewModel.NewPlanCommand.Execute(null);
+        var selected = Assert.Single(viewModel.WorkflowSteps).SelectedWorkflowVersion;
+
+        Assert.Contains(viewModel.PublishedWorkflowVersions, option => option.WorkflowId == unverifiedId);
+        Assert.Contains(viewModel.PublishedWorkflowVersions, option => option.WorkflowId == verifiedId);
+
+        viewModel.ShowVerifiedWorkflowTemplatesOnly = true;
+
+        Assert.Same(selected, viewModel.WorkflowSteps[0].SelectedWorkflowVersion);
+        Assert.Contains(selected, viewModel.PublishedWorkflowVersions);
+        Assert.DoesNotContain(viewModel.PublishedWorkflowVersions, option => option.WorkflowId == unverifiedId);
+        Assert.Contains(viewModel.PublishedWorkflowVersions, option => option.WorkflowId == verifiedId);
+        Assert.Contains("仅系统/已验证模板", viewModel.WorkflowTemplateFilterSummary, StringComparison.Ordinal);
+
+        viewModel.ShowVerifiedWorkflowTemplatesOnly = false;
+
+        Assert.Same(selected, viewModel.WorkflowSteps[0].SelectedWorkflowVersion);
+        Assert.Contains(viewModel.PublishedWorkflowVersions, option => option.WorkflowId == unverifiedId);
+    }
+
+    [Fact]
+    public async Task Plan_keeps_unavailable_referenced_workflow_version_visible_and_explicitly_marked()
+    {
+        var fixture = PlanFixture.Create(ExperimentPlanStatus.Draft, valid: null);
+        var step = new ExperimentPlanWorkflowStep
+        {
+            StepId = Guid.NewGuid(),
+            Order = 1,
+            WorkflowId = fixture.WorkflowId,
+            WorkflowVersion = 99,
+            Name = "Legacy instrument read"
+        };
+        fixture.Client.Upsert(fixture.Plan with
+        {
+            WorkflowVersion = 99,
+            WorkflowSteps = [step]
+        });
+        using var viewModel = new ExperimentPlanManagementViewModel(fixture.Client)
+        {
+            Reason = "Review legacy reference"
+        };
+
+        await viewModel.RefreshAsync();
+
+        var selected = Assert.Single(viewModel.WorkflowSteps).SelectedWorkflowVersion;
+        Assert.NotNull(selected);
+        Assert.False(selected!.IsAvailable);
+        Assert.Equal("Legacy instrument read", selected.Name);
+        Assert.Contains("已引用但不可用", selected.Display, StringComparison.Ordinal);
+        Assert.Contains(selected, viewModel.PublishedWorkflowVersions);
+
+        viewModel.ShowVerifiedWorkflowTemplatesOnly = true;
+
+        Assert.Same(selected, viewModel.WorkflowSteps[0].SelectedWorkflowVersion);
+        Assert.Contains(selected, viewModel.PublishedWorkflowVersions);
+    }
+
+    [Fact]
     public void Workflow_step_editor_roundtrips_parameter_overrides_without_data_loss()
     {
         var stepId = Guid.NewGuid();
@@ -253,33 +322,60 @@ public sealed class ExperimentPlanManagementViewModelTests
         }
     }
 
-    private sealed class PlanClientStub(Guid workflowId) : IMesClient
+    private sealed class PlanClientStub : IMesClient
     {
         private readonly Dictionary<Guid, List<ExperimentPlan>> _plans = [];
-        public Guid WorkflowId { get; } = workflowId;
+        private readonly Dictionary<Guid, WorkflowDefinition> _workflowDefinitions = [];
+        private readonly Dictionary<Guid, List<WorkflowVersion>> _workflowVersions = [];
+        public Guid WorkflowId { get; }
         public SaveExperimentPlanDraftRequest? LastSavedDraft { get; private set; }
         public int ValidateCalls { get; private set; }
         public int PublishCalls { get; private set; }
         public int NextDraftCalls { get; private set; }
 
+        public PlanClientStub(Guid workflowId)
+        {
+            WorkflowId = workflowId;
+            AddWorkflowTemplate("Published workflow", isPreset: false, version: 3, workflowId: workflowId);
+        }
+
+        public Guid AddWorkflowTemplate(string name, bool isPreset, int version)
+        {
+            var workflowId = Guid.NewGuid();
+            AddWorkflowTemplate(name, isPreset, version, workflowId);
+            return workflowId;
+        }
+
+        private void AddWorkflowTemplate(string name, bool isPreset, int version, Guid workflowId)
+        {
+            var definition = new WorkflowDefinition
+            {
+                Id = workflowId,
+                Name = name,
+                IsPreset = isPreset
+            };
+            _workflowDefinitions[workflowId] = definition;
+            _workflowVersions[workflowId] =
+            [
+                new WorkflowVersion
+                {
+                    WorkflowId = workflowId,
+                    Version = version,
+                    Definition = definition,
+                    Status = WorkflowVersionStatus.Published,
+                    PublishStatus = WorkflowPublishStatus.Published
+                }
+            ];
+        }
+
         public Task<IReadOnlyList<WorkflowDefinition>> GetWorkflowsAsync(CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<WorkflowDefinition>>
-            ([new WorkflowDefinition { Id = WorkflowId, Name = "Published workflow" }]);
+            Task.FromResult<IReadOnlyList<WorkflowDefinition>>(_workflowDefinitions.Values.ToArray());
 
         public Task<IReadOnlyList<WorkflowVersion>> GetWorkflowVersionsAsync(
             Guid requestedWorkflowId,
             CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<WorkflowVersion>>
-            ([
-                new WorkflowVersion
-                {
-                    WorkflowId = requestedWorkflowId,
-                    Version = 3,
-                    Definition = new WorkflowDefinition { Id = requestedWorkflowId, Name = "Published workflow" },
-                    Status = WorkflowVersionStatus.Published,
-                    PublishStatus = WorkflowPublishStatus.Published
-                }
-            ]);
+            Task.FromResult<IReadOnlyList<WorkflowVersion>>(
+                _workflowVersions.GetValueOrDefault(requestedWorkflowId) ?? []);
 
         public Task<IReadOnlyList<ExperimentPlan>> GetExperimentPlansAsync(CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<ExperimentPlan>>(_plans.Values

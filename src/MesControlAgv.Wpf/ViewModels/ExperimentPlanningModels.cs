@@ -60,10 +60,11 @@ public sealed record PublishedWorkflowVersionOption(
     bool IsAvailable = true,
     bool IsPreset = false)
 {
-    public string TemplateKind => IsPreset ? "已验证模板" : "已发布流程";
+    public string TemplateKind => IsPreset ? "系统/已验证模板" : "已发布流程";
+    public string AvailabilityDisplay => IsAvailable ? "可用" : "已引用但不可用";
     public string Display => IsAvailable
         ? $"{Name} / v{Version} · {TemplateKind}"
-        : $"固定版本不可用 / {WorkflowId:N} / v{Version}";
+        : $"{AvailabilityDisplay} / {Name} / {WorkflowId:N} / v{Version}";
 }
 
 /// <summary>

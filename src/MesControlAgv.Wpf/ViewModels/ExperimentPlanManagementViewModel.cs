@@ -32,6 +32,8 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
     private readonly RelayCommand<ExperimentPlanWorkflowStepEditorViewModel> _removeWorkflowStepCommand;
     private readonly RelayCommand _moveWorkflowStepUpCommand;
     private readonly RelayCommand _moveWorkflowStepDownCommand;
+    private readonly List<PublishedWorkflowVersionOption> _publishedWorkflowVersionCatalog = [];
+    private readonly Dictionary<(Guid WorkflowId, int Version), PublishedWorkflowVersionOption> _referencedWorkflowVersions = [];
     private ExperimentPlanListItemViewModel? _selectedPlan;
     private ExperimentPlanVersionItemViewModel? _selectedVersion;
     private PublishedWorkflowVersionOption? _selectedWorkflowVersion;
@@ -43,6 +45,7 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
     private bool _isLoadingEditor;
     private bool _suppressPlanSelectionLoad;
     private bool _hasLoaded;
+    private bool _showVerifiedWorkflowTemplatesOnly;
     private string _name = string.Empty;
     private string _description = string.Empty;
     private string _profileProductId = string.Empty;
@@ -86,6 +89,23 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
     public ObservableCollection<ExperimentParameterEditorViewModel> Parameters { get; } = [];
     public ObservableCollection<ExperimentResourceRequirementEditorViewModel> ResourceRequirements { get; } = [];
     public ObservableCollection<ExperimentPlanWorkflowStepEditorViewModel> WorkflowSteps { get; } = [];
+
+    /// <summary>
+    /// When enabled, the workflow picker shows system/verified templates first,
+    /// while keeping every workflow version already referenced by the current
+    /// plan in the projection so changing the filter cannot clear a selection.
+    /// </summary>
+    public bool ShowVerifiedWorkflowTemplatesOnly
+    {
+        get => _showVerifiedWorkflowTemplatesOnly;
+        set
+        {
+            if (!SetField(ref _showVerifiedWorkflowTemplatesOnly, value)) return;
+            RebindWorkflowStepOptions(_publishedWorkflowVersionCatalog);
+            RebuildPublishedWorkflowVersions();
+            OnPropertyChanged(nameof(WorkflowTemplateFilterSummary));
+        }
+    }
 
     public IReadOnlyList<string> ResourceTypes { get; } =
     [
@@ -283,6 +303,20 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
                                            WorkflowSteps.IndexOf(SelectedWorkflowStep) >= 0 &&
                                            WorkflowSteps.IndexOf(SelectedWorkflowStep) < WorkflowSteps.Count - 1;
     public bool HasValidationIssues => ValidationIssues.Count > 0;
+    public string WorkflowTemplateFilterSummary
+    {
+        get
+        {
+            if (!ShowVerifiedWorkflowTemplatesOnly)
+                return $"全部已发布模板 · {PublishedWorkflowVersions.Count} 项";
+
+            var verifiedCount = PublishedWorkflowVersions.Count(option => option.IsPreset);
+            var preservedCount = PublishedWorkflowVersions.Count(option => !option.IsPreset);
+            return preservedCount == 0
+                ? $"仅系统/已验证模板 · {verifiedCount} 项"
+                : $"仅系统/已验证模板 · {verifiedCount} 项 · 保留当前引用 {preservedCount} 项";
+        }
+    }
     private ExperimentPlan? CurrentPlan => SelectedVersion?.Plan;
     private bool HasActionMetadata =>
         !string.IsNullOrWhiteSpace(OperatorName) && !string.IsNullOrWhiteSpace(Reason);
@@ -421,9 +455,10 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
             .ThenByDescending(option => option.Version)
             .ToArray();
 
-        PublishedWorkflowVersions.Clear();
-        foreach (var option in options) PublishedWorkflowVersions.Add(option);
-        RebindWorkflowStepOptions(options);
+        _publishedWorkflowVersionCatalog.Clear();
+        _publishedWorkflowVersionCatalog.AddRange(options);
+        RebindWorkflowStepOptions(_publishedWorkflowVersionCatalog);
+        RebuildPublishedWorkflowVersions();
     }
 
     private async Task LoadSelectedPlanAsync(ExperimentPlanListItemViewModel? selected, long revision)
@@ -461,6 +496,7 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
         _isLoadingEditor = true;
         try
         {
+            _referencedWorkflowVersions.Clear();
             IsNewPlan = false;
             Name = plan.Name;
             Description = plan.Description;
@@ -473,9 +509,9 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
             ReplaceWorkflowStepEditors(planSteps.Select(step =>
                 ExperimentPlanWorkflowStepEditorViewModel.From(
                     step,
-                    FindOrAddWorkflowOption(step.WorkflowId, step.WorkflowVersion))));
+                    FindOrAddWorkflowOption(step.WorkflowId, step.WorkflowVersion, step.Name))));
             SelectedWorkflowVersion = WorkflowSteps.FirstOrDefault()?.SelectedWorkflowVersion ??
-                                      FindOrAddWorkflowOption(plan.WorkflowId, plan.WorkflowVersion);
+                                      FindOrAddWorkflowOption(plan.WorkflowId, plan.WorkflowVersion, plan.Name);
             ReplaceEditors(Materials, plan.MaterialRequirements.Select(ExperimentMaterialEditorViewModel.From));
             ReplaceEditors(Parameters, plan.DefaultParameters.Select(ExperimentParameterEditorViewModel.From));
             ReplaceEditors(ResourceRequirements, plan.ResourceRequirements.Select(ExperimentResourceRequirementEditorViewModel.From));
@@ -490,17 +526,29 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
         {
             _isLoadingEditor = false;
         }
+        RebuildPublishedWorkflowVersions();
         RaiseStateChanged();
     }
 
-    private PublishedWorkflowVersionOption? FindOrAddWorkflowOption(Guid workflowId, int version)
+    private PublishedWorkflowVersionOption? FindOrAddWorkflowOption(
+        Guid workflowId,
+        int version,
+        string? fallbackName = null)
     {
         if (workflowId == Guid.Empty || version <= 0) return null;
-        var option = PublishedWorkflowVersions.FirstOrDefault(item =>
+        var option = _publishedWorkflowVersionCatalog.FirstOrDefault(item =>
             item.WorkflowId == workflowId && item.Version == version);
         if (option is not null) return option;
-        option = new PublishedWorkflowVersionOption(workflowId, version, string.Empty, IsAvailable: false);
-        PublishedWorkflowVersions.Add(option);
+
+        var key = (workflowId, version);
+        if (_referencedWorkflowVersions.TryGetValue(key, out option)) return option;
+
+        option = new PublishedWorkflowVersionOption(
+            workflowId,
+            version,
+            string.IsNullOrWhiteSpace(fallbackName) ? "已引用流程" : fallbackName.Trim(),
+            IsAvailable: false);
+        _referencedWorkflowVersions[key] = option;
         return option;
     }
 
@@ -527,6 +575,7 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
         _isLoadingEditor = true;
         try
         {
+            _referencedWorkflowVersions.Clear();
             SelectedPlan = null;
             Versions.Clear();
             SelectedVersion = null;
@@ -552,6 +601,7 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
         IsDirty = true;
         ErrorMessage = string.Empty;
         StatusMessage = "正在编辑新方案草稿。";
+        RebuildPublishedWorkflowVersions();
         RaiseStateChanged();
     }
 
@@ -727,7 +777,7 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
         ReplaceWorkflowStepEditors(source.Select(step =>
             ExperimentPlanWorkflowStepEditorViewModel.From(
                 step,
-                FindOrAddWorkflowOption(step.WorkflowId, step.WorkflowVersion))));
+                FindOrAddWorkflowOption(step.WorkflowId, step.WorkflowVersion, step.Name))));
     }
 
     private void RebindWorkflowStepOptions(IReadOnlyList<PublishedWorkflowVersionOption> options)
@@ -750,6 +800,69 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
         {
             _isLoadingEditor = wasLoading;
         }
+    }
+
+    private void RebuildPublishedWorkflowVersions()
+    {
+        var workflowSelections = WorkflowSteps
+            .Select(step => (Step: step, Option: step.SelectedWorkflowVersion))
+            .ToArray();
+        var selectedWorkflowVersion = SelectedWorkflowVersion;
+        var wasLoading = _isLoadingEditor;
+        _isLoadingEditor = true;
+        try
+        {
+            var visible = _publishedWorkflowVersionCatalog
+                .Where(option => !ShowVerifiedWorkflowTemplatesOnly || option.IsPreset)
+                .ToList();
+
+            // A filtered catalog must still contain the versions selected by
+            // the current plan. This keeps WPF ComboBox SelectedItem references
+            // stable and makes legacy/unavailable references visible instead of
+            // silently replacing them with the first matching template.
+            var referenced = WorkflowSteps
+                .Select(step => step.SelectedWorkflowVersion)
+                .Append(SelectedWorkflowVersion)
+                .Concat(_referencedWorkflowVersions.Values)
+                .Where(option => option is not null)
+                .Cast<PublishedWorkflowVersionOption>()
+                .GroupBy(option => (option.WorkflowId, option.Version))
+                .Select(group => group.First());
+
+            foreach (var option in referenced)
+            {
+                if (visible.Any(item => item.WorkflowId == option.WorkflowId && item.Version == option.Version))
+                    continue;
+                visible.Add(option);
+            }
+
+            PublishedWorkflowVersions.Clear();
+            foreach (var option in visible
+                         .OrderBy(option => option.IsAvailable ? 0 : 1)
+                         .ThenBy(option => option.Name, StringComparer.OrdinalIgnoreCase)
+                         .ThenByDescending(option => option.Version))
+            {
+                PublishedWorkflowVersions.Add(option);
+            }
+
+            // WPF may transiently write null to SelectedItem while an
+            // ObservableCollection is reset. Restore the captured selections
+            // before releasing the loading guard so filtering is non-mutating.
+            foreach (var selection in workflowSelections)
+            {
+                if (!ReferenceEquals(selection.Step.SelectedWorkflowVersion, selection.Option))
+                    selection.Step.SelectedWorkflowVersion = selection.Option;
+            }
+
+            if (!ReferenceEquals(_selectedWorkflowVersion, selectedWorkflowVersion))
+                SetField(ref _selectedWorkflowVersion, selectedWorkflowVersion, nameof(SelectedWorkflowVersion));
+        }
+        finally
+        {
+            _isLoadingEditor = wasLoading;
+        }
+
+        OnPropertyChanged(nameof(WorkflowTemplateFilterSummary));
     }
 
     private void ReindexWorkflowSteps()
@@ -822,6 +935,7 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
         OnPropertyChanged(nameof(CurrentVersion));
         OnPropertyChanged(nameof(ValidationSummary));
         OnPropertyChanged(nameof(WorkflowStepsSummary));
+        OnPropertyChanged(nameof(WorkflowTemplateFilterSummary));
         OnPropertyChanged(nameof(CanMoveWorkflowStepUp));
         OnPropertyChanged(nameof(CanMoveWorkflowStepDown));
         OnPropertyChanged(nameof(HasValidationIssues));

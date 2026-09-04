@@ -42,6 +42,11 @@ public sealed class ExperimentPlanningViewBindingTests
                 Assert.Same(plans.AddWorkflowStepCommand, Assert.IsType<Button>(planView.FindName("AddWorkflowStepButton")).Command);
                 Assert.Same(plans.MoveWorkflowStepUpCommand, Assert.IsType<Button>(planView.FindName("MoveWorkflowStepUpButton")).Command);
                 Assert.Same(plans.MoveWorkflowStepDownCommand, Assert.IsType<Button>(planView.FindName("MoveWorkflowStepDownButton")).Command);
+                var verifiedFilter = Assert.IsType<CheckBox>(planView.FindName("VerifiedWorkflowTemplatesOnlyCheckBox"));
+                Assert.False(verifiedFilter.IsChecked);
+                planView.Dispatcher.Invoke(() => verifiedFilter.IsChecked = true);
+                PumpDispatcher(planView.Dispatcher);
+                Assert.True(plans.ShowVerifiedWorkflowTemplatesOnly);
                 Assert.Single(Assert.IsType<DataGrid>(planView.FindName("WorkflowStepGrid")).Items);
                 Assert.Single(Assert.IsType<DataGrid>(planView.FindName("PlanGrid")).Items);
                 Assert.Single(Assert.IsType<DataGrid>(planView.FindName("PlanVersionGrid")).Items);
