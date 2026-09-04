@@ -92,6 +92,7 @@
                            Text="{Binding SelectedExperimentStepHint}"
                            TextWrapping="Wrap" />
                 <Expander Margin="0,6,0,0"
+                          IsExpanded="False"
                           Header="高级：按运行 ID 加载（通常无需填写）">
                     <WrapPanel Margin="0,6,0,0" VerticalAlignment="Center">
                         <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Foreground="#475467" Text="运行 ID" />
