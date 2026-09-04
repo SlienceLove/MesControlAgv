@@ -12,6 +12,7 @@ public partial class WorkflowManagementView : UserControl
 {
     private WorkflowEditorViewModel? _workflowEditor;
     private bool? _isCompactLayout;
+    private bool _isCanvasFocusMode;
 
     public WorkflowManagementView()
     {
@@ -30,6 +31,7 @@ public partial class WorkflowManagementView : UserControl
 
     private void WorkflowManagementView_Unloaded(object sender, RoutedEventArgs e)
     {
+        SetCanvasFocusMode(false);
         DetachWorkflowEditor();
         WorkflowCanvasSurface.Detach();
     }
@@ -41,6 +43,12 @@ public partial class WorkflowManagementView : UserControl
 
     private void ApplyResponsiveLayout()
     {
+        if (_isCanvasFocusMode)
+        {
+            ApplyCanvasFocusLayout();
+            return;
+        }
+
         if (Content is not Grid root)
         {
             return;
@@ -84,6 +92,59 @@ public partial class WorkflowManagementView : UserControl
             columns[1].Width = new GridLength(1, GridUnitType.Star);
             columns[2].Width = new GridLength(360);
         }
+    }
+
+    private void WorkflowCanvasFullscreen_Checked(object sender, RoutedEventArgs e) =>
+        SetCanvasFocusMode(true);
+
+    private void WorkflowCanvasFullscreen_Unchecked(object sender, RoutedEventArgs e) =>
+        SetCanvasFocusMode(false);
+
+    private void SetCanvasFocusMode(bool isFocusMode)
+    {
+        _isCanvasFocusMode = isFocusMode;
+        WorkflowCanvasFullscreenButton.Content = isFocusMode ? "退出全屏编辑" : "全屏编辑";
+        WorkflowPalettePane.Visibility = isFocusMode ? Visibility.Collapsed : Visibility.Visible;
+        WorkflowInspectorPane.Visibility = isFocusMode ? Visibility.Collapsed : Visibility.Visible;
+        WorkflowCanvasPane.Margin = isFocusMode ? new Thickness(0) : new Thickness(12, 0, 12, 0);
+
+        if (Content is not Grid root)
+            return;
+
+        var workspace = root.Children
+            .OfType<Grid>()
+            .FirstOrDefault(child => Grid.GetRow(child) == 1 && child.ColumnDefinitions.Count == 3);
+        if (workspace is null)
+            return;
+
+        var columns = workspace.ColumnDefinitions;
+        if (isFocusMode)
+        {
+            columns[0].Width = new GridLength(0);
+            columns[1].Width = new GridLength(1, GridUnitType.Star);
+            columns[2].Width = new GridLength(0);
+            return;
+        }
+
+        _isCompactLayout = null;
+        ApplyResponsiveLayout();
+    }
+
+    private void ApplyCanvasFocusLayout()
+    {
+        if (Content is not Grid root)
+            return;
+
+        var workspace = root.Children
+            .OfType<Grid>()
+            .FirstOrDefault(child => Grid.GetRow(child) == 1 && child.ColumnDefinitions.Count == 3);
+        if (workspace is null)
+            return;
+
+        var columns = workspace.ColumnDefinitions;
+        columns[0].Width = new GridLength(0);
+        columns[1].Width = new GridLength(1, GridUnitType.Star);
+        columns[2].Width = new GridLength(0);
     }
 
     private void ImportWorkflowCompatibility_Click(object sender, RoutedEventArgs e)

@@ -60,6 +60,14 @@
                             Command="{Binding WorkflowEditor.ExecuteSimulatorCommand}"
                             Content="执行模拟"
                             ToolTip="仅 simulator 模式；进入本地隔离服务并执行已发布流程" />
+                    <ToggleButton x:Name="WorkflowCanvasFullscreenButton"
+                                  Margin="6,0,0,0"
+                                  Padding="12,7"
+                                  AutomationProperties.AutomationId="WorkflowCanvasFullscreenButton"
+                                  Checked="WorkflowCanvasFullscreen_Checked"
+                                  Unchecked="WorkflowCanvasFullscreen_Unchecked"
+                                  Content="全屏编辑"
+                                  ToolTip="隐藏流程列表和属性面板，扩大画布查看或编辑节点；点击再次恢复" />
                 </WrapPanel>
             </Grid>
 
@@ -70,7 +78,7 @@
                     <ColumnDefinition Width="360" />
                 </Grid.ColumnDefinitions>
 
-                <Border Padding="12" Background="#F6F8FA" CornerRadius="6">
+                <Border x:Name="WorkflowPalettePane" Padding="12" Background="#F6F8FA" CornerRadius="6">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -95,7 +103,7 @@
                     </Grid>
                 </Border>
 
-                <Border Grid.Column="1" Margin="12,0" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
+                <Border x:Name="WorkflowCanvasPane" Grid.Column="1" Margin="12,0" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
                     <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" />
@@ -138,7 +146,7 @@
                     </Grid>
                 </Border>
 
-                <Border Grid.Column="2" Padding="12" Background="#F6F8FA" CornerRadius="6">
+                <Border x:Name="WorkflowInspectorPane" Grid.Column="2" Padding="12" Background="#F6F8FA" CornerRadius="6">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel>
                              <TextBlock FontSize="16" FontWeight="SemiBold" Text="流程属性" />

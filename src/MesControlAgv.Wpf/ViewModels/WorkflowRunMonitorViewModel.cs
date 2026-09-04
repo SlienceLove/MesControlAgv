@@ -1,8 +1,10 @@
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Net.Http;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
 using MesControlAgv.Contracts;
+using MesControlAgv.Contracts.Experiments;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Workflows;
 using MesControlAgv.Wpf.Infrastructure;
@@ -29,6 +31,9 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     private readonly AsyncCommand _createAndAuthorizeFieldMoveCommand;
     private readonly IWorkflowRuntimeAlertPresenter _alertPresenter;
     private readonly bool _physicalRuntime;
+    private readonly CancellationTokenSource _shutdown = new();
+    private readonly SemaphoreSlim _experimentSelectionGate = new(1, 1);
+    private readonly AsyncCommand _refreshExperimentJobsCommand;
     private CancellationTokenSource? _autoRefreshCancellation;
     private Task? _autoRefreshLoop;
     private bool _autoRefreshViewAttached;
@@ -36,6 +41,9 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     private TimeSpan _autoRefreshInterval = DefaultAutoRefreshInterval;
     private bool _isAutoRefreshRunning;
     private bool _disposed;
+    private bool _isLoadingExperimentJobs;
+    private bool _experimentJobsLoaded;
+    private bool _suppressExperimentSelection;
     private string _runIdText = string.Empty;
     private WorkflowExecutionSnapshot? _run;
     private WorkflowVersion? _version;
@@ -66,6 +74,8 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     private string _physicalGateStatus = "现场条件尚未读取";
     private string _physicalGateWarning = string.Empty;
     private string? _lastPhysicalGateWarningKey;
+    private WorkflowMonitorExperimentJobOption? _selectedExperimentJob;
+    private WorkflowMonitorStepOption? _selectedExperimentStep;
 
     public WorkflowRunMonitorViewModel(
         IMesClient mes,
@@ -77,6 +87,9 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         _confirmation = confirmation ?? MessageBoxWorkflowRunControlConfirmation.Instance;
         _alertPresenter = alertPresenter ?? MessageBoxWorkflowRuntimeAlertPresenter.Instance;
         _physicalRuntime = physicalRuntime;
+        _refreshExperimentJobsCommand = new AsyncCommand(
+            () => RefreshExperimentJobsAsync(),
+            () => !IsBusy && !IsLoadingExperimentJobs);
         _refreshCommand = new AsyncCommand(RefreshFromInputAsync, CanRefresh);
         _checkPermissionsCommand = new AsyncCommand(CheckPermissionsAsync, CanCheckPermissions);
         _pauseCommand = new AsyncCommand(PauseAsync, () => CanPause);
@@ -103,6 +116,56 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    public ObservableCollection<WorkflowMonitorExperimentJobOption> ExperimentJobOptions { get; } = [];
+    public ObservableCollection<WorkflowMonitorStepOption> ExperimentStepOptions { get; } = [];
+
+    public WorkflowMonitorExperimentJobOption? SelectedExperimentJob
+    {
+        get => _selectedExperimentJob;
+        set
+        {
+            if (!SetField(ref _selectedExperimentJob, value)) return;
+            OnPropertyChanged(nameof(SelectedExperimentJobHint));
+            if (_suppressExperimentSelection) return;
+            ApplyExperimentJobSelection(value);
+        }
+    }
+
+    public WorkflowMonitorStepOption? SelectedExperimentStep
+    {
+        get => _selectedExperimentStep;
+        set
+        {
+            if (!SetField(ref _selectedExperimentStep, value)) return;
+            OnPropertyChanged(nameof(SelectedExperimentStepHint));
+            if (_suppressExperimentSelection) return;
+            ApplyExperimentStepSelection(value);
+        }
+    }
+
+    public bool IsLoadingExperimentJobs
+    {
+        get => _isLoadingExperimentJobs;
+        private set
+        {
+            if (!SetField(ref _isLoadingExperimentJobs, value)) return;
+            OnPropertyChanged(nameof(ExperimentSelectionStatus));
+            _refreshExperimentJobsCommand.RaiseCanExecuteChanged();
+        }
+    }
+
+    public string ExperimentSelectionStatus => IsLoadingExperimentJobs
+        ? "正在读取可监控实验任务..."
+        : ExperimentJobOptions.Count == 0
+            ? "暂无已准入或已运行的实验任务"
+            : $"已加载 {ExperimentJobOptions.Count} 个可监控实验任务";
+
+    public string SelectedExperimentJobHint => SelectedExperimentJob?.Hint ??
+                                               "请选择实验任务，系统会自动定位对应运行记录。";
+
+    public string SelectedExperimentStepHint => SelectedExperimentStep?.Hint ??
+                                                "选择任务后显示方案中的流程步骤。";
+
     public string RunIdText
     {
         get => _runIdText;
@@ -121,6 +184,7 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     public ICommand ResolveUnknownSucceededCommand { get; }
     public ICommand ResolveUnknownFailedCommand { get; }
     public ICommand CreateAndAuthorizeFieldMoveCommand { get; }
+    public ICommand RefreshExperimentJobsCommand => _refreshExperimentJobsCommand;
 
     /// <summary>
     /// The view calls this when it is visible. Refreshing is read-only and is
@@ -457,6 +521,7 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         {
             if (!SetField(ref _isBusy, value)) return;
             _refreshCommand.RaiseCanExecuteChanged();
+            _refreshExperimentJobsCommand.RaiseCanExecuteChanged();
             RaiseControlStateChanged();
         }
     }
@@ -645,6 +710,187 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         ? "结果未知，禁止自动重试。请先核对设备操作和时间线证据。"
         : string.Empty;
 
+    /// <summary>
+    /// Loads the business-facing experiment-task selector. Jobs without a
+    /// workflow run are retained so a composed plan can explain that its
+    /// step-level runtime context is not available yet.
+    /// </summary>
+    public Task EnsureExperimentJobsLoadedAsync(
+        CancellationToken cancellationToken = default) =>
+        _experimentJobsLoaded
+            ? Task.CompletedTask
+            : RefreshExperimentJobsAsync(cancellationToken);
+
+    public async Task RefreshExperimentJobsAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (_disposed) return;
+        var effectiveCancellation = cancellationToken.CanBeCanceled
+            ? cancellationToken
+            : _shutdown.Token;
+        if (!await _experimentSelectionGate.WaitAsync(0, effectiveCancellation))
+            return;
+
+        IsLoadingExperimentJobs = true;
+        try
+        {
+            var jobsTask = _mes.GetExperimentJobsAsync(null, effectiveCancellation);
+            var plansTask = _mes.GetExperimentPlansAsync(effectiveCancellation);
+            await Task.WhenAll(jobsTask, plansTask);
+
+            var planNames = plansTask.Result
+                .GroupBy(plan => plan.PlanId)
+                .ToDictionary(group => group.Key, group => group
+                    .OrderByDescending(plan => plan.Version)
+                    .Select(plan => plan.Name)
+                    .FirstOrDefault() ?? string.Empty);
+            var options = jobsTask.Result
+                .Where(job => job.Status != ExperimentJobStatus.Draft)
+                .OrderByDescending(job => job.UpdatedAt)
+                .ThenBy(job => job.SampleBatchId, StringComparer.OrdinalIgnoreCase)
+                .Select(job => new WorkflowMonitorExperimentJobOption(
+                    job,
+                    planNames.GetValueOrDefault(job.PlanId) ?? string.Empty))
+                .ToArray();
+
+            var selectedJobId = SelectedExperimentJob?.JobId;
+            _suppressExperimentSelection = true;
+            try
+            {
+                ExperimentJobOptions.Clear();
+                foreach (var option in options)
+                    ExperimentJobOptions.Add(option);
+
+                var selected = options.FirstOrDefault(option =>
+                                   option.Job.WorkflowRunId == Run?.ExecutionId) ??
+                               options.FirstOrDefault(option => option.JobId == selectedJobId) ??
+                               options.FirstOrDefault();
+                SelectedExperimentJob = selected;
+                PopulateExperimentStepOptions(selected);
+            }
+            finally
+            {
+                _suppressExperimentSelection = false;
+            }
+
+            OnPropertyChanged(nameof(ExperimentSelectionStatus));
+            OnPropertyChanged(nameof(SelectedExperimentJobHint));
+            OnPropertyChanged(nameof(SelectedExperimentStepHint));
+            _experimentJobsLoaded = true;
+
+            if (SelectedExperimentJob?.Job.WorkflowRunId is { } runId &&
+                runId != Guid.Empty &&
+                Run?.ExecutionId != runId)
+            {
+                await LoadAsync(runId, effectiveCancellation);
+            }
+        }
+        catch (OperationCanceledException) when (effectiveCancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = $"实验任务列表读取失败：{exception.Message}";
+        }
+        finally
+        {
+            IsLoadingExperimentJobs = false;
+            try { _experimentSelectionGate.Release(); }
+            catch (ObjectDisposedException) { }
+        }
+    }
+
+    private void ApplyExperimentJobSelection(WorkflowMonitorExperimentJobOption? option)
+    {
+        _suppressExperimentSelection = true;
+        try
+        {
+            PopulateExperimentStepOptions(option);
+        }
+        finally
+        {
+            _suppressExperimentSelection = false;
+        }
+
+        OnPropertyChanged(nameof(SelectedExperimentJobHint));
+        OnPropertyChanged(nameof(SelectedExperimentStepHint));
+        if (option is null)
+        {
+            ClearLoadedRun();
+            RunIdText = string.Empty;
+            StatusMessage = "请选择一个实验任务。";
+            return;
+        }
+
+        if (option.Job.WorkflowRunId is not { } runId || runId == Guid.Empty)
+        {
+            ClearLoadedRun();
+            RunIdText = string.Empty;
+            StatusMessage = option.Job.WorkflowSteps.Count > 1
+                ? $"方案包含 {option.Job.WorkflowSteps.Count} 个流程步骤，但当前尚未建立复合运行上下文。"
+                : "该实验任务尚未准入运行，暂无可监控的流程记录。";
+            return;
+        }
+
+        if (Run?.ExecutionId != runId)
+            _ = LoadSelectedExperimentRunAsync(runId);
+    }
+
+    private void PopulateExperimentStepOptions(
+        WorkflowMonitorExperimentJobOption? option)
+    {
+        ExperimentStepOptions.Clear();
+        if (option is not null)
+        {
+            var steps = option.Job.WorkflowSteps
+                .OrderBy(step => step.Order)
+                .ToArray();
+            for (var index = 0; index < steps.Length; index++)
+            {
+                ExperimentStepOptions.Add(new WorkflowMonitorStepOption(
+                    option,
+                    steps[index],
+                    index + 1,
+                    steps.Length));
+            }
+        }
+
+        SelectedExperimentStep = ExperimentStepOptions.FirstOrDefault();
+    }
+
+    private void ApplyExperimentStepSelection(WorkflowMonitorStepOption? option)
+    {
+        if (option is null) return;
+        OnPropertyChanged(nameof(SelectedExperimentStepHint));
+        if (!option.IsRuntimeSelectable)
+        {
+            StatusMessage = option.Hint;
+            return;
+        }
+
+        if (option.Job.Job.WorkflowRunId is { } runId &&
+            runId != Guid.Empty &&
+            Run?.ExecutionId != runId)
+        {
+            _ = LoadSelectedExperimentRunAsync(runId);
+        }
+    }
+
+    private async Task LoadSelectedExperimentRunAsync(Guid runId)
+    {
+        try
+        {
+            await LoadAsync(runId, _shutdown.Token);
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = $"流程运行读取失败：{exception.Message}";
+        }
+    }
+
     public async Task LoadAsync(Guid workflowRunId, CancellationToken cancellationToken = default)
     {
         if (workflowRunId == Guid.Empty)
@@ -682,6 +928,7 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
             ValidateReadModel(run, version, nodes, operations, timeline);
             ValidateFieldAcceptances(run, nodes, acceptances);
             ApplyReadModel(run, version, nodes, operations, timeline, acceptances);
+            SyncExperimentSelectionForRun(run.ExecutionId);
             await RefreshPhysicalGateAsync(cancellationToken);
             await RefreshPermissionsAsync(cancellationToken, reportFailure: false);
             RefreshedAt = DateTimeOffset.Now;
@@ -1189,6 +1436,7 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
 
         try
         {
+            ClearExperimentSelectionForManualRun(workflowRunId);
             await LoadAsync(workflowRunId);
         }
         catch (Exception exception)
@@ -1523,6 +1771,42 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         EnsureAutoRefreshLoop();
     }
 
+    private void SyncExperimentSelectionForRun(Guid workflowRunId)
+    {
+        var option = ExperimentJobOptions.FirstOrDefault(item =>
+            item.Job.WorkflowRunId == workflowRunId);
+        if (option is null) return;
+
+        _suppressExperimentSelection = true;
+        try
+        {
+            SelectedExperimentJob = option;
+            PopulateExperimentStepOptions(option);
+        }
+        finally
+        {
+            _suppressExperimentSelection = false;
+        }
+    }
+
+    private void ClearExperimentSelectionForManualRun(Guid workflowRunId)
+    {
+        if (SelectedExperimentJob?.Job.WorkflowRunId is not { } selectedRunId ||
+            selectedRunId == workflowRunId)
+            return;
+
+        _suppressExperimentSelection = true;
+        try
+        {
+            SelectedExperimentJob = null;
+            PopulateExperimentStepOptions(null);
+        }
+        finally
+        {
+            _suppressExperimentSelection = false;
+        }
+    }
+
     private static WorkflowRunNodeItemViewModel? SelectDefaultNode(
         WorkflowExecutionSnapshot run,
         IReadOnlyList<WorkflowRunNodeItemViewModel> nodes) =>
@@ -1779,6 +2063,9 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         _disposed = true;
         _autoRefreshViewAttached = false;
         CancelAutoRefreshLoop();
+        _shutdown.Cancel();
+        _experimentSelectionGate.Dispose();
+        _shutdown.Dispose();
     }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)

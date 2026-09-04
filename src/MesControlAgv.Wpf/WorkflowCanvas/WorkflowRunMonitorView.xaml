@@ -50,26 +50,63 @@
                     </StackPanel>
                 </Grid>
                 <WrapPanel Margin="0,10,0,0" VerticalAlignment="Center">
-                    <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Foreground="#475467" Text="运行 ID" />
-                    <TextBox Width="330"
-                             MinHeight="32"
-                             AutomationProperties.AutomationId="WorkflowRunIdInput"
-                             Text="{Binding RunIdText, UpdateSourceTrigger=PropertyChanged}" />
-                    <Button MinWidth="88"
+                    <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Foreground="#475467" Text="实验任务" />
+                    <ComboBox x:Name="WorkflowRunExperimentJobSelector" Width="410"
+                              MinHeight="32"
+                              AutomationProperties.AutomationId="WorkflowRunExperimentJobSelector"
+                              DisplayMemberPath="Display"
+                              ItemsSource="{Binding ExperimentJobOptions}"
+                              SelectedItem="{Binding SelectedExperimentJob, Mode=TwoWay}"
+                              ToolTip="{Binding SelectedExperimentJobHint}" />
+                    <TextBlock Margin="12,0,6,0" VerticalAlignment="Center" Foreground="#475467" Text="流程步骤" />
+                    <ComboBox x:Name="WorkflowRunStepSelector" Width="330"
+                              MinHeight="32"
+                              AutomationProperties.AutomationId="WorkflowRunStepSelector"
+                              DisplayMemberPath="Display"
+                              ItemsSource="{Binding ExperimentStepOptions}"
+                              SelectedItem="{Binding SelectedExperimentStep, Mode=TwoWay}"
+                              ToolTip="{Binding SelectedExperimentStepHint}" />
+                    <Button x:Name="WorkflowRunSelectionRefreshButton" MinWidth="110"
                             Margin="8,0,0,0"
                             Padding="12,5"
-                            AutomationProperties.AutomationId="WorkflowRunRefreshButton"
-                             Command="{Binding RefreshCommand}"
-                             Content="加载 / 刷新" />
+                            AutomationProperties.AutomationId="WorkflowRunSelectionRefreshButton"
+                            Command="{Binding RefreshExperimentJobsCommand}"
+                            Content="刷新任务列表" />
                     <Button x:Name="WorkflowRunFullscreenButton"
                             MinWidth="88"
                             Margin="8,0,0,0"
                             Padding="12,5"
                             AutomationProperties.AutomationId="WorkflowRunFullscreenButton"
                             Click="OpenFullscreen_Click"
-                             Content="全屏查看"
-                             ToolTip="在独立大屏窗口查看流程图、当前节点、节点执行、设备操作和时间线" />
+                            Content="全屏查看"
+                            ToolTip="在独立大屏窗口查看流程图、当前节点、节点执行、设备操作和时间线" />
                 </WrapPanel>
+                <TextBlock Margin="0,5,0,0"
+                           FontSize="11"
+                           Foreground="#667085"
+                           Text="{Binding SelectedExperimentJobHint}"
+                           TextWrapping="Wrap" />
+                <TextBlock Margin="0,2,0,0"
+                           FontSize="11"
+                           Foreground="#667085"
+                           Text="{Binding SelectedExperimentStepHint}"
+                           TextWrapping="Wrap" />
+                <Expander Margin="0,6,0,0"
+                          Header="高级：按运行 ID 加载（通常无需填写）">
+                    <WrapPanel Margin="0,6,0,0" VerticalAlignment="Center">
+                        <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Foreground="#475467" Text="运行 ID" />
+                        <TextBox Width="330"
+                                 MinHeight="32"
+                                 AutomationProperties.AutomationId="WorkflowRunIdInput"
+                                 Text="{Binding RunIdText, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button MinWidth="88"
+                                Margin="8,0,0,0"
+                                Padding="12,5"
+                                AutomationProperties.AutomationId="WorkflowRunRefreshButton"
+                                Command="{Binding RefreshCommand}"
+                                Content="加载 / 刷新" />
+                    </WrapPanel>
+                </Expander>
                 <WrapPanel Margin="0,7,0,0">
                     <CheckBox x:Name="AutoRefreshCheckBox"
                               VerticalAlignment="Center"

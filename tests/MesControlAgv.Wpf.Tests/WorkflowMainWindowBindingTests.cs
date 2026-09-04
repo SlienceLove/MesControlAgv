@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Threading;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Wpf.Services;
@@ -56,6 +57,7 @@ public sealed class WorkflowMainWindowBindingTests
                 var surface = Assert.IsType<NodifyCanvasAdapter>(workflowView.FindName("WorkflowCanvasSurface"));
                 var simulatorExecute = Assert.IsType<Button>(workflowView.FindName("WorkflowSimulatorExecuteButton"));
                 var commandToolbar = Assert.IsType<WrapPanel>(workflowView.FindName("WorkflowCommandToolbar"));
+                var fullscreenButton = Assert.IsType<ToggleButton>(workflowView.FindName("WorkflowCanvasFullscreenButton"));
                 surface.Attach(Assert.IsType<WorkflowCanvasSpikeViewModel>(editor.CanvasViewModel));
                 PumpDispatcher(window.Dispatcher);
                 Assert.Same(editor.ExecuteSimulatorCommand, simulatorExecute.Command);
@@ -66,6 +68,18 @@ public sealed class WorkflowMainWindowBindingTests
                     Equals(button.Content, "试运行"));
                 Assert.Contains(commandToolbar.Children.OfType<Button>(), button =>
                     Equals(button.Content, "执行模拟"));
+                Assert.Equal("全屏编辑", fullscreenButton.Content);
+                fullscreenButton.IsChecked = true;
+                PumpDispatcher(window.Dispatcher);
+                Assert.Equal(Visibility.Collapsed, Assert.IsType<Border>(workflowView.FindName("WorkflowPalettePane")).Visibility);
+                Assert.Equal(Visibility.Collapsed, Assert.IsType<Border>(workflowView.FindName("WorkflowInspectorPane")).Visibility);
+                Assert.Equal(0, ((Grid)workflowView.Content).Children.OfType<Grid>()
+                    .First(child => Grid.GetRow(child) == 1 && child.ColumnDefinitions.Count == 3)
+                    .ColumnDefinitions[0].Width.Value);
+                Assert.Equal("退出全屏编辑", fullscreenButton.Content);
+                fullscreenButton.IsChecked = false;
+                PumpDispatcher(window.Dispatcher);
+                Assert.Equal(Visibility.Visible, Assert.IsType<Border>(workflowView.FindName("WorkflowPalettePane")).Visibility);
                 var validationGrid = Assert.IsType<DataGrid>(workflowView.FindName("WorkflowValidationGrid"));
                 validationGrid.SelectedItem = Assert.Single(
                     validationGrid.Items.OfType<WorkflowValidationIssueItemViewModel>());

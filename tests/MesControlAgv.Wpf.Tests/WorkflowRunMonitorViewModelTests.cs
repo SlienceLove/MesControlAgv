@@ -1,5 +1,6 @@
 using System.Windows.Input;
 using MesControlAgv.Contracts;
+using MesControlAgv.Contracts.Experiments;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Wpf.Services;
 using MesControlAgv.Wpf.ViewModels;
@@ -73,6 +74,107 @@ public sealed class WorkflowRunMonitorViewModelTests
             fixture.Version.Definition.Layouts.Select(layout =>
                 (layout.NodeId, layout.X, layout.Y, layout.Width, layout.Height)));
         Assert.Equal(0, fixture.Version.Definition.Viewport.X);
+    }
+
+    [Fact]
+    public async Task Experiment_job_and_step_selectors_load_a_run_without_manual_id_input()
+    {
+        var fixture = WorkflowRunMonitorFixture.Create();
+        var job = new ExperimentJob
+        {
+            JobId = Guid.NewGuid(),
+            PlanId = Guid.NewGuid(),
+            PlanVersion = 3,
+            WorkflowId = fixture.Run.WorkflowId,
+            WorkflowVersion = fixture.Run.Version,
+            WorkflowRunId = fixture.Run.ExecutionId,
+            SampleBatchId = "B-SELECTOR",
+            Status = ExperimentJobStatus.Running,
+            WorkflowSteps =
+            [
+                new ExperimentPlanWorkflowStep
+                {
+                    StepId = Guid.NewGuid(),
+                    Order = 1,
+                    WorkflowId = fixture.Run.WorkflowId,
+                    WorkflowVersion = fixture.Run.Version,
+                    Name = "读取仪器"
+                }
+            ]
+        };
+        var client = new WorkflowRunMonitorClientStub(fixture)
+        {
+            ExperimentJobs = [job],
+            ExperimentPlans =
+            [
+                new ExperimentPlan
+                {
+                    PlanId = job.PlanId,
+                    Version = job.PlanVersion,
+                    Name = "离子检测方案",
+                    Status = ExperimentPlanStatus.Published
+                }
+            ]
+        };
+        using var monitor = new WorkflowRunMonitorViewModel(client);
+
+        await monitor.RefreshExperimentJobsAsync();
+
+        var selectedJob = Assert.Single(monitor.ExperimentJobOptions);
+        Assert.Equal("B-SELECTOR · 离子检测方案 / v3 · 运行中", selectedJob.Display);
+        Assert.Same(selectedJob, monitor.SelectedExperimentJob);
+        var selectedStep = Assert.Single(monitor.ExperimentStepOptions);
+        Assert.Equal("步骤 1/1 · 读取仪器 · 运行中", selectedStep.Display);
+        Assert.Same(selectedStep, monitor.SelectedExperimentStep);
+        Assert.Equal(fixture.Run.ExecutionId, monitor.Run!.ExecutionId);
+        Assert.Equal(fixture.Run.ExecutionId.ToString("D"), monitor.RunIdText);
+    }
+
+    [Fact]
+    public async Task Composite_job_selector_explains_step_context_without_asking_for_a_guid()
+    {
+        var fixture = WorkflowRunMonitorFixture.Create();
+        var job = new ExperimentJob
+        {
+            JobId = Guid.NewGuid(),
+            PlanId = Guid.NewGuid(),
+            PlanVersion = 1,
+            WorkflowId = fixture.Run.WorkflowId,
+            WorkflowVersion = fixture.Run.Version,
+            SampleBatchId = "B-COMPOSITE-SELECTOR",
+            Status = ExperimentJobStatus.Scheduled,
+            WorkflowSteps =
+            [
+                new ExperimentPlanWorkflowStep
+                {
+                    StepId = Guid.NewGuid(),
+                    Order = 1,
+                    WorkflowId = fixture.Run.WorkflowId,
+                    WorkflowVersion = fixture.Run.Version,
+                    Name = "准备"
+                },
+                new ExperimentPlanWorkflowStep
+                {
+                    StepId = Guid.NewGuid(),
+                    Order = 2,
+                    WorkflowId = fixture.Run.WorkflowId,
+                    WorkflowVersion = fixture.Run.Version,
+                    Name = "检测"
+                }
+            ]
+        };
+        var client = new WorkflowRunMonitorClientStub(fixture)
+        {
+            ExperimentJobs = [job]
+        };
+        using var monitor = new WorkflowRunMonitorViewModel(client);
+
+        await monitor.RefreshExperimentJobsAsync();
+
+        Assert.Null(monitor.Run);
+        Assert.Equal(2, monitor.ExperimentStepOptions.Count);
+        Assert.Contains("复合运行上下文", monitor.SelectedExperimentStepHint, StringComparison.Ordinal);
+        Assert.Contains("无需输入运行 ID", monitor.SelectedExperimentStepHint, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -542,6 +644,8 @@ internal sealed class WorkflowRunMonitorClientStub : IMesClient
     public IReadOnlyList<WorkflowDeviceOperationSnapshot> DeviceOperations { get; set; }
     public IReadOnlyList<WorkflowRunTimelineEntry> Timeline { get; set; }
     public IReadOnlyList<FieldNavigationAcceptanceResponse> FieldAcceptances { get; set; } = [];
+    public IReadOnlyList<ExperimentJob> ExperimentJobs { get; set; } = [];
+    public IReadOnlyList<ExperimentPlan> ExperimentPlans { get; set; } = [];
     public AuboArmProgramStatusResponse? AuboProgramStatus { get; set; }
     public IReadOnlyList<string> GrantedPermissions { get; set; } = [];
     public List<WorkflowRunControlRequest> PauseRequests { get; } = [];
@@ -555,6 +659,16 @@ internal sealed class WorkflowRunMonitorClientStub : IMesClient
 
     public Task<WorkflowExecutionSnapshot?> GetWorkflowExecutionAsync(Guid executionId, CancellationToken cancellationToken) =>
         ReadExecution();
+
+    public Task<IReadOnlyList<ExperimentJob>> GetExperimentJobsAsync(
+        ExperimentJobStatus? status,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ExperimentJob>>(
+            ExperimentJobs.Where(job => status is null || job.Status == status).ToArray());
+
+    public Task<IReadOnlyList<ExperimentPlan>> GetExperimentPlansAsync(
+        CancellationToken cancellationToken) =>
+        Task.FromResult(ExperimentPlans);
 
     private Task<WorkflowExecutionSnapshot?> ReadExecution()
     {

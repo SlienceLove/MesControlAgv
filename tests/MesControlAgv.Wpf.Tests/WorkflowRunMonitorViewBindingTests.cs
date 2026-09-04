@@ -50,6 +50,9 @@ public sealed class WorkflowRunMonitorViewBindingTests
                 var autoRefresh = Assert.IsType<CheckBox>(view.FindName("AutoRefreshCheckBox"));
                 var progress = Assert.IsType<ProgressBar>(view.FindName("WorkflowRunProgressBar"));
                 var fullscreen = Assert.IsType<Button>(view.FindName("WorkflowRunFullscreenButton"));
+                var experimentJobSelector = Assert.IsType<ComboBox>(view.FindName("WorkflowRunExperimentJobSelector"));
+                var experimentStepSelector = Assert.IsType<ComboBox>(view.FindName("WorkflowRunStepSelector"));
+                var selectionRefresh = Assert.IsType<Button>(view.FindName("WorkflowRunSelectionRefreshButton"));
                 var failurePanel = Assert.IsType<Border>(view.FindName("WorkflowFailureEvidencePanel"));
                 var cancellationPanel = Assert.IsType<Border>(view.FindName("WorkflowCancellationPanel"));
                 Assert.Same(monitor.PauseCommand, pause.Command);
@@ -59,6 +62,9 @@ public sealed class WorkflowRunMonitorViewBindingTests
                 Assert.Same(monitor.ResolveUnknownFailedCommand, resolveFailed.Command);
                 Assert.Same(monitor.CreateAndAuthorizeFieldMoveCommand, fieldAcceptance.Command);
                 Assert.Equal("全屏查看", fullscreen.Content.ToString());
+                Assert.Same(monitor.ExperimentJobOptions, experimentJobSelector.ItemsSource);
+                Assert.Same(monitor.ExperimentStepOptions, experimentStepSelector.ItemsSource);
+                Assert.Same(monitor.RefreshExperimentJobsCommand, selectionRefresh.Command);
                 Assert.True(autoRefresh.IsChecked);
                 Assert.Contains("自动刷新", autoRefresh.Content.ToString(), StringComparison.Ordinal);
                 Assert.Equal(monitor.ProgressPercent, progress.Value);

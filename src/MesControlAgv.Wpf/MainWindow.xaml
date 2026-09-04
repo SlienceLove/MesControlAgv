@@ -44,6 +44,7 @@
             </Style>
 
             <Style x:Key="NavigationRadioButtonStyle" TargetType="{x:Type RadioButton}">
+                <Setter Property="GroupName" Value="MainNavigation" />
                 <Setter Property="Foreground" Value="#C6D4E1" />
                 <Setter Property="FontSize" Value="13" />
                 <Setter Property="FontWeight" Value="Normal" />

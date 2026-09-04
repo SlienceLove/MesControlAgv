@@ -28,7 +28,7 @@ public partial class WorkflowRunMonitorView : UserControl
         DataContextChanged += WorkflowRunMonitorView_DataContextChanged;
     }
 
-    private void WorkflowRunMonitorView_Loaded(object sender, RoutedEventArgs e)
+    private async void WorkflowRunMonitorView_Loaded(object sender, RoutedEventArgs e)
     {
         // The fullscreen mirror reuses this view. It must not expose a second
         // fullscreen action that could create nested windows.
@@ -36,6 +36,8 @@ public partial class WorkflowRunMonitorView : UserControl
             ? Visibility.Visible
             : Visibility.Collapsed;
         AttachViewModel();
+        if (_viewModel is not null)
+            await _viewModel.EnsureExperimentJobsLoadedAsync();
     }
 
     private void WorkflowRunMonitorView_Unloaded(object sender, RoutedEventArgs e) => DetachViewModel();
