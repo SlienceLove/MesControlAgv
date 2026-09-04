@@ -472,6 +472,30 @@ public static class ExperimentUiText
         _ => "未知"
     };
 
+    public static string CompositeRunStatus(ExperimentRunStatus status) => status switch
+    {
+        ExperimentRunStatus.Prepared => "已准备",
+        ExperimentRunStatus.Running => "运行中",
+        ExperimentRunStatus.Paused => "已暂停",
+        ExperimentRunStatus.Completed => "已完成",
+        ExperimentRunStatus.Failed => "失败",
+        ExperimentRunStatus.Unknown => "待人工核销",
+        ExperimentRunStatus.Cancelled => "已取消",
+        _ => "未知"
+    };
+
+    public static string CompositeStepStatus(ExperimentStepRunStatus status) => status switch
+    {
+        ExperimentStepRunStatus.Pending => "等待中",
+        ExperimentStepRunStatus.Ready => "待启动",
+        ExperimentStepRunStatus.Running => "运行中",
+        ExperimentStepRunStatus.Succeeded => "已完成",
+        ExperimentStepRunStatus.Failed => "失败",
+        ExperimentStepRunStatus.Unknown => "待人工核销",
+        ExperimentStepRunStatus.Cancelled => "已取消",
+        _ => "未知"
+    };
+
     public static string ScheduleStatus(ScheduleEntryStatus status) => status switch
     {
         ScheduleEntryStatus.Draft => "未排程",

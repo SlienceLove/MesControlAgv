@@ -178,6 +178,86 @@ public sealed class WorkflowRunMonitorViewModelTests
     }
 
     [Fact]
+    public async Task Composite_job_selector_loads_outer_snapshot_and_step_status_without_run_id()
+    {
+        var fixture = WorkflowRunMonitorFixture.Create();
+        var job = new ExperimentJob
+        {
+            JobId = Guid.NewGuid(),
+            PlanId = Guid.NewGuid(),
+            PlanVersion = 2,
+            WorkflowId = fixture.Run.WorkflowId,
+            WorkflowVersion = fixture.Run.Version,
+            SampleBatchId = "B-COMPOSITE-RUN",
+            Status = ExperimentJobStatus.Scheduled,
+            WorkflowSteps =
+            [
+                new ExperimentPlanWorkflowStep
+                {
+                    StepId = Guid.NewGuid(),
+                    Order = 1,
+                    WorkflowId = fixture.Run.WorkflowId,
+                    WorkflowVersion = fixture.Run.Version,
+                    Name = "准备"
+                },
+                new ExperimentPlanWorkflowStep
+                {
+                    StepId = Guid.NewGuid(),
+                    Order = 2,
+                    WorkflowId = fixture.Run.WorkflowId,
+                    WorkflowVersion = fixture.Run.Version,
+                    Name = "检测"
+                }
+            ]
+        };
+        var run = new ExperimentRun
+        {
+            ExperimentRunId = Guid.NewGuid(),
+            ExperimentJobId = job.JobId,
+            PlanId = job.PlanId,
+            PlanVersion = job.PlanVersion,
+            AdmissionRequestId = Guid.NewGuid(),
+            Status = ExperimentRunStatus.Prepared,
+            CurrentStepOrder = 1,
+            Steps = job.WorkflowSteps.Select(step => new ExperimentStepRun
+            {
+                ExperimentRunId = Guid.NewGuid(),
+                StepRunId = Guid.NewGuid(),
+                StepId = step.StepId,
+                Order = step.Order,
+                WorkflowId = step.WorkflowId,
+                WorkflowVersion = step.WorkflowVersion,
+                Name = step.Name,
+                Status = ExperimentStepRunStatus.Pending
+            }).ToArray(),
+            CreatedAt = DateTimeOffset.Parse("2026-09-05T01:00:00Z"),
+            UpdatedAt = DateTimeOffset.Parse("2026-09-05T01:00:00Z")
+        };
+        var client = new WorkflowRunMonitorClientStub(fixture)
+        {
+            ExperimentJobs = [job],
+            CompositeRuns = new Dictionary<Guid, ExperimentRun> { [job.JobId] = run }
+        };
+        using var monitor = new WorkflowRunMonitorViewModel(client);
+
+        await monitor.RefreshExperimentJobsAsync();
+
+        Assert.Null(monitor.Run);
+        Assert.Empty(monitor.RunIdText);
+        Assert.Same(run, monitor.CompositeRun);
+        Assert.Equal(2, monitor.CompositeSteps.Count);
+        Assert.Equal("已准备", monitor.CompositeRunStatusDisplay);
+        Assert.Equal("步骤 1 · 准备 / 等待中", monitor.CurrentNodeDisplay);
+        Assert.Contains("已完成 0/2", monitor.CompositeRunSummary, StringComparison.Ordinal);
+        Assert.All(monitor.CompositeSteps, step => Assert.Equal("等待中", step.StatusDisplay));
+
+        monitor.SelectedExperimentStep = monitor.ExperimentStepOptions[1];
+
+        Assert.Contains("步骤 2", monitor.StatusMessage, StringComparison.Ordinal);
+        Assert.Contains("等待子流程", monitor.StatusMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Unknown_node_and_device_evidence_remain_distinct_and_never_expose_a_retry_action()
     {
         var fixture = WorkflowRunMonitorFixture.Create();
@@ -689,6 +769,8 @@ internal sealed class WorkflowRunMonitorClientStub : IMesClient
     public IReadOnlyList<FieldNavigationAcceptanceResponse> FieldAcceptances { get; set; } = [];
     public IReadOnlyList<ExperimentJob> ExperimentJobs { get; set; } = [];
     public IReadOnlyList<ExperimentPlan> ExperimentPlans { get; set; } = [];
+    public IReadOnlyDictionary<Guid, ExperimentRun> CompositeRuns { get; set; } =
+        new Dictionary<Guid, ExperimentRun>();
     public AuboArmProgramStatusResponse? AuboProgramStatus { get; set; }
     public PhysicalAgvPreflightResponse? PhysicalPreflight { get; set; }
     public IReadOnlyList<string> GrantedPermissions { get; set; } = [];
@@ -713,6 +795,11 @@ internal sealed class WorkflowRunMonitorClientStub : IMesClient
     public Task<IReadOnlyList<ExperimentPlan>> GetExperimentPlansAsync(
         CancellationToken cancellationToken) =>
         Task.FromResult(ExperimentPlans);
+
+    public Task<ExperimentRun?> GetExperimentRunForJobAsync(
+        Guid experimentJobId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(CompositeRuns.GetValueOrDefault(experimentJobId));
 
     private Task<WorkflowExecutionSnapshot?> ReadExecution()
     {

@@ -1148,6 +1148,7 @@ AGV/AUBO 只读预检和明确授权。
 ## 2026-09-05 实验复合运行时阶段 2：外层快照持久化
 
 - MES 新增 `ExperimentRunRecord` 与 `ExperimentRuns` 表，以单行 JSON 快照持久化 `ExperimentRun/ExperimentStepRun`；只读查询不会改变状态。
-- 新增显式 `/api/experiment-runs/prepare` 和 `/api/experiment-runs/{runId}` 接口，准备前校验 Scheduled 任务、计划/任务步骤快照、已发布工作流版本及幂等请求；准备阶段不创建子工作流、不写入设备。
-- 新增 MES API 回归 `3/3`，覆盖快照持久化、查询、重复请求和错误载荷拒绝；完整离线门禁报告为 `artifacts/mes-offline-release-gate-20260905-composite-runtime.json`：`1015 passed / 5 allowed skipped / 0 failed`，`releaseEligible=true`。
-- 本切片仅扩展 MES 持久化和只读准备边界，现场 AGV/AUBO 未连接；下一步实现有子工作流证据约束的逐步骤协调器。
+- 新增显式 `/api/experiment-runs/prepare`、按运行 ID和按任务 ID查询接口，准备前校验 Scheduled 任务、计划/任务步骤快照、已发布工作流版本及幂等请求；准备阶段不创建子工作流、不写入设备。
+- WPF 流程运行监控按实验任务读取复合快照，显示每个步骤状态、子流程是否建立、时间和异常；运行 ID 输入保持高级折叠，尚未有子流程时显示明确占位而不是空画布。
+- 新增 MES API 回归 `3/3`、WPF 客户端路由及监控回归；WPF 全量 `398/398`、Domain `43/43`、MES `166/166` 通过。
+- 本切片仅扩展 MES 只读准备边界和 WPF 展示，现场 AGV/AUBO 未连接；下一步实现有子工作流证据约束的逐步骤协调器。

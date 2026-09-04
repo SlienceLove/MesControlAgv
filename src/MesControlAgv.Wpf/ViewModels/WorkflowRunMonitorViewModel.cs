@@ -46,6 +46,8 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     private bool _suppressExperimentSelection;
     private string _runIdText = string.Empty;
     private WorkflowExecutionSnapshot? _run;
+    private ExperimentRun? _compositeRun;
+    private IReadOnlyList<WorkflowMonitorCompositeStepItemViewModel> _compositeSteps = [];
     private WorkflowVersion? _version;
     private IReadOnlyList<WorkflowRunNodeItemViewModel> _nodes = [];
     private IReadOnlyList<WorkflowRunDeviceOperationItemViewModel> _deviceOperations = [];
@@ -160,8 +162,11 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
             ? "暂无已准入或已运行的实验任务"
             : $"已加载 {ExperimentJobOptions.Count} 个可监控实验任务";
 
-    public string SelectedExperimentJobHint => SelectedExperimentJob?.Hint ??
-                                               "请选择实验任务，系统会自动定位对应运行记录。";
+    public string SelectedExperimentJobHint => CompositeRun is not null &&
+                                               SelectedExperimentJob?.JobId == CompositeRun.ExperimentJobId
+        ? $"{SelectedExperimentJob.WorkflowSummary} · 已建立复合运行上下文"
+        : SelectedExperimentJob?.Hint ??
+          "请选择实验任务，系统会自动定位对应运行记录。";
 
     public string SelectedExperimentStepHint => SelectedExperimentStep?.Hint ??
                                                 "选择任务后显示方案中的流程步骤。";
@@ -241,8 +246,9 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         get
         {
             if (!IsAutoRefreshEnabled) return "自动刷新已关闭";
-            if (Run is null) return "加载运行后自动刷新";
-            if (Run.IsTerminal) return "流程已终态，自动刷新已暂停";
+            if (Run is null && CompositeRun is null) return "加载运行后自动刷新";
+            if (Run?.IsTerminal == true || CompositeRun?.IsTerminal == true)
+                return "流程已终态，自动刷新已暂停";
             return IsAutoRefreshRunning
                 ? $"每 {AutoRefreshInterval.TotalSeconds:0.#} 秒自动刷新"
                 : "自动刷新待启动";
@@ -303,6 +309,23 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         : string.Join("  /  ", _grantedPermissions);
 
     public WorkflowExecutionSnapshot? Run => _run;
+
+    /// <summary>
+    /// Outer composite runtime snapshot. It is read by the business selectors;
+    /// child workflow details continue to use <see cref="Run"/> when a child
+    /// execution has actually been created.
+    /// </summary>
+    public ExperimentRun? CompositeRun
+    {
+        get => _compositeRun;
+        private set => SetField(ref _compositeRun, value);
+    }
+
+    public IReadOnlyList<WorkflowMonitorCompositeStepItemViewModel> CompositeSteps
+    {
+        get => _compositeSteps;
+        private set => SetField(ref _compositeSteps, value);
+    }
 
     public WorkflowVersion? Version => _version;
 
@@ -537,9 +560,31 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     }
 
     public bool HasRun => Run is not null;
+    public bool HasCompositeRun => CompositeRun is not null;
+    public string CompositeRunStatusDisplay => CompositeRun is null
+        ? "未建立复合运行"
+        : ExperimentUiText.CompositeRunStatus(CompositeRun.Status);
+    public string CompositeRunSummary
+    {
+        get
+        {
+            if (CompositeRun is null) return string.Empty;
+            var completed = CompositeRun.Steps.Count(step => step.Status == ExperimentStepRunStatus.Succeeded);
+            var current = CompositeRun.Steps.FirstOrDefault(step => step.Order == CompositeRun.CurrentStepOrder);
+            var currentDisplay = current is null
+                ? "无当前步骤"
+                : $"当前：步骤 {current.Order} · {current.Name}";
+            return $"{currentDisplay} · 已完成 {completed}/{CompositeRun.Steps.Count} · {CompositeRunStatusDisplay}";
+        }
+    }
+
+    public string CompositeRunTimeSummary => CompositeRun is null
+        ? string.Empty
+        : $"准备 {CompositeRun.CreatedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}  /  更新 {CompositeRun.UpdatedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}";
 
     public bool HasUnknownState =>
         Run?.RuntimeStatus == WorkflowRuntimeStatus.Unknown ||
+        CompositeRun?.Status == ExperimentRunStatus.Unknown ||
         Nodes.Any(node => node.Status == WorkflowNodeExecutionStatus.Unknown) ||
         DeviceOperations.Any(operation => operation.Status == WorkflowDeviceOperationStatus.Unknown);
 
@@ -597,18 +642,28 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         ? $"待处置节点：{SelectedNode.NodeName} / 尝试 {SelectedNode.Attempt} / {SelectedNode.Id:D}"
         : "请选择 Unknown 节点并核对设备操作与时间线证据。";
 
-    public string RunTitle => Version?.Definition.Name ?? "流程运行监控";
+    public string RunTitle => CompositeRun is not null
+        ? $"{SelectedExperimentJob?.PlanName ?? "实验方案"} · 复合运行监控"
+        : Version?.Definition.Name ?? "流程运行监控";
 
     public string RunIdentity => Run is null
-        ? "尚未加载运行"
+        ? CompositeRun is null ? "尚未加载运行" : "已按实验任务定位复合运行"
         : $"{Run.ExecutionId:D}  /  v{Run.Version}";
 
-    public string RunStatusDisplay => Run is null ? "未加载" : DescribeRunStatus(Run.RuntimeStatus);
+    public string RunStatusDisplay => Run is not null
+        ? DescribeRunStatus(Run.RuntimeStatus)
+        : CompositeRun is not null
+            ? CompositeRunStatusDisplay
+            : "未加载";
 
-    public string RunStatusBrush => Run is null ? "#667085" : GetRunStatusBrush(Run.RuntimeStatus);
+    public string RunStatusBrush => Run is not null
+        ? GetRunStatusBrush(Run.RuntimeStatus)
+        : CompositeRun is null
+            ? "#667085"
+            : GetCompositeRunStatusBrush(CompositeRun.Status);
 
     public string RunTimeSummary => Run is null
-        ? string.Empty
+        ? CompositeRunTimeSummary
         : $"开始 {Run.CreatedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}  /  更新 {Run.UpdatedAt.ToLocalTime():yyyy-MM-dd HH:mm:ss}";
 
     private IReadOnlyList<WorkflowRunNodeItemViewModel> ProgressNodes =>
@@ -626,24 +681,38 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     private int DefinedExecutableNodeCount => Version?.Definition.Nodes.Count(node =>
         node.Type is not (WorkflowNodeType.Start or WorkflowNodeType.End)) ?? 0;
 
-    public int TotalNodeCount => DefinedExecutableNodeCount > 0
+    public int TotalNodeCount => CompositeRun is not null
+        ? CompositeRun.Steps.Count
+        : DefinedExecutableNodeCount > 0
         ? DefinedExecutableNodeCount
         : ProgressNodes.Count;
 
-    public int CompletedNodeCount => ProgressNodes.Count(node => node.Status is
-        WorkflowNodeExecutionStatus.Succeeded or WorkflowNodeExecutionStatus.Skipped);
+    public int CompletedNodeCount => CompositeRun is not null
+        ? CompositeRun.Steps.Count(step => step.Status == ExperimentStepRunStatus.Succeeded)
+        : ProgressNodes.Count(node => node.Status is
+            WorkflowNodeExecutionStatus.Succeeded or WorkflowNodeExecutionStatus.Skipped);
 
-    public int FailedNodeCount => ProgressNodes.Count(node => node.Status is
-        WorkflowNodeExecutionStatus.Failed or WorkflowNodeExecutionStatus.TimedOut);
+    public int FailedNodeCount => CompositeRun is not null
+        ? CompositeRun.Steps.Count(step => step.Status == ExperimentStepRunStatus.Failed)
+        : ProgressNodes.Count(node => node.Status is
+            WorkflowNodeExecutionStatus.Failed or WorkflowNodeExecutionStatus.TimedOut);
 
-    public int CancelledNodeCount => ProgressNodes.Count(node => node.Status == WorkflowNodeExecutionStatus.Cancelled);
+    public int CancelledNodeCount => CompositeRun is not null
+        ? CompositeRun.Steps.Count(step => step.Status == ExperimentStepRunStatus.Cancelled)
+        : ProgressNodes.Count(node => node.Status == WorkflowNodeExecutionStatus.Cancelled);
 
-    public int UnknownNodeCount => ProgressNodes.Count(node => node.Status == WorkflowNodeExecutionStatus.Unknown);
+    public int UnknownNodeCount => CompositeRun is not null
+        ? CompositeRun.Steps.Count(step => step.Status == ExperimentStepRunStatus.Unknown)
+        : ProgressNodes.Count(node => node.Status == WorkflowNodeExecutionStatus.Unknown);
 
-    public int TerminalNodeCount => ProgressNodes.Count(node => node.Status is
-        WorkflowNodeExecutionStatus.Succeeded or WorkflowNodeExecutionStatus.Skipped or
-        WorkflowNodeExecutionStatus.Failed or WorkflowNodeExecutionStatus.TimedOut or
-        WorkflowNodeExecutionStatus.Unknown or WorkflowNodeExecutionStatus.Cancelled);
+    public int TerminalNodeCount => CompositeRun is not null
+        ? CompositeRun.Steps.Count(step => step.Status is
+            ExperimentStepRunStatus.Succeeded or ExperimentStepRunStatus.Failed or
+            ExperimentStepRunStatus.Unknown or ExperimentStepRunStatus.Cancelled)
+        : ProgressNodes.Count(node => node.Status is
+            WorkflowNodeExecutionStatus.Succeeded or WorkflowNodeExecutionStatus.Skipped or
+            WorkflowNodeExecutionStatus.Failed or WorkflowNodeExecutionStatus.TimedOut or
+            WorkflowNodeExecutionStatus.Unknown or WorkflowNodeExecutionStatus.Cancelled);
 
     public double ProgressPercent => TotalNodeCount == 0
         ? 0
@@ -651,12 +720,22 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
 
     public string ProgressDisplay => TotalNodeCount == 0
         ? "暂无节点执行记录"
-        : $"已处理 {TerminalNodeCount}/{TotalNodeCount} 个节点（完成 {CompletedNodeCount}，失败 {FailedNodeCount}，取消 {CancelledNodeCount}，未知 {UnknownNodeCount}）";
+        : CompositeRun is not null
+            ? $"已处理 {TerminalNodeCount}/{TotalNodeCount} 个流程步骤（完成 {CompletedNodeCount}，失败 {FailedNodeCount}，取消 {CancelledNodeCount}，未知 {UnknownNodeCount}）"
+            : $"已处理 {TerminalNodeCount}/{TotalNodeCount} 个节点（完成 {CompletedNodeCount}，失败 {FailedNodeCount}，取消 {CancelledNodeCount}，未知 {UnknownNodeCount}）";
 
     public string CurrentNodeDisplay
     {
         get
         {
+            if (CompositeRun is not null)
+            {
+                var currentStep = CompositeRun.Steps.FirstOrDefault(step => step.Order == CompositeRun.CurrentStepOrder);
+                return currentStep is null
+                    ? "无当前步骤"
+                    : $"步骤 {currentStep.Order} · {currentStep.Name} / {ExperimentUiText.CompositeStepStatus(currentStep.Status)}";
+            }
+
             if (Run?.CurrentNodeId is not { } currentNodeId) return "无";
             return Nodes
                        .Where(node => node.NodeId == currentNodeId)
@@ -673,7 +752,8 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     {
         get
         {
-            if (Run is null) return string.Empty;
+            if (Run is null)
+                return CompositeRun?.LastError ?? string.Empty;
 
             var reasons = new List<string>();
             AddReason(reasons, Run.LastError);
@@ -704,10 +784,13 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         }
     }
 
-    public bool IsCancelled => Run?.RuntimeStatus == WorkflowRuntimeStatus.Cancelled;
+    public bool IsCancelled => Run?.RuntimeStatus == WorkflowRuntimeStatus.Cancelled ||
+                               CompositeRun?.Status == ExperimentRunStatus.Cancelled;
 
     public string CancellationStatusDisplay => IsCancelled
-        ? "流程已取消：MES 已停止后续节点调度；已发出的设备操作不会自动撤销，请核对设备证据和时间线。"
+        ? CompositeRun is not null
+            ? "复合方案已取消：尚未启动的后续步骤不会执行；如已有子流程，请继续核对子流程和设备证据。"
+            : "流程已取消：MES 已停止后续节点调度；已发出的设备操作不会自动撤销，请核对设备证据和时间线。"
         : string.Empty;
 
     public string UnknownWarning => HasUnknownState
@@ -786,7 +869,17 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
                 runId != Guid.Empty &&
                 Run?.ExecutionId != runId)
             {
+                ClearCompositeRun();
                 await LoadAsync(runId, effectiveCancellation);
+            }
+            else if (SelectedExperimentJob?.Job.WorkflowSteps.Count > 1)
+            {
+                ClearLoadedRun();
+                await LoadSelectedCompositeRunAsync(SelectedExperimentJob.JobId, effectiveCancellation);
+            }
+            else
+            {
+                ClearCompositeRun();
             }
         }
         catch (OperationCanceledException) when (effectiveCancellation.IsCancellationRequested)
@@ -809,7 +902,7 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         _suppressExperimentSelection = true;
         try
         {
-            PopulateExperimentStepOptions(option);
+            PopulateExperimentStepOptions(option, compositeRuntimeAvailable: false);
         }
         finally
         {
@@ -820,6 +913,7 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         OnPropertyChanged(nameof(SelectedExperimentStepHint));
         if (option is null)
         {
+            ClearCompositeRun();
             ClearLoadedRun();
             RunIdText = string.Empty;
             StatusMessage = "请选择一个实验任务。";
@@ -829,19 +923,28 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         if (option.Job.WorkflowRunId is not { } runId || runId == Guid.Empty)
         {
             ClearLoadedRun();
+            ClearCompositeRun();
             RunIdText = string.Empty;
-            StatusMessage = option.Job.WorkflowSteps.Count > 1
-                ? $"方案包含 {option.Job.WorkflowSteps.Count} 个流程步骤，但当前尚未建立复合运行上下文。"
-                : "该实验任务尚未准入运行，暂无可监控的流程记录。";
+            if (option.Job.WorkflowSteps.Count > 1)
+            {
+                StatusMessage = $"方案包含 {option.Job.WorkflowSteps.Count} 个流程步骤，正在按任务读取复合运行上下文。";
+                _ = LoadSelectedCompositeRunAsync(option.JobId, _shutdown.Token);
+            }
+            else
+            {
+                StatusMessage = "该实验任务尚未准入运行，暂无可监控的流程记录。";
+            }
             return;
         }
 
+        ClearCompositeRun();
         if (Run?.ExecutionId != runId)
             _ = LoadSelectedExperimentRunAsync(runId);
     }
 
     private void PopulateExperimentStepOptions(
-        WorkflowMonitorExperimentJobOption? option)
+        WorkflowMonitorExperimentJobOption? option,
+        bool compositeRuntimeAvailable = false)
     {
         ExperimentStepOptions.Clear();
         if (option is not null)
@@ -855,7 +958,8 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
                     option,
                     steps[index],
                     index + 1,
-                    steps.Length));
+                    steps.Length,
+                    compositeRuntimeAvailable));
             }
         }
 
@@ -869,6 +973,15 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         if (!option.IsRuntimeSelectable)
         {
             StatusMessage = option.Hint;
+            return;
+        }
+
+        if (CompositeRun is not null && option.Count > 1)
+        {
+            var step = CompositeRun.Steps.FirstOrDefault(item => item.StepId == option.StepId);
+            StatusMessage = step is null
+                ? option.Hint
+                : $"已选中步骤 {step.Order} · {step.Name}：{ExperimentUiText.CompositeStepStatus(step.Status)}；{(step.WorkflowRunId is null ? "等待子流程启动" : "子流程已建立")}。";
             return;
         }
 
@@ -895,11 +1008,83 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         }
     }
 
+    private async Task LoadSelectedCompositeRunAsync(
+        Guid experimentJobId,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var composite = await _mes.GetExperimentRunForJobAsync(experimentJobId, cancellationToken);
+            if (SelectedExperimentJob?.JobId != experimentJobId) return;
+
+            if (composite is null)
+            {
+                ClearCompositeRun();
+                PopulateExperimentStepOptions(SelectedExperimentJob, compositeRuntimeAvailable: false);
+                StatusMessage = "该复合方案尚未准备运行上下文，暂无可监控的步骤状态。";
+                return;
+            }
+
+            if (composite.ExperimentJobId != experimentJobId)
+                throw new InvalidOperationException("MES returned a composite run for a different experiment job.");
+
+            ApplyCompositeRun(composite);
+            StatusMessage = $"已按实验任务加载 {composite.Steps.Count} 个流程步骤的复合运行状态；子流程启动后将显示节点和设备证据。";
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            if (SelectedExperimentJob?.JobId == experimentJobId)
+                StatusMessage = $"复合运行读取失败：{exception.Message}";
+        }
+    }
+
+    private void ApplyCompositeRun(ExperimentRun run)
+    {
+        _run = null;
+        _version = null;
+        CompositeRun = run;
+        Nodes = [];
+        DeviceOperations = [];
+        Timeline = [];
+        FieldAcceptances = [];
+        SelectedNode = null;
+        SelectedDeviceOperation = null;
+        SelectedTimelineEntry = null;
+        CanvasViewModel = null;
+        ClearPhysicalGate();
+        CompositeSteps = run.Steps
+            .OrderBy(step => step.Order)
+            .Select(step => new WorkflowMonitorCompositeStepItemViewModel(step))
+            .ToArray();
+        _suppressExperimentSelection = true;
+        try
+        {
+            PopulateExperimentStepOptions(SelectedExperimentJob, compositeRuntimeAvailable: true);
+        }
+        finally
+        {
+            _suppressExperimentSelection = false;
+        }
+
+        RunIdText = string.Empty;
+        RefreshedAt = DateTimeOffset.Now;
+        OnPropertyChanged(nameof(Run));
+        OnPropertyChanged(nameof(Version));
+        OnPropertyChanged(nameof(SelectedExperimentJobHint));
+        OnPropertyChanged(nameof(SelectedExperimentStepHint));
+        NotifyRunSummaryChanged();
+        EnsureAutoRefreshLoop();
+    }
+
     public async Task LoadAsync(Guid workflowRunId, CancellationToken cancellationToken = default)
     {
         if (workflowRunId == Guid.Empty)
             throw new ArgumentException("A workflow run id is required.", nameof(workflowRunId));
 
+        ClearCompositeRun();
         RunIdText = workflowRunId.ToString("D");
         IsBusy = true;
         StatusMessage = "正在读取运行记录...";
@@ -949,8 +1134,14 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
 
     public async Task RefreshLoadedRunAsync(CancellationToken cancellationToken = default)
     {
-        if (Run?.ExecutionId is not { } workflowRunId || workflowRunId == Guid.Empty) return;
-        await LoadAsync(workflowRunId, cancellationToken);
+        if (Run?.ExecutionId is { } workflowRunId && workflowRunId != Guid.Empty)
+        {
+            await LoadAsync(workflowRunId, cancellationToken);
+            return;
+        }
+
+        if (CompositeRun is not null && SelectedExperimentJob is { } selectedJob)
+            await LoadSelectedCompositeRunAsync(selectedJob.JobId, cancellationToken);
     }
 
     private async Task RefreshPhysicalGateAsync(CancellationToken cancellationToken)
@@ -1396,7 +1587,9 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     private void EnsureAutoRefreshLoop()
     {
         if (_disposed || !_autoRefreshViewAttached || !IsAutoRefreshEnabled ||
-            Run is null || Run.IsTerminal || _autoRefreshLoop is not null)
+            Run is null && CompositeRun is null ||
+            Run?.IsTerminal == true || CompositeRun?.IsTerminal == true ||
+            _autoRefreshLoop is not null)
             return;
 
         var cancellation = new CancellationTokenSource();
@@ -1423,7 +1616,10 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
             using var timer = new PeriodicTimer(AutoRefreshInterval);
             while (await timer.WaitForNextTickAsync(cancellation.Token))
             {
-                if (!IsAutoRefreshEnabled || Run is null || Run.IsTerminal) break;
+                if (!IsAutoRefreshEnabled ||
+                    Run is null && CompositeRun is null ||
+                    Run?.IsTerminal == true || CompositeRun?.IsTerminal == true)
+                    break;
                 if (IsBusy) continue;
 
                 try
@@ -1440,7 +1636,7 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
                         StatusMessage = $"自动刷新失败：{exception.Message}";
                 }
 
-                if (Run?.IsTerminal == true) break;
+                if (Run?.IsTerminal == true || CompositeRun?.IsTerminal == true) break;
             }
         }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
@@ -1460,7 +1656,8 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
                 OnPropertyChanged(nameof(IsAutoRefreshRunning));
                 OnPropertyChanged(nameof(AutoRefreshStatusDisplay));
                 if (_autoRefreshViewAttached && IsAutoRefreshEnabled &&
-                    Run is not null && !Run.IsTerminal)
+                    (Run is not null && !Run.IsTerminal ||
+                     CompositeRun is not null && !CompositeRun.IsTerminal))
                     EnsureAutoRefreshLoop();
             }
         }
@@ -1831,8 +2028,9 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
 
     private void ClearExperimentSelectionForManualRun(Guid workflowRunId)
     {
-        if (SelectedExperimentJob?.Job.WorkflowRunId is not { } selectedRunId ||
-            selectedRunId == workflowRunId)
+        if (CompositeRun is null &&
+            (SelectedExperimentJob?.Job.WorkflowRunId is not { } selectedRunId ||
+             selectedRunId == workflowRunId))
             return;
 
         _suppressExperimentSelection = true;
@@ -1931,8 +2129,27 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         NotifyRunSummaryChanged();
     }
 
+    private void ClearCompositeRun()
+    {
+        if (CompositeRun is null && CompositeSteps.Count == 0) return;
+        CompositeRun = null;
+        CompositeSteps = [];
+        OnPropertyChanged(nameof(CompositeRunStatusDisplay));
+        OnPropertyChanged(nameof(CompositeRunSummary));
+        OnPropertyChanged(nameof(CompositeRunTimeSummary));
+        OnPropertyChanged(nameof(SelectedExperimentJobHint));
+        OnPropertyChanged(nameof(SelectedExperimentStepHint));
+        NotifyRunSummaryChanged();
+    }
+
     private void NotifyRunSummaryChanged()
     {
+        OnPropertyChanged(nameof(CompositeRun));
+        OnPropertyChanged(nameof(HasCompositeRun));
+        OnPropertyChanged(nameof(CompositeRunStatusDisplay));
+        OnPropertyChanged(nameof(CompositeRunSummary));
+        OnPropertyChanged(nameof(CompositeRunTimeSummary));
+        OnPropertyChanged(nameof(CompositeSteps));
         OnPropertyChanged(nameof(HasRun));
         OnPropertyChanged(nameof(HasUnknownState));
         OnPropertyChanged(nameof(RunTitle));
@@ -1971,6 +2188,7 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         string stateReason)
     {
         if (IsBusy) return "正在处理其他运行请求。";
+        if (CompositeRun is not null) return "复合运行已建立；逐步骤控制将在协调器切片启用。";
         if (Run is null) return "请先加载流程运行。";
         if (string.IsNullOrWhiteSpace(OperatorName)) return "请输入操作者身份。";
         if (!string.Equals(_permissionActor, OperatorName.Trim(), StringComparison.OrdinalIgnoreCase))
@@ -2094,6 +2312,16 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         WorkflowRuntimeStatus.Prepared or WorkflowRuntimeStatus.Paused => "#8A5A00",
         WorkflowRuntimeStatus.Unknown => "#A30D5D",
         WorkflowRuntimeStatus.Failed or WorkflowRuntimeStatus.Rejected or WorkflowRuntimeStatus.Cancelled => "#B42318",
+        _ => "#667085"
+    };
+
+    private static string GetCompositeRunStatusBrush(ExperimentRunStatus status) => status switch
+    {
+        ExperimentRunStatus.Completed => "#247A3D",
+        ExperimentRunStatus.Running => "#0F766E",
+        ExperimentRunStatus.Prepared or ExperimentRunStatus.Paused => "#8A5A00",
+        ExperimentRunStatus.Unknown => "#A30D5D",
+        ExperimentRunStatus.Failed or ExperimentRunStatus.Cancelled => "#B42318",
         _ => "#667085"
     };
 

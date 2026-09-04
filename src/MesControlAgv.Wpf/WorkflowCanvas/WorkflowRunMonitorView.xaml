@@ -91,6 +91,50 @@
                            Foreground="#667085"
                            Text="{Binding SelectedExperimentStepHint}"
                            TextWrapping="Wrap" />
+                <Expander x:Name="CompositeRunExpander"
+                          Margin="0,7,0,0"
+                          AutomationProperties.AutomationId="WorkflowCompositeRunExpander"
+                          Header="复合方案步骤状态"
+                          IsExpanded="True"
+                          Visibility="{Binding HasCompositeRun, Converter={StaticResource BooleanToVisibilityConverter}}">
+                    <Border Margin="0,4,0,0"
+                            Padding="8"
+                            Background="#F8FAFC"
+                            BorderBrush="#D0D5DD"
+                            BorderThickness="1"
+                            CornerRadius="4">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                            </Grid.RowDefinitions>
+                            <TextBlock FontWeight="SemiBold" Text="{Binding CompositeRunSummary}" TextWrapping="Wrap" />
+                            <TextBlock Grid.Row="1" Margin="0,3,0,5" FontSize="11" Foreground="#667085"
+                                       Text="{Binding CompositeRunTimeSummary}" />
+                            <DataGrid x:Name="CompositeStepStatusGrid"
+                                      AutomationProperties.AutomationId="WorkflowCompositeStepStatusGrid"
+                                      Grid.Row="2"
+                                      MaxHeight="190"
+                                      AutoGenerateColumns="False"
+                                      CanUserAddRows="False"
+                                      HeadersVisibility="Column"
+                                      IsReadOnly="True"
+                                      ItemsSource="{Binding CompositeSteps}"
+                                      ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                      ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Width="48" Header="序" Binding="{Binding Order}" />
+                                    <DataGridTextColumn Width="1.4*" MinWidth="130" Header="流程" Binding="{Binding Name}" />
+                                    <DataGridTextColumn Width="105" Header="状态" Binding="{Binding StatusDisplay}" />
+                                    <DataGridTextColumn Width="105" Header="子流程" Binding="{Binding ChildRunDisplay}" />
+                                    <DataGridTextColumn Width="200" Header="时间" Binding="{Binding TimeDisplay}" />
+                                    <DataGridTextColumn Width="1.2*" MinWidth="120" Header="异常" Binding="{Binding ErrorDisplay}" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </Grid>
+                    </Border>
+                </Expander>
                 <Expander Margin="0,6,0,0"
                           IsExpanded="False"
                           Header="高级：按运行 ID 加载（通常无需填写）">
@@ -386,7 +430,8 @@
         </StackPanel>
 
         <Grid x:Name="RunCanvasWorkspaceGrid" Grid.Row="2" MinHeight="240" MinWidth="0"
-              SizeChanged="RunCanvasWorkspaceGrid_SizeChanged">
+              SizeChanged="RunCanvasWorkspaceGrid_SizeChanged"
+              Visibility="{Binding HasRun, Converter={StaticResource BooleanToVisibilityConverter}}">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="RunCanvasColumn" Width="2*" MinWidth="0" />
                 <ColumnDefinition x:Name="RunInspectorColumn" Width="390" MinWidth="0" />
@@ -519,6 +564,25 @@
                 </ScrollViewer>
             </Border>
         </Grid>
+
+        <Border x:Name="CompositeRunCanvasPlaceholder"
+                Grid.Row="2"
+                Margin="0,0,0,0"
+                Padding="24"
+                Background="#F8FAFC"
+                BorderBrush="#D0D5DD"
+                BorderThickness="1"
+                CornerRadius="4"
+                Visibility="{Binding HasCompositeRun, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                <TextBlock HorizontalAlignment="Center" FontSize="18" FontWeight="SemiBold" Text="复合方案步骤监控" />
+                <TextBlock Margin="0,8,0,0" HorizontalAlignment="Center" Foreground="#475467"
+                           Text="子流程启动后将在这里显示对应的节点、设备操作和审计证据。"
+                           TextWrapping="Wrap" />
+                <TextBlock Margin="0,4,0,0" HorizontalAlignment="Center" Foreground="#667085"
+                           Text="当前先显示外层步骤状态，不要求输入运行 ID。" />
+            </StackPanel>
+        </Border>
 
         <TabControl Grid.Row="3" Margin="0,10,0,0">
             <TabItem Header="节点执行">
