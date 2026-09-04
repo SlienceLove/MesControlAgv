@@ -1133,5 +1133,6 @@ AGV/AUBO 只读预检和明确授权。
 - WPF 实验方案模板下拉现在展示模板能力、资源族、明确的预计时长和最近验证时间；缺少模板级时长时显示“未配置”，不从超时参数臆测排程时长。
 - 方案执行流程增加步骤级状态提示：不可用的已引用版本和多步骤缺失预计时长会即时提示；MES 返回 `workflowSteps[n]` 校验问题时，WPF 自动选中对应步骤并切换到执行流程页。
 - 新增模板元数据、预计时长投影和步骤问题定位回归；WPF 定向测试 `10/10` 通过，Release 构建 `0` 警告 / `0` 错误。
-- 完整离线门禁报告为 `artifacts/mes-offline-release-gate-20260904-workflow-metadata.json`：`1008 passed / 5 allowed skipped / 0 failed`，`releaseEligible=true`。
+- 完整离线门禁报告为 `artifacts/mes-offline-release-gate-20260904-workflow-metadata-final.json`：`1008 passed / 5 allowed skipped / 0 failed`，`releaseEligible=true`。
+- 独立 WPF Release 包为 `bin/Verify/PhysicalOneClickWorkflowMetadata-final-20260904-235200.zip`，包内 manifest 固定源码提交 `c0b1403`，压缩包校验值记录在同名 `.zip.sha256` sidecar 文件中。
 - 本切片只修改 WPF 展示/校验投影及测试，未连接或操作 AGV/AUBO；复合运行时和实体设备活动时间轴仍按后续阶段计划推进。
