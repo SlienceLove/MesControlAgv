@@ -23,8 +23,6 @@ public sealed class MainWindowNavigationTests
                     Height = 760
                 };
                 window.Show();
-                window.UpdateLayout();
-
                 var tabs = Assert.IsType<TabControl>(window.FindName("MainTabs"));
                 var agvTab = Assert.IsType<TabItem>(window.FindName("AgvCommunicationTab"));
                 var sidebar = Assert.IsType<Border>(window.FindName("NavigationSidebar"));
@@ -117,6 +115,72 @@ public sealed class MainWindowNavigationTests
         thread.Start();
 
         Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "WPF compact AGV layout test did not complete.");
+        Assert.Null(failure);
+    }
+
+    [Fact]
+    public void Task_monitor_keeps_details_panel_inside_compact_window()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var window = new MainWindow
+                {
+                    WindowState = WindowState.Normal,
+                    Width = 820,
+                    Height = 480
+                };
+                window.Show();
+                var tabs = Assert.IsType<TabControl>(window.FindName("MainTabs"));
+                tabs.SelectedIndex = 0;
+                window.Measure(new Size(820, 480));
+                window.Arrange(new Rect(0, 0, 820, 480));
+                window.UpdateLayout();
+
+                var taskView = Assert.IsType<Views.TaskMonitorView>(window.FindName("TaskMonitorView"));
+                var taskGrid = Assert.IsType<DataGrid>(taskView.FindName("TaskGrid"));
+                var workspace = Assert.IsType<Grid>(taskView.FindName("TaskWorkspaceGrid"));
+                var detailsScroll = Assert.IsType<ScrollViewer>(taskView.FindName("TaskDetailsScrollViewer"));
+                var detailsHost = Assert.IsType<Grid>(taskView.FindName("TaskDetailsHost"));
+                var scrollPosition = detailsScroll.TranslatePoint(new Point(0, 0), window);
+                var position = detailsHost.TranslatePoint(new Point(0, 0), window);
+
+                Assert.True(taskGrid.ActualWidth > 0);
+                Assert.True(detailsHost.ActualWidth > 0);
+                Assert.Equal(1, Grid.GetRow(detailsScroll));
+                Assert.Equal(0, Grid.GetColumn(detailsScroll));
+                Assert.Equal(2, Grid.GetColumnSpan(detailsScroll));
+                Assert.True(workspace.ActualWidth < 900);
+                Assert.True(
+                    position.X + detailsHost.ActualWidth <= window.ActualWidth + 0.5,
+                    "紧凑窗口下任务详情面板不应被推到窗口可视区之外。");
+
+                window.Width = 1400;
+                window.Height = 860;
+                window.UpdateLayout();
+                Assert.Equal(0, Grid.GetRow(detailsScroll));
+                Assert.Equal(1, Grid.GetColumn(detailsScroll));
+                Assert.Equal(1, Grid.GetColumnSpan(detailsScroll));
+                Assert.True(workspace.ActualWidth >= 900);
+
+                window.Close();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                Dispatcher.CurrentDispatcher.InvokeShutdown();
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "WPF compact task layout test did not complete.");
         Assert.Null(failure);
     }
 

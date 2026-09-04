@@ -164,12 +164,17 @@
                 <Button Margin="8,0,0,0" Padding="12,4" Command="{Binding RefreshTasksCommand}" Content="刷新" />
                 <Button Margin="8,0,0,0" Padding="12,4" Click="ResetTaskGridLayout_Click" Content="恢复列布局" ToolTip="恢复任务表默认列宽和顺序" />
             </StackPanel>
-            <Grid Grid.Row="1" MinHeight="0" MinWidth="0" ClipToBounds="True">
+            <Grid x:Name="TaskWorkspaceGrid" Grid.Row="1" MinHeight="0" MinWidth="0" ClipToBounds="True"
+                  SizeChanged="TaskWorkspaceGrid_SizeChanged">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" MinHeight="0" />
+                <RowDefinition Height="0" />
+            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" MinWidth="0" />
                 <ColumnDefinition Width="310" MinWidth="0" />
             </Grid.ColumnDefinitions>
-            <Grid Grid.Column="0" MinWidth="0">
+            <Grid x:Name="TaskListHost" Grid.Column="0" MinWidth="0">
                 <DataGrid x:Name="TaskGrid"
                           local:DataGridLayoutPersistence.LayoutKey="TaskMonitor"
                           local:DataGridLayoutPersistence.PersistLayout="True"
@@ -208,7 +213,10 @@
                     </StackPanel>
                 </Border>
             </Grid>
-            <Grid Grid.Column="1" Margin="16,0,0,0" MinHeight="0">
+            <ScrollViewer x:Name="TaskDetailsScrollViewer" Grid.Row="0" Grid.Column="1"
+                          Margin="16,0,0,0" MinWidth="0"
+                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <Grid x:Name="TaskDetailsHost" MinHeight="0" MinWidth="0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
@@ -316,6 +324,7 @@
                     </StackPanel>
                 </Border>
             </Grid>
+            </ScrollViewer>
         </Grid>
         </Grid>
         <TextBlock Grid.Row="3" Margin="0,16,0,0" HorizontalAlignment="Left" VerticalAlignment="Top" IsHitTestVisible="False" Foreground="Gray" Text="界面每 2 秒从 MES 刷新；取货与放货需要人工确认后才会推进。" />
