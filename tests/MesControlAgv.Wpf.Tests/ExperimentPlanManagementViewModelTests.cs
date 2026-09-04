@@ -148,6 +148,113 @@ public sealed class ExperimentPlanManagementViewModelTests
     }
 
     [Fact]
+    public async Task Published_template_projects_capabilities_resources_duration_and_validation_metadata()
+    {
+        var fixture = PlanFixture.Empty();
+        var workflowId = fixture.Client.AddWorkflowTemplate(
+            "搬运检测模板",
+            isPreset: true,
+            version: 6,
+            definition: new WorkflowDefinition
+            {
+                Name = "搬运检测模板",
+                IsPreset = true,
+                Nodes =
+                [
+                    new WorkflowNode
+                    {
+                        Type = WorkflowNodeType.Start,
+                        NodeTypeId = WorkflowGraphNodeTypeIds.Start
+                    },
+                    new WorkflowNode
+                    {
+                        Type = WorkflowNodeType.Move,
+                        NodeTypeId = WorkflowGraphNodeTypeIds.Move,
+                        TargetStation = "LM7",
+                        Configuration = new Dictionary<string, string?>
+                        {
+                            ["estimatedDurationMinutes"] = "4"
+                        }
+                    },
+                    new WorkflowNode
+                    {
+                        Type = WorkflowNodeType.RobotProgram,
+                        NodeTypeId = WorkflowGraphNodeTypeIds.RobotExecuteProgram,
+                        Configuration = new Dictionary<string, string?>
+                        {
+                            ["estimatedDurationMinutes"] = "6"
+                        }
+                    },
+                    new WorkflowNode
+                    {
+                        Type = WorkflowNodeType.End,
+                        NodeTypeId = WorkflowGraphNodeTypeIds.End
+                    }
+                ]
+            },
+            validation: new WorkflowValidationResult
+            {
+                ValidatorVersion = "workflow-publication-v3",
+                ValidatedAt = DateTimeOffset.Parse("2026-09-04T08:00:00Z"),
+                ProfileProductId = "MES-AGV"
+            },
+            publishedAt: DateTimeOffset.Parse("2026-09-04T08:01:00Z"));
+        using var viewModel = new ExperimentPlanManagementViewModel(fixture.Client)
+        {
+            Reason = "Project workflow metadata"
+        };
+
+        await viewModel.RefreshAsync();
+
+        var option = Assert.Single(viewModel.PublishedWorkflowVersions.Where(item => item.WorkflowId == workflowId));
+        Assert.Equal([WorkflowCapabilityIds.AgvNavigateToStation, WorkflowCapabilityIds.RobotExecuteProgram], option.CapabilityIds);
+        Assert.Equal([ExperimentResourceTypeIds.Agv, ExperimentResourceTypeIds.RobotArm, ExperimentResourceTypeIds.Station], option.ResourceTypes);
+        Assert.Equal(10, option.EstimatedDurationMinutes);
+        Assert.Contains("预计 10 分钟", option.EstimatedDurationDisplay, StringComparison.Ordinal);
+        Assert.Contains("已验证 2026-09-04", option.ValidationDisplay, StringComparison.Ordinal);
+        Assert.Contains("AGV 到站", option.CapabilitiesDisplay, StringComparison.Ordinal);
+        Assert.Contains("机械臂程序", option.CapabilitiesDisplay, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Missing_composed_step_duration_is_explained_and_step_issue_selects_the_step()
+    {
+        var fixture = PlanFixture.Create(ExperimentPlanStatus.Draft, valid: null);
+        var first = new ExperimentPlanWorkflowStep
+        {
+            StepId = Guid.NewGuid(),
+            Order = 1,
+            WorkflowId = fixture.WorkflowId,
+            WorkflowVersion = 3,
+            Name = "第一段"
+        };
+        var second = first with { StepId = Guid.NewGuid(), Order = 2, Name = "第二段" };
+        fixture.Client.Upsert(fixture.Plan with { WorkflowSteps = [first, second] });
+        using var viewModel = new ExperimentPlanManagementViewModel(fixture.Client)
+        {
+            Reason = "Review step duration"
+        };
+
+        await viewModel.RefreshAsync();
+
+        Assert.Equal(2, viewModel.MissingWorkflowDurationCount);
+        Assert.Contains("2 个步骤缺少预计时长", viewModel.WorkflowStepsValidationSummary, StringComparison.Ordinal);
+        var issue = new ExperimentPlanValidationIssueItemViewModel(new ExperimentPlanValidationIssue
+        {
+            Code = ExperimentSchedulingIssueCodes.WorkflowStepInvalid,
+            Message = "Composed workflow steps require a positive estimated duration.",
+            Field = "workflowSteps[1].estimatedDurationMinutes"
+        });
+        viewModel.SelectedValidationIssue = issue;
+
+        Assert.Equal(1, issue.StepIndex);
+        Assert.Equal("步骤 2", issue.StepDisplay);
+        Assert.Equal("步骤 2 · 预计时长", issue.FieldDisplay);
+        Assert.Equal(4, viewModel.DetailTabIndex);
+        Assert.Same(viewModel.WorkflowSteps[1], viewModel.SelectedWorkflowStep);
+    }
+
+    [Fact]
     public async Task Plan_keeps_unavailable_referenced_workflow_version_visible_and_explicitly_marked()
     {
         var fixture = PlanFixture.Create(ExperimentPlanStatus.Draft, valid: null);
@@ -339,20 +446,34 @@ public sealed class ExperimentPlanManagementViewModelTests
             AddWorkflowTemplate("Published workflow", isPreset: false, version: 3, workflowId: workflowId);
         }
 
-        public Guid AddWorkflowTemplate(string name, bool isPreset, int version)
+        public Guid AddWorkflowTemplate(
+            string name,
+            bool isPreset,
+            int version,
+            WorkflowDefinition? definition = null,
+            WorkflowValidationResult? validation = null,
+            DateTimeOffset? publishedAt = null)
         {
             var workflowId = Guid.NewGuid();
-            AddWorkflowTemplate(name, isPreset, version, workflowId);
+            AddWorkflowTemplate(name, isPreset, version, workflowId, definition, validation, publishedAt);
             return workflowId;
         }
 
-        private void AddWorkflowTemplate(string name, bool isPreset, int version, Guid workflowId)
+        private void AddWorkflowTemplate(
+            string name,
+            bool isPreset,
+            int version,
+            Guid workflowId,
+            WorkflowDefinition? definition = null,
+            WorkflowValidationResult? validation = null,
+            DateTimeOffset? publishedAt = null)
         {
-            var definition = new WorkflowDefinition
+            definition ??= new WorkflowDefinition();
+            definition = definition with
             {
                 Id = workflowId,
-                Name = name,
-                IsPreset = isPreset
+                Name = string.IsNullOrWhiteSpace(definition.Name) ? name : definition.Name,
+                IsPreset = isPreset || definition.IsPreset
             };
             _workflowDefinitions[workflowId] = definition;
             _workflowVersions[workflowId] =
@@ -363,7 +484,9 @@ public sealed class ExperimentPlanManagementViewModelTests
                     Version = version,
                     Definition = definition,
                     Status = WorkflowVersionStatus.Published,
-                    PublishStatus = WorkflowPublishStatus.Published
+                    PublishStatus = WorkflowPublishStatus.Published,
+                    Validation = validation,
+                    PublishedAt = publishedAt
                 }
             ];
         }

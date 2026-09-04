@@ -60,11 +60,52 @@ public sealed record PublishedWorkflowVersionOption(
     bool IsAvailable = true,
     bool IsPreset = false)
 {
+    /// <summary>
+    /// Capabilities are projected from the immutable workflow node catalog. The
+    /// list is informational only; scheduling and publication still enforce the
+    /// authoritative MES contracts.
+    /// </summary>
+    public IReadOnlyList<string> CapabilityIds { get; init; } = Array.Empty<string>();
+
+    /// <summary>Resource families inferred from the workflow's required capabilities and stations.</summary>
+    public IReadOnlyList<string> ResourceTypes { get; init; } = Array.Empty<string>();
+
+    /// <summary>
+    /// A template may omit estimates. In that case the UI must say so instead of
+    /// deriving a duration from timeout values or inventing a planning estimate.
+    /// </summary>
+    public int? EstimatedDurationMinutes { get; init; }
+
+    /// <summary>Latest immutable validation observation, when the API returned one.</summary>
+    public DateTimeOffset? LastValidatedAt { get; init; }
+
+    public string? LastValidatedBy { get; init; }
+
     public string TemplateKind => IsPreset ? "系统/已验证模板" : "已发布流程";
     public string AvailabilityDisplay => IsAvailable ? "可用" : "已引用但不可用";
     public string Display => IsAvailable
         ? $"{Name} / v{Version} · {TemplateKind}"
         : $"{AvailabilityDisplay} / {Name} / {WorkflowId:N} / v{Version}";
+
+    public string CapabilitiesDisplay => CapabilityIds.Count == 0
+        ? "未声明能力"
+        : string.Join("、", CapabilityIds.Select(ExperimentUiText.Capability));
+
+    public string ResourcesDisplay => ResourceTypes.Count == 0
+        ? "无专用资源"
+        : string.Join("、", ResourceTypes.Select(ExperimentUiText.ResourceType));
+
+    public string EstimatedDurationDisplay => EstimatedDurationMinutes is > 0
+        ? $"预计 {EstimatedDurationMinutes} 分钟"
+        : "未配置预计时长";
+
+    public string ValidationDisplay => LastValidatedAt is { } validatedAt
+        ? $"已验证 {validatedAt.ToLocalTime():yyyy-MM-dd HH:mm}" +
+          (string.IsNullOrWhiteSpace(LastValidatedBy) ? string.Empty : $" · {LastValidatedBy}")
+        : "暂无验证记录";
+
+    public string MetadataSummary =>
+        $"能力：{CapabilitiesDisplay} · 资源：{ResourcesDisplay} · 时长：{EstimatedDurationDisplay} · 验证：{ValidationDisplay}";
 }
 
 /// <summary>
@@ -113,6 +154,7 @@ public sealed class ExperimentPlanWorkflowStepEditorViewModel : ExperimentBindab
             OnPropertyChanged(nameof(WorkflowDisplay));
             OnPropertyChanged(nameof(NameOrWorkflowDisplay));
             OnPropertyChanged(nameof(IsAvailable));
+            OnPropertyChanged(nameof(WorkflowMetadataSummary));
         }
     }
 
@@ -139,6 +181,7 @@ public sealed class ExperimentPlanWorkflowStepEditorViewModel : ExperimentBindab
     public string WorkflowDisplay => SelectedWorkflowVersion?.Display ?? "请选择已发布流程模板";
     public string NameOrWorkflowDisplay => string.IsNullOrWhiteSpace(Name) ? WorkflowDisplay : Name;
     public bool IsAvailable => SelectedWorkflowVersion?.IsAvailable == true;
+    public string WorkflowMetadataSummary => SelectedWorkflowVersion?.MetadataSummary ?? "请选择流程模板后查看能力、资源和验证信息。";
     public string EstimatedDurationDisplay => EstimatedDurationMinutes > 0
         ? $"预计 {EstimatedDurationMinutes} 分钟"
         : "预计时长待补充";
@@ -250,9 +293,54 @@ public sealed class ExperimentPlanValidationIssueItemViewModel(ExperimentPlanVal
     public string Code => Issue.Code;
     public string Message => Issue.Message;
     public string Field => Issue.Field ?? "-";
+    public int? StepIndex => ParseStepIndex(Issue.Field);
+    public string StepDisplay => StepIndex is { } index ? $"步骤 {index + 1}" : "-";
+    public string FieldDisplay => FormatField(Issue.Field, StepIndex);
     public string Resource => Issue.Resource is null
         ? "-"
         : $"{Issue.Resource.ResourceType}/{Issue.Resource.ResourceId}";
+
+    private static int? ParseStepIndex(string? field)
+    {
+        if (string.IsNullOrWhiteSpace(field)) return null;
+        const string prefix = "workflowSteps[";
+        var start = field.IndexOf(prefix, StringComparison.OrdinalIgnoreCase);
+        if (start < 0) return null;
+        start += prefix.Length;
+        var end = field.IndexOf(']', start);
+        return end > start && int.TryParse(field[start..end], out var index) && index >= 0
+            ? index
+            : null;
+    }
+
+    private static string FormatField(string? field, int? stepIndex)
+    {
+        if (string.IsNullOrWhiteSpace(field)) return "-";
+        if (stepIndex is { } index)
+        {
+            var prefixIndex = field.IndexOf("workflowSteps[", StringComparison.OrdinalIgnoreCase);
+            var closingIndex = prefixIndex < 0 ? -1 : field.IndexOf(']', prefixIndex);
+            var suffix = closingIndex >= 0 && closingIndex + 1 < field.Length
+                ? field[(closingIndex + 1)..].TrimStart('.')
+                : string.Empty;
+            var display = suffix switch
+            {
+                "estimatedDurationMinutes" => "预计时长",
+                "parameters" => "步骤参数",
+                _ => string.IsNullOrWhiteSpace(suffix) ? "步骤" : suffix
+            };
+            return $"步骤 {index + 1} · {display}";
+        }
+
+        return field switch
+        {
+            "resourceRequirements" => "资源要求",
+            "materialRequirements" => "物料要求",
+            "defaultParameters" => "默认参数",
+            "workflowSteps" => "执行流程",
+            _ => field
+        };
+    }
 }
 
 public sealed class ExperimentMaterialEditorViewModel : ExperimentBindableObject
@@ -344,6 +432,23 @@ public sealed class ExperimentResourceRequirementEditorViewModel : ExperimentBin
 
 public static class ExperimentUiText
 {
+    public static string Capability(string capabilityId) => capabilityId switch
+    {
+        "agv.navigate-to-station" => "AGV 到站",
+        "robot.execute-program" => "机械臂程序",
+        "instrument.identify" => "仪器识别",
+        "instrument.read-status" => "仪器状态读取",
+        "instrument.wait-until-stable" => "仪器稳定等待",
+        "instrument.set-flow" => "仪器流量设置",
+        "instrument.enable-pump" => "仪器泵控制",
+        "instrument.set-temperature" => "仪器温度设置",
+        "instrument.load-method" => "仪器方法加载",
+        "instrument.inject" => "仪器进样",
+        "instrument.start-analysis" => "仪器启动分析",
+        "instrument.stop-analysis" => "仪器停止分析",
+        _ => capabilityId
+    };
+
     public static string PlanStatus(ExperimentPlanStatus status) => status switch
     {
         ExperimentPlanStatus.Draft => "草稿",
@@ -409,6 +514,7 @@ public static class ExperimentUiText
         ExperimentResourceTypeIds.Workstation => "工作站",
         ExperimentResourceTypeIds.Carrier => "载具",
         ExperimentResourceTypeIds.OperatorStation => "操作席位",
+        "ion-chromatography" => "离子色谱仪",
         _ => resourceType
     };
 }

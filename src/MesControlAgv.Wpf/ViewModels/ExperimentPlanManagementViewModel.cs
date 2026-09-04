@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Windows.Input;
 using MesControlAgv.Contracts.Experiments;
 using MesControlAgv.Contracts.Workflows;
+using MesControlAgv.Domain.Workflows;
 using MesControlAgv.Wpf.Infrastructure;
 using MesControlAgv.Wpf.Services;
 
@@ -14,6 +15,7 @@ namespace MesControlAgv.Wpf.ViewModels;
 /// </summary>
 public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject, IDisposable
 {
+    private static readonly WorkflowCatalogSet WorkflowCatalog = BuiltInWorkflowCatalog.Create();
     private readonly IMesClient _mes;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly AsyncCommand _refreshCommand;
@@ -57,6 +59,11 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
     private string _errorMessage = string.Empty;
     private int _detailTabIndex;
     private long _selectionRevision;
+
+    private sealed record WorkflowTemplateMetadata(
+        IReadOnlyList<string> CapabilityIds,
+        IReadOnlyList<string> ResourceTypes,
+        int? EstimatedDurationMinutes);
 
     public ExperimentPlanManagementViewModel(IMesClient mes)
     {
@@ -195,6 +202,11 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
         set
         {
             if (!SetField(ref _selectedValidationIssue, value) || value is null) return;
+            if (value.StepIndex is { } stepIndex &&
+                stepIndex >= 0 && stepIndex < WorkflowSteps.Count)
+            {
+                SelectedWorkflowStep = WorkflowSteps[stepIndex];
+            }
             DetailTabIndex = value.Field switch
             {
                 "materialRequirements" => 1,
@@ -203,6 +215,8 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
                 "workflowSteps" => 4,
                 _ => 0
             };
+            if (value.StepIndex is not null)
+                DetailTabIndex = 4;
         }
     }
 
@@ -297,6 +311,23 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
     public string WorkflowStepsSummary => WorkflowSteps.Count == 0
         ? "尚未配置固定流程"
         : $"{WorkflowSteps.Count} 个固定流程 · {string.Join(" → ", WorkflowSteps.Select(step => step.NameOrWorkflowDisplay))}";
+    public int MissingWorkflowDurationCount => WorkflowSteps.Count > 1
+        ? WorkflowSteps.Count(step => step.EstimatedDurationMinutes <= 0)
+        : 0;
+    public int UnavailableWorkflowStepCount => WorkflowSteps.Count(step => !step.IsAvailable);
+    public string WorkflowStepsValidationSummary
+    {
+        get
+        {
+            if (WorkflowSteps.Count == 0)
+                return "请至少添加一个固定流程步骤。";
+            if (UnavailableWorkflowStepCount > 0)
+                return $"有 {UnavailableWorkflowStepCount} 个步骤引用的流程版本不可用，校验时会被拒绝。";
+            if (MissingWorkflowDurationCount > 0)
+                return $"有 {MissingWorkflowDurationCount} 个步骤缺少预计时长；多步骤方案校验前必须补充。";
+            return "步骤级模板引用和预计时长已填写，可提交校验。";
+        }
+    }
     public bool CanMoveWorkflowStepUp => SelectedWorkflowStep is not null &&
                                          WorkflowSteps.IndexOf(SelectedWorkflowStep) > 0;
     public bool CanMoveWorkflowStepDown => SelectedWorkflowStep is not null &&
@@ -444,13 +475,25 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
             .SelectMany(item => item.Versions
                 .Where(version => version.Status == WorkflowVersionStatus.Published &&
                                   version.PublishStatus == WorkflowPublishStatus.Published)
-                .Select(version => new PublishedWorkflowVersionOption(
-                    version.WorkflowId,
-                    version.Version,
-                    string.IsNullOrWhiteSpace(version.Definition.Name)
-                        ? item.Definition.Name
-                        : version.Definition.Name,
-                    IsPreset: version.Definition.IsPreset || item.Definition.IsPreset)))
+                .Select(version =>
+                {
+                    var definition = version.Definition ?? item.Definition;
+                    var metadata = DescribeWorkflowTemplate(definition);
+                    return new PublishedWorkflowVersionOption(
+                        version.WorkflowId,
+                        version.Version,
+                        string.IsNullOrWhiteSpace(definition.Name)
+                            ? item.Definition.Name
+                            : definition.Name,
+                        IsPreset: definition.IsPreset || item.Definition.IsPreset)
+                    {
+                        CapabilityIds = metadata.CapabilityIds,
+                        ResourceTypes = metadata.ResourceTypes,
+                        EstimatedDurationMinutes = metadata.EstimatedDurationMinutes,
+                        LastValidatedAt = version.Validation?.ValidatedAt ?? version.PublishedAt,
+                        LastValidatedBy = version.PublishedBy
+                    };
+                }))
             .OrderBy(option => option.Name, StringComparer.OrdinalIgnoreCase)
             .ThenByDescending(option => option.Version)
             .ToArray();
@@ -550,6 +593,118 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
             IsAvailable: false);
         _referencedWorkflowVersions[key] = option;
         return option;
+    }
+
+    private static WorkflowTemplateMetadata DescribeWorkflowTemplate(WorkflowDefinition definition)
+    {
+        var capabilities = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var resources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var nodes = definition.Nodes ?? Array.Empty<WorkflowNode>();
+
+        foreach (var node in nodes)
+        {
+            var nodeTypeId = string.IsNullOrWhiteSpace(node.NodeTypeId)
+                ? WorkflowGraphNodeTypeIds.For(node.Type)
+                : node.NodeTypeId.Trim();
+            var schemaVersion = string.IsNullOrWhiteSpace(node.SchemaVersion)
+                ? BuiltInWorkflowCatalog.CurrentSchemaVersion
+                : node.SchemaVersion;
+            var nodeType = WorkflowCatalog.NodeTypes.Resolve(nodeTypeId, schemaVersion).Definition;
+            foreach (var capability in nodeType?.RequiredCapabilityIds ?? Array.Empty<string>())
+                capabilities.Add(capability);
+
+            if (nodeTypeId.Equals(WorkflowGraphNodeTypeIds.Move, StringComparison.OrdinalIgnoreCase) ||
+                nodeTypeId.Equals(WorkflowGraphNodeTypeIds.Pickup, StringComparison.OrdinalIgnoreCase) ||
+                nodeTypeId.Equals(WorkflowGraphNodeTypeIds.Dropoff, StringComparison.OrdinalIgnoreCase))
+            {
+                resources.Add(ExperimentResourceTypeIds.Agv);
+                if (!string.IsNullOrWhiteSpace(node.TargetStation))
+                    resources.Add(ExperimentResourceTypeIds.Station);
+            }
+
+            if (nodeTypeId.Equals(WorkflowGraphNodeTypeIds.InstrumentOperation, StringComparison.OrdinalIgnoreCase) ||
+                nodeTypeId.StartsWith("instrument.", StringComparison.OrdinalIgnoreCase))
+            {
+                resources.Add(ExperimentResourceTypeIds.Instrument);
+            }
+        }
+
+        foreach (var capability in capabilities.ToArray())
+        {
+            var family = WorkflowCatalog.Capabilities.GetLatest(capability)?.DeviceFamily;
+            if (!string.IsNullOrWhiteSpace(family))
+                resources.Add(ResourceTypeForDeviceFamily(family));
+        }
+
+        return new WorkflowTemplateMetadata(
+            capabilities.OrderBy(item => item, StringComparer.OrdinalIgnoreCase).ToArray(),
+            resources.OrderBy(item => item, StringComparer.OrdinalIgnoreCase).ToArray(),
+            TryEstimateDurationMinutes(nodes));
+    }
+
+    private static string ResourceTypeForDeviceFamily(string family) => family switch
+    {
+        WorkflowDeviceFamilyIds.Agv => ExperimentResourceTypeIds.Agv,
+        WorkflowDeviceFamilyIds.RobotArm => ExperimentResourceTypeIds.RobotArm,
+        WorkflowDeviceFamilyIds.IonChromatography => ExperimentResourceTypeIds.Instrument,
+        _ => family
+    };
+
+    private static int? TryEstimateDurationMinutes(IReadOnlyList<WorkflowNode> nodes)
+    {
+        var executable = nodes
+            .Where(node => node.Type is not (WorkflowNodeType.Start or WorkflowNodeType.End) &&
+                           !string.Equals(node.NodeTypeId, WorkflowGraphNodeTypeIds.Start, StringComparison.OrdinalIgnoreCase) &&
+                           !string.Equals(node.NodeTypeId, WorkflowGraphNodeTypeIds.End, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (executable.Length == 0) return null;
+
+        var durations = executable.Select(TryReadNodeDurationMinutes).ToArray();
+        if (durations.Any(value => value is null or <= 0)) return null;
+        var total = durations.Sum(value => value!.Value);
+        return total > 0 && total <= int.MaxValue ? (int)Math.Ceiling(total) : null;
+    }
+
+    private static decimal? TryReadNodeDurationMinutes(WorkflowNode node)
+    {
+        var values = (node.Configuration ?? new Dictionary<string, string?>())
+            .Where(item => item.Key.Equals("estimatedDurationMinutes", StringComparison.OrdinalIgnoreCase) ||
+                           item.Key.Equals("durationMinutes", StringComparison.OrdinalIgnoreCase) ||
+                           item.Key.Equals("estimatedDurationSeconds", StringComparison.OrdinalIgnoreCase))
+            .Select(item => (Key: item.Key, Value: item.Value))
+            .Concat((node.Parameters ?? Array.Empty<WorkflowParameter>())
+                .Where(item => item.Name.Equals("estimatedDurationMinutes", StringComparison.OrdinalIgnoreCase) ||
+                               item.Name.Equals("durationMinutes", StringComparison.OrdinalIgnoreCase) ||
+                               item.Name.Equals("estimatedDurationSeconds", StringComparison.OrdinalIgnoreCase))
+                .Select(item => (Key: item.Name, Value: item.Value)))
+            .ToArray();
+        foreach (var item in values)
+        {
+            if (!decimal.TryParse(
+                    item.Value,
+                    System.Globalization.NumberStyles.Number,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var number) || number <= 0)
+                continue;
+            return item.Key.EndsWith("Seconds", StringComparison.OrdinalIgnoreCase)
+                ? number / 60m
+                : number;
+        }
+
+        if (node.Type == WorkflowNodeType.Wait &&
+            (node.Parameters ?? Array.Empty<WorkflowParameter>()).FirstOrDefault(item =>
+                item.Name.Equals(WorkflowRuntimeParameterNames.WaitDurationSeconds, StringComparison.OrdinalIgnoreCase)) is
+            { Value: var waitValue } &&
+            decimal.TryParse(
+                waitValue,
+                System.Globalization.NumberStyles.Number,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var waitSeconds) && waitSeconds > 0)
+        {
+            return waitSeconds / 60m;
+        }
+
+        return null;
     }
 
     private static IReadOnlyList<ExperimentPlanWorkflowStep> CreateLegacyWorkflowStep(
@@ -883,6 +1038,9 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
             SetField(ref _selectedWorkflowVersion, step.SelectedWorkflowVersion, nameof(SelectedWorkflowVersion));
         }
         OnPropertyChanged(nameof(WorkflowStepsSummary));
+        OnPropertyChanged(nameof(MissingWorkflowDurationCount));
+        OnPropertyChanged(nameof(UnavailableWorkflowStepCount));
+        OnPropertyChanged(nameof(WorkflowStepsValidationSummary));
         MarkDirty();
     }
 
@@ -935,6 +1093,9 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
         OnPropertyChanged(nameof(CurrentVersion));
         OnPropertyChanged(nameof(ValidationSummary));
         OnPropertyChanged(nameof(WorkflowStepsSummary));
+        OnPropertyChanged(nameof(MissingWorkflowDurationCount));
+        OnPropertyChanged(nameof(UnavailableWorkflowStepCount));
+        OnPropertyChanged(nameof(WorkflowStepsValidationSummary));
         OnPropertyChanged(nameof(WorkflowTemplateFilterSummary));
         OnPropertyChanged(nameof(CanMoveWorkflowStepUp));
         OnPropertyChanged(nameof(CanMoveWorkflowStepDown));

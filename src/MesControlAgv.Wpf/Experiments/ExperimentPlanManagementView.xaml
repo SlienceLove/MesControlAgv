@@ -332,6 +332,11 @@
                                             Command="{Binding MoveWorkflowStepDownCommand}" Content="下移" />
                                 </WrapPanel>
                                 <TextBlock Margin="0,6,0,0" Foreground="#475467" TextWrapping="Wrap" Text="{Binding WorkflowStepsSummary}" />
+                                <TextBlock Margin="0,6,0,0" FontWeight="SemiBold" Foreground="#344054" Text="选中模板信息" />
+                                <TextBlock Margin="0,3,0,0" Foreground="#667085" TextWrapping="Wrap"
+                                           Text="{Binding SelectedWorkflowStep.WorkflowMetadataSummary}" />
+                                <TextBlock x:Name="WorkflowStepsValidationHint" Margin="0,6,0,0" Foreground="#B54708"
+                                           TextWrapping="Wrap" Text="{Binding WorkflowStepsValidationSummary}" />
                                 <TextBlock Margin="0,8,0,3" Foreground="#667085" Text="选中步骤参数覆盖（key=value;...）" />
                                 <TextBox MinHeight="30"
                                          Padding="6,4"
@@ -367,7 +372,8 @@
                     <DataGridTextColumn Width="60" Header="级别" Binding="{Binding Severity}" />
                     <DataGridTextColumn Width="210" Header="代码" Binding="{Binding Code}" />
                     <DataGridTextColumn Width="*" Header="问题" Binding="{Binding Message}" />
-                    <DataGridTextColumn Width="130" Header="字段" Binding="{Binding Field}" />
+                    <DataGridTextColumn Width="90" Header="步骤" Binding="{Binding StepDisplay}" />
+                    <DataGridTextColumn Width="160" Header="字段" Binding="{Binding FieldDisplay}" />
                     <DataGridTextColumn Width="150" Header="资源" Binding="{Binding Resource}" />
                 </DataGrid.Columns>
             </DataGrid>
