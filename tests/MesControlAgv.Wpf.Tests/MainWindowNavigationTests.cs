@@ -65,6 +65,61 @@ public sealed class MainWindowNavigationTests
         Assert.Null(failure);
     }
 
+    [Fact]
+    public void Agv_control_panel_stacks_below_table_in_compact_window()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var window = new MainWindow
+                {
+                    WindowState = WindowState.Normal,
+                    Width = 820,
+                    Height = 480
+                };
+                window.Show();
+                var tabs = Assert.IsType<TabControl>(window.FindName("MainTabs"));
+                tabs.SelectedItem = Assert.IsType<TabItem>(window.FindName("AgvCommunicationTab"));
+                window.UpdateLayout();
+
+                var agvView = Assert.IsType<Views.AgvCommunicationView>(window.FindName("AgvCommunicationView"));
+                var workspace = Assert.IsType<Grid>(agvView.FindName("AgvWorkspaceGrid"));
+                var controlPanel = Assert.IsType<Border>(agvView.FindName("AgvControlPanel"));
+
+                Assert.Equal(1, Grid.GetRow(controlPanel));
+                Assert.Equal(0, Grid.GetColumn(controlPanel));
+                Assert.Equal(2, Grid.GetColumnSpan(controlPanel));
+                Assert.True(workspace.ActualWidth < 760);
+
+                window.Width = 1400;
+                window.Height = 860;
+                window.UpdateLayout();
+                Assert.Equal(0, Grid.GetRow(controlPanel));
+                Assert.Equal(1, Grid.GetColumn(controlPanel));
+                Assert.Equal(1, Grid.GetColumnSpan(controlPanel));
+                Assert.True(workspace.ActualWidth >= 760);
+
+                window.Close();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                Dispatcher.CurrentDispatcher.InvokeShutdown();
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "WPF compact AGV layout test did not complete.");
+        Assert.Null(failure);
+    }
+
     private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root)
         where T : DependencyObject
     {

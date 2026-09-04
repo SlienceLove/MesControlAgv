@@ -53,13 +53,17 @@
                        Text="{Binding OfflineState.StateText, StringFormat=数据状态：{0}}" />
         </Grid>
 
-        <Grid Grid.Row="1" MinWidth="0">
+        <Grid x:Name="AgvWorkspaceGrid" Grid.Row="1" MinWidth="0" SizeChanged="AgvWorkspaceGrid_SizeChanged">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+                <RowDefinition Height="0" />
+            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" MinWidth="0" />
                 <ColumnDefinition Width="260" MinWidth="0" />
             </Grid.ColumnDefinitions>
 
-            <Grid Grid.Column="0" MinWidth="0" ClipToBounds="True">
+            <Grid x:Name="AgvTableHost" Grid.Row="0" Grid.Column="0" MinWidth="0" ClipToBounds="True">
                 <DataGrid x:Name="AgvGrid"
                           local:DataGridLayoutPersistence.LayoutKey="AgvCommunication"
                           local:DataGridLayoutPersistence.PersistLayout="True"
@@ -97,7 +101,7 @@
                 </Border>
             </Grid>
 
-            <Border x:Name="AgvControlPanel" Grid.Column="1" Margin="16,0,0,0" Padding="16" Background="#F6F8FA" CornerRadius="6">
+            <Border x:Name="AgvControlPanel" Grid.Row="0" Grid.Column="1" Margin="16,0,0,0" Padding="16" Background="#F6F8FA" CornerRadius="6">
                 <ScrollViewer x:Name="AgvControlScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel>
                     <TextBlock FontSize="18" FontWeight="SemiBold" Text="调度控制" />
