@@ -18,19 +18,262 @@
             </ResourceDictionary.MergedDictionaries>
             <converters:StatusBrushConverter x:Key="StatusBrushConverter" />
             <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+
+            <!-- Keep the content selection model of TabControl while moving the
+                 navigation chrome into an explicit, grouped shell.  This avoids
+                 rendering one long list of tabs and lets each page own its
+                 internal layout/scrolling. -->
+            <Style x:Key="ContentOnlyTabControlStyle" TargetType="{x:Type TabControl}">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type TabControl}">
+                            <Grid Background="{TemplateBinding Background}">
+                                <ContentPresenter x:Name="PART_SelectedContentHost"
+                                                  ContentSource="SelectedContent"
+                                                  HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                                  SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}" />
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style x:Key="NavigationRadioButtonStyle" TargetType="{x:Type RadioButton}">
+                <Setter Property="Foreground" Value="#C6D4E1" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="FontWeight" Value="Normal" />
+                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                <Setter Property="VerticalContentAlignment" Value="Center" />
+                <Setter Property="Margin" Value="8,1" />
+                <Setter Property="Padding" Value="10,8" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type RadioButton}">
+                            <Border x:Name="NavigationItem"
+                                    Padding="{TemplateBinding Padding}"
+                                    Background="Transparent"
+                                    CornerRadius="6">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="18" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Ellipse x:Name="NavigationGlyph" Width="7" Height="7"
+                                             HorizontalAlignment="Left" VerticalAlignment="Center"
+                                             Fill="#6F8AA4" />
+                                    <ContentPresenter Grid.Column="1"
+                                                      VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                                      HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                      RecognizesAccessKey="True"
+                                                      TextElement.Foreground="{TemplateBinding Foreground}" />
+                                </Grid>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="NavigationItem" Property="Background" Value="#173D5D" />
+                                    <Setter TargetName="NavigationGlyph" Property="Fill" Value="#B8D6FF" />
+                                </Trigger>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter TargetName="NavigationItem" Property="Background" Value="{StaticResource PrimaryBrush}" />
+                                    <Setter TargetName="NavigationGlyph" Property="Fill" Value="White" />
+                                    <Setter Property="Foreground" Value="White" />
+                                    <Setter Property="FontWeight" Value="SemiBold" />
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter Property="Opacity" Value="0.45" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <Style x:Key="NavigationGroupStyle" TargetType="{x:Type Expander}">
+                <Setter Property="Foreground" Value="#8FA8BE" />
+                <Setter Property="FontSize" Value="11" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="Margin" Value="14,12,14,2" />
+                <Setter Property="IsExpanded" Value="True" />
+            </Style>
         </ResourceDictionary>
     </Window.Resources>
-        <TabControl x:Name="MainTabs" Margin="0"
-                    Style="{StaticResource MainNavigationTabControlStyle}"
-                    ItemContainerStyle="{StaticResource MainNavigationTabItemStyle}"
-                    HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
-        <TabItem Header="任务监控" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <Grid Background="{StaticResource AppCanvasBrush}">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="184" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+
+        <Border x:Name="NavigationSidebar" Grid.Column="0" Background="{StaticResource SidebarBrush}">
+            <DockPanel LastChildFill="True">
+                <Border DockPanel.Dock="Top" Height="78" Padding="18,15"
+                        BorderBrush="#1E405D" BorderThickness="0,0,0,1">
+                    <StackPanel>
+                        <TextBlock Foreground="White" FontSize="17" FontWeight="SemiBold" Text="中控运营中心" />
+                        <TextBlock Margin="0,5,0,0" Foreground="#8FA8BE" FontSize="11" Text="物流 · 实验 · 设备协同" />
+                    </StackPanel>
+                </Border>
+                <Border DockPanel.Dock="Bottom" Margin="14" Padding="12,10"
+                        Background="#102D47" CornerRadius="6">
+                    <StackPanel>
+                        <TextBlock Foreground="#8FA8BE" FontSize="10" Text="当前运行模式" />
+                        <TextBlock Margin="0,4,0,0" Foreground="White" FontSize="12"
+                                   Text="{Binding RuntimeMode}" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+                <ScrollViewer Margin="0,6,0,0" VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel>
+                        <Expander Header="运营总览" Style="{StaticResource NavigationGroupStyle}">
+                            <StackPanel>
+                                <RadioButton Tag="TaskMonitorTab" IsChecked="True"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="任务监控" />
+                                </RadioButton>
+                                <RadioButton Tag="KpiDashboardTab"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="KPI 看板" />
+                                </RadioButton>
+                                <RadioButton Tag="MapDashboardTab"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="地图视图" />
+                                </RadioButton>
+                            </StackPanel>
+                        </Expander>
+
+                        <Expander Header="任务与设备" Style="{StaticResource NavigationGroupStyle}">
+                            <StackPanel>
+                                <RadioButton Tag="ShineLabDeviceStatusTab"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="设备状态查询" />
+                                </RadioButton>
+                                <RadioButton Tag="AgvCommunicationTab"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="AGV 通讯与调度" />
+                                </RadioButton>
+                                <RadioButton Tag="AuboArmTab"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="AUBO 机械臂" />
+                                </RadioButton>
+                            </StackPanel>
+                        </Expander>
+
+                        <Expander Header="实验工作流" Style="{StaticResource NavigationGroupStyle}">
+                            <StackPanel>
+                                <RadioButton Tag="ShineLabTaskDispatchTab"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="ShineLab 任务下发" TextWrapping="Wrap" />
+                                </RadioButton>
+                                <RadioButton Tag="ShineLabSequenceImportTab"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="离子色谱样品任务导入" TextWrapping="Wrap" />
+                                </RadioButton>
+                                <RadioButton Tag="BatchTaskImportTab"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="批量任务导入" />
+                                </RadioButton>
+                                <RadioButton Tag="WorkflowManagementTab"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="实验流程管理" />
+                                </RadioButton>
+                                <RadioButton Tag="ExperimentPlansTab"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="实验方案" />
+                                </RadioButton>
+                                <RadioButton Tag="ExperimentSchedulingTab"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="任务排程" />
+                                </RadioButton>
+                                <RadioButton Tag="WorkflowRunMonitorTab"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="流程运行监控" />
+                                </RadioButton>
+                            </StackPanel>
+                        </Expander>
+
+                        <Expander Header="系统与诊断" Style="{StaticResource NavigationGroupStyle}">
+                            <StackPanel>
+                                <RadioButton Tag="StartupDiagnosticsTab"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="启动诊断" />
+                                </RadioButton>
+                                <RadioButton Tag="ReadinessTab"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="就绪 / 地图 / 审计" TextWrapping="Wrap" />
+                                </RadioButton>
+                            </StackPanel>
+                        </Expander>
+                    </StackPanel>
+                </ScrollViewer>
+            </DockPanel>
+        </Border>
+
+        <Grid Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="56" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Border Grid.Row="0" Background="White" BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="0,0,0,1">
+                <Grid Margin="16,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock FontSize="16" FontWeight="SemiBold"
+                                   Text="{Binding SelectedItem.Header, ElementName=MainTabs}" />
+                        <TextBlock Margin="0,2,0,0" Foreground="{StaticResource TextSecondaryBrush}" FontSize="10"
+                                   Text="智能制造运营与任务协同" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Border Padding="10,5" Background="#ECFDF3" CornerRadius="12">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse Width="7" Height="7" Margin="0,0,6,0" VerticalAlignment="Center"
+                                         Fill="{StaticResource SuccessBrush}" />
+                                <TextBlock Foreground="#027A48" FontSize="11" Text="{Binding ConnectionStatus}" />
+                            </StackPanel>
+                        </Border>
+                        <Border Margin="10,0,0,0" Padding="10,5" Background="#F2F4F7" CornerRadius="12">
+                            <TextBlock Foreground="#475467" FontSize="11" Text="{Binding AgvStatus}" />
+                        </Border>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Border Grid.Row="1" Margin="12" Padding="14"
+                    Background="{StaticResource SurfaceBrush}"
+                    TextElement.Foreground="{StaticResource TextPrimaryBrush}"
+                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="9">
+                <TabControl x:Name="MainTabs" Style="{StaticResource ContentOnlyTabControlStyle}"
+                            SelectionChanged="MainTabs_SelectionChanged"
+                            HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <TabItem x:Name="TaskMonitorTab" Header="任务监控" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
             <views:TaskMonitorView x:Name="TaskMonitorView" />
         </TabItem>
-    <TabItem Header="KPI 看板" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <TabItem x:Name="KpiDashboardTab" Header="KPI 看板" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:KpiDashboardView x:Name="KpiDashboardView" />
     </TabItem>
-    <TabItem Header="离子色谱（已迁移至设备状态查询）" Visibility="Collapsed" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <TabItem x:Name="IonChromatographyTab" Header="离子色谱（已迁移至设备状态查询）" Visibility="Collapsed" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <Grid Margin="0,12,0,0">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
@@ -143,13 +386,13 @@
             </Grid>
         </Grid>
     </TabItem>
-    <TabItem Header="设备状态查询" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <TabItem x:Name="ShineLabDeviceStatusTab" Header="设备状态查询" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:ShineLabDeviceStatusView DataContext="{Binding ShineLabDeviceStatus}" />
     </TabItem>
-    <TabItem Header="ShineLab 任务下发（实验）" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <TabItem x:Name="ShineLabTaskDispatchTab" Header="ShineLab 任务下发（实验）" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:ShineLabTaskDispatchView DataContext="{Binding ShineLabTaskDispatch}" />
     </TabItem>
-    <TabItem Header="离子色谱样品任务导入" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <TabItem x:Name="ShineLabSequenceImportTab" Header="离子色谱样品任务导入" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:ShineLabSequenceImportView x:Name="ShineLabSequenceImportView" />
     </TabItem>
     <TabItem x:Name="AgvCommunicationTab" Header="AGV 通讯与调度" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
@@ -158,10 +401,10 @@
     <TabItem x:Name="AuboArmTab" Header="AUBO 机械臂" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:AuboArmControlView DataContext="{Binding AuboArm}" />
     </TabItem>
-    <TabItem Header="批量任务导入" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <TabItem x:Name="BatchTaskImportTab" Header="批量任务导入" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:BatchTaskImportView x:Name="BatchTaskImportView" />
     </TabItem>
-    <TabItem AutomationProperties.AutomationId="WorkflowManagementTab" Header="实验流程管理" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <TabItem x:Name="WorkflowManagementTab" AutomationProperties.AutomationId="WorkflowManagementTab" Header="实验流程管理" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:WorkflowManagementView x:Name="WorkflowManagementView" />
     </TabItem>
         <TabItem x:Name="ExperimentPlansTab" AutomationProperties.AutomationId="ExperimentPlansTab"
@@ -176,7 +419,7 @@
                  VerticalContentAlignment="Stretch">
             <experiments:ExperimentSchedulingView DataContext="{Binding ExperimentScheduling}" />
         </TabItem>
-        <TabItem AutomationProperties.AutomationId="WorkflowRunMonitorTab"
+        <TabItem x:Name="WorkflowRunMonitorTab" AutomationProperties.AutomationId="WorkflowRunMonitorTab"
                   Header="流程运行监控"
                  HorizontalContentAlignment="Stretch"
                  VerticalContentAlignment="Stretch">
@@ -186,7 +429,7 @@
                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
             <views:StartupDiagnosticsView x:Name="StartupDiagnosticsView" DataContext="{Binding Diagnostics}" />
         </TabItem>
-        <TabItem Header="就绪 / 地图 / 审计" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <TabItem x:Name="ReadinessTab" Header="就绪 / 地图 / 审计" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
             <Grid Margin="0,12,0,0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -337,8 +580,11 @@
                 </Grid>
             </Grid>
         </TabItem>
-        <TabItem Header="地图视图" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <TabItem x:Name="MapDashboardTab" Header="地图视图" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
             <views:MapDashboardView x:Name="MapDashboardView" />
         </TabItem>
-    </TabControl>
+                </TabControl>
+            </Border>
+        </Grid>
+    </Grid>
 </Window>

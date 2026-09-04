@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Media;
 using MesControlAgv.Wpf.ViewModels;
@@ -11,6 +12,64 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+    }
+
+    private void NavigationButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not RadioButton { Tag: string tabName })
+        {
+            return;
+        }
+
+        var tab = FindTab(tabName);
+        if (tab is not null)
+        {
+            MainTabs.SelectedItem = tab;
+        }
+    }
+
+    private void MainTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (MainTabs.SelectedItem is not TabItem selectedTab)
+        {
+            return;
+        }
+
+        foreach (var button in FindVisualChildren<RadioButton>(NavigationSidebar))
+        {
+            if (button.Tag is string tabName && string.Equals(tabName, selectedTab.Name, StringComparison.Ordinal))
+            {
+                button.IsChecked = true;
+                break;
+            }
+        }
+    }
+
+    private TabItem? FindTab(string name) =>
+        MainTabs.Items.OfType<TabItem>()
+            .FirstOrDefault(tab => string.Equals(tab.Name, name, StringComparison.Ordinal));
+
+    private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root)
+        where T : DependencyObject
+    {
+        if (root is null)
+        {
+            yield break;
+        }
+
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            var child = VisualTreeHelper.GetChild(root, index);
+            if (child is T match)
+            {
+                yield return match;
+            }
+
+            foreach (var descendant in FindVisualChildren<T>(child))
+            {
+                yield return descendant;
+            }
+        }
     }
 }
 
