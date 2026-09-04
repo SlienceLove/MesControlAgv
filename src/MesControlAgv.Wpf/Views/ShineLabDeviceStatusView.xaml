@@ -18,12 +18,17 @@
                     Command="{Binding RefreshCommand}" Content="刷新状态" />
         </DockPanel>
 
-        <Grid Grid.Row="1" Margin="0,0,0,14">
+        <Grid x:Name="DeviceSummaryGrid" Grid.Row="1" Margin="0,0,0,14"
+              MinWidth="0" SizeChanged="DeviceSummaryGrid_SizeChanged">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" MinHeight="0" />
+                <RowDefinition Height="0" />
+            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="2*" />
-                <ColumnDefinition Width="3*" />
+                <ColumnDefinition Width="2*" MinWidth="0" />
+                <ColumnDefinition Width="3*" MinWidth="0" />
             </Grid.ColumnDefinitions>
-            <Border Margin="0,0,12,0" Padding="12" Background="#F6F8FA"
+            <Border x:Name="DeviceListHost" Grid.Row="0" Grid.Column="0" Margin="0,0,12,0" Padding="12" Background="#F6F8FA"
                     BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
                 <StackPanel>
                     <TextBlock Foreground="Gray" Text="已发现设备" />
@@ -52,7 +57,10 @@
                 </StackPanel>
             </Border>
 
-            <Border Grid.Column="1" Padding="16" Background="White"
+            <ScrollViewer x:Name="SelectedDeviceScrollViewer" Grid.Row="0" Grid.Column="1"
+                          Margin="0" MinWidth="0" VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+            <Border Padding="16" Background="White"
                     BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -62,6 +70,8 @@
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
@@ -85,26 +95,34 @@
                     <TextBlock Grid.Row="4" Grid.Column="1" Margin="0,8,8,0" Text="{Binding SelectedStage}" />
                     <TextBlock Grid.Row="4" Grid.Column="2" Margin="0,8,8,0" Foreground="Gray" Text="报警" />
                     <TextBlock Grid.Row="4" Grid.Column="3" Margin="0,8,0,0" Text="{Binding SelectedAlarm}" TextWrapping="Wrap" />
+                    <TextBlock Grid.Row="5" Margin="0,8,8,0" Foreground="Gray" Text="任务号" />
+                    <TextBlock Grid.Row="5" Grid.Column="1" Margin="0,8,8,0" Text="{Binding SelectedTaskUuid}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Grid.Row="5" Grid.Column="2" Margin="0,8,8,0" Foreground="Gray" Text="进度" />
+                    <TextBlock Grid.Row="5" Grid.Column="3" Margin="0,8,0,0" Text="{Binding SelectedProgress}" />
+                    <TextBlock Grid.Row="6" Margin="0,8,8,0" Foreground="Gray" Text="最后推送" />
+                    <TextBlock Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="3" Margin="0,8,0,0" Text="{Binding SelectedLastSeen}" />
                 </Grid>
             </Border>
+            </ScrollViewer>
         </Grid>
 
         <Border Grid.Row="2" Padding="12" Background="White"
                 BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
             <StackPanel>
                 <TextBlock FontSize="17" FontWeight="SemiBold" Text="推送明细" />
-                <DataGrid Margin="0,12,0,0" ItemsSource="{Binding Devices}" AutoGenerateColumns="False"
-                          IsReadOnly="True" CanUserAddRows="False">
+                <DataGrid x:Name="DevicePushGrid" Margin="0,12,0,0" MinWidth="0"
+                          ItemsSource="{Binding Devices}" AutoGenerateColumns="False"
+                          IsReadOnly="True" CanUserAddRows="False"
+                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                          ScrollViewer.VerticalScrollBarVisibility="Auto">
                     <DataGrid.Columns>
-                        <DataGridTextColumn Width="180" Header="设备" Binding="{Binding DeviceName}" />
-                        <DataGridTextColumn Width="110" Header="在线" Binding="{Binding Online}" />
-                        <DataGridTextColumn Width="120" Header="状态" Binding="{Binding State}" />
-                        <DataGridTextColumn Width="150" Header="任务状态" Binding="{Binding HasActiveTask}" />
-                        <DataGridTextColumn Width="200" Header="任务号" Binding="{Binding TaskUuid}" />
-                        <DataGridTextColumn Width="160" Header="样品" Binding="{Binding SampleName}" />
-                        <DataGridTextColumn Width="100" Header="通道" Binding="{Binding Channel}" />
-                        <DataGridTextColumn Width="100" Header="位置" Binding="{Binding Position}" />
-                        <DataGridTextColumn Width="180" Header="最后推送" Binding="{Binding LastSeenAtUtc, StringFormat={}{0:yyyy-MM-dd HH:mm:ss}}" />
+                        <!-- Keep scan-level fields here; UUID, channel, position,
+                             progress and last-seen details are in the selection panel. -->
+                        <DataGridTextColumn Width="1.4*" MinWidth="100" Header="设备" Binding="{Binding DeviceName}" />
+                        <DataGridTextColumn Width="0.8*" MinWidth="64" Header="在线" Binding="{Binding Online}" />
+                        <DataGridTextColumn Width="1*" MinWidth="80" Header="状态" Binding="{Binding State}" />
+                        <DataGridTextColumn Width="1.2*" MinWidth="90" Header="任务状态" Binding="{Binding HasActiveTask}" />
+                        <DataGridTextColumn Width="1.5*" MinWidth="100" Header="样品" Binding="{Binding SampleName}" />
                     </DataGrid.Columns>
                 </DataGrid>
             </StackPanel>

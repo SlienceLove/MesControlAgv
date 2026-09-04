@@ -184,6 +184,104 @@ public sealed class MainWindowNavigationTests
         Assert.Null(failure);
     }
 
+    [Fact]
+    public void Sequence_import_stacks_validation_details_in_compact_window()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var window = new MainWindow
+                {
+                    WindowState = WindowState.Normal,
+                    Width = 820,
+                    Height = 480
+                };
+                window.Show();
+                var tabs = Assert.IsType<TabControl>(window.FindName("MainTabs"));
+                tabs.SelectedItem = Assert.IsType<TabItem>(window.FindName("ShineLabSequenceImportTab"));
+                window.Measure(new Size(820, 480));
+                window.Arrange(new Rect(0, 0, 820, 480));
+                window.UpdateLayout();
+
+                var view = Assert.IsType<Views.ShineLabSequenceImportView>(window.FindName("ShineLabSequenceImportView"));
+                var workspace = Assert.IsType<Grid>(view.FindName("SequenceWorkspaceGrid"));
+                var details = Assert.IsType<ScrollViewer>(view.FindName("SequenceDetailsScrollViewer"));
+
+                Assert.Equal(1, Grid.GetRow(details));
+                Assert.Equal(0, Grid.GetColumn(details));
+                Assert.Equal(2, Grid.GetColumnSpan(details));
+                Assert.True(workspace.ActualWidth < 900);
+
+                window.Close();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                Dispatcher.CurrentDispatcher.InvokeShutdown();
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "WPF compact sequence import layout test did not complete.");
+        Assert.Null(failure);
+    }
+
+    [Fact]
+    public void Device_status_stacks_selected_device_details_in_compact_window()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var window = new MainWindow
+                {
+                    WindowState = WindowState.Normal,
+                    Width = 820,
+                    Height = 480
+                };
+                window.Show();
+                var tabs = Assert.IsType<TabControl>(window.FindName("MainTabs"));
+                tabs.SelectedItem = Assert.IsType<TabItem>(window.FindName("ShineLabDeviceStatusTab"));
+                window.Measure(new Size(820, 480));
+                window.Arrange(new Rect(0, 0, 820, 480));
+                window.UpdateLayout();
+
+                var view = Assert.Single(FindVisualChildren<Views.ShineLabDeviceStatusView>(window));
+                var workspace = Assert.IsType<Grid>(view.FindName("DeviceSummaryGrid"));
+                var details = Assert.IsType<ScrollViewer>(view.FindName("SelectedDeviceScrollViewer"));
+
+                Assert.Equal(1, Grid.GetRow(details));
+                Assert.Equal(0, Grid.GetColumn(details));
+                Assert.Equal(2, Grid.GetColumnSpan(details));
+                Assert.True(workspace.ActualWidth < 800);
+
+                window.Close();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                Dispatcher.CurrentDispatcher.InvokeShutdown();
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "WPF compact device status layout test did not complete.");
+        Assert.Null(failure);
+    }
+
     private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root)
         where T : DependencyObject
     {

@@ -50,6 +50,7 @@ public sealed class ShineLabSequenceImportViewModel : INotifyPropertyChanged
     private string _status = "请选择离子色谱样品任务 CSV 或 XLSX 文件";
     private string _batchId = string.Empty;
     private ShineLabBatchReceipt? _receipt;
+    private ShineLabSampleTaskRowViewModel? _selectedSampleTask;
 
     public ShineLabSequenceImportViewModel(
         Func<IShineLabBatchHandoff?>? handoffFactory = null,
@@ -67,6 +68,12 @@ public sealed class ShineLabSequenceImportViewModel : INotifyPropertyChanged
 
     public ICommand SubmitCommand { get; }
     public ICommand ClearCommand { get; }
+
+    public ShineLabSampleTaskRowViewModel? SelectedSampleTask
+    {
+        get => _selectedSampleTask;
+        set => SetField(ref _selectedSampleTask, value);
+    }
 
     public string SourceFilePath
     {
@@ -173,6 +180,7 @@ public sealed class ShineLabSequenceImportViewModel : INotifyPropertyChanged
 
         OfflineState.BeginLoading("正在解析样品任务文件...");
         SampleTasks.Clear();
+        SelectedSampleTask = null;
         Issues.Clear();
         Receipt = null;
         BatchId = string.Empty;
@@ -205,6 +213,7 @@ public sealed class ShineLabSequenceImportViewModel : INotifyPropertyChanged
         {
             SampleTasks.Add(new ShineLabSampleTaskRowViewModel(displayIndex++, task));
         }
+        SelectedSampleTask = SampleTasks.FirstOrDefault();
 
         Status = _result.CanGenerateSequence
             ? $"已解析 {SampleTasks.Count} 条样品任务；确认追加导入并填写目标序列后可下发到控制电脑"
@@ -219,6 +228,7 @@ public sealed class ShineLabSequenceImportViewModel : INotifyPropertyChanged
     {
         _result = null;
         SampleTasks.Clear();
+        SelectedSampleTask = null;
         Issues.Clear();
         Receipt = null;
         BatchId = string.Empty;

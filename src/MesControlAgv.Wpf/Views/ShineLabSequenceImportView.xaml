@@ -55,26 +55,45 @@
             </StackPanel>
         </Grid>
 
-        <Grid Grid.Row="2">
+        <Grid x:Name="SequenceWorkspaceGrid" Grid.Row="2" MinWidth="0"
+              SizeChanged="SequenceWorkspaceGrid_SizeChanged">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" MinHeight="0" />
+                <RowDefinition Height="0" />
+            </Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="320" />
+                <ColumnDefinition Width="*" MinWidth="0" />
+                <ColumnDefinition Width="320" MinWidth="0" />
             </Grid.ColumnDefinitions>
-            <DataGrid AutoGenerateColumns="False" IsReadOnly="True"
+            <DataGrid x:Name="SampleTaskGrid" Grid.Row="0" Grid.Column="0" MinWidth="0"
+                      AutoGenerateColumns="False" IsReadOnly="True"
+                      SelectedItem="{Binding ShineLabSequenceImport.SelectedSampleTask, Mode=TwoWay}"
+                      ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                      ScrollViewer.VerticalScrollBarVisibility="Auto"
                       ItemsSource="{Binding ShineLabSequenceImport.SampleTasks}" HeadersVisibility="Column">
                 <DataGrid.Columns>
                     <DataGridTextColumn Header="序号" Width="60" Binding="{Binding DisplayIndex}" />
-                    <DataGridTextColumn Header="源行" Width="60" Binding="{Binding SourceRowNumber}" />
-                    <DataGridTextColumn Header="样品名称" Width="140" Binding="{Binding SampleName}" />
-                    <DataGridTextColumn Header="样品类型" Width="110" Binding="{Binding SampleType}" />
-                    <DataGridTextColumn Header="样品等级" Width="90" Binding="{Binding SampleLevel}" />
-                    <DataGridTextColumn Header="循环次数" Width="90" Binding="{Binding CycleCount}" />
-                    <DataGridTextColumn Header="进样体积" Width="110" Binding="{Binding InjectionVolume}" />
-                    <DataGridTextColumn Header="色谱方法" Width="*" Binding="{Binding ChromatographyMethod}" />
+                    <DataGridTextColumn Header="样品名称" Width="1.7*" MinWidth="120" Binding="{Binding SampleName}" />
+                    <DataGridTextColumn Header="样品类型" Width="1.1*" MinWidth="90" Binding="{Binding SampleType}" />
+                    <DataGridTextColumn Header="循环次数" Width="0.9*" MinWidth="72" Binding="{Binding CycleCount}" />
+                    <DataGridTextColumn Header="色谱方法" Width="2*" MinWidth="120" Binding="{Binding ChromatographyMethod}" />
                 </DataGrid.Columns>
             </DataGrid>
-            <ScrollViewer Grid.Column="1" Margin="12,0,0,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <ScrollViewer x:Name="SequenceDetailsScrollViewer" Grid.Row="0" Grid.Column="1"
+                          Margin="12,0,0,0" MinWidth="0"
+                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel>
+                    <Border Padding="12" Background="#F6F8FA"
+                            BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
+                        <StackPanel>
+                            <TextBlock FontSize="17" FontWeight="SemiBold" Text="选中样品" />
+                            <TextBlock Margin="0,10,0,0" FontWeight="SemiBold" Text="{Binding ShineLabSequenceImport.SelectedSampleTask.SampleName}" />
+                            <TextBlock Margin="0,4,0,0" Foreground="Gray" Text="{Binding ShineLabSequenceImport.SelectedSampleTask.SampleType}" />
+                            <TextBlock Margin="0,8,0,0" Text="{Binding ShineLabSequenceImport.SelectedSampleTask.SampleLevel, StringFormat=等级：{0}}" />
+                            <TextBlock Margin="0,4,0,0" Text="{Binding ShineLabSequenceImport.SelectedSampleTask.InjectionVolume, StringFormat=进样体积：{0}}" />
+                            <TextBlock Margin="0,4,0,0" Text="{Binding ShineLabSequenceImport.SelectedSampleTask.SourceRowNumber, StringFormat=源行：{0}}" />
+                        </StackPanel>
+                    </Border>
                     <TextBlock FontSize="17" FontWeight="SemiBold" Text="校验问题" />
                     <ListBox Height="150" Margin="0,8,0,0" ItemsSource="{Binding ShineLabSequenceImport.Issues}" />
                     <TextBlock Margin="0,12,0,0" Foreground="Gray" Text="批次号" />

@@ -7,6 +7,8 @@ namespace MesControlAgv.Wpf.Views;
 
 public partial class ShineLabSequenceImportView : UserControl
 {
+    private bool? _isCompactLayout;
+
     public ShineLabSequenceImportView()
     {
         InitializeComponent();
@@ -41,5 +43,45 @@ public partial class ShineLabSequenceImportView : UserControl
                 : LogicalTreeHelper.GetParent(current);
         }
         return null;
+    }
+
+    private void SequenceWorkspaceGrid_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (SequenceWorkspaceGrid.ActualWidth <= 0)
+        {
+            return;
+        }
+
+        var isCompact = SequenceWorkspaceGrid.ActualWidth < 900;
+        if (_isCompactLayout == isCompact)
+        {
+            return;
+        }
+
+        _isCompactLayout = isCompact;
+        if (isCompact)
+        {
+            SequenceWorkspaceGrid.RowDefinitions[0].Height = new GridLength(1, GridUnitType.Star);
+            SequenceWorkspaceGrid.RowDefinitions[1].Height = GridLength.Auto;
+            SequenceWorkspaceGrid.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+            SequenceWorkspaceGrid.ColumnDefinitions[1].Width = new GridLength(0);
+            Grid.SetRow(SequenceDetailsScrollViewer, 1);
+            Grid.SetColumn(SequenceDetailsScrollViewer, 0);
+            Grid.SetColumnSpan(SequenceDetailsScrollViewer, 2);
+            SequenceDetailsScrollViewer.Margin = new Thickness(0, 12, 0, 0);
+            SequenceDetailsScrollViewer.MaxHeight = 300;
+        }
+        else
+        {
+            SequenceWorkspaceGrid.RowDefinitions[0].Height = new GridLength(1, GridUnitType.Star);
+            SequenceWorkspaceGrid.RowDefinitions[1].Height = new GridLength(0);
+            SequenceWorkspaceGrid.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+            SequenceWorkspaceGrid.ColumnDefinitions[1].Width = new GridLength(320);
+            Grid.SetRow(SequenceDetailsScrollViewer, 0);
+            Grid.SetColumn(SequenceDetailsScrollViewer, 1);
+            Grid.SetColumnSpan(SequenceDetailsScrollViewer, 1);
+            SequenceDetailsScrollViewer.Margin = new Thickness(12, 0, 0, 0);
+            SequenceDetailsScrollViewer.ClearValue(MaxHeightProperty);
+        }
     }
 }
