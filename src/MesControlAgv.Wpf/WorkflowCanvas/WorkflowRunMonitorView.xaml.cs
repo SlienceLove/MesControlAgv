@@ -10,6 +10,7 @@ public partial class WorkflowRunMonitorView : UserControl
 {
     private WorkflowRunMonitorViewModel? _viewModel;
     private WorkflowRunMonitorFullscreenWindow? _fullscreenWindow;
+    private bool? _isCompactLayout;
 
     /// <summary>
     /// The embedded monitor owns the refresh lifecycle. A fullscreen mirror
@@ -95,6 +96,37 @@ public partial class WorkflowRunMonitorView : UserControl
     }
 
     private void RunCanvas_FitToContent(object sender, RoutedEventArgs e) => RunCanvasSurface.FitToContent();
+
+    private void RunCanvasWorkspaceGrid_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (RunCanvasWorkspaceGrid.ActualWidth <= 0)
+        {
+            return;
+        }
+
+        var isCompact = RunCanvasWorkspaceGrid.ActualWidth < 1000;
+        if (_isCompactLayout == isCompact)
+        {
+            return;
+        }
+
+        _isCompactLayout = isCompact;
+        if (isCompact)
+        {
+            // Keep the read-only canvas and the node inspector side by side,
+            // but give the inspector a flexible share instead of allowing its
+            // fixed width to push the canvas outside a compact window.
+            RunCanvasColumn.Width = new GridLength(1.25, GridUnitType.Star);
+            RunInspectorColumn.Width = new GridLength(1, GridUnitType.Star);
+            RunInspectorPanel.Margin = new Thickness(12, 0, 0, 0);
+        }
+        else
+        {
+            RunCanvasColumn.Width = new GridLength(2, GridUnitType.Star);
+            RunInspectorColumn.Width = new GridLength(390);
+            RunInspectorPanel.Margin = new Thickness(12, 0, 0, 0);
+        }
+    }
 
     private void OpenFullscreen_Click(object sender, RoutedEventArgs e)
     {

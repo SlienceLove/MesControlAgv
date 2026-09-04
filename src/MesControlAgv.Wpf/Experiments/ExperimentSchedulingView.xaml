@@ -19,12 +19,11 @@
             <RowDefinition Height="265" />
         </Grid.RowDefinitions>
 
-        <DockPanel Margin="0,0,0,10" LastChildFill="False">
-            <StackPanel DockPanel.Dock="Left">
+        <Grid Margin="0,0,0,10">
+            <StackPanel>
                 <TextBlock FontSize="22" FontWeight="SemiBold" Text="任务排程" />
                 <TextBlock Margin="0,3,0,0" Foreground="#667085" Text="{Binding BoardWindow}" />
-            </StackPanel>
-            <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                <WrapPanel Margin="0,10,0,0">
                 <TextBlock Margin="0,0,6,0" VerticalAlignment="Center" Foreground="#667085" Text="日期" />
                 <DatePicker Width="132" SelectedDate="{Binding BoardDate}" />
                 <TextBlock Margin="12,0,6,0" VerticalAlignment="Center" Foreground="#667085" Text="起始" />
@@ -34,37 +33,34 @@
                 <TextBlock Margin="4,0,0,0" VerticalAlignment="Center" Foreground="#667085" Text="小时" />
                 <Button x:Name="SchedulingRefreshButton" AutomationProperties.AutomationId="ExperimentSchedulingRefreshButton"
                         Margin="12,0,0,0" Padding="14,7" Command="{Binding RefreshCommand}" Content="刷新窗口" />
-            </StackPanel>
-        </DockPanel>
-
-        <Grid Grid.Row="1" Margin="0,0,0,10">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="210" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="180" />
-            </Grid.ColumnDefinitions>
-            <StackPanel Margin="0,0,12,0">
-                <TextBlock Margin="0,0,0,3" Foreground="#667085" Text="操作者" />
-                <TextBox MinHeight="30" Padding="6,4" Text="{Binding OperatorName, UpdateSourceTrigger=PropertyChanged}" />
-            </StackPanel>
-            <StackPanel Grid.Column="1" Margin="0,0,12,0">
-                <TextBlock Margin="0,0,0,3" Foreground="#667085" Text="操作理由" />
-                <TextBox MinHeight="30" Padding="6,4" Text="{Binding Reason, UpdateSourceTrigger=PropertyChanged}" />
-            </StackPanel>
-            <StackPanel Grid.Column="2">
-                <TextBlock Margin="0,0,0,3" Foreground="#667085" Text="数据状态" />
-                <TextBlock MinHeight="30" Padding="6,5" Background="#F6F8FA" Text="{Binding RefreshStatus}" />
+                </WrapPanel>
             </StackPanel>
         </Grid>
 
-        <Grid Grid.Row="2" MinHeight="250">
+        <WrapPanel Grid.Row="1" Margin="0,0,0,10">
+            <StackPanel Width="210" Margin="0,0,12,8">
+                <TextBlock Margin="0,0,0,3" Foreground="#667085" Text="操作者" />
+                <TextBox MinHeight="30" Padding="6,4" Text="{Binding OperatorName, UpdateSourceTrigger=PropertyChanged}" />
+            </StackPanel>
+            <StackPanel Width="320" Margin="0,0,12,8">
+                <TextBlock Margin="0,0,0,3" Foreground="#667085" Text="操作理由" />
+                <TextBox MinHeight="30" Padding="6,4" Text="{Binding Reason, UpdateSourceTrigger=PropertyChanged}" />
+            </StackPanel>
+            <StackPanel Width="180" Margin="0,0,0,8">
+                <TextBlock Margin="0,0,0,3" Foreground="#667085" Text="数据状态" />
+                <TextBlock MinHeight="30" Padding="6,5" Background="#F6F8FA" Text="{Binding RefreshStatus}" />
+            </StackPanel>
+        </WrapPanel>
+
+        <Grid x:Name="SchedulingWorkspaceGrid" Grid.Row="2" MinHeight="250" MinWidth="0"
+              SizeChanged="SchedulingWorkspaceGrid_SizeChanged">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="320" />
+                <ColumnDefinition x:Name="SchedulingTaskPoolColumn" Width="320" MinWidth="0" />
                 <ColumnDefinition Width="6" />
-                <ColumnDefinition Width="*" />
+                <ColumnDefinition x:Name="SchedulingTimelineColumn" Width="*" MinWidth="0" />
             </Grid.ColumnDefinitions>
 
-            <Grid Grid.Column="0" Margin="0,0,8,0">
+            <Grid x:Name="SchedulingTaskPoolPane" Grid.Column="0" Margin="0,0,8,0" MinWidth="0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
@@ -76,7 +72,9 @@
                                Foreground="#667085" Text="{Binding TaskPool.Count, StringFormat={}{0} 项}" />
                 </DockPanel>
                 <DataGrid x:Name="TaskPoolGrid" AutomationProperties.AutomationId="ExperimentTaskPoolGrid"
-                          Grid.Row="1" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True"
+                          Grid.Row="1" MinWidth="0" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True"
+                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                          ScrollViewer.VerticalScrollBarVisibility="Auto"
                           ItemsSource="{Binding TaskPool}" SelectedItem="{Binding SelectedJob}">
                     <DataGrid.Columns>
                         <DataGridTextColumn Width="*" Header="样品批次" Binding="{Binding SampleBatchId}" />
@@ -137,7 +135,7 @@
 
             <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Stretch" Background="#EAECF0" />
 
-            <Grid Grid.Column="2" Margin="8,0,0,0">
+            <Grid x:Name="SchedulingTimelinePane" Grid.Column="2" Margin="8,0,0,0" MinWidth="0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />

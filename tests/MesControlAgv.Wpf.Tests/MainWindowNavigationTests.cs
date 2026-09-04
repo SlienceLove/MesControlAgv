@@ -331,6 +331,168 @@ public sealed class MainWindowNavigationTests
         Assert.Null(failure);
     }
 
+    [Fact]
+    public void Experiment_plan_keeps_catalog_version_and_details_visible_in_compact_window()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var window = new MainWindow
+                {
+                    WindowState = WindowState.Normal,
+                    Width = 820,
+                    Height = 480
+                };
+                window.Show();
+                var tabs = Assert.IsType<TabControl>(window.FindName("MainTabs"));
+                tabs.SelectedItem = Assert.IsType<TabItem>(window.FindName("ExperimentPlansTab"));
+                window.Measure(new Size(820, 480));
+                window.Arrange(new Rect(0, 0, 820, 480));
+                window.UpdateLayout();
+
+                var view = Assert.Single(FindVisualChildren<MesControlAgv.Wpf.Experiments.ExperimentPlanManagementView>(window));
+                var workspace = Assert.IsType<Grid>(view.FindName("PlanWorkspaceGrid"));
+                var catalog = Assert.IsType<Grid>(view.FindName("PlanCatalogPane"));
+                var version = Assert.IsType<Grid>(view.FindName("PlanVersionPane"));
+                var details = Assert.IsType<Grid>(view.FindName("PlanDetailsPane"));
+                var position = details.TranslatePoint(new Point(0, 0), window);
+
+                Assert.True(workspace.ActualWidth < 1100);
+                Assert.True(catalog.ActualWidth > 0);
+                Assert.True(version.ActualWidth > 0);
+                Assert.True(details.ActualWidth > 0);
+                Assert.True(
+                    position.X + details.ActualWidth <= window.ActualWidth + 0.5,
+                    "紧凑窗口下实验方案详情不应被推到窗口可视区之外。");
+
+                window.Close();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                Dispatcher.CurrentDispatcher.InvokeShutdown();
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "WPF compact experiment plan layout test did not complete.");
+        Assert.Null(failure);
+    }
+
+    [Fact]
+    public void Experiment_scheduling_keeps_task_pool_and_timeline_visible_in_compact_window()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var window = new MainWindow
+                {
+                    WindowState = WindowState.Normal,
+                    Width = 820,
+                    Height = 480
+                };
+                window.Show();
+                var tabs = Assert.IsType<TabControl>(window.FindName("MainTabs"));
+                tabs.SelectedItem = Assert.IsType<TabItem>(window.FindName("ExperimentSchedulingTab"));
+                window.Measure(new Size(820, 480));
+                window.Arrange(new Rect(0, 0, 820, 480));
+                window.UpdateLayout();
+
+                var view = Assert.Single(FindVisualChildren<MesControlAgv.Wpf.Experiments.ExperimentSchedulingView>(window));
+                var workspace = Assert.IsType<Grid>(view.FindName("SchedulingWorkspaceGrid"));
+                var taskPool = Assert.IsType<Grid>(view.FindName("SchedulingTaskPoolPane"));
+                var timeline = Assert.IsType<Grid>(view.FindName("SchedulingTimelinePane"));
+
+                Assert.True(workspace.ActualWidth < 1000);
+                Assert.True(taskPool.ActualWidth > 0);
+                Assert.True(timeline.ActualWidth > 0);
+                Assert.True(
+                    taskPool.ActualWidth + timeline.ActualWidth <= workspace.ActualWidth + 8,
+                    "紧凑窗口下任务池和时间轴不应超出排程工作区。");
+
+                window.Close();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                Dispatcher.CurrentDispatcher.InvokeShutdown();
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "WPF compact scheduling layout test did not complete.");
+        Assert.Null(failure);
+    }
+
+    [Fact]
+    public void Workflow_run_monitor_keeps_canvas_and_inspector_inside_compact_window()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var window = new MainWindow
+                {
+                    WindowState = WindowState.Normal,
+                    Width = 820,
+                    Height = 480
+                };
+                window.Show();
+                var tabs = Assert.IsType<TabControl>(window.FindName("MainTabs"));
+                tabs.SelectedItem = Assert.IsType<TabItem>(window.FindName("WorkflowRunMonitorTab"));
+                window.Measure(new Size(820, 480));
+                window.Arrange(new Rect(0, 0, 820, 480));
+                window.UpdateLayout();
+
+                var view = Assert.Single(FindVisualChildren<MesControlAgv.Wpf.WorkflowCanvas.WorkflowRunMonitorView>(window));
+                var workspace = Assert.IsType<Grid>(view.FindName("RunCanvasWorkspaceGrid"));
+                var canvas = Assert.IsType<ColumnDefinition>(view.FindName("RunCanvasColumn"));
+                var inspector = Assert.IsType<ColumnDefinition>(view.FindName("RunInspectorColumn"));
+                var inspectorPanel = Assert.IsType<Border>(view.FindName("RunInspectorPanel"));
+                var position = inspectorPanel.TranslatePoint(new Point(0, 0), window);
+
+                Assert.True(workspace.ActualWidth < 1000);
+                Assert.True(canvas.ActualWidth > 0);
+                Assert.True(inspector.ActualWidth > 0);
+                Assert.True(inspectorPanel.ActualWidth > 0);
+                Assert.True(
+                    position.X + inspectorPanel.ActualWidth <= window.ActualWidth + 0.5,
+                    "紧凑窗口下流程运行监控检查器不应被推到窗口可视区之外。");
+
+                window.Close();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                Dispatcher.CurrentDispatcher.InvokeShutdown();
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "WPF compact workflow run layout test did not complete.");
+        Assert.Null(failure);
+    }
+
     private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root)
         where T : DependencyObject
     {

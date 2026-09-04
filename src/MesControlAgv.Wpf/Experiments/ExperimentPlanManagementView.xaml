@@ -20,12 +20,11 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <DockPanel Margin="0,0,0,10" LastChildFill="False">
-            <StackPanel DockPanel.Dock="Left">
+        <Grid Margin="0,0,0,10">
+            <StackPanel>
                 <TextBlock FontSize="22" FontWeight="SemiBold" Text="实验方案" />
                 <TextBlock Margin="0,3,0,0" Foreground="#667085" Text="{Binding CurrentVersion}" />
-            </StackPanel>
-            <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right" Orientation="Horizontal">
+                <WrapPanel Margin="0,10,0,0">
                 <Button x:Name="PlanRefreshButton" AutomationProperties.AutomationId="ExperimentPlanRefreshButton"
                         Margin="6,0,0,0" Padding="12,7" Command="{Binding RefreshCommand}" Content="刷新" />
                 <Button x:Name="PlanNewButton" AutomationProperties.AutomationId="ExperimentPlanNewButton"
@@ -39,79 +38,81 @@
                         Command="{Binding PublishCommand}" Content="发布" />
                 <Button x:Name="PlanNextDraftButton" AutomationProperties.AutomationId="ExperimentPlanNextDraftButton"
                         Margin="6,0,0,0" Padding="12,7" Command="{Binding CreateNextDraftCommand}" Content="复制为下一草稿" />
+                </WrapPanel>
             </StackPanel>
-        </DockPanel>
+        </Grid>
 
-        <Grid Grid.Row="1" Margin="0,0,0,10">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="210" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="260" />
-            </Grid.ColumnDefinitions>
-            <StackPanel Margin="0,0,12,0">
+        <WrapPanel Grid.Row="1" Margin="0,0,0,10">
+            <StackPanel Width="210" Margin="0,0,12,8">
                 <TextBlock Margin="0,0,0,3" Foreground="#667085" Text="操作者" />
                 <TextBox MinHeight="30" Padding="6,4" Text="{Binding OperatorName, UpdateSourceTrigger=PropertyChanged}" />
             </StackPanel>
-            <StackPanel Grid.Column="1" Margin="0,0,12,0">
+            <StackPanel Width="320" Margin="0,0,12,8">
                 <TextBlock Margin="0,0,0,3" Foreground="#667085" Text="变更理由" />
                 <TextBox MinHeight="30" Padding="6,4" Text="{Binding Reason, UpdateSourceTrigger=PropertyChanged}" />
             </StackPanel>
-            <StackPanel Grid.Column="2">
+            <StackPanel Width="260" Margin="0,0,0,8">
                 <TextBlock Margin="0,0,0,3" Foreground="#667085" Text="完整度" />
                 <TextBlock MinHeight="30" Padding="6,5" Background="#F6F8FA" FontWeight="SemiBold"
                            Text="{Binding ValidationSummary}" />
             </StackPanel>
-        </Grid>
-
-        <Grid Grid.Row="2" MinHeight="280">
+        </WrapPanel>
+        <!-- The editor panes use adjustable ratios below 1100px so the plan,
+             version and detail views remain visible instead of pushing the
+             detail tabs outside the window. -->
+        <Grid x:Name="PlanWorkspaceGrid" Grid.Row="2" MinHeight="280" MinWidth="0"
+              SizeChanged="PlanWorkspaceGrid_SizeChanged">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="330" />
+                <ColumnDefinition x:Name="PlanCatalogColumn" Width="330" MinWidth="0" />
                 <ColumnDefinition Width="6" />
-                <ColumnDefinition Width="165" />
+                <ColumnDefinition x:Name="PlanVersionColumn" Width="165" MinWidth="0" />
                 <ColumnDefinition Width="6" />
-                <ColumnDefinition Width="*" />
+                <ColumnDefinition x:Name="PlanDetailsColumn" Width="*" MinWidth="0" />
             </Grid.ColumnDefinitions>
-
-            <Grid Grid.Column="0" Margin="0,0,8,0">
+            <Grid x:Name="PlanCatalogPane" Grid.Column="0" Margin="0,0,8,0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
                 <TextBlock Margin="0,0,0,6" FontSize="15" FontWeight="SemiBold" Text="方案目录" />
                 <DataGrid x:Name="PlanGrid" AutomationProperties.AutomationId="ExperimentPlanGrid"
-                          Grid.Row="1" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True"
-                          ItemsSource="{Binding Plans}" SelectedItem="{Binding SelectedPlan}">
+                          Grid.Row="1" MinWidth="0" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True"
+                          ItemsSource="{Binding Plans}" SelectedItem="{Binding SelectedPlan}"
+                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                          ScrollViewer.VerticalScrollBarVisibility="Auto">
                     <DataGrid.Columns>
-                        <DataGridTextColumn Width="*" Header="名称" Binding="{Binding Name}" />
-                        <DataGridTextColumn Width="42" Header="版本" Binding="{Binding Version}" />
-                        <DataGridTextColumn Width="62" Header="状态" Binding="{Binding Status}" />
-                        <DataGridTextColumn Width="78" Header="完整度" Binding="{Binding Completeness}" />
+                        <DataGridTextColumn Width="*" MinWidth="80" Header="名称" Binding="{Binding Name}" />
+                        <DataGridTextColumn Width="42" MinWidth="36" Header="版本" Binding="{Binding Version}" />
+                        <DataGridTextColumn Width="62" MinWidth="48" Header="状态" Binding="{Binding Status}" />
+                        <DataGridTextColumn Width="78" MinWidth="60" Header="完整度" Binding="{Binding Completeness}" />
                     </DataGrid.Columns>
                 </DataGrid>
             </Grid>
 
-            <GridSplitter Grid.Column="1" Width="6" HorizontalAlignment="Stretch" Background="#EAECF0" />
+            <GridSplitter x:Name="PlanCatalogSplitter" Grid.Column="1" Width="6" HorizontalAlignment="Stretch" Background="#EAECF0" />
 
-            <Grid Grid.Column="2" Margin="8,0">
+            <Grid x:Name="PlanVersionPane" Grid.Column="2" Margin="8,0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
                 <TextBlock Margin="0,0,0,6" FontSize="15" FontWeight="SemiBold" Text="版本" />
                 <DataGrid x:Name="PlanVersionGrid" AutomationProperties.AutomationId="ExperimentPlanVersionGrid"
-                          Grid.Row="1" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True"
-                          HeadersVisibility="Column" ItemsSource="{Binding Versions}" SelectedItem="{Binding SelectedVersion}">
+                          Grid.Row="1" MinWidth="0" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True"
+                          HeadersVisibility="Column" ItemsSource="{Binding Versions}" SelectedItem="{Binding SelectedVersion}"
+                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                          ScrollViewer.VerticalScrollBarVisibility="Auto">
                     <DataGrid.Columns>
-                        <DataGridTextColumn Width="42" Header="版本" Binding="{Binding VersionText}" />
-                        <DataGridTextColumn Width="60" Header="状态" Binding="{Binding Status}" />
-                        <DataGridTextColumn Width="*" Header="校验" Binding="{Binding Validation}" />
+                        <DataGridTextColumn Width="42" MinWidth="36" Header="版本" Binding="{Binding VersionText}" />
+                        <DataGridTextColumn Width="60" MinWidth="48" Header="状态" Binding="{Binding Status}" />
+                        <DataGridTextColumn Width="*" MinWidth="80" Header="校验" Binding="{Binding Validation}" />
                     </DataGrid.Columns>
                 </DataGrid>
             </Grid>
 
-            <GridSplitter Grid.Column="3" Width="6" HorizontalAlignment="Stretch" Background="#EAECF0" />
+            <GridSplitter x:Name="PlanVersionSplitter" Grid.Column="3" Width="6" HorizontalAlignment="Stretch" Background="#EAECF0" />
 
-            <Grid Grid.Column="4" Margin="8,0,0,0">
+            <Grid x:Name="PlanDetailsPane" Grid.Column="4" Margin="8,0,0,0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
