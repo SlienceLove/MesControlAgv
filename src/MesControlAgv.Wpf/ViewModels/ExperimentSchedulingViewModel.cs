@@ -51,6 +51,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
     private string _statusMessage = "排程数据尚未加载。";
     private string _errorMessage = string.Empty;
     private DateTimeOffset? _lastRefreshedAt;
+    private bool _isTimelineFocusMode;
 
     public ExperimentSchedulingViewModel(
         IMesClient mes,
@@ -287,6 +288,19 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
     public string RefreshStatus => LastRefreshedAt is null
         ? "尚未刷新"
         : $"更新于 {LastRefreshedAt.Value.ToLocalTime():HH:mm:ss}";
+    public bool IsTimelineFocusMode
+    {
+        get => _isTimelineFocusMode;
+        set
+        {
+            if (!SetField(ref _isTimelineFocusMode, value)) return;
+            OnPropertyChanged(nameof(TimelineFocusButtonText));
+        }
+    }
+    public string TimelineFocusButtonText => IsTimelineFocusMode
+        ? "退出时间轴全屏"
+        : "全屏查看时间轴";
+
     public string BoardWindow => TryGetBoardWindow(out var start, out var end)
         ? $"{start.ToLocalTime():yyyy-MM-dd HH:mm} - {end.ToLocalTime():MM-dd HH:mm}"
         : "窗口无效";

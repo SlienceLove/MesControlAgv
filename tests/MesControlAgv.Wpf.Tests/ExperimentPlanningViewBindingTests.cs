@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Threading;
 using MesControlAgv.Contracts.Experiments;
 using MesControlAgv.Contracts.Workflows;
@@ -54,6 +55,8 @@ public sealed class ExperimentPlanningViewBindingTests
                 Assert.Same(scheduling.UnscheduleCommand, Assert.IsType<Button>(schedulingView.FindName("UnscheduleButton")).Command);
                 Assert.Same(scheduling.AdmitCommand, Assert.IsType<Button>(schedulingView.FindName("AdmitButton")).Command);
                 Assert.Same(scheduling.CancelJobCommand, Assert.IsType<Button>(schedulingView.FindName("CancelJobButton")).Command);
+                var focusButton = Assert.IsType<ToggleButton>(schedulingView.FindName("TimelineFocusButton"));
+                Assert.Equal(scheduling.TimelineFocusButtonText, focusButton.Content);
                 Assert.Single(Assert.IsType<DataGrid>(schedulingView.FindName("TaskPoolGrid")).Items);
                 Assert.Single(Assert.IsType<DataGrid>(schedulingView.FindName("BlockingReasonGrid")).Items);
                 var timeline = Assert.IsType<ScrollViewer>(schedulingView.FindName("ResourceTimeline"));
@@ -61,6 +64,16 @@ public sealed class ExperimentPlanningViewBindingTests
                 Assert.True(timeline.ActualHeight > 0);
                 Assert.Single(scheduling.ResourceLanes);
                 Assert.Contains(scheduling.ResourceLanes[0].Blocks, block => block.JobId == client.Job.JobId);
+                schedulingView.Dispatcher.Invoke(() => scheduling.IsTimelineFocusMode = true);
+                PumpDispatcher(schedulingView.Dispatcher);
+                Assert.Equal(Visibility.Collapsed, Assert.IsType<Grid>(schedulingView.FindName("SchedulingTaskPoolPane")).Visibility);
+                Assert.Equal(Visibility.Collapsed, Assert.IsType<Grid>(schedulingView.FindName("SchedulingDetailsGrid")).Visibility);
+                Assert.Equal(0, Assert.IsType<RowDefinition>(schedulingView.FindName("SchedulingDetailsRow")).Height.Value);
+                Assert.Equal("退出时间轴全屏", focusButton.Content);
+                schedulingView.Dispatcher.Invoke(() => scheduling.IsTimelineFocusMode = false);
+                PumpDispatcher(schedulingView.Dispatcher);
+                Assert.Equal(Visibility.Visible, Assert.IsType<Grid>(schedulingView.FindName("SchedulingTaskPoolPane")).Visibility);
+                Assert.Equal(265, Assert.IsType<RowDefinition>(schedulingView.FindName("SchedulingDetailsRow")).Height.Value);
                 schedulingWindow.Close();
             }
             catch (Exception exception)
