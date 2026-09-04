@@ -19,17 +19,15 @@
         </Grid.RowDefinitions>
 
         <Grid Margin="0,0,0,12">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
-            <TextBlock FontSize="22" FontWeight="SemiBold" Text="离子色谱样品任务导入" />
-            <TextBlock Grid.Row="1" Margin="0,4,0,0" Foreground="Gray" TextWrapping="Wrap"
-                       Text="解析 ShineLab 样品序列，导入前执行字段校验；控制电脑只接受追加语义，运行仍需现场人工确认。" />
-            <StackPanel Grid.Row="0" Grid.RowSpan="2" HorizontalAlignment="Right" Orientation="Horizontal">
+            <StackPanel>
+                <TextBlock FontSize="22" FontWeight="SemiBold" Text="离子色谱样品任务导入" />
+                <TextBlock Margin="0,4,0,0" Foreground="Gray" TextWrapping="Wrap"
+                           Text="解析 ShineLab 样品序列，导入前执行字段校验；控制电脑只接受追加语义，运行仍需现场人工确认。" />
+                <WrapPanel Margin="0,10,0,0">
                 <Button Height="34" Padding="14,0" Click="ImportShineLabSequence_Click" Content="选择样品任务文件" />
                 <Button x:Name="SubmitButton" Height="34" Margin="8,0,0,0" Padding="14,0" Command="{Binding ShineLabSequenceImport.SubmitCommand}" Content="导入到 ShineLab" />
                 <Button Height="34" Margin="8,0,0,0" Padding="14,0" Command="{Binding ShineLabSequenceImport.ClearCommand}" Content="清空" />
+                </WrapPanel>
             </StackPanel>
         </Grid>
 

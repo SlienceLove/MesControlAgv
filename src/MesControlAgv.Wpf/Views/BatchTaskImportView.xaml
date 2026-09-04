@@ -17,19 +17,17 @@
         </Grid.RowDefinitions>
 
         <Grid Margin="0,0,0,12">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
-            <TextBlock FontSize="22" FontWeight="SemiBold" Text="批量任务导入" />
-            <TextBlock Grid.Row="1" Margin="0,4,0,0" Foreground="Gray" TextWrapping="Wrap"
-                       Text="支持 CSV / XLSX；导入后按优先级、计划时间自动排序，可直接编辑优先级；站点支持数字编码、AGV 站点 ID 或名称" />
-            <WrapPanel Grid.Row="0" Grid.RowSpan="2" HorizontalAlignment="Right" VerticalAlignment="Top">
+            <StackPanel>
+                <TextBlock FontSize="22" FontWeight="SemiBold" Text="批量任务导入" />
+                <TextBlock Margin="0,4,0,0" Foreground="Gray" TextWrapping="Wrap"
+                           Text="支持 CSV / XLSX；导入后按优先级、计划时间自动排序，可直接编辑优先级；站点支持数字编码、AGV 站点 ID 或名称" />
+                <WrapPanel Margin="0,10,0,0">
                 <Button Margin="6,0,0,0" Padding="14,7" Click="ImportBatch_Click" Content="选择文件" />
                 <Button x:Name="SortButton" Margin="6,0,0,0" Padding="14,7" Command="{Binding SortBatchCommand}" Content="按优先级排序" />
                 <Button x:Name="SubmitButton" Margin="6,0,0,0" Padding="14,7" Background="#1769AA" Foreground="White" Command="{Binding SubmitBatchCommand}" Content="批量提交" />
                 <Button x:Name="ClearButton" Margin="6,0,0,0" Padding="14,7" Command="{Binding ClearBatchCommand}" Content="清空" />
-            </WrapPanel>
+                </WrapPanel>
+            </StackPanel>
         </Grid>
 
         <DataGrid x:Name="BatchTaskGrid" Grid.Row="1" MinWidth="0"

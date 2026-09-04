@@ -24,41 +24,37 @@
         </Grid.RowDefinitions>
 
         <Grid Margin="0,0,0,16">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="220" />
-                <ColumnDefinition Width="220" />
-                <ColumnDefinition Width="240" />
-            </Grid.ColumnDefinitions>
             <StackPanel>
                 <TextBlock FontSize="26" FontWeight="SemiBold" Text="生产运营总览" />
                 <TextBlock Margin="0,6,0,0" Foreground="#667085" Text="运输任务、设备状态与实验流程统一协同" />
+                <WrapPanel Margin="0,10,0,0">
+                    <Border Width="220" Margin="0,0,12,8" Padding="14" Background="#EEF5FF" BorderBrush="#CFE0FF" BorderThickness="1" CornerRadius="8">
+                        <StackPanel>
+                            <TextBlock Foreground="Gray" Text="MES 连接" />
+                            <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding ConnectionStatus}" />
+                            <TextBlock Margin="0,4,0,0" Foreground="Gray" FontSize="11" TextWrapping="Wrap" Text="{Binding RefreshStatus}" />
+                            <TextBlock Margin="0,4,0,0" FontSize="11"
+                                       Foreground="{Binding OfflineState.StateText, Converter={StaticResource StatusBrushConverter}}"
+                                       Text="{Binding OfflineState.StateText, StringFormat=数据状态：{0}}" />
+                        </StackPanel>
+                    </Border>
+                    <Border Width="220" Margin="0,0,12,8" Padding="14" Background="#ECFDF3" BorderBrush="#C4EBD6" BorderThickness="1" CornerRadius="8">
+                        <StackPanel>
+                            <TextBlock Foreground="Gray" Text="运行模式" />
+                            <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding RuntimeMode}" />
+                            <TextBlock Foreground="Gray" FontSize="11" Text="{Binding RuntimeModeDescription}" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </Border>
+                    <Border Width="240" Margin="0,0,12,8" Padding="14" Background="#FFF6ED" BorderBrush="#FEDFBE" BorderThickness="1" CornerRadius="8">
+                        <StackPanel>
+                            <TextBlock Foreground="Gray" Text="AGV 状态 / 当前位置" />
+                            <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding AgvStatus}" />
+                            <TextBlock Text="{Binding AgvStation}" />
+                            <TextBlock Margin="0,4,0,0" Foreground="Gray" FontSize="11" TextWrapping="Wrap" Text="{Binding AgvExecutionStatus}" />
+                        </StackPanel>
+                    </Border>
+                </WrapPanel>
             </StackPanel>
-            <Border Grid.Column="1" Margin="12,0,0,0" Padding="14" Background="#EEF5FF" BorderBrush="#CFE0FF" BorderThickness="1" CornerRadius="8">
-                <StackPanel>
-                    <TextBlock Foreground="Gray" Text="MES 连接" />
-                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding ConnectionStatus}" />
-                    <TextBlock Margin="0,4,0,0" Foreground="Gray" FontSize="11" TextWrapping="Wrap" Text="{Binding RefreshStatus}" />
-                    <TextBlock Margin="0,4,0,0" FontSize="11"
-                               Foreground="{Binding OfflineState.StateText, Converter={StaticResource StatusBrushConverter}}"
-                               Text="{Binding OfflineState.StateText, StringFormat=数据状态：{0}}" />
-                </StackPanel>
-            </Border>
-            <Border Grid.Column="2" Margin="12,0,0,0" Padding="14" Background="#ECFDF3" BorderBrush="#C4EBD6" BorderThickness="1" CornerRadius="8">
-                <StackPanel>
-                    <TextBlock Foreground="Gray" Text="运行模式" />
-                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding RuntimeMode}" />
-                    <TextBlock Foreground="Gray" FontSize="11" Text="{Binding RuntimeModeDescription}" TextWrapping="Wrap" />
-                </StackPanel>
-            </Border>
-            <Border Grid.Column="3" Margin="12,0,0,0" Padding="14" Background="#FFF6ED" BorderBrush="#FEDFBE" BorderThickness="1" CornerRadius="8">
-                <StackPanel>
-                    <TextBlock Foreground="Gray" Text="AGV 状态 / 当前位置" />
-                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding AgvStatus}" />
-                    <TextBlock Text="{Binding AgvStation}" />
-                    <TextBlock Margin="0,4,0,0" Foreground="Gray" FontSize="11" TextWrapping="Wrap" Text="{Binding AgvExecutionStatus}" />
-                </StackPanel>
-            </Border>
         </Grid>
 
         <Border Grid.Row="1" Margin="0,0,0,16" Padding="16" Background="White" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8">
