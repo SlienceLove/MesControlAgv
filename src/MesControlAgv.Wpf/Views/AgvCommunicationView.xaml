@@ -53,13 +53,13 @@
                        Text="{Binding OfflineState.StateText, StringFormat=数据状态：{0}}" />
         </Grid>
 
-        <Grid Grid.Row="1">
+        <Grid Grid.Row="1" MinWidth="0">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="260" />
+                <ColumnDefinition Width="*" MinWidth="0" />
+                <ColumnDefinition Width="260" MinWidth="0" />
             </Grid.ColumnDefinitions>
 
-            <Grid Grid.Column="0">
+            <Grid Grid.Column="0" MinWidth="0" ClipToBounds="True">
                 <DataGrid x:Name="AgvGrid"
                           local:DataGridLayoutPersistence.LayoutKey="AgvCommunication"
                           local:DataGridLayoutPersistence.PersistLayout="True"
@@ -69,19 +69,20 @@
                           CanUserAddRows="False"
                           IsReadOnly="True"
                           SelectionMode="Single"
+                          MinWidth="0"
                           CanUserReorderColumns="True"
                           CanUserResizeColumns="True"
                           ScrollViewer.HorizontalScrollBarVisibility="Auto"
                           ScrollViewer.VerticalScrollBarVisibility="Auto">
                     <DataGrid.Columns>
-                        <DataGridTextColumn Width="170" Header="MES 状态" Binding="{Binding MesTaskStatus}" />
-                        <DataGridTextColumn Width="110" Header="设备状态" Binding="{Binding DeviceState}" />
-                        <DataGridTextColumn Width="150" Header="目标站点" Binding="{Binding TargetStationId}" />
-                        <DataGridTextColumn Width="140" Header="AGV ID" Binding="{Binding AgvId}" />
-                        <DataGridTextColumn Width="150" Header="来源 / 连接状态" Binding="{Binding ConnectionStatusDisplay}" />
-                        <DataGridTextColumn Width="120" Header="控制权" Binding="{Binding ControlOwner}" />
-                        <DataGridTextColumn Width="150" Header="当前位置" Binding="{Binding CurrentStationId}" />
-                        <DataGridTextColumn Width="2*" Header="当前任务" Binding="{Binding CurrentTaskText}" />
+                        <!-- Keep scan-level fields in the table.  Connection,
+                             ownership and route details are shown for the
+                             selected AGV on the right, so the table remains
+                             usable when the window is narrow. -->
+                        <DataGridTextColumn Width="1.2*" MinWidth="90" Header="MES 状态" Binding="{Binding MesTaskStatus}" />
+                        <DataGridTextColumn Width="1*" MinWidth="75" Header="设备状态" Binding="{Binding DeviceState}" />
+                        <DataGridTextColumn Width="95" MinWidth="72" Header="AGV ID" Binding="{Binding AgvId}" />
+                        <DataGridTextColumn Width="1.8*" MinWidth="100" Header="当前任务" Binding="{Binding CurrentTaskText}" />
                     </DataGrid.Columns>
                 </DataGrid>
                 <Border Margin="1"
@@ -113,6 +114,21 @@
                     <TextBlock Margin="0,8,0,0" Foreground="Gray" Text="MES / 设备状态" />
                     <TextBlock Text="{Binding SelectedAgv.MesTaskStatus}" TextWrapping="Wrap" />
                     <TextBlock Margin="0,6,0,0" Text="{Binding SelectedAgv.DeviceState}" />
+                    <Grid Margin="0,8,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="72" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <TextBlock Foreground="Gray" Text="连接状态：" />
+                        <TextBlock Grid.Column="1" Text="{Binding SelectedAgv.ConnectionStatusDisplay}" TextWrapping="Wrap" />
+                    </Grid>
+                    <Grid Margin="0,4,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="72" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <TextBlock Foreground="Gray" Text="控制权：" />
+                        <TextBlock Grid.Column="1" Text="{Binding SelectedAgv.ControlOwner}" TextWrapping="Wrap" />
+                    </Grid>
+                    <Grid Margin="0,8,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="72" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <TextBlock Foreground="Gray" Text="当前位置：" />
+                        <TextBlock Grid.Column="1" Text="{Binding SelectedAgv.CurrentStationId}" TextWrapping="Wrap" />
+                    </Grid>
                     <TextBlock Margin="0,8,0,0" Foreground="Gray" Text="目标 / 路径" />
                     <TextBlock Text="{Binding SelectedAgv.TargetStationId}" />
                     <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" Text="{Binding SelectedAgv.ExecutionPath}" />
