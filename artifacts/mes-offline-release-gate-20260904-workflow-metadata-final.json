@@ -1,8 +1,8 @@
 {
     "schemaVersion":  "mes.offline-release-gate/1.0",
-    "generatedAt":  "\/Date(1788537011097)\/",
+    "generatedAt":  "\/Date(1788537680829)\/",
     "repository":  "[REDACTED]",
-    "revision":  "88a92f9",
+    "revision":  "be25970",
     "workingTree":  "dirty",
     "releaseEligible":  true,
     "gatePassed":  true,
@@ -210,7 +210,7 @@
                    {
                        "name":  "solution-tests",
                        "passed":  true,
-                       "detail":  "dotnet test exit code 0. 已通过! - 失败:     0，通过:    80，已跳过:     0，总计:    80，持续时间: 205 ms - MesControlAgv.InstrumentGateway.Tests.dll (net8.0)"
+                       "detail":  "dotnet test exit code 0. 已通过! - 失败:     0，通过:    80，已跳过:     0，总计:    80，持续时间: 275 ms - MesControlAgv.InstrumentGateway.Tests.dll (net8.0)"
                    }
                ],
     "passed":  true
