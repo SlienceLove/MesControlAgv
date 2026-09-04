@@ -11,6 +11,7 @@ namespace MesControlAgv.Wpf.Views;
 public partial class WorkflowManagementView : UserControl
 {
     private WorkflowEditorViewModel? _workflowEditor;
+    private bool? _isCompactLayout;
 
     public WorkflowManagementView()
     {
@@ -18,9 +19,14 @@ public partial class WorkflowManagementView : UserControl
         Loaded += WorkflowManagementView_Loaded;
         Unloaded += WorkflowManagementView_Unloaded;
         DataContextChanged += WorkflowManagementView_DataContextChanged;
+        SizeChanged += WorkflowManagementView_SizeChanged;
     }
 
-    private void WorkflowManagementView_Loaded(object sender, RoutedEventArgs e) => AttachWorkflowEditor();
+    private void WorkflowManagementView_Loaded(object sender, RoutedEventArgs e)
+    {
+        AttachWorkflowEditor();
+        ApplyResponsiveLayout();
+    }
 
     private void WorkflowManagementView_Unloaded(object sender, RoutedEventArgs e)
     {
@@ -30,6 +36,55 @@ public partial class WorkflowManagementView : UserControl
 
     private void WorkflowManagementView_DataContextChanged(object sender, DependencyPropertyChangedEventArgs e) =>
         AttachWorkflowEditor();
+
+    private void WorkflowManagementView_SizeChanged(object sender, SizeChangedEventArgs e) => ApplyResponsiveLayout();
+
+    private void ApplyResponsiveLayout()
+    {
+        if (Content is not Grid root)
+        {
+            return;
+        }
+
+        // The editor body is the direct Grid.Row=1 child of the page root. We
+        // intentionally locate it structurally so this behavior coexists with
+        // in-progress XAML additions (for example the physical batch fields).
+        var workspace = root.Children
+            .OfType<Grid>()
+            .FirstOrDefault(child => Grid.GetRow(child) == 1 && child.ColumnDefinitions.Count == 3);
+        if (workspace is null || workspace.ActualWidth <= 0)
+        {
+            return;
+        }
+
+        var isCompact = workspace.ActualWidth < 1100;
+        if (_isCompactLayout == isCompact)
+        {
+            return;
+        }
+
+        _isCompactLayout = isCompact;
+        var columns = workspace.ColumnDefinitions;
+        foreach (var column in columns)
+        {
+            column.MinWidth = 0;
+        }
+
+        if (isCompact)
+        {
+            // Keep the palette and property inspector present on compact
+            // screens while giving the canvas the largest flexible share.
+            columns[0].Width = new GridLength(1.1, GridUnitType.Star);
+            columns[1].Width = new GridLength(2.4, GridUnitType.Star);
+            columns[2].Width = new GridLength(1.6, GridUnitType.Star);
+        }
+        else
+        {
+            columns[0].Width = new GridLength(190);
+            columns[1].Width = new GridLength(1, GridUnitType.Star);
+            columns[2].Width = new GridLength(360);
+        }
+    }
 
     private void ImportWorkflowCompatibility_Click(object sender, RoutedEventArgs e)
     {

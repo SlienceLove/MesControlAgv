@@ -543,6 +543,59 @@ public sealed class MainWindowNavigationTests
         Assert.Null(failure);
     }
 
+    [Fact]
+    public void Workflow_management_keeps_palette_canvas_and_inspector_inside_compact_window()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var window = new MainWindow
+                {
+                    WindowState = WindowState.Normal,
+                    Width = 820,
+                    Height = 480
+                };
+                window.Show();
+                var tabs = Assert.IsType<TabControl>(window.FindName("MainTabs"));
+                tabs.SelectedItem = Assert.IsType<TabItem>(window.FindName("WorkflowManagementTab"));
+                window.Measure(new Size(820, 480));
+                window.Arrange(new Rect(0, 0, 820, 480));
+                window.UpdateLayout();
+
+                var view = Assert.Single(FindVisualChildren<Views.WorkflowManagementView>(window));
+                var root = Assert.IsType<Grid>(view.Content);
+                var workspace = root.Children
+                    .OfType<Grid>()
+                    .Single(grid => Grid.GetRow(grid) == 1 && grid.ColumnDefinitions.Count == 3);
+
+                Assert.True(workspace.ActualWidth < 1100);
+                Assert.All(workspace.ColumnDefinitions, column => Assert.True(column.ActualWidth > 0));
+                Assert.Equal(
+                    workspace.ActualWidth,
+                    workspace.ColumnDefinitions.Sum(column => column.ActualWidth),
+                    precision: 1);
+
+                window.Close();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                Dispatcher.CurrentDispatcher.InvokeShutdown();
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "WPF compact workflow management layout test did not complete.");
+        Assert.Null(failure);
+    }
+
     private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root)
         where T : DependencyObject
     {
