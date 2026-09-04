@@ -27,7 +27,10 @@ public sealed class ExperimentPlanListItemViewModel(ExperimentPlan plan)
     public int Version => Plan.Version;
     public string Name => Plan.Name;
     public string Status => ExperimentUiText.PlanStatus(Plan.Status);
-    public string Workflow => $"{Plan.WorkflowId:N} / v{Plan.WorkflowVersion}";
+    public string Workflow => Plan.WorkflowSteps.Count > 1
+        ? $"{Plan.WorkflowSteps.Count} 个固定流程"
+        : $"{Plan.WorkflowId:N} / v{Plan.WorkflowVersion}";
+    public int WorkflowStepCount => Plan.WorkflowSteps.Count;
     public string Completeness => Plan.Validation is null
         ? "尚未校验"
         : Plan.Validation.IsValid
@@ -54,11 +57,127 @@ public sealed record PublishedWorkflowVersionOption(
     Guid WorkflowId,
     int Version,
     string Name,
-    bool IsAvailable = true)
+    bool IsAvailable = true,
+    bool IsPreset = false)
 {
+    public string TemplateKind => IsPreset ? "已验证模板" : "已发布流程";
     public string Display => IsAvailable
-        ? $"{Name} / v{Version}"
+        ? $"{Name} / v{Version} · {TemplateKind}"
         : $"固定版本不可用 / {WorkflowId:N} / v{Version}";
+}
+
+/// <summary>
+/// Editable plan-level reference to one immutable workflow template. The
+/// definition remains owned by the workflow editor; this object only stores
+/// ordering, a display label, duration estimate and optional overrides.
+/// </summary>
+public sealed class ExperimentPlanWorkflowStepEditorViewModel : ExperimentBindableObject
+{
+    private readonly Guid _stepId;
+    private int _order;
+    private PublishedWorkflowVersionOption? _selectedWorkflowVersion;
+    private string _name = string.Empty;
+    private int _estimatedDurationMinutes;
+    private IReadOnlyDictionary<string, string?> _parameters =
+        new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+
+    public ExperimentPlanWorkflowStepEditorViewModel()
+        : this(Guid.NewGuid())
+    {
+    }
+
+    private ExperimentPlanWorkflowStepEditorViewModel(Guid stepId)
+    {
+        _stepId = stepId == Guid.Empty ? Guid.NewGuid() : stepId;
+    }
+
+    public Guid StepId => _stepId;
+
+    public int Order
+    {
+        get => _order;
+        private set => SetField(ref _order, value);
+    }
+
+    public PublishedWorkflowVersionOption? SelectedWorkflowVersion
+    {
+        get => _selectedWorkflowVersion;
+        set
+        {
+            if (!SetField(ref _selectedWorkflowVersion, value)) return;
+            if (value is not null && string.IsNullOrWhiteSpace(Name))
+                Name = value.Name;
+            OnPropertyChanged(nameof(WorkflowDisplay));
+            OnPropertyChanged(nameof(NameOrWorkflowDisplay));
+            OnPropertyChanged(nameof(IsAvailable));
+        }
+    }
+
+    public string Name
+    {
+        get => _name;
+        set
+        {
+            if (SetField(ref _name, value ?? string.Empty))
+                OnPropertyChanged(nameof(NameOrWorkflowDisplay));
+        }
+    }
+
+    public int EstimatedDurationMinutes
+    {
+        get => _estimatedDurationMinutes;
+        set
+        {
+            if (!SetField(ref _estimatedDurationMinutes, Math.Max(0, value))) return;
+            OnPropertyChanged(nameof(EstimatedDurationDisplay));
+        }
+    }
+
+    public string WorkflowDisplay => SelectedWorkflowVersion?.Display ?? "请选择已发布流程模板";
+    public string NameOrWorkflowDisplay => string.IsNullOrWhiteSpace(Name) ? WorkflowDisplay : Name;
+    public bool IsAvailable => SelectedWorkflowVersion?.IsAvailable == true;
+    public string EstimatedDurationDisplay => EstimatedDurationMinutes > 0
+        ? $"预计 {EstimatedDurationMinutes} 分钟"
+        : "预计时长待补充";
+    public IReadOnlyDictionary<string, string?> Parameters
+    {
+        get => _parameters;
+        private set
+        {
+            _parameters = new Dictionary<string, string?>(
+                value ?? new Dictionary<string, string?>(),
+                StringComparer.OrdinalIgnoreCase);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ParametersSummary));
+        }
+    }
+    public string ParametersSummary => Parameters.Count == 0
+        ? "无步骤参数覆盖"
+        : $"{Parameters.Count} 个步骤参数覆盖";
+
+    public static ExperimentPlanWorkflowStepEditorViewModel From(
+        ExperimentPlanWorkflowStep step,
+        PublishedWorkflowVersionOption? option) => new(step.StepId)
+    {
+        Order = Math.Max(1, step.Order),
+        SelectedWorkflowVersion = option,
+        Name = step.Name,
+        EstimatedDurationMinutes = step.EstimatedDurationMinutes,
+        Parameters = step.Parameters
+    };
+
+    internal void SetOrder(int order) => Order = Math.Max(1, order);
+
+    internal ExperimentPlanWorkflowStep ToContract(int order) => new()
+    {
+        StepId = StepId,
+        Order = Math.Max(1, order),
+        WorkflowId = SelectedWorkflowVersion?.WorkflowId ?? Guid.Empty,
+        WorkflowVersion = SelectedWorkflowVersion?.Version ?? 0,
+        Name = Name.Trim(),
+        EstimatedDurationMinutes = Math.Max(0, EstimatedDurationMinutes),
+        Parameters = new Dictionary<string, string?>(Parameters, StringComparer.OrdinalIgnoreCase)
+    };
 }
 
 public sealed class ExperimentPlanValidationIssueItemViewModel(ExperimentPlanValidationIssue issue)
@@ -195,6 +314,27 @@ public static class ExperimentUiText
         ScheduleEntryStatus.Completed => "已完成",
         _ => "未知"
     };
+
+    public static string ActivityStatus(string status)
+    {
+        var normalized = status?.Trim() ?? string.Empty;
+        var display = normalized.ToLowerInvariant() switch
+        {
+            "prepared" => "已准备",
+            "accepted" => "已接收",
+            "running" => "运行中",
+            "succeeded" or "completed" => "已完成",
+            "failed" => "失败",
+            "timedout" or "timeout" => "超时",
+            "cancelled" or "canceled" => "已取消",
+            "unknown" => "未知",
+            _ => string.IsNullOrWhiteSpace(normalized) ? "未知" : normalized
+        };
+        if (string.IsNullOrWhiteSpace(normalized)) return display;
+        return string.Equals(display, normalized, StringComparison.OrdinalIgnoreCase)
+            ? display
+            : $"{display} / {normalized}";
+    }
 
     public static string ResourceType(string resourceType) => resourceType switch
     {

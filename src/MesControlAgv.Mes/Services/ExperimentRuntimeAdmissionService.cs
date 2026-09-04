@@ -283,6 +283,20 @@ public sealed class ExperimentRuntimeAdmissionService(
                 "The job's pinned experiment plan is missing, unpublished, or no longer matches its workflow reference.",
                 Array.Empty<ExperimentResourceReference>());
         }
+        var planWorkflowSteps = ExperimentSchedulingPersistence.NormalizeWorkflowSteps(
+            ExperimentSchedulingPersistence.Deserialize(
+                plan.WorkflowStepsJson,
+                Array.Empty<ExperimentPlanWorkflowStep>()),
+            plan.WorkflowId,
+            plan.WorkflowVersion,
+            plan.PlanId);
+        if (planWorkflowSteps.Count > 1)
+        {
+            return new AdmissionRejection(
+                ExperimentSchedulingIssueCodes.CompositeWorkflowNotSupported,
+                "This plan contains multiple workflow templates. Runtime composition must be enabled before admission.",
+                Array.Empty<ExperimentResourceReference>());
+        }
         var workflow = await database.WorkflowVersions.AsNoTracking().SingleOrDefaultAsync(
             item => item.WorkflowId == job.WorkflowId && item.Version == job.WorkflowVersion,
             cancellationToken);

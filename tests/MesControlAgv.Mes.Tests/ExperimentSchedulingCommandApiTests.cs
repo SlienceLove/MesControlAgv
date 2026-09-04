@@ -177,6 +177,135 @@ public sealed class ExperimentSchedulingCommandApiTests : IClassFixture<MesWebAp
     }
 
     [Fact]
+    public async Task Composed_plan_roundtrips_ordered_workflow_steps_and_blocks_unsafe_single_run_admission()
+    {
+        var first = await PublishWorkflowAsync();
+        var second = await PublishWorkflowAsync();
+        var request = CreatePlanRequest(first, "Create a composed workflow plan") with
+        {
+            Draft = CreatePlanRequest(first, "Create a composed workflow plan").Draft with
+            {
+                WorkflowSteps =
+                [
+                    new ExperimentPlanWorkflowStep
+                    {
+                        StepId = Guid.NewGuid(),
+                        Order = 1,
+                        WorkflowId = first.WorkflowId,
+                        WorkflowVersion = first.Version,
+                        Name = "搬运到检测位",
+                        EstimatedDurationMinutes = 12
+                    },
+                    new ExperimentPlanWorkflowStep
+                    {
+                        StepId = Guid.NewGuid(),
+                        Order = 2,
+                        WorkflowId = second.WorkflowId,
+                        WorkflowVersion = second.Version,
+                        Name = "执行检测模板",
+                        EstimatedDurationMinutes = 30
+                    }
+                ]
+            }
+        };
+
+        var create = await _client.PostAsJsonAsync("/api/experiment-plans", request);
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var draft = await create.Content.ReadFromJsonAsync<ExperimentPlan>();
+        Assert.Equal(2, draft!.WorkflowSteps.Count);
+        Assert.Equal("搬运到检测位", draft.WorkflowSteps[0].Name);
+
+        var validate = await _client.PostAsJsonAsync(
+            $"/api/experiment-plans/{draft.PlanId}/versions/{draft.Version}/validate",
+            Action("Validate composed workflow plan"));
+        Assert.Equal(HttpStatusCode.OK, validate.StatusCode);
+        var validated = await validate.Content.ReadFromJsonAsync<ExperimentPlan>();
+        Assert.True(validated!.Validation!.IsValid, string.Join("; ", validated.Validation.Issues.Select(issue => issue.Message)));
+
+        var publish = await _client.PostAsJsonAsync(
+            $"/api/experiment-plans/{draft.PlanId}/versions/{draft.Version}/publish",
+            Action("Publish composed workflow plan"));
+        Assert.Equal(HttpStatusCode.OK, publish.StatusCode);
+        var published = await publish.Content.ReadFromJsonAsync<ExperimentPlan>();
+        Assert.Equal(2, published!.WorkflowSteps.Count);
+
+        var job = await CreateJobAsync(published, "B-COMPOSED");
+        Assert.Equal(2, job.WorkflowSteps.Count);
+        Assert.Equal("执行检测模板", job.WorkflowSteps[1].Name);
+
+        var scheduled = await _client.PutAsJsonAsync(
+            $"/api/experiment-jobs/{job.JobId}/schedule",
+            Schedule(
+                new DateTimeOffset(2026, 8, 23, 9, 0, 0, TimeSpan.Zero),
+                new DateTimeOffset(2026, 8, 23, 10, 0, 0, TimeSpan.Zero),
+                70,
+                "Schedule composed workflow plan"));
+        Assert.Equal(HttpStatusCode.OK, scheduled.StatusCode);
+
+        var admission = await _client.PostAsJsonAsync(
+            $"/api/experiment-jobs/{job.JobId}/admit",
+            new AdmitExperimentJobRequest
+            {
+                RequestId = Guid.NewGuid(),
+                Actor = "planner-api-test",
+                Reason = "Verify composite runtime safety gate"
+            });
+        Assert.Equal(HttpStatusCode.Conflict, admission.StatusCode);
+        var rejection = await admission.Content.ReadFromJsonAsync<ExperimentJobAdmissionResult>();
+        Assert.Equal(ExperimentSchedulingIssueCodes.CompositeWorkflowNotSupported, rejection!.RejectionCode);
+        Assert.Null(rejection.WorkflowRunId);
+    }
+
+    [Fact]
+    public async Task Missing_composed_step_ids_are_deterministic_across_idempotent_replay_and_read()
+    {
+        var first = await PublishWorkflowAsync();
+        var second = await PublishWorkflowAsync();
+        var request = CreatePlanRequest(first, "Verify deterministic step identities") with
+        {
+            Draft = CreatePlanRequest(first, "Verify deterministic step identities").Draft with
+            {
+                WorkflowSteps =
+                [
+                    new ExperimentPlanWorkflowStep
+                    {
+                        Order = 1,
+                        WorkflowId = first.WorkflowId,
+                        WorkflowVersion = first.Version,
+                        Name = "准备样品",
+                        EstimatedDurationMinutes = 10
+                    },
+                    new ExperimentPlanWorkflowStep
+                    {
+                        Order = 2,
+                        WorkflowId = second.WorkflowId,
+                        WorkflowVersion = second.Version,
+                        Name = "执行检测",
+                        EstimatedDurationMinutes = 20
+                    }
+                ]
+            }
+        };
+
+        var create = await _client.PostAsJsonAsync("/api/experiment-plans", request);
+        Assert.Equal(HttpStatusCode.Created, create.StatusCode);
+        var firstRead = await create.Content.ReadFromJsonAsync<ExperimentPlan>();
+        var ids = firstRead!.WorkflowSteps.Select(step => step.StepId).ToArray();
+        Assert.Equal(2, ids.Length);
+        Assert.All(ids, id => Assert.NotEqual(Guid.Empty, id));
+        Assert.Equal(2, ids.Distinct().Count());
+
+        var replay = await _client.PostAsJsonAsync("/api/experiment-plans", request);
+        Assert.Equal(HttpStatusCode.Created, replay.StatusCode);
+        var replayRead = await replay.Content.ReadFromJsonAsync<ExperimentPlan>();
+        Assert.Equal(ids, replayRead!.WorkflowSteps.Select(step => step.StepId).ToArray());
+
+        var persisted = await _client.GetFromJsonAsync<ExperimentPlan>(
+            $"/api/experiment-plans/{firstRead.PlanId}/versions/{firstRead.Version}");
+        Assert.Equal(ids, persisted!.WorkflowSteps.Select(step => step.StepId).ToArray());
+    }
+
+    [Fact]
     public async Task Overlapping_resource_is_blocked_and_boundary_reschedule_is_deterministic()
     {
         var workflow = await PublishWorkflowAsync();

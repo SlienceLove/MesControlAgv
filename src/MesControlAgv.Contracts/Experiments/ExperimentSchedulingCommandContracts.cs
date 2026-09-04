@@ -13,6 +13,8 @@ public static class ExperimentSchedulingIssueCodes
     public const string WorkflowReferenceRequired = "EXP-WORKFLOW-REFERENCE-REQUIRED";
     public const string WorkflowVersionNotFound = "EXP-WORKFLOW-VERSION-NOT-FOUND";
     public const string WorkflowVersionNotPublished = "EXP-WORKFLOW-VERSION-NOT-PUBLISHED";
+    public const string WorkflowStepInvalid = "EXP-WORKFLOW-STEP-INVALID";
+    public const string CompositeWorkflowNotSupported = "EXP-COMPOSITE-WORKFLOW-NOT-SUPPORTED";
     public const string ProfileMismatch = "EXP-PROFILE-MISMATCH";
     public const string MaterialInvalid = "EXP-MATERIAL-INVALID";
     public const string ParameterNameInvalid = "EXP-PARAMETER-NAME-INVALID";
@@ -60,6 +62,8 @@ public sealed record ExperimentPlanDraft
     public string Description { get; init; } = string.Empty;
     public Guid WorkflowId { get; init; }
     public int WorkflowVersion { get; init; }
+    public IReadOnlyList<ExperimentPlanWorkflowStep> WorkflowSteps { get; init; } =
+        Array.Empty<ExperimentPlanWorkflowStep>();
     public IReadOnlyList<ExperimentMaterialRequirement> MaterialRequirements { get; init; } =
         Array.Empty<ExperimentMaterialRequirement>();
     public IReadOnlyDictionary<string, string?> DefaultParameters { get; init; } =

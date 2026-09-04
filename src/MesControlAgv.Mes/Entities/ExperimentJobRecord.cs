@@ -7,6 +7,7 @@ public sealed class ExperimentJobRecord
     public int PlanVersion { get; set; }
     public Guid WorkflowId { get; set; }
     public int WorkflowVersion { get; set; }
+    public string WorkflowStepsJson { get; set; } = "[]";
     public string SampleBatchId { get; set; } = string.Empty;
     public string? SampleId { get; set; }
     public string ParametersJson { get; set; } = "{}";

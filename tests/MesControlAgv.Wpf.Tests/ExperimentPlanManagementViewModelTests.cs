@@ -77,6 +77,74 @@ public sealed class ExperimentPlanManagementViewModelTests
     }
 
     [Fact]
+    public async Task New_plan_composes_ordered_published_workflow_steps()
+    {
+        var fixture = PlanFixture.Empty();
+        using var viewModel = new ExperimentPlanManagementViewModel(fixture.Client)
+        {
+            Reason = "Compose verified workflow templates"
+        };
+        await viewModel.RefreshAsync();
+
+        viewModel.NewPlanCommand.Execute(null);
+        viewModel.Name = "Composed experiment";
+        viewModel.ProfileProductId = "MES-PROFILE";
+        viewModel.ProfileVersion = "1.0";
+
+        Assert.Single(viewModel.WorkflowSteps);
+        viewModel.AddWorkflowStepCommand.Execute(null);
+        Assert.Equal(2, viewModel.WorkflowSteps.Count);
+        var second = viewModel.SelectedWorkflowStep!;
+        second.Name = "第二段验证";
+        viewModel.MoveWorkflowStepUpCommand.Execute(null);
+
+        Assert.Same(second, viewModel.WorkflowSteps[0]);
+        Assert.Equal(new[] { 1, 2 }, viewModel.WorkflowSteps.Select(step => step.Order).ToArray());
+
+        await viewModel.SaveDraftAsync();
+
+        var steps = fixture.Client.LastSavedDraft!.Draft.WorkflowSteps;
+        Assert.Equal(2, steps.Count);
+        Assert.Equal(new[] { 1, 2 }, steps.Select(step => step.Order).ToArray());
+        Assert.All(steps, step =>
+        {
+            Assert.Equal(fixture.WorkflowId, step.WorkflowId);
+            Assert.Equal(3, step.WorkflowVersion);
+        });
+        Assert.Equal(steps[0].WorkflowId, fixture.Client.LastSavedDraft.Draft.WorkflowId);
+        Assert.Equal(steps[0].WorkflowVersion, fixture.Client.LastSavedDraft.Draft.WorkflowVersion);
+    }
+
+    [Fact]
+    public void Workflow_step_editor_roundtrips_parameter_overrides_without_data_loss()
+    {
+        var stepId = Guid.NewGuid();
+        var workflowId = Guid.NewGuid();
+        var step = new ExperimentPlanWorkflowStep
+        {
+            StepId = stepId,
+            Order = 1,
+            WorkflowId = workflowId,
+            WorkflowVersion = 7,
+            Name = "Instrument read",
+            EstimatedDurationMinutes = 20,
+            Parameters = new Dictionary<string, string?>
+            {
+                ["method"] = "anion",
+                ["sampleVolume"] = "10"
+            }
+        };
+        var option = new PublishedWorkflowVersionOption(workflowId, 7, "Instrument read");
+
+        var editor = ExperimentPlanWorkflowStepEditorViewModel.From(step, option);
+        var roundTripped = editor.ToContract(1);
+
+        Assert.Equal(stepId, roundTripped.StepId);
+        Assert.Equal(step.Parameters, roundTripped.Parameters);
+        Assert.Equal("2 个步骤参数覆盖", editor.ParametersSummary);
+    }
+
+    [Fact]
     public async Task Lifecycle_commands_follow_draft_validated_published_and_next_draft_states()
     {
         var fixture = PlanFixture.Create(ExperimentPlanStatus.Draft, valid: null);
@@ -299,6 +367,7 @@ public sealed class ExperimentPlanManagementViewModelTests
             Description = draft.Description,
             WorkflowId = draft.WorkflowId,
             WorkflowVersion = draft.WorkflowVersion,
+            WorkflowSteps = draft.WorkflowSteps,
             Status = ExperimentPlanStatus.Draft,
             MaterialRequirements = draft.MaterialRequirements,
             DefaultParameters = draft.DefaultParameters,

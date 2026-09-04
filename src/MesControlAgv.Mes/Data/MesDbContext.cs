@@ -180,6 +180,7 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.Property(plan => plan.Name).HasMaxLength(256);
             entity.Property(plan => plan.Description).HasMaxLength(2048);
             entity.Property(plan => plan.Status).HasMaxLength(32);
+            entity.Property(plan => plan.WorkflowStepsJson).HasMaxLength(65535);
             entity.Property(plan => plan.MaterialRequirementsJson).HasMaxLength(65535);
             entity.Property(plan => plan.DefaultParametersJson).HasMaxLength(65535);
             entity.Property(plan => plan.ResourceRequirementsJson).HasMaxLength(65535);
@@ -200,6 +201,7 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.HasKey(job => job.JobId);
             entity.Property(job => job.SampleBatchId).HasMaxLength(256);
             entity.Property(job => job.SampleId).HasMaxLength(256);
+            entity.Property(job => job.WorkflowStepsJson).HasMaxLength(65535);
             entity.Property(job => job.ParametersJson).HasMaxLength(65535);
             entity.Property(job => job.Status).HasMaxLength(32);
             entity.Property(job => job.CreatedBy).HasMaxLength(256);

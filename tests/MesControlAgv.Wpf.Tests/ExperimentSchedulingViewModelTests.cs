@@ -70,7 +70,7 @@ public sealed class ExperimentSchedulingViewModelTests
 
         Assert.Equal(13, ticks.Count);
         Assert.Equal(ExperimentScheduleTimelineProjector.TimelineWidth, ticks[^1].Left, 3);
-        Assert.Equal(ExperimentResourceLaneViewModel.LaneHeight, lane.Height);
+        Assert.Equal(8 + 3 * 26, lane.Height);
         Assert.True(lane.HasActiveLease);
         Assert.Equal(3, lane.Blocks.Count);
         var plannedBlock = Assert.Single(lane.Blocks.Where(block => block.JobId == readyJob.JobId));
@@ -82,6 +82,208 @@ public sealed class ExperimentSchedulingViewModelTests
         Assert.Equal(runId, leaseBlock.WorkflowRunId);
         Assert.Equal(0, leaseBlock.Left, 3);
         Assert.Equal(ExperimentScheduleTimelineProjector.TimelineWidth, leaseBlock.Width, 3);
+    }
+
+    [Fact]
+    public void Timeline_splits_composed_plan_into_ordered_workflow_step_segments()
+    {
+        var start = DateTimeOffset.Parse("2026-08-24T08:00:00+08:00");
+        var end = start.AddHours(2);
+        var resource = ResourceRef("instrument", "D160_01");
+        var jobId = Guid.NewGuid();
+        var job = Job("B-COMPOSED", ExperimentJobStatus.Scheduled) with
+        {
+            JobId = jobId,
+            WorkflowSteps =
+            [
+                new ExperimentPlanWorkflowStep
+                {
+                    StepId = Guid.NewGuid(),
+                    Order = 1,
+                    WorkflowId = Guid.NewGuid(),
+                    WorkflowVersion = 2,
+                    Name = "搬运到检测位",
+                    EstimatedDurationMinutes = 30
+                },
+                new ExperimentPlanWorkflowStep
+                {
+                    StepId = Guid.NewGuid(),
+                    Order = 2,
+                    WorkflowId = Guid.NewGuid(),
+                    WorkflowVersion = 4,
+                    Name = "执行检测模板",
+                    EstimatedDurationMinutes = 90
+                }
+            ]
+        };
+        var snapshot = new ExperimentScheduleSnapshot
+        {
+            Entries =
+            [
+                new ScheduleEntry
+                {
+                    ScheduleEntryId = Guid.NewGuid(),
+                    ExperimentJobId = jobId,
+                    PlannedStart = start,
+                    PlannedEnd = end,
+                    Priority = 50,
+                    Status = ScheduleEntryStatus.Scheduled,
+                    RequestedResources = [resource]
+                }
+            ]
+        };
+        var availability = new ExperimentResourceAvailability
+        {
+            Resource = resource,
+            DisplayName = "D160 #1",
+            Enabled = true,
+            Capacity = 1,
+            AvailableCapacity = 1
+        };
+
+        var lane = Assert.Single(ExperimentScheduleTimelineProjector.CreateLanes(
+            start,
+            end,
+            [availability],
+            snapshot,
+            new Dictionary<Guid, ExperimentJob> { [jobId] = job }));
+        var blocks = lane.Blocks.Where(block => !block.IsRuntimeLease).OrderBy(block => block.WorkflowStepOrder).ToArray();
+
+        Assert.Equal(2, blocks.Length);
+        Assert.Equal("搬运到检测位", blocks[0].WorkflowStepName);
+        Assert.Equal("执行检测模板", blocks[1].WorkflowStepName);
+        Assert.Equal(1, blocks[0].WorkflowStepOrder);
+        Assert.Equal(2, blocks[1].WorkflowStepOrder);
+        Assert.Equal(2, blocks[0].WorkflowStepCount);
+        Assert.Equal(ExperimentScheduleTimelineProjector.TimelineWidth / 4, blocks[0].Width, 3);
+        Assert.Equal(ExperimentScheduleTimelineProjector.TimelineWidth * 3 / 4, blocks[1].Width, 3);
+        Assert.Contains("步骤 1/2", blocks[0].Detail, StringComparison.Ordinal);
+        Assert.Contains("步骤 2/2", blocks[1].Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Timeline_projects_actual_device_activity_with_runtime_status()
+    {
+        var start = DateTimeOffset.Parse("2026-08-24T08:00:00+08:00");
+        var end = start.AddHours(2);
+        var resource = ResourceRef("instrument", "D160_01");
+        var jobId = Guid.NewGuid();
+        var runId = Guid.NewGuid();
+        var activityId = Guid.NewGuid();
+        var snapshot = new ExperimentScheduleSnapshot
+        {
+            GeneratedAt = start.AddMinutes(30),
+            Activities =
+            [
+                new ExperimentScheduleActivity
+                {
+                    ActivityId = activityId,
+                    ExperimentJobId = jobId,
+                    ScheduleEntryId = Guid.NewGuid(),
+                    WorkflowRunId = runId,
+                    WorkflowId = Guid.NewGuid(),
+                    WorkflowVersion = 3,
+                    Resource = resource,
+                    ActivityName = "读取 D160 状态",
+                    Status = "Running",
+                    PlannedStart = start,
+                    PlannedEnd = end,
+                    ActualStart = start.AddMinutes(15)
+                }
+            ]
+        };
+        var availability = new ExperimentResourceAvailability
+        {
+            Resource = resource,
+            DisplayName = "D160 #1",
+            Enabled = true,
+            Capacity = 1,
+            AvailableCapacity = 1
+        };
+
+        var lane = Assert.Single(ExperimentScheduleTimelineProjector.CreateLanes(
+            start,
+            end,
+            [availability],
+            snapshot,
+            new Dictionary<Guid, ExperimentJob>()));
+        var activity = Assert.Single(lane.Blocks.Where(block => block.IsRuntimeActivity));
+
+        Assert.Equal(activityId, activity.ActivityId);
+        Assert.Equal(runId, activity.WorkflowRunId);
+        Assert.Equal("读取 D160 状态", activity.Label);
+        Assert.Equal("#E0F2FE", activity.Fill);
+        Assert.Contains("实际 Running", activity.Detail, StringComparison.Ordinal);
+        Assert.Equal(120, activity.Width, 3);
+    }
+
+    [Fact]
+    public void Timeline_routes_activity_without_resource_evidence_to_unassigned_lane()
+    {
+        var start = DateTimeOffset.Parse("2026-08-24T08:00:00+08:00");
+        var end = start.AddHours(2);
+        var activity = new ExperimentScheduleActivity
+        {
+            ActivityId = Guid.NewGuid(),
+            ExperimentJobId = Guid.NewGuid(),
+            Resource = new ExperimentResourceReference(),
+            ActivityName = "待确认设备活动",
+            Status = "Unknown",
+            PlannedStart = start,
+            PlannedEnd = end,
+            ActualStart = start.AddMinutes(5)
+        };
+
+        var lanes = ExperimentScheduleTimelineProjector.CreateLanes(
+            start,
+            end,
+            [],
+            new ExperimentScheduleSnapshot { Activities = [activity] },
+            new Dictionary<Guid, ExperimentJob>());
+
+        var lane = Assert.Single(lanes);
+        Assert.Equal("unassigned", lane.ResourceType);
+        Assert.Equal("UNASSIGNED", lane.ResourceId);
+        var block = Assert.Single(lane.Blocks);
+        Assert.True(block.IsRuntimeActivity);
+        Assert.Equal("#FCE7F3", block.Fill);
+    }
+
+    [Fact]
+    public async Task Refresh_exposes_selected_job_activity_status_and_observed_window()
+    {
+        var fixture = SchedulingFixture.Create();
+        var job = fixture.Client.AddJob("B-ACTIVITY", ExperimentJobStatus.Running);
+        var start = fixture.WindowStart.AddHours(1);
+        fixture.Client.SetSchedule(Schedule(
+            job.JobId,
+            fixture.Resource,
+            start,
+            start.AddHours(1),
+            ScheduleEntryStatus.Admitted));
+        fixture.Client.Activities.Add(new ExperimentScheduleActivity
+        {
+            ActivityId = Guid.NewGuid(),
+            ExperimentJobId = job.JobId,
+            ScheduleEntryId = Guid.NewGuid(),
+            WorkflowRunId = Guid.NewGuid(),
+            Resource = fixture.Resource,
+            ActivityName = "读取仪器状态",
+            Status = "Running",
+            PlannedStart = start,
+            PlannedEnd = start.AddHours(1),
+            ActualStart = start.AddMinutes(5)
+        });
+
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Inspect observed activity";
+        await viewModel.RefreshAsync(job.JobId);
+
+        Assert.Equal("运行中 / Running", viewModel.SelectedActivityStatus);
+        Assert.Equal("instrument/D160_01", viewModel.SelectedActivityResource);
+        Assert.Contains("读取仪器状态", viewModel.SelectedActivity!.ActivityName, StringComparison.Ordinal);
+        Assert.Contains("运行中", viewModel.SelectedActivityStatus, StringComparison.Ordinal);
+        Assert.NotEqual("-", viewModel.SelectedActivityWindow);
     }
 
     [Fact]
@@ -345,6 +547,7 @@ public sealed class ExperimentSchedulingViewModelTests
         }
 
         public List<ExperimentSchedulingAuditEntry> Audits { get; } = [];
+        public List<ExperimentScheduleActivity> Activities { get; } = [];
         public CreateExperimentJobRequest? LastCreateJobRequest { get; private set; }
         public ScheduleExperimentJobRequest? LastScheduleRequest { get; private set; }
         public int ScheduleCalls { get; private set; }
@@ -393,7 +596,8 @@ public sealed class ExperimentSchedulingViewModelTests
             Task.FromResult(new ExperimentScheduleSnapshot
             {
                 GeneratedAt = DateTimeOffset.Now,
-                Entries = _schedules.ToArray()
+                Entries = _schedules.ToArray(),
+                Activities = Activities.ToArray()
             });
 
         public Task<IReadOnlyList<ExperimentResourceAvailability>> GetExperimentResourceAvailabilityAsync(DateTimeOffset? from, DateTimeOffset? to, CancellationToken cancellationToken) =>

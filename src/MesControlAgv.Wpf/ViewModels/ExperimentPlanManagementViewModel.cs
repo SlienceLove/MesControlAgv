@@ -28,9 +28,14 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
     private readonly RelayCommand<ExperimentParameterEditorViewModel> _removeParameterCommand;
     private readonly RelayCommand _addResourceCommand;
     private readonly RelayCommand<ExperimentResourceRequirementEditorViewModel> _removeResourceCommand;
+    private readonly RelayCommand _addWorkflowStepCommand;
+    private readonly RelayCommand<ExperimentPlanWorkflowStepEditorViewModel> _removeWorkflowStepCommand;
+    private readonly RelayCommand _moveWorkflowStepUpCommand;
+    private readonly RelayCommand _moveWorkflowStepDownCommand;
     private ExperimentPlanListItemViewModel? _selectedPlan;
     private ExperimentPlanVersionItemViewModel? _selectedVersion;
     private PublishedWorkflowVersionOption? _selectedWorkflowVersion;
+    private ExperimentPlanWorkflowStepEditorViewModel? _selectedWorkflowStep;
     private ExperimentPlanValidationIssueItemViewModel? _selectedValidationIssue;
     private bool _isNewPlan;
     private bool _isDirty;
@@ -65,6 +70,12 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
         _removeParameterCommand = new RelayCommand<ExperimentParameterEditorViewModel>(RemoveParameter, item => CanEdit && item is not null);
         _addResourceCommand = new RelayCommand(AddResourceRequirement, () => CanEdit);
         _removeResourceCommand = new RelayCommand<ExperimentResourceRequirementEditorViewModel>(RemoveResourceRequirement, item => CanEdit && item is not null);
+        _addWorkflowStepCommand = new RelayCommand(AddWorkflowStep, () => CanEdit);
+        _removeWorkflowStepCommand = new RelayCommand<ExperimentPlanWorkflowStepEditorViewModel>(
+            RemoveWorkflowStep,
+            item => CanEdit && item is not null && WorkflowSteps.Count > 1);
+        _moveWorkflowStepUpCommand = new RelayCommand(MoveWorkflowStepUp, () => CanEdit && CanMoveWorkflowStepUp);
+        _moveWorkflowStepDownCommand = new RelayCommand(MoveWorkflowStepDown, () => CanEdit && CanMoveWorkflowStepDown);
     }
 
     public ObservableCollection<ExperimentPlanListItemViewModel> Plans { get; } = [];
@@ -74,6 +85,7 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
     public ObservableCollection<ExperimentMaterialEditorViewModel> Materials { get; } = [];
     public ObservableCollection<ExperimentParameterEditorViewModel> Parameters { get; } = [];
     public ObservableCollection<ExperimentResourceRequirementEditorViewModel> ResourceRequirements { get; } = [];
+    public ObservableCollection<ExperimentPlanWorkflowStepEditorViewModel> WorkflowSteps { get; } = [];
 
     public IReadOnlyList<string> ResourceTypes { get; } =
     [
@@ -99,6 +111,10 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
     public ICommand RemoveParameterCommand => _removeParameterCommand;
     public ICommand AddResourceCommand => _addResourceCommand;
     public ICommand RemoveResourceCommand => _removeResourceCommand;
+    public ICommand AddWorkflowStepCommand => _addWorkflowStepCommand;
+    public ICommand RemoveWorkflowStepCommand => _removeWorkflowStepCommand;
+    public ICommand MoveWorkflowStepUpCommand => _moveWorkflowStepUpCommand;
+    public ICommand MoveWorkflowStepDownCommand => _moveWorkflowStepDownCommand;
 
     public ExperimentPlanListItemViewModel? SelectedPlan
     {
@@ -128,7 +144,28 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
         set
         {
             if (!SetField(ref _selectedWorkflowVersion, value)) return;
+            if (!_isLoadingEditor && WorkflowSteps.Count > 0 &&
+                !ReferenceEquals(WorkflowSteps[0].SelectedWorkflowVersion, value))
+            {
+                WorkflowSteps[0].SelectedWorkflowVersion = value;
+            }
             MarkDirty();
+        }
+    }
+
+    public ExperimentPlanWorkflowStepEditorViewModel? SelectedWorkflowStep
+    {
+        get => _selectedWorkflowStep;
+        set
+        {
+            if (!SetField(ref _selectedWorkflowStep, value)) return;
+            if (!_isLoadingEditor && value is not null &&
+                WorkflowSteps.Count > 0 && ReferenceEquals(WorkflowSteps[0], value) &&
+                !ReferenceEquals(SelectedWorkflowVersion, value.SelectedWorkflowVersion))
+            {
+                SetField(ref _selectedWorkflowVersion, value.SelectedWorkflowVersion, nameof(SelectedWorkflowVersion));
+            }
+            RaiseStateChanged();
         }
     }
 
@@ -143,6 +180,7 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
                 "materialRequirements" => 1,
                 "defaultParameters" => 2,
                 "resourceRequirements" => 3,
+                "workflowSteps" => 4,
                 _ => 0
             };
         }
@@ -236,6 +274,14 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
         : CurrentPlan.Validation.IsValid
             ? $"校验通过 / {CurrentPlan.Validation.ValidatorVersion}"
             : $"校验未通过 / {CurrentPlan.Validation.Issues.Count} 项问题";
+    public string WorkflowStepsSummary => WorkflowSteps.Count == 0
+        ? "尚未配置固定流程"
+        : $"{WorkflowSteps.Count} 个固定流程 · {string.Join(" → ", WorkflowSteps.Select(step => step.NameOrWorkflowDisplay))}";
+    public bool CanMoveWorkflowStepUp => SelectedWorkflowStep is not null &&
+                                         WorkflowSteps.IndexOf(SelectedWorkflowStep) > 0;
+    public bool CanMoveWorkflowStepDown => SelectedWorkflowStep is not null &&
+                                           WorkflowSteps.IndexOf(SelectedWorkflowStep) >= 0 &&
+                                           WorkflowSteps.IndexOf(SelectedWorkflowStep) < WorkflowSteps.Count - 1;
     public bool HasValidationIssues => ValidationIssues.Count > 0;
     private ExperimentPlan? CurrentPlan => SelectedVersion?.Plan;
     private bool HasActionMetadata =>
@@ -369,13 +415,15 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
                     version.Version,
                     string.IsNullOrWhiteSpace(version.Definition.Name)
                         ? item.Definition.Name
-                        : version.Definition.Name)))
+                        : version.Definition.Name,
+                    IsPreset: version.Definition.IsPreset || item.Definition.IsPreset)))
             .OrderBy(option => option.Name, StringComparer.OrdinalIgnoreCase)
             .ThenByDescending(option => option.Version)
             .ToArray();
 
         PublishedWorkflowVersions.Clear();
         foreach (var option in options) PublishedWorkflowVersions.Add(option);
+        RebindWorkflowStepOptions(options);
     }
 
     private async Task LoadSelectedPlanAsync(ExperimentPlanListItemViewModel? selected, long revision)
@@ -419,7 +467,15 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
             ProfileProductId = plan.ProfileProductId ?? string.Empty;
             ProfileVersion = plan.ProfileVersion ?? string.Empty;
             LayoutId = plan.LayoutId ?? string.Empty;
-            SelectedWorkflowVersion = FindOrAddWorkflowOption(plan.WorkflowId, plan.WorkflowVersion);
+            var planSteps = plan.WorkflowSteps.Count > 0
+                ? plan.WorkflowSteps
+                : CreateLegacyWorkflowStep(plan.WorkflowId, plan.WorkflowVersion, plan.PlanId);
+            ReplaceWorkflowStepEditors(planSteps.Select(step =>
+                ExperimentPlanWorkflowStepEditorViewModel.From(
+                    step,
+                    FindOrAddWorkflowOption(step.WorkflowId, step.WorkflowVersion))));
+            SelectedWorkflowVersion = WorkflowSteps.FirstOrDefault()?.SelectedWorkflowVersion ??
+                                      FindOrAddWorkflowOption(plan.WorkflowId, plan.WorkflowVersion);
             ReplaceEditors(Materials, plan.MaterialRequirements.Select(ExperimentMaterialEditorViewModel.From));
             ReplaceEditors(Parameters, plan.DefaultParameters.Select(ExperimentParameterEditorViewModel.From));
             ReplaceEditors(ResourceRequirements, plan.ResourceRequirements.Select(ExperimentResourceRequirementEditorViewModel.From));
@@ -448,6 +504,22 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
         return option;
     }
 
+    private static IReadOnlyList<ExperimentPlanWorkflowStep> CreateLegacyWorkflowStep(
+        Guid workflowId,
+        int version,
+        Guid stepId) => workflowId == Guid.Empty || version <= 0
+        ? []
+        :
+        [
+            new ExperimentPlanWorkflowStep
+            {
+                StepId = stepId == Guid.Empty ? Guid.NewGuid() : stepId,
+                Order = 1,
+                WorkflowId = workflowId,
+                WorkflowVersion = version
+            }
+        ];
+
     private void BeginNewPlan()
     {
         _selectionRevision++;
@@ -466,6 +538,8 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
             LayoutId = string.Empty;
             SelectedWorkflowVersion = PublishedWorkflowVersions.FirstOrDefault();
             ClearEditors();
+            if (SelectedWorkflowVersion is not null)
+                AddWorkflowStepCore(SelectedWorkflowVersion);
             ValidationIssues.Clear();
             SelectedValidationIssue = null;
             DetailTabIndex = 0;
@@ -496,6 +570,7 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
             Description = Description,
             WorkflowId = SelectedWorkflowVersion?.WorkflowId ?? Guid.Empty,
             WorkflowVersion = SelectedWorkflowVersion?.Version ?? 0,
+            WorkflowSteps = WorkflowSteps.Select((step, index) => step.ToContract(index + 1)).ToArray(),
             MaterialRequirements = Materials.Select(item => item.ToContract()).ToArray(),
             DefaultParameters = parameters,
             ResourceRequirements = ResourceRequirements.Select(item => item.ToContract()).ToArray(),
@@ -574,6 +649,128 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
         ReplaceEditors(Materials, []);
         ReplaceEditors(Parameters, []);
         ReplaceEditors(ResourceRequirements, []);
+        ReplaceWorkflowStepEditors([]);
+    }
+
+    private void AddWorkflowStep()
+    {
+        AddWorkflowStepCore(PublishedWorkflowVersions.FirstOrDefault());
+    }
+
+    private void AddWorkflowStepCore(PublishedWorkflowVersionOption? option)
+    {
+        var item = new ExperimentPlanWorkflowStepEditorViewModel
+        {
+            SelectedWorkflowVersion = option,
+            Name = option?.Name ?? $"步骤 {WorkflowSteps.Count + 1}"
+        };
+        item.SetOrder(WorkflowSteps.Count + 1);
+        AttachWorkflowStep(item);
+        WorkflowSteps.Add(item);
+        SelectedWorkflowStep = item;
+        OnPropertyChanged(nameof(WorkflowStepsSummary));
+        RaiseStateChanged();
+        MarkDirty();
+    }
+
+    private void RemoveWorkflowStep(ExperimentPlanWorkflowStepEditorViewModel? item)
+    {
+        if (item is null || WorkflowSteps.Count <= 1 || !WorkflowSteps.Remove(item)) return;
+        item.PropertyChanged -= WorkflowStepPropertyChanged;
+        ReindexWorkflowSteps();
+        SelectedWorkflowStep = WorkflowSteps.ElementAtOrDefault(Math.Max(0, WorkflowSteps.Count - 1));
+        OnPropertyChanged(nameof(WorkflowStepsSummary));
+        RaiseStateChanged();
+        MarkDirty();
+    }
+
+    private void MoveWorkflowStepUp()
+    {
+        if (SelectedWorkflowStep is null) return;
+        var index = WorkflowSteps.IndexOf(SelectedWorkflowStep);
+        if (index <= 0) return;
+        WorkflowSteps.Move(index, index - 1);
+        ReindexWorkflowSteps();
+        OnPropertyChanged(nameof(WorkflowStepsSummary));
+        RaiseStateChanged();
+        MarkDirty();
+    }
+
+    private void MoveWorkflowStepDown()
+    {
+        if (SelectedWorkflowStep is null) return;
+        var index = WorkflowSteps.IndexOf(SelectedWorkflowStep);
+        if (index < 0 || index >= WorkflowSteps.Count - 1) return;
+        WorkflowSteps.Move(index, index + 1);
+        ReindexWorkflowSteps();
+        OnPropertyChanged(nameof(WorkflowStepsSummary));
+        RaiseStateChanged();
+        MarkDirty();
+    }
+
+    private void ReplaceWorkflowStepEditors(IEnumerable<ExperimentPlanWorkflowStepEditorViewModel> source)
+    {
+        foreach (var item in WorkflowSteps) item.PropertyChanged -= WorkflowStepPropertyChanged;
+        WorkflowSteps.Clear();
+        foreach (var item in source)
+        {
+            AttachWorkflowStep(item);
+            WorkflowSteps.Add(item);
+        }
+        ReindexWorkflowSteps();
+        SelectedWorkflowStep = WorkflowSteps.FirstOrDefault();
+        OnPropertyChanged(nameof(WorkflowStepsSummary));
+    }
+
+    private void ReplaceWorkflowSteps(IEnumerable<ExperimentPlanWorkflowStep> source)
+    {
+        ReplaceWorkflowStepEditors(source.Select(step =>
+            ExperimentPlanWorkflowStepEditorViewModel.From(
+                step,
+                FindOrAddWorkflowOption(step.WorkflowId, step.WorkflowVersion))));
+    }
+
+    private void RebindWorkflowStepOptions(IReadOnlyList<PublishedWorkflowVersionOption> options)
+    {
+        if (WorkflowSteps.Count == 0) return;
+        var wasLoading = _isLoadingEditor;
+        _isLoadingEditor = true;
+        try
+        {
+            foreach (var step in WorkflowSteps)
+            {
+                var current = step.SelectedWorkflowVersion;
+                if (current is null) continue;
+                step.SelectedWorkflowVersion = options.FirstOrDefault(option =>
+                    option.WorkflowId == current.WorkflowId && option.Version == current.Version) ??
+                    FindOrAddWorkflowOption(current.WorkflowId, current.Version);
+            }
+        }
+        finally
+        {
+            _isLoadingEditor = wasLoading;
+        }
+    }
+
+    private void ReindexWorkflowSteps()
+    {
+        for (var index = 0; index < WorkflowSteps.Count; index++)
+            WorkflowSteps[index].SetOrder(index + 1);
+    }
+
+    private void AttachWorkflowStep(ExperimentPlanWorkflowStepEditorViewModel item) =>
+        item.PropertyChanged += WorkflowStepPropertyChanged;
+
+    private void WorkflowStepPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (sender is ExperimentPlanWorkflowStepEditorViewModel step &&
+            !_isLoadingEditor && ReferenceEquals(step, WorkflowSteps.FirstOrDefault()) &&
+            !ReferenceEquals(SelectedWorkflowVersion, step.SelectedWorkflowVersion))
+        {
+            SetField(ref _selectedWorkflowVersion, step.SelectedWorkflowVersion, nameof(SelectedWorkflowVersion));
+        }
+        OnPropertyChanged(nameof(WorkflowStepsSummary));
+        MarkDirty();
     }
 
     private void AttachEditor(ExperimentBindableObject item) => item.PropertyChanged += EditorPropertyChanged;
@@ -624,6 +821,9 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
         OnPropertyChanged(nameof(CanCreateNextDraft));
         OnPropertyChanged(nameof(CurrentVersion));
         OnPropertyChanged(nameof(ValidationSummary));
+        OnPropertyChanged(nameof(WorkflowStepsSummary));
+        OnPropertyChanged(nameof(CanMoveWorkflowStepUp));
+        OnPropertyChanged(nameof(CanMoveWorkflowStepDown));
         OnPropertyChanged(nameof(HasValidationIssues));
         foreach (var command in new[]
                  {
@@ -641,6 +841,10 @@ public sealed class ExperimentPlanManagementViewModel : ExperimentBindableObject
         _removeParameterCommand.RaiseCanExecuteChanged();
         _addResourceCommand.RaiseCanExecuteChanged();
         _removeResourceCommand.RaiseCanExecuteChanged();
+        _addWorkflowStepCommand.RaiseCanExecuteChanged();
+        _removeWorkflowStepCommand.RaiseCanExecuteChanged();
+        _moveWorkflowStepUpCommand.RaiseCanExecuteChanged();
+        _moveWorkflowStepDownCommand.RaiseCanExecuteChanged();
     }
 
     private static string? NormalizeOptional(string value) =>

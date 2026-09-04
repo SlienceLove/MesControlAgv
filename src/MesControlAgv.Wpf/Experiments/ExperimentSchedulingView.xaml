@@ -99,8 +99,12 @@
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Margin="0,6,8,0" Text="已发布方案" />
-                        <ComboBox Grid.Column="1" MinHeight="28" DisplayMemberPath="Display"
-                                  ItemsSource="{Binding PublishedPlans}" SelectedItem="{Binding SelectedPublishedPlan}" />
+                        <StackPanel Grid.Column="1">
+                            <ComboBox MinHeight="28" DisplayMemberPath="Display"
+                                      ItemsSource="{Binding PublishedPlans}" SelectedItem="{Binding SelectedPublishedPlan}" />
+                            <TextBlock Margin="0,3,0,0" FontSize="11" Foreground="#667085"
+                                       Text="{Binding SelectedPublishedPlan.WorkflowSummary}" TextWrapping="Wrap" />
+                        </StackPanel>
                         <TextBlock Grid.Row="1" Margin="0,10,8,0" Text="样品批次" />
                         <TextBox Grid.Row="1" Grid.Column="1" Margin="0,4,0,0" MinHeight="28" Padding="5,3"
                                  Text="{Binding SampleBatchId, UpdateSourceTrigger=PropertyChanged}" />
@@ -148,7 +152,9 @@
                         <Border Width="12" Height="12" Margin="0,0,4,0" Background="#FEE4E2" BorderBrush="#B42318" BorderThickness="1" />
                         <TextBlock Margin="0,0,12,0" Foreground="#667085" Text="阻塞" />
                         <Border Width="12" Height="12" Margin="0,0,4,0" Background="#FEF0C7" BorderBrush="#B54708" BorderThickness="1" />
-                        <TextBlock Foreground="#667085" Text="活动运行租约" />
+                        <TextBlock Margin="0,0,12,0" Foreground="#667085" Text="活动运行租约" />
+                        <Border Width="12" Height="12" Margin="0,0,4,0" Background="#E0F2FE" BorderBrush="#0369A1" BorderThickness="1" />
+                        <TextBlock Foreground="#667085" Text="实际设备活动" />
                     </StackPanel>
                 </DockPanel>
 
@@ -208,7 +214,8 @@
                                                           ItemsSource="{Binding DataContext.TimelineTicks, RelativeSource={RelativeSource AncestorType=UserControl}}">
                                                 <ItemsControl.ItemsPanel>
                                                     <ItemsPanelTemplate>
-                                                        <Canvas Width="960" Height="60" />
+                                                        <Canvas Width="960"
+                                                                Height="{Binding DataContext.Height, RelativeSource={RelativeSource AncestorType=Grid}}" />
                                                     </ItemsPanelTemplate>
                                                 </ItemsControl.ItemsPanel>
                                                 <ItemsControl.ItemContainerStyle>
@@ -225,7 +232,8 @@
                                             <ItemsControl ItemsSource="{Binding Blocks}">
                                                 <ItemsControl.ItemsPanel>
                                                     <ItemsPanelTemplate>
-                                                        <Canvas Width="960" Height="60" />
+                                                        <Canvas Width="960"
+                                                                Height="{Binding DataContext.Height, RelativeSource={RelativeSource AncestorType=Grid}}" />
                                                     </ItemsPanelTemplate>
                                                 </ItemsControl.ItemsPanel>
                                                 <ItemsControl.ItemContainerStyle>
@@ -283,6 +291,11 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <TextBlock Foreground="#667085" Text="方案" />
                     <TextBlock Grid.Column="1" Text="{Binding SelectedPlan}" TextTrimming="CharacterEllipsis" />
@@ -294,6 +307,17 @@
                     <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding SelectedScheduleWindow}" />
                     <TextBlock Grid.Row="4" Foreground="#667085" Text="资源" />
                     <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding SelectedResources}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Grid.Row="5" Foreground="#667085" Text="执行流程" />
+                    <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding SelectedWorkflow}" TextWrapping="Wrap" />
+                    <TextBlock Grid.Row="6" Foreground="#667085" Text="实际设备" />
+                    <TextBlock Grid.Row="6" Grid.Column="1" Text="{Binding SelectedActivityResource}" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Grid.Row="7" Foreground="#667085" Text="活动状态" />
+                    <TextBlock Grid.Row="7" Grid.Column="1" FontWeight="SemiBold" Text="{Binding SelectedActivityStatus}" />
+                    <TextBlock Grid.Row="8" Foreground="#667085" Text="活动时间" />
+                    <TextBlock Grid.Row="8" Grid.Column="1" Text="{Binding SelectedActivityWindow}" />
+                    <TextBlock Grid.Row="9" Foreground="#667085" Text="活动异常" />
+                    <TextBlock Grid.Row="9" Grid.Column="1" Foreground="#B42318" Text="{Binding SelectedActivityError}"
+                               TextWrapping="Wrap" TextTrimming="CharacterEllipsis" />
                 </Grid>
                 <DataGrid x:Name="BlockingReasonGrid" AutomationProperties.AutomationId="ExperimentBlockingReasonGrid"
                           Grid.Row="2" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True"

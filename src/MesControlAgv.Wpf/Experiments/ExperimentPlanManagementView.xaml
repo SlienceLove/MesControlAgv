@@ -145,7 +145,7 @@
                                 <TextBox Grid.Row="1" Grid.Column="1" Margin="0,6,0,0" MinHeight="54" Padding="6,4"
                                          AcceptsReturn="True" IsEnabled="{Binding CanEdit}" TextWrapping="Wrap"
                                          Text="{Binding Description, UpdateSourceTrigger=PropertyChanged}" />
-                                <TextBlock Grid.Row="2" Margin="0,12,10,0" Text="固定流程版本" />
+                                <TextBlock Grid.Row="2" Margin="0,12,10,0" Text="首个流程（兼容）" />
                                 <ComboBox Grid.Row="2" Grid.Column="1" Margin="0,6,0,0" MinHeight="30"
                                           DisplayMemberPath="Display" IsEnabled="{Binding CanEdit}"
                                           ItemsSource="{Binding PublishedWorkflowVersions}"
@@ -260,6 +260,65 @@
                                     </DataGridTemplateColumn>
                                 </DataGrid.Columns>
                             </DataGrid>
+                        </Grid>
+                    </TabItem>
+                    <TabItem Header="执行流程">
+                        <Grid Margin="8">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="*" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <DockPanel Margin="0,0,0,8" LastChildFill="False">
+                                <StackPanel DockPanel.Dock="Left">
+                                    <TextBlock FontSize="15" FontWeight="SemiBold" Text="固定流程执行顺序" />
+                                    <TextBlock Margin="0,3,0,0" Foreground="#667085" Text="只允许引用已发布、已验证的流程模板；方案发布后版本不可变。" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <Button x:Name="AddWorkflowStepButton" DockPanel.Dock="Right" Padding="10,5"
+                                        Command="{Binding AddWorkflowStepCommand}" Content="添加流程" />
+                            </DockPanel>
+                            <DataGrid x:Name="WorkflowStepGrid" Grid.Row="1" MinWidth="0"
+                                      AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="False"
+                                      ItemsSource="{Binding WorkflowSteps}"
+                                      SelectedItem="{Binding SelectedWorkflowStep, Mode=TwoWay}"
+                                      ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                                      ScrollViewer.VerticalScrollBarVisibility="Auto">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Width="58" MinWidth="48" Header="顺序" Binding="{Binding Order}" IsReadOnly="True" />
+                                    <DataGridTemplateColumn Width="2*" MinWidth="170" Header="流程模板">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <ComboBox MinHeight="28"
+                                                          ItemsSource="{Binding DataContext.PublishedWorkflowVersions, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                          DisplayMemberPath="Display"
+                                                          SelectedItem="{Binding SelectedWorkflowVersion, Mode=TwoWay}"
+                                                          IsEnabled="{Binding DataContext.CanEdit, RelativeSource={RelativeSource AncestorType=UserControl}}" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Width="1.2*" MinWidth="110" Header="步骤名称" Binding="{Binding Name, UpdateSourceTrigger=PropertyChanged}" />
+                                    <DataGridTextColumn Width="110" MinWidth="90" Header="预计时长(分)" Binding="{Binding EstimatedDurationMinutes, UpdateSourceTrigger=PropertyChanged}" />
+                                    <DataGridTextColumn Width="125" MinWidth="100" Header="参数覆盖" Binding="{Binding ParametersSummary}" />
+                                    <DataGridTemplateColumn Width="58" MinWidth="52" Header="操作">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Padding="5,2" Content="移除"
+                                                        Command="{Binding DataContext.RemoveWorkflowStepCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                        CommandParameter="{Binding}" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <StackPanel Grid.Row="2" Margin="0,8,0,0">
+                                <WrapPanel>
+                                    <Button x:Name="MoveWorkflowStepUpButton" Padding="10,4"
+                                            Command="{Binding MoveWorkflowStepUpCommand}" Content="上移" />
+                                    <Button x:Name="MoveWorkflowStepDownButton" Margin="6,0,0,0" Padding="10,4"
+                                            Command="{Binding MoveWorkflowStepDownCommand}" Content="下移" />
+                                </WrapPanel>
+                                <TextBlock Margin="0,6,0,0" Foreground="#475467" TextWrapping="Wrap" Text="{Binding WorkflowStepsSummary}" />
+                            </StackPanel>
                         </Grid>
                     </TabItem>
                 </TabControl>

@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using MesControlAgv.Contracts.Experiments;
 using MesControlAgv.Mes.Entities;
@@ -31,6 +33,11 @@ internal static class ExperimentSchedulingPersistence
         var parameters = Deserialize(
             record.DefaultParametersJson,
             new Dictionary<string, string?>());
+        var workflowSteps = NormalizeWorkflowSteps(
+            Deserialize(record.WorkflowStepsJson, Array.Empty<ExperimentPlanWorkflowStep>()),
+            record.WorkflowId,
+            record.WorkflowVersion,
+            record.PlanId);
         return new ExperimentPlan
         {
             PlanId = record.PlanId,
@@ -39,6 +46,7 @@ internal static class ExperimentSchedulingPersistence
             Description = record.Description,
             WorkflowId = record.WorkflowId,
             WorkflowVersion = record.WorkflowVersion,
+            WorkflowSteps = workflowSteps,
             Status = ParseStatus<ExperimentPlanStatus>(record.Status),
             MaterialRequirements = Deserialize(
                 record.MaterialRequirementsJson,
@@ -66,6 +74,11 @@ internal static class ExperimentSchedulingPersistence
     public static ExperimentJob MapJob(ExperimentJobRecord record)
     {
         var parameters = Deserialize(record.ParametersJson, new Dictionary<string, string?>());
+        var workflowSteps = NormalizeWorkflowSteps(
+            Deserialize(record.WorkflowStepsJson, Array.Empty<ExperimentPlanWorkflowStep>()),
+            record.WorkflowId,
+            record.WorkflowVersion,
+            record.JobId);
         return new ExperimentJob
         {
             JobId = record.JobId,
@@ -73,6 +86,7 @@ internal static class ExperimentSchedulingPersistence
             PlanVersion = record.PlanVersion,
             WorkflowId = record.WorkflowId,
             WorkflowVersion = record.WorkflowVersion,
+            WorkflowSteps = workflowSteps,
             SampleBatchId = record.SampleBatchId,
             SampleId = record.SampleId,
             Parameters = new Dictionary<string, string?>(parameters, StringComparer.OrdinalIgnoreCase),
@@ -176,6 +190,82 @@ internal static class ExperimentSchedulingPersistence
 
     public static DateTimeOffset? ToOffset(DateTime? value) =>
         value is null ? null : ToOffset(value.Value);
+
+    public static IReadOnlyList<ExperimentPlanWorkflowStep> NormalizeWorkflowSteps(
+        IReadOnlyList<ExperimentPlanWorkflowStep>? steps,
+        Guid legacyWorkflowId,
+        int legacyWorkflowVersion,
+        Guid fallbackStepId)
+    {
+        var source = (steps ?? [])
+            .Where(step => step is not null)
+            .ToList();
+        if (source.Count == 0 && legacyWorkflowId != Guid.Empty && legacyWorkflowVersion > 0)
+        {
+            source.Add(new ExperimentPlanWorkflowStep
+            {
+                StepId = fallbackStepId,
+                Order = 1,
+                WorkflowId = legacyWorkflowId,
+                WorkflowVersion = legacyWorkflowVersion
+            });
+        }
+
+        return source
+            .OrderBy(step => step.Order <= 0 ? int.MaxValue : step.Order)
+            .ThenBy(step => step.StepId)
+            .Select((step, index) =>
+            {
+                var parameters = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+                foreach (var parameter in (step.Parameters ?? new Dictionary<string, string?>())
+                             .OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
+                             .ThenBy(item => item.Key, StringComparer.Ordinal))
+                {
+                    var name = parameter.Key?.Trim() ?? string.Empty;
+                    parameters[name] = parameter.Value;
+                }
+
+                return new ExperimentPlanWorkflowStep
+                {
+                    StepId = step.StepId == Guid.Empty
+                        ? CreateDeterministicStepId(fallbackStepId, step, index)
+                        : step.StepId,
+                    Order = index + 1,
+                    WorkflowId = step.WorkflowId,
+                    WorkflowVersion = step.WorkflowVersion,
+                    Name = step.Name?.Trim() ?? string.Empty,
+                    EstimatedDurationMinutes = Math.Max(0, step.EstimatedDurationMinutes),
+                    Parameters = parameters
+                };
+            })
+            .ToArray();
+    }
+
+    private static Guid CreateDeterministicStepId(
+        Guid fallbackStepId,
+        ExperimentPlanWorkflowStep step,
+        int index)
+    {
+        // A missing StepId is common when older clients send a composed draft.
+        // Derive it from the persisted owner, ordered position and immutable
+        // workflow reference so retries and read projections do not mutate the
+        // request fingerprint or create a new identity on every read.
+        var seed = string.Join(
+            "|",
+            fallbackStepId.ToString("N"),
+            index.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            step.Order.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            step.WorkflowId.ToString("N"),
+            step.WorkflowVersion.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(seed));
+        Span<byte> bytes = stackalloc byte[16];
+        hash.AsSpan(0, bytes.Length).CopyTo(bytes);
+        // Mark the value as a UUID v5-style name-derived identifier while
+        // keeping the implementation independent of a particular UUID package.
+        bytes[6] = (byte)((bytes[6] & 0x0F) | 0x50);
+        bytes[8] = (byte)((bytes[8] & 0x3F) | 0x80);
+        return new Guid(bytes);
+    }
 
     public static int GetPeakConcurrentReservationCount(
         IEnumerable<ResourceReservationRecord> reservations,

@@ -107,8 +107,26 @@ public sealed record ExperimentResourceRequirement
 }
 
 /// <summary>
+/// A plan step references an immutable, published workflow template. The plan
+/// owns ordering and optional parameter overrides; the workflow editor owns the
+/// validated template definition itself.
+/// </summary>
+public sealed record ExperimentPlanWorkflowStep
+{
+    public Guid StepId { get; init; } = Guid.NewGuid();
+    public int Order { get; init; }
+    public Guid WorkflowId { get; init; }
+    public int WorkflowVersion { get; init; }
+    public string Name { get; init; } = string.Empty;
+    public int EstimatedDurationMinutes { get; init; }
+    public IReadOnlyDictionary<string, string?> Parameters { get; init; } =
+        new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+}
+
+/// <summary>
 /// Versioned description of what an experiment does. WorkflowId and
-/// WorkflowVersion always identify an immutable workflow version.
+/// WorkflowVersion retain the legacy first-step reference; WorkflowSteps is the
+/// ordered source of truth for composed plans.
 /// </summary>
 public sealed record ExperimentPlan
 {
@@ -118,6 +136,8 @@ public sealed record ExperimentPlan
     public string Description { get; init; } = string.Empty;
     public Guid WorkflowId { get; init; }
     public int WorkflowVersion { get; init; }
+    public IReadOnlyList<ExperimentPlanWorkflowStep> WorkflowSteps { get; init; } =
+        Array.Empty<ExperimentPlanWorkflowStep>();
     public ExperimentPlanStatus Status { get; init; }
     public IReadOnlyList<ExperimentMaterialRequirement> MaterialRequirements { get; init; } =
         Array.Empty<ExperimentMaterialRequirement>();
@@ -149,6 +169,8 @@ public sealed record ExperimentJob
     public int PlanVersion { get; init; }
     public Guid WorkflowId { get; init; }
     public int WorkflowVersion { get; init; }
+    public IReadOnlyList<ExperimentPlanWorkflowStep> WorkflowSteps { get; init; } =
+        Array.Empty<ExperimentPlanWorkflowStep>();
     public string SampleBatchId { get; init; } = string.Empty;
     public string? SampleId { get; init; }
     public IReadOnlyDictionary<string, string?> Parameters { get; init; } =
@@ -228,10 +250,37 @@ public sealed record ResourceLease
     public DateTimeOffset UpdatedAt { get; init; }
 }
 
+/// <summary>
+/// Read-only projection of one planned or actual device activity. Planned
+/// schedule blocks and runtime evidence are deliberately kept as separate
+/// fields so the board never presents an estimate as an observed duration.
+/// </summary>
+public sealed record ExperimentScheduleActivity
+{
+    public Guid ActivityId { get; init; }
+    public Guid ExperimentJobId { get; init; }
+    public Guid? ScheduleEntryId { get; init; }
+    public Guid? WorkflowRunId { get; init; }
+    public Guid? WorkflowNodeExecutionId { get; init; }
+    public Guid? DeviceOperationId { get; init; }
+    public Guid? WorkflowStepId { get; init; }
+    public Guid WorkflowId { get; init; }
+    public int WorkflowVersion { get; init; }
+    public ExperimentResourceReference Resource { get; init; } = new();
+    public string ActivityName { get; init; } = string.Empty;
+    public string Status { get; init; } = string.Empty;
+    public DateTimeOffset PlannedStart { get; init; }
+    public DateTimeOffset PlannedEnd { get; init; }
+    public DateTimeOffset? ActualStart { get; init; }
+    public DateTimeOffset? ActualEnd { get; init; }
+    public string? LastError { get; init; }
+}
+
 /// <summary>Read-only projection used by the scheduling board.</summary>
 public sealed record ExperimentScheduleSnapshot
 {
     public DateTimeOffset GeneratedAt { get; init; }
     public IReadOnlyList<ScheduleEntry> Entries { get; init; } = Array.Empty<ScheduleEntry>();
     public IReadOnlyList<ResourceLease> ActiveLeases { get; init; } = Array.Empty<ResourceLease>();
+    public IReadOnlyList<ExperimentScheduleActivity> Activities { get; init; } = Array.Empty<ExperimentScheduleActivity>();
 }

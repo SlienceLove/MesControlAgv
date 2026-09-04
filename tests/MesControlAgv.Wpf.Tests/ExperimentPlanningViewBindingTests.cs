@@ -38,6 +38,10 @@ public sealed class ExperimentPlanningViewBindingTests
                 Assert.Same(plans.ValidateCommand, Assert.IsType<Button>(planView.FindName("PlanValidateButton")).Command);
                 Assert.Same(plans.PublishCommand, Assert.IsType<Button>(planView.FindName("PlanPublishButton")).Command);
                 Assert.Same(plans.CreateNextDraftCommand, Assert.IsType<Button>(planView.FindName("PlanNextDraftButton")).Command);
+                Assert.Same(plans.AddWorkflowStepCommand, Assert.IsType<Button>(planView.FindName("AddWorkflowStepButton")).Command);
+                Assert.Same(plans.MoveWorkflowStepUpCommand, Assert.IsType<Button>(planView.FindName("MoveWorkflowStepUpButton")).Command);
+                Assert.Same(plans.MoveWorkflowStepDownCommand, Assert.IsType<Button>(planView.FindName("MoveWorkflowStepDownButton")).Command);
+                Assert.Single(Assert.IsType<DataGrid>(planView.FindName("WorkflowStepGrid")).Items);
                 Assert.Single(Assert.IsType<DataGrid>(planView.FindName("PlanGrid")).Items);
                 Assert.Single(Assert.IsType<DataGrid>(planView.FindName("PlanVersionGrid")).Items);
                 planWindow.Close();

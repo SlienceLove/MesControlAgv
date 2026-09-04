@@ -537,6 +537,7 @@ static async Task EnsureExperimentSchedulingTablesAsync(MesDbContext database)
             Description TEXT NOT NULL,
             WorkflowId TEXT NOT NULL,
             WorkflowVersion INTEGER NOT NULL,
+            WorkflowStepsJson TEXT NOT NULL DEFAULT '[]',
             Status TEXT NOT NULL,
             MaterialRequirementsJson TEXT NOT NULL,
             DefaultParametersJson TEXT NOT NULL,
@@ -562,6 +563,7 @@ static async Task EnsureExperimentSchedulingTablesAsync(MesDbContext database)
             PlanVersion INTEGER NOT NULL,
             WorkflowId TEXT NOT NULL,
             WorkflowVersion INTEGER NOT NULL,
+            WorkflowStepsJson TEXT NOT NULL DEFAULT '[]',
             SampleBatchId TEXT NOT NULL,
             SampleId TEXT NULL,
             ParametersJson TEXT NOT NULL,
@@ -688,6 +690,7 @@ static async Task EnsureExperimentSchedulingColumnsAsync(System.Data.Common.DbCo
         connection,
         "ExperimentPlans",
         [
+            (Name: "WorkflowStepsJson", Sql: "TEXT NOT NULL DEFAULT '[]'"),
             (Name: "ValidationJson", Sql: "TEXT NULL"),
             (Name: "ValidatedBy", Sql: "TEXT NULL"),
             (Name: "ValidatedAtUtc", Sql: "TEXT NULL")
@@ -697,6 +700,12 @@ static async Task EnsureExperimentSchedulingColumnsAsync(System.Data.Common.DbCo
         "ScheduleEntries",
         [
             (Name: "RequestedResourcesJson", Sql: "TEXT NOT NULL DEFAULT '[]'")
+        ]);
+    await EnsureColumnsAsync(
+        connection,
+        "ExperimentJobs",
+        [
+            (Name: "WorkflowStepsJson", Sql: "TEXT NOT NULL DEFAULT '[]'")
         ]);
 }
 

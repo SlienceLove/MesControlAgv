@@ -31,6 +31,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
     private ExperimentScheduleSnapshot _snapshot = new();
     private ExperimentJobItemViewModel? _selectedJob;
     private ScheduleEntry? _selectedSchedule;
+    private ExperimentScheduleActivity? _selectedActivity;
     private ExperimentPublishedPlanOption? _selectedPublishedPlan;
     private bool _isBusy;
     private bool _hasLoaded;
@@ -123,6 +124,20 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
             OnPropertyChanged(nameof(SelectedScheduleWindow));
             OnPropertyChanged(nameof(SelectedResources));
             OnPropertyChanged(nameof(ScheduleButtonText));
+        }
+    }
+
+    public ExperimentScheduleActivity? SelectedActivity
+    {
+        get => _selectedActivity;
+        private set
+        {
+            if (!SetField(ref _selectedActivity, value)) return;
+            OnPropertyChanged(nameof(SelectedActivityStatus));
+            OnPropertyChanged(nameof(SelectedActivityResource));
+            OnPropertyChanged(nameof(SelectedActivityWindow));
+            OnPropertyChanged(nameof(SelectedActivityError));
+            OnPropertyChanged(nameof(HasSelectedActivity));
         }
     }
 
@@ -289,7 +304,21 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
         : $"{SelectedJob.PlanName} / v{SelectedJob.Job.PlanVersion}";
     public string SelectedWorkflow => SelectedJob is null
         ? "-"
-        : $"{SelectedJob.Job.WorkflowId:N} / v{SelectedJob.Job.WorkflowVersion}";
+        : SelectedJob.WorkflowSummary;
+    public bool HasSelectedActivity => SelectedActivity is not null;
+    public string SelectedActivityStatus => SelectedActivity is null
+        ? "尚未采集"
+        : ExperimentUiText.ActivityStatus(SelectedActivity.Status);
+    public string SelectedActivityResource => SelectedActivity is null
+        ? "-"
+        : $"{SelectedActivity.Resource.ResourceType}/{SelectedActivity.Resource.ResourceId}";
+    public string SelectedActivityWindow => SelectedActivity is null
+        ? "-"
+        : $"{FormatActivityTime(SelectedActivity.ActualStart ?? SelectedActivity.PlannedStart)} - " +
+          $"{FormatActivityTime(SelectedActivity.ActualEnd ?? SelectedActivity.PlannedEnd)}";
+    public string SelectedActivityError => string.IsNullOrWhiteSpace(SelectedActivity?.LastError)
+        ? "-"
+        : SelectedActivity!.LastError!;
     public string SelectedParameters => SelectedJob is null || SelectedJob.Job.Parameters.Count == 0
         ? "无"
         : string.Join("；", SelectedJob.Job.Parameters.OrderBy(item => item.Key).Select(item => $"{item.Key}={item.Value ?? "<null>"}"));
@@ -557,6 +586,17 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
     private void ApplySelectedJob()
     {
         SelectedSchedule = SelectedJob is null ? null : FindSchedule(SelectedJob.JobId);
+        if (SelectedActivity is null || SelectedJob is null ||
+            SelectedActivity.ExperimentJobId != SelectedJob.JobId)
+        {
+            SelectedActivity = SelectedJob is null
+                ? null
+                : _snapshot.Activities
+                    .Where(activity => activity.ExperimentJobId == SelectedJob.JobId)
+                    .OrderByDescending(activity => activity.ActualStart ?? activity.PlannedStart)
+                    .ThenByDescending(activity => activity.ActivityId)
+                    .FirstOrDefault();
+        }
         BlockingReasons.Clear();
         foreach (var reason in SelectedSchedule?.BlockingReasons ?? [])
             BlockingReasons.Add(new ExperimentScheduleBlockReasonItemViewModel(reason));
@@ -614,6 +654,9 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
 
     private void SelectScheduleBlock(ExperimentScheduleBlockViewModel? block)
     {
+        SelectedActivity = block?.ActivityId is { } activityId
+            ? _snapshot.Activities.FirstOrDefault(activity => activity.ActivityId == activityId)
+            : null;
         if (block?.JobId is { } jobId)
         {
             SelectedJob = _allJobs.FirstOrDefault(item => item.JobId == jobId);
@@ -732,6 +775,9 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
 
     private static string? NormalizeOptional(string value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string FormatActivityTime(DateTimeOffset value) =>
+        value.ToLocalTime().ToString("MM-dd HH:mm:ss");
 
     public void Dispose()
     {

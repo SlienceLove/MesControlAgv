@@ -8,6 +8,7 @@ public sealed class ExperimentPlanRecord
     public string Description { get; set; } = string.Empty;
     public Guid WorkflowId { get; set; }
     public int WorkflowVersion { get; set; }
+    public string WorkflowStepsJson { get; set; } = "[]";
     public string Status { get; set; } = string.Empty;
     public string MaterialRequirementsJson { get; set; } = "[]";
     public string DefaultParametersJson { get; set; } = "{}";

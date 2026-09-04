@@ -323,6 +323,7 @@ public sealed class ExperimentSchedulingCommandService(
             Description = source.Description,
             WorkflowId = source.WorkflowId,
             WorkflowVersion = source.WorkflowVersion,
+            WorkflowStepsJson = source.WorkflowStepsJson,
             Status = ExperimentPlanStatus.Draft.ToString(),
             MaterialRequirementsJson = source.MaterialRequirementsJson,
             DefaultParametersJson = source.DefaultParametersJson,
@@ -396,7 +397,14 @@ public sealed class ExperimentSchedulingCommandService(
             throw new ExperimentSchedulingConflictException(
                 $"Experiment jobs require a published plan; current plan state is '{planStatus}'.");
         }
-        await EnsureWorkflowVersionPublishedAsync(plan.WorkflowId, plan.WorkflowVersion, cancellationToken);
+        var workflowSteps = ExperimentSchedulingPersistence.NormalizeWorkflowSteps(
+            ExperimentSchedulingPersistence.Deserialize(
+                plan.WorkflowStepsJson,
+                Array.Empty<ExperimentPlanWorkflowStep>()),
+            plan.WorkflowId,
+            plan.WorkflowVersion,
+            plan.PlanId);
+        await EnsureWorkflowStepsPublishedAsync(workflowSteps, cancellationToken);
 
         var parameters = ExperimentSchedulingPersistence.Deserialize(
             plan.DefaultParametersJson,
@@ -412,6 +420,7 @@ public sealed class ExperimentSchedulingCommandService(
             PlanVersion = plan.Version,
             WorkflowId = plan.WorkflowId,
             WorkflowVersion = plan.WorkflowVersion,
+            WorkflowStepsJson = ExperimentSchedulingPersistence.Serialize(workflowSteps),
             SampleBatchId = sampleBatchId,
             SampleId = sampleId,
             ParametersJson = ExperimentSchedulingPersistence.Serialize(mergedParameters),
@@ -741,32 +750,71 @@ public sealed class ExperimentSchedulingCommandService(
                 "Experiment plan name is required.",
                 "name"));
         }
-        if (record.WorkflowId == Guid.Empty || record.WorkflowVersion <= 0)
+        var workflowSteps = ExperimentSchedulingPersistence.NormalizeWorkflowSteps(
+            ExperimentSchedulingPersistence.Deserialize(
+                record.WorkflowStepsJson,
+                Array.Empty<ExperimentPlanWorkflowStep>()),
+            record.WorkflowId,
+            record.WorkflowVersion,
+            record.PlanId);
+        if (workflowSteps.Count == 0)
         {
             issues.Add(PlanIssue(
                 ExperimentSchedulingIssueCodes.WorkflowReferenceRequired,
-                "A positive immutable workflow version reference is required.",
-                "workflowVersion"));
+                "At least one immutable workflow template reference is required.",
+                "workflowSteps"));
         }
         else
         {
-            var workflow = await database.WorkflowVersions.AsNoTracking().SingleOrDefaultAsync(
-                item => item.WorkflowId == record.WorkflowId && item.Version == record.WorkflowVersion,
-                cancellationToken);
-            if (workflow is null)
+            var stepIds = new HashSet<Guid>();
+            for (var index = 0; index < workflowSteps.Count; index++)
             {
-                issues.Add(PlanIssue(
-                    ExperimentSchedulingIssueCodes.WorkflowVersionNotFound,
-                    $"Workflow version '{record.WorkflowId}/{record.WorkflowVersion}' was not found.",
-                    "workflowVersion"));
-            }
-            else if (!string.Equals(workflow.PublishStatus, "Published", StringComparison.OrdinalIgnoreCase) ||
-                     !string.Equals(workflow.Status, "Published", StringComparison.OrdinalIgnoreCase))
-            {
-                issues.Add(PlanIssue(
-                    ExperimentSchedulingIssueCodes.WorkflowVersionNotPublished,
-                    $"Workflow version '{record.WorkflowId}/{record.WorkflowVersion}' is not published.",
-                    "workflowVersion"));
+                var step = workflowSteps[index];
+                var field = $"workflowSteps[{index}]";
+                if (step.WorkflowId == Guid.Empty || step.WorkflowVersion <= 0 ||
+                    !stepIds.Add(step.StepId))
+                {
+                    issues.Add(PlanIssue(
+                        ExperimentSchedulingIssueCodes.WorkflowStepInvalid,
+                        "Each workflow step needs a unique id and a positive immutable workflow version reference.",
+                        field));
+                    continue;
+                }
+
+                if (workflowSteps.Count > 1 && step.EstimatedDurationMinutes <= 0)
+                {
+                    issues.Add(PlanIssue(
+                        ExperimentSchedulingIssueCodes.WorkflowStepInvalid,
+                        "Composed workflow steps require a positive estimated duration for deterministic scheduling.",
+                        $"{field}.estimatedDurationMinutes"));
+                }
+
+                if (step.Parameters.Keys.Any(key => string.IsNullOrWhiteSpace(key)))
+                {
+                    issues.Add(PlanIssue(
+                        ExperimentSchedulingIssueCodes.ParameterNameInvalid,
+                        "Workflow-step parameter names must not be empty.",
+                        $"{field}.parameters"));
+                }
+
+                var workflow = await database.WorkflowVersions.AsNoTracking().SingleOrDefaultAsync(
+                    item => item.WorkflowId == step.WorkflowId && item.Version == step.WorkflowVersion,
+                    cancellationToken);
+                if (workflow is null)
+                {
+                    issues.Add(PlanIssue(
+                        ExperimentSchedulingIssueCodes.WorkflowVersionNotFound,
+                        $"Workflow version '{step.WorkflowId}/{step.WorkflowVersion}' was not found.",
+                        field));
+                }
+                else if (!string.Equals(workflow.PublishStatus, "Published", StringComparison.OrdinalIgnoreCase) ||
+                         !string.Equals(workflow.Status, "Published", StringComparison.OrdinalIgnoreCase))
+                {
+                    issues.Add(PlanIssue(
+                        ExperimentSchedulingIssueCodes.WorkflowVersionNotPublished,
+                        $"Workflow version '{step.WorkflowId}/{step.WorkflowVersion}' is not published.",
+                        field));
+                }
             }
         }
 
@@ -1072,6 +1120,25 @@ public sealed class ExperimentSchedulingCommandService(
         }
     }
 
+    private async Task EnsureWorkflowStepsPublishedAsync(
+        IReadOnlyList<ExperimentPlanWorkflowStep> steps,
+        CancellationToken cancellationToken)
+    {
+        if (steps.Count == 0)
+        {
+            throw new ExperimentSchedulingConflictException(
+                "The published experiment plan does not contain a workflow template reference.");
+        }
+
+        foreach (var step in steps)
+        {
+            await EnsureWorkflowVersionPublishedAsync(
+                step.WorkflowId,
+                step.WorkflowVersion,
+                cancellationToken);
+        }
+    }
+
     private async Task<ExperimentPlanRecord> FindPlanAsync(
         Guid planId,
         int version,
@@ -1154,8 +1221,15 @@ public sealed class ExperimentSchedulingCommandService(
     {
         record.Name = draft.Name;
         record.Description = draft.Description;
-        record.WorkflowId = draft.WorkflowId;
-        record.WorkflowVersion = draft.WorkflowVersion;
+        var workflowSteps = ExperimentSchedulingPersistence.NormalizeWorkflowSteps(
+            draft.WorkflowSteps,
+            draft.WorkflowId,
+            draft.WorkflowVersion,
+            record.PlanId);
+        var firstStep = workflowSteps.FirstOrDefault();
+        record.WorkflowId = firstStep?.WorkflowId ?? draft.WorkflowId;
+        record.WorkflowVersion = firstStep?.WorkflowVersion ?? draft.WorkflowVersion;
+        record.WorkflowStepsJson = ExperimentSchedulingPersistence.Serialize(workflowSteps);
         record.MaterialRequirementsJson = ExperimentSchedulingPersistence.Serialize(draft.MaterialRequirements);
         record.DefaultParametersJson = ExperimentSchedulingPersistence.Serialize(draft.DefaultParameters);
         record.ResourceRequirementsJson = ExperimentSchedulingPersistence.Serialize(draft.ResourceRequirements);
@@ -1187,12 +1261,19 @@ public sealed class ExperimentSchedulingCommandService(
                 Exclusive = requirement.Exclusive
             })
             .ToArray();
+        var workflowSteps = ExperimentSchedulingPersistence.NormalizeWorkflowSteps(
+            draft.WorkflowSteps,
+            draft.WorkflowId,
+            draft.WorkflowVersion,
+            draft.WorkflowId);
+        var firstStep = workflowSteps.FirstOrDefault();
         return new ExperimentPlanDraft
         {
             Name = draft.Name?.Trim() ?? string.Empty,
             Description = draft.Description?.Trim() ?? string.Empty,
-            WorkflowId = draft.WorkflowId,
-            WorkflowVersion = draft.WorkflowVersion,
+            WorkflowId = firstStep?.WorkflowId ?? draft.WorkflowId,
+            WorkflowVersion = firstStep?.WorkflowVersion ?? draft.WorkflowVersion,
+            WorkflowSteps = workflowSteps,
             MaterialRequirements = materials,
             DefaultParameters = NormalizeParameters(draft.DefaultParameters, nameof(draft.DefaultParameters)),
             ResourceRequirements = requirements,
@@ -1208,6 +1289,10 @@ public sealed class ExperimentSchedulingCommandService(
         draft.Description,
         draft.WorkflowId,
         draft.WorkflowVersion,
+        WorkflowSteps = draft.WorkflowSteps
+            .OrderBy(item => item.Order)
+            .ThenBy(item => item.StepId)
+            .ToArray(),
         Materials = draft.MaterialRequirements
             .OrderBy(item => item.MaterialId, StringComparer.OrdinalIgnoreCase)
             .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
