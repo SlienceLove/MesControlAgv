@@ -53,6 +53,7 @@ public sealed class WorkflowRunMonitorViewBindingTests
                 var experimentJobSelector = Assert.IsType<ComboBox>(view.FindName("WorkflowRunExperimentJobSelector"));
                 var experimentStepSelector = Assert.IsType<ComboBox>(view.FindName("WorkflowRunStepSelector"));
                 var selectionRefresh = Assert.IsType<Button>(view.FindName("WorkflowRunSelectionRefreshButton"));
+                var prepareComposite = Assert.IsType<Button>(view.FindName("PrepareCompositeRunButton"));
                 var compositeExpander = Assert.IsType<Expander>(view.FindName("CompositeRunExpander"));
                 var compositeSteps = Assert.IsType<DataGrid>(view.FindName("CompositeStepStatusGrid"));
                 var failurePanel = Assert.IsType<Border>(view.FindName("WorkflowFailureEvidencePanel"));
@@ -67,6 +68,8 @@ public sealed class WorkflowRunMonitorViewBindingTests
                 Assert.Same(monitor.ExperimentJobOptions, experimentJobSelector.ItemsSource);
                 Assert.Same(monitor.ExperimentStepOptions, experimentStepSelector.ItemsSource);
                 Assert.Same(monitor.RefreshExperimentJobsCommand, selectionRefresh.Command);
+                Assert.Same(monitor.PrepareCompositeRunCommand, prepareComposite.Command);
+                Assert.Equal(Visibility.Collapsed, prepareComposite.Visibility);
                 Assert.Same(monitor.CompositeSteps, compositeSteps.ItemsSource);
                 Assert.Equal(Visibility.Collapsed, compositeExpander.Visibility);
                 Assert.True(autoRefresh.IsChecked);

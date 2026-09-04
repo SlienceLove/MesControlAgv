@@ -28,6 +28,7 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     private readonly AsyncCommand _cancelCommand;
     private readonly AsyncCommand _resolveSucceededCommand;
     private readonly AsyncCommand _resolveFailedCommand;
+    private readonly AsyncCommand _prepareCompositeRunCommand;
     private readonly AsyncCommand _createAndAuthorizeFieldMoveCommand;
     private readonly IWorkflowRuntimeAlertPresenter _alertPresenter;
     private readonly bool _physicalRuntime;
@@ -103,6 +104,9 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         _resolveFailedCommand = new AsyncCommand(
             () => ResolveUnknownAsync(WorkflowUnknownResolutionOutcome.ConfirmedFailed),
             () => CanResolveUnknown);
+        _prepareCompositeRunCommand = new AsyncCommand(
+            PrepareCompositeRunAsync,
+            () => CanPrepareCompositeRun);
         _createAndAuthorizeFieldMoveCommand = new AsyncCommand(
             CreateAndAuthorizeFieldMoveAsync,
             () => CanCreateAndAuthorizeFieldMove);
@@ -128,6 +132,10 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         {
             if (!SetField(ref _selectedExperimentJob, value)) return;
             OnPropertyChanged(nameof(SelectedExperimentJobHint));
+            OnPropertyChanged(nameof(HasCompositeJob));
+            OnPropertyChanged(nameof(CanPrepareCompositeRun));
+            OnPropertyChanged(nameof(PrepareCompositeRunUnavailableReason));
+            _prepareCompositeRunCommand.RaiseCanExecuteChanged();
             if (_suppressExperimentSelection) return;
             ApplyExperimentJobSelection(value);
         }
@@ -171,6 +179,25 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     public string SelectedExperimentStepHint => SelectedExperimentStep?.Hint ??
                                                 "选择任务后显示方案中的流程步骤。";
 
+    public bool HasCompositeJob => SelectedExperimentJob?.Job.WorkflowSteps.Count > 1;
+
+    public bool CanPrepareCompositeRun => string.IsNullOrEmpty(PrepareCompositeRunUnavailableReason);
+
+    public string PrepareCompositeRunUnavailableReason
+    {
+        get
+        {
+            if (IsBusy) return "正在处理其他运行请求。";
+            if (!HasCompositeJob) return "请选择包含多个流程步骤的实验任务。";
+            if (CompositeRun is not null) return "该任务已建立复合运行上下文。";
+            if (SelectedExperimentJob?.Job.Status != ExperimentJobStatus.Scheduled)
+                return "只有已排程任务才能建立复合运行上下文。";
+            if (string.IsNullOrWhiteSpace(OperatorName)) return "请输入操作者身份。";
+            if (string.IsNullOrWhiteSpace(ControlReason)) return "请输入建立运行上下文的原因。";
+            return string.Empty;
+        }
+    }
+
     public string RunIdText
     {
         get => _runIdText;
@@ -188,6 +215,7 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     public ICommand CancelCommand { get; }
     public ICommand ResolveUnknownSucceededCommand { get; }
     public ICommand ResolveUnknownFailedCommand { get; }
+    public ICommand PrepareCompositeRunCommand => _prepareCompositeRunCommand;
     public ICommand CreateAndAuthorizeFieldMoveCommand { get; }
     public ICommand RefreshExperimentJobsCommand => _refreshExperimentJobsCommand;
 
@@ -1038,6 +1066,49 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         {
             if (SelectedExperimentJob?.JobId == experimentJobId)
                 StatusMessage = $"复合运行读取失败：{exception.Message}";
+        }
+    }
+
+    private async Task PrepareCompositeRunAsync()
+    {
+        if (SelectedExperimentJob is not { } selectedJob || !CanPrepareCompositeRun)
+            return;
+        if (!_confirmation.Confirm(
+                "建立复合运行上下文",
+                $"将为任务 {selectedJob.SampleBatchId} 建立 {selectedJob.Job.WorkflowSteps.Count} 个流程步骤的运行快照。此操作不会启动子流程，也不会向设备发送命令。是否继续？"))
+        {
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            var run = await _mes.PrepareExperimentRunAsync(
+                new PrepareExperimentRunRequest
+                {
+                    RequestId = Guid.NewGuid(),
+                    ExperimentJobId = selectedJob.JobId,
+                    Actor = OperatorName.Trim(),
+                    Reason = ControlReason.Trim()
+                },
+                _shutdown.Token);
+            if (run.ExperimentJobId != selectedJob.JobId)
+                throw new InvalidOperationException("MES returned a composite run for a different experiment job.");
+
+            ControlReason = string.Empty;
+            ApplyCompositeRun(run);
+            StatusMessage = $"已建立 {run.Steps.Count} 个流程步骤的复合运行上下文；未启动子流程，未发送设备命令。";
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = $"复合运行准备失败：{exception.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
         }
     }
 
@@ -2202,6 +2273,7 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     private void RaiseControlStateChanged()
     {
         _checkPermissionsCommand.RaiseCanExecuteChanged();
+        _prepareCompositeRunCommand.RaiseCanExecuteChanged();
         _pauseCommand.RaiseCanExecuteChanged();
         _resumeCommand.RaiseCanExecuteChanged();
         _cancelCommand.RaiseCanExecuteChanged();
@@ -2209,6 +2281,9 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         _resolveFailedCommand.RaiseCanExecuteChanged();
         _createAndAuthorizeFieldMoveCommand.RaiseCanExecuteChanged();
         OnPropertyChanged(nameof(CanPause));
+        OnPropertyChanged(nameof(HasCompositeJob));
+        OnPropertyChanged(nameof(CanPrepareCompositeRun));
+        OnPropertyChanged(nameof(PrepareCompositeRunUnavailableReason));
         OnPropertyChanged(nameof(CanResume));
         OnPropertyChanged(nameof(CanCancel));
         OnPropertyChanged(nameof(CanResolveUnknown));

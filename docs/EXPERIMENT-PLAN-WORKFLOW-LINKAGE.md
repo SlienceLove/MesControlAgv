@@ -88,6 +88,7 @@
 - Contracts 增加 `ExperimentRun` / `ExperimentStepRun` 外层运行快照；Domain 状态机按稳定 `StepId/StepRunId` 逐步推进，不允许跳步、活动步骤重复启动或在 Unknown 状态静默取消。
 - MES 以 `ExperimentRuns` 持久化外层快照，提供显式 `/api/experiment-runs/prepare` 与只读查询接口；准备阶段不创建子工作流、不写入设备。
 - WPF 流程运行监控按实验任务读取复合快照，显示每个方案步骤的状态、子流程关联和时间/异常；运行 ID 继续仅保留在高级入口。
+- 对已排程多步骤任务提供带操作者原因和二次确认的“建立复合运行”入口；该入口只准备外层快照，不触发设备操作。
 - 复合运行时尚未完成时，多步骤任务的运行准入返回明确的 `EXP-COMPOSITE-WORKFLOW-NOT-SUPPORTED`，禁止误执行第一步后结束。
 
 ## 4. 后续实施阶段

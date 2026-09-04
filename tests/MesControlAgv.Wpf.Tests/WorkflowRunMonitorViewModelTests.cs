@@ -258,6 +258,88 @@ public sealed class WorkflowRunMonitorViewModelTests
     }
 
     [Fact]
+    public async Task Scheduled_composite_job_can_prepare_context_without_device_dispatch()
+    {
+        var fixture = WorkflowRunMonitorFixture.Create();
+        var job = new ExperimentJob
+        {
+            JobId = Guid.NewGuid(),
+            PlanId = Guid.NewGuid(),
+            PlanVersion = 2,
+            WorkflowId = fixture.Run.WorkflowId,
+            WorkflowVersion = fixture.Run.Version,
+            SampleBatchId = "B-COMPOSITE-PREPARE",
+            Status = ExperimentJobStatus.Scheduled,
+            WorkflowSteps =
+            [
+                new ExperimentPlanWorkflowStep
+                {
+                    StepId = Guid.NewGuid(),
+                    Order = 1,
+                    WorkflowId = fixture.Run.WorkflowId,
+                    WorkflowVersion = fixture.Run.Version,
+                    Name = "准备"
+                },
+                new ExperimentPlanWorkflowStep
+                {
+                    StepId = Guid.NewGuid(),
+                    Order = 2,
+                    WorkflowId = fixture.Run.WorkflowId,
+                    WorkflowVersion = fixture.Run.Version,
+                    Name = "检测"
+                }
+            ]
+        };
+        var prepared = new ExperimentRun
+        {
+            ExperimentRunId = Guid.NewGuid(),
+            ExperimentJobId = job.JobId,
+            PlanId = job.PlanId,
+            PlanVersion = job.PlanVersion,
+            AdmissionRequestId = Guid.NewGuid(),
+            Status = ExperimentRunStatus.Prepared,
+            CurrentStepOrder = 1,
+            Steps = job.WorkflowSteps.Select(step => new ExperimentStepRun
+            {
+                ExperimentRunId = Guid.NewGuid(),
+                StepRunId = Guid.NewGuid(),
+                StepId = step.StepId,
+                Order = step.Order,
+                WorkflowId = step.WorkflowId,
+                WorkflowVersion = step.WorkflowVersion,
+                Name = step.Name,
+                Status = ExperimentStepRunStatus.Pending
+            }).ToArray(),
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        var confirmation = new WorkflowRunControlConfirmationStub();
+        var client = new WorkflowRunMonitorClientStub(fixture)
+        {
+            ExperimentJobs = [job],
+            PreparedCompositeRun = prepared
+        };
+        using var monitor = new WorkflowRunMonitorViewModel(client, confirmation)
+        {
+            ControlReason = "Prepare the approved composite context"
+        };
+
+        await monitor.RefreshExperimentJobsAsync();
+
+        Assert.True(monitor.CanPrepareCompositeRun);
+        monitor.PrepareCompositeRunCommand.Execute(null);
+        await WaitUntilAsync(() => client.PrepareCompositeRequests.Count == 1 && !monitor.IsBusy);
+
+        var request = Assert.Single(client.PrepareCompositeRequests);
+        Assert.Equal(job.JobId, request.ExperimentJobId);
+        Assert.Equal("local-operator", request.Actor);
+        Assert.Contains("不会向设备发送命令", Assert.Single(confirmation.Messages), StringComparison.Ordinal);
+        Assert.Same(prepared, monitor.CompositeRun);
+        Assert.Empty(monitor.RunIdText);
+        Assert.False(monitor.CanPrepareCompositeRun);
+    }
+
+    [Fact]
     public async Task Unknown_node_and_device_evidence_remain_distinct_and_never_expose_a_retry_action()
     {
         var fixture = WorkflowRunMonitorFixture.Create();
@@ -771,6 +853,8 @@ internal sealed class WorkflowRunMonitorClientStub : IMesClient
     public IReadOnlyList<ExperimentPlan> ExperimentPlans { get; set; } = [];
     public IReadOnlyDictionary<Guid, ExperimentRun> CompositeRuns { get; set; } =
         new Dictionary<Guid, ExperimentRun>();
+    public ExperimentRun? PreparedCompositeRun { get; set; }
+    public List<PrepareExperimentRunRequest> PrepareCompositeRequests { get; } = [];
     public AuboArmProgramStatusResponse? AuboProgramStatus { get; set; }
     public PhysicalAgvPreflightResponse? PhysicalPreflight { get; set; }
     public IReadOnlyList<string> GrantedPermissions { get; set; } = [];
@@ -800,6 +884,16 @@ internal sealed class WorkflowRunMonitorClientStub : IMesClient
         Guid experimentJobId,
         CancellationToken cancellationToken) =>
         Task.FromResult(CompositeRuns.GetValueOrDefault(experimentJobId));
+
+    public Task<ExperimentRun> PrepareExperimentRunAsync(
+        PrepareExperimentRunRequest request,
+        CancellationToken cancellationToken)
+    {
+        PrepareCompositeRequests.Add(request);
+        return PreparedCompositeRun is null
+            ? Task.FromException<ExperimentRun>(new InvalidOperationException("No prepared composite run configured."))
+            : Task.FromResult(PreparedCompositeRun);
+    }
 
     private Task<WorkflowExecutionSnapshot?> ReadExecution()
     {

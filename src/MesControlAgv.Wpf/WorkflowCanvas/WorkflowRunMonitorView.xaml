@@ -72,6 +72,17 @@
                             AutomationProperties.AutomationId="WorkflowRunSelectionRefreshButton"
                             Command="{Binding RefreshExperimentJobsCommand}"
                             Content="刷新任务列表" />
+                    <Button x:Name="PrepareCompositeRunButton"
+                            MinWidth="150"
+                            Margin="8,0,0,0"
+                            Padding="12,5"
+                            AutomationProperties.AutomationId="WorkflowPrepareCompositeRunButton"
+                            Command="{Binding PrepareCompositeRunCommand}"
+                            Content="建立复合运行"
+                            IsEnabled="{Binding CanPrepareCompositeRun}"
+                            ToolTip="{Binding PrepareCompositeRunUnavailableReason}"
+                            ToolTipService.ShowOnDisabled="True"
+                            Visibility="{Binding HasCompositeJob, Converter={StaticResource BooleanToVisibilityConverter}}" />
                     <Button x:Name="WorkflowRunFullscreenButton"
                             MinWidth="88"
                             Margin="8,0,0,0"
