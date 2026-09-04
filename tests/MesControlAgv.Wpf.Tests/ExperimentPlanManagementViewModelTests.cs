@@ -145,6 +145,27 @@ public sealed class ExperimentPlanManagementViewModelTests
     }
 
     [Fact]
+    public void Workflow_step_editor_accepts_batch_parameter_overrides_and_rejects_invalid_text()
+    {
+        var editor = new ExperimentPlanWorkflowStepEditorViewModel
+        {
+            ParameterOverridesText = "method=anion; sampleVolume=10"
+        };
+
+        var contract = editor.ToContract(1);
+
+        Assert.Equal("anion", contract.Parameters["method"]);
+        Assert.Equal("10", contract.Parameters["sampleVolume"]);
+        Assert.False(editor.HasParameterOverridesError);
+
+        editor.ParameterOverridesText = "method=anion; =missing-name";
+
+        Assert.True(editor.HasParameterOverridesError);
+        Assert.Contains("参数名不能为空", editor.ParameterOverridesError, StringComparison.Ordinal);
+        Assert.Throws<InvalidOperationException>(() => editor.ToContract(1));
+    }
+
+    [Fact]
     public async Task Lifecycle_commands_follow_draft_validated_published_and_next_draft_states()
     {
         var fixture = PlanFixture.Create(ExperimentPlanStatus.Draft, valid: null);

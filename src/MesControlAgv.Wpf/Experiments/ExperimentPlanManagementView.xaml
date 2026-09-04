@@ -324,6 +324,17 @@
                                             Command="{Binding MoveWorkflowStepDownCommand}" Content="下移" />
                                 </WrapPanel>
                                 <TextBlock Margin="0,6,0,0" Foreground="#475467" TextWrapping="Wrap" Text="{Binding WorkflowStepsSummary}" />
+                                <TextBlock Margin="0,8,0,3" Foreground="#667085" Text="选中步骤参数覆盖（key=value;...）" />
+                                <TextBox MinHeight="30"
+                                         Padding="6,4"
+                                         IsEnabled="{Binding CanEdit}"
+                                         ToolTip="仅覆盖当前方案步骤参数，不会修改已发布的流程模板。"
+                                         Text="{Binding SelectedWorkflowStep.ParameterOverridesText, UpdateSourceTrigger=PropertyChanged}" />
+                                <TextBlock Margin="0,3,0,0"
+                                           Foreground="#B42318"
+                                           TextWrapping="Wrap"
+                                           Text="{Binding SelectedWorkflowStep.ParameterOverridesError}"
+                                           Visibility="{Binding SelectedWorkflowStep.HasParameterOverridesError, Converter={StaticResource BooleanToVisibilityConverter}}" />
                             </StackPanel>
                         </Grid>
                     </TabItem>

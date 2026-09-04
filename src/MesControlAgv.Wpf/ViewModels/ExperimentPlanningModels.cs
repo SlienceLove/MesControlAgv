@@ -80,6 +80,8 @@ public sealed class ExperimentPlanWorkflowStepEditorViewModel : ExperimentBindab
     private int _estimatedDurationMinutes;
     private IReadOnlyDictionary<string, string?> _parameters =
         new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+    private string _parameterOverridesText = string.Empty;
+    private string _parameterOverridesError = string.Empty;
 
     public ExperimentPlanWorkflowStepEditorViewModel()
         : this(Guid.NewGuid())
@@ -154,6 +156,26 @@ public sealed class ExperimentPlanWorkflowStepEditorViewModel : ExperimentBindab
     public string ParametersSummary => Parameters.Count == 0
         ? "无步骤参数覆盖"
         : $"{Parameters.Count} 个步骤参数覆盖";
+    public string ParameterOverridesText
+    {
+        get => _parameterOverridesText;
+        set
+        {
+            value ??= string.Empty;
+            if (!SetField(ref _parameterOverridesText, value)) return;
+            ParseParameterOverrides(value);
+        }
+    }
+    public string ParameterOverridesError
+    {
+        get => _parameterOverridesError;
+        private set
+        {
+            if (!SetField(ref _parameterOverridesError, value)) return;
+            OnPropertyChanged(nameof(HasParameterOverridesError));
+        }
+    }
+    public bool HasParameterOverridesError => !string.IsNullOrWhiteSpace(ParameterOverridesError);
 
     public static ExperimentPlanWorkflowStepEditorViewModel From(
         ExperimentPlanWorkflowStep step,
@@ -163,7 +185,8 @@ public sealed class ExperimentPlanWorkflowStepEditorViewModel : ExperimentBindab
         SelectedWorkflowVersion = option,
         Name = step.Name,
         EstimatedDurationMinutes = step.EstimatedDurationMinutes,
-        Parameters = step.Parameters
+        Parameters = step.Parameters,
+        ParameterOverridesText = FormatParameterOverrides(step.Parameters)
     };
 
     internal void SetOrder(int order) => Order = Math.Max(1, order);
@@ -176,8 +199,47 @@ public sealed class ExperimentPlanWorkflowStepEditorViewModel : ExperimentBindab
         WorkflowVersion = SelectedWorkflowVersion?.Version ?? 0,
         Name = Name.Trim(),
         EstimatedDurationMinutes = Math.Max(0, EstimatedDurationMinutes),
-        Parameters = new Dictionary<string, string?>(Parameters, StringComparer.OrdinalIgnoreCase)
+        Parameters = HasParameterOverridesError
+            ? throw new InvalidOperationException($"步骤参数覆盖格式错误：{ParameterOverridesError}")
+            : new Dictionary<string, string?>(Parameters, StringComparer.OrdinalIgnoreCase)
     };
+
+    private void ParseParameterOverrides(string value)
+    {
+        var parameters = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        var errors = new List<string>();
+        foreach (var rawItem in value.Split([';', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var item = rawItem.Trim();
+            var separator = item.IndexOf('=');
+            if (separator < 0)
+            {
+                errors.Add($"“{item}”缺少 =");
+                continue;
+            }
+
+            var name = item[..separator].Trim();
+            if (name.Length == 0)
+            {
+                errors.Add("参数名不能为空");
+                continue;
+            }
+
+            if (!parameters.TryAdd(name, item[(separator + 1)..].Trim()))
+                errors.Add($"参数“{name}”重复");
+        }
+
+        _parameters = parameters;
+        ParameterOverridesError = string.Join("；", errors);
+        OnPropertyChanged(nameof(Parameters));
+        OnPropertyChanged(nameof(ParametersSummary));
+    }
+
+    private static string FormatParameterOverrides(
+        IReadOnlyDictionary<string, string?>? parameters) =>
+        string.Join("; ", (parameters ?? new Dictionary<string, string?>())
+            .OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(item => $"{item.Key}={item.Value ?? string.Empty}"));
 }
 
 public sealed class ExperimentPlanValidationIssueItemViewModel(ExperimentPlanValidationIssue issue)
