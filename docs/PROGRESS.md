@@ -1132,7 +1132,15 @@ AGV/AUBO 只读预检和明确授权。
 
 - WPF 实验方案模板下拉现在展示模板能力、资源族、明确的预计时长和最近验证时间；缺少模板级时长时显示“未配置”，不从超时参数臆测排程时长。
 - 方案执行流程增加步骤级状态提示：不可用的已引用版本和多步骤缺失预计时长会即时提示；MES 返回 `workflowSteps[n]` 校验问题时，WPF 自动选中对应步骤并切换到执行流程页。
-- 新增模板元数据、预计时长投影和步骤问题定位回归；WPF 定向测试 `10/10` 通过，Release 构建 `0` 警告 / `0` 错误。
+- 新增模板元数据、预计时长投影和步骤问题定位回归；WPF 定向测试 `12/12` 通过，Release 构建 `0` 警告 / `0` 错误。
 - 完整离线门禁报告为 `artifacts/mes-offline-release-gate-20260904-workflow-metadata-final.json`：`1008 passed / 5 allowed skipped / 0 failed`，`releaseEligible=true`。
 - 独立 WPF Release 包为 `bin/Verify/PhysicalOneClickWorkflowMetadata-final-20260904-235200.zip`，包内 manifest 固定源码提交 `c0b1403`，压缩包校验值记录在同名 `.zip.sha256` sidecar 文件中。
 - 本切片只修改 WPF 展示/校验投影及测试，未连接或操作 AGV/AUBO；复合运行时和实体设备活动时间轴仍按后续阶段计划推进。
+
+## 2026-09-05 实验复合运行时阶段 2：无设备状态机基础
+
+- Contracts 新增 `ExperimentRun` / `ExperimentStepRun` 外层快照，固定方案、版本、步骤和子工作流身份；每个步骤使用由运行 ID 与步骤 ID 推导的稳定 `StepRunId`。
+- Domain 新增设备无关状态机，支持 Prepared→Running、逐步 Ready/Running/Succeeded、暂停/恢复、边界取消和 Unknown 人工核销；活动步骤禁止重复启动、越过步骤或静默取消。
+- 定向 Domain 回归 `4/4` 通过；本切片未接触 Adapter、AGV 或 AUBO，也未改变现有多步骤实体运行仍拒绝的准入门禁。
+- 完整离线门禁报告为 `artifacts/mes-offline-release-gate-20260905-composite-state.json`：`1012 passed / 5 allowed skipped / 0 failed`，`releaseEligible=true`。
+- 下一切片将把外层快照持久化到 MES，并以模拟器验证逐步骤子工作流上下文和重启恢复。
