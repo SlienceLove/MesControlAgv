@@ -21,6 +21,7 @@ public partial class MapDashboardView : UserControl
     private DateTimeOffset _mapAnimationLastTick;
     private MapViewModel? _observedMap;
     private bool _mapAutoFitted;
+    private bool? _isCompactLayout;
 
     public MapDashboardView()
     {
@@ -52,6 +53,34 @@ public partial class MapDashboardView : UserControl
     private void MapDashboardView_IsVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
     {
         if (IsVisible) Dispatcher.BeginInvoke(TryAutoFitMap, DispatcherPriority.Loaded);
+    }
+
+    private void MapWorkspaceGrid_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (MapWorkspaceGrid.ActualWidth <= 0)
+        {
+            return;
+        }
+
+        var isCompact = MapWorkspaceGrid.ActualWidth < 900;
+        if (_isCompactLayout == isCompact)
+        {
+            return;
+        }
+
+        _isCompactLayout = isCompact;
+        if (isCompact)
+        {
+            MapViewportColumn.Width = new GridLength(1.65, GridUnitType.Star);
+            MapDetailsColumn.Width = new GridLength(1, GridUnitType.Star);
+        }
+        else
+        {
+            MapViewportColumn.Width = new GridLength(1, GridUnitType.Star);
+            MapDetailsColumn.Width = new GridLength(290);
+        }
+
+        Dispatcher.BeginInvoke(TryAutoFitMap, DispatcherPriority.Loaded);
     }
 
     private async void ImportMap_Click(object sender, RoutedEventArgs e)

@@ -20,11 +20,10 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
-                <DockPanel Margin="0,0,0,12">
-                    <StackPanel DockPanel.Dock="Left">
-                        <TextBlock FontSize="22" FontWeight="SemiBold" Text="只读地图视图" />
-                        <TextBlock Margin="0,4,0,0" Foreground="Gray" Text="配置地图几何、实时 AGV 状态和路径叠加" />
-                        <StackPanel Margin="0,8,0,0" Orientation="Horizontal">
+                <StackPanel Margin="0,0,0,12">
+                    <TextBlock FontSize="22" FontWeight="SemiBold" Text="只读地图视图" />
+                    <TextBlock Margin="0,4,0,0" Foreground="Gray" Text="配置地图几何、实时 AGV 状态和路径叠加" />
+                    <WrapPanel Margin="0,8,0,0">
                             <Button Height="28" Padding="10,0" Background="#1769AA" Foreground="White" Content="导入 SMAP 地图" Click="ImportMap_Click" ToolTip="选择 .smap 文件加载地图" AutomationProperties.Name="导入 SMAP 地图文件" />
                             <Separator Margin="8,0" Width="1" Background="#D0D7DE" />
                             <Button Width="32" Height="28" Content="−" Click="MapZoomOut_Click" ToolTip="缩小地图" />
@@ -34,8 +33,8 @@
                             <Button Width="32" Height="28" Margin="6,0,0,0" Content="↺" Click="MapReset_Click" ToolTip="重置视图" />
                             <Button Height="28" Margin="6,0,0,0" Padding="10,0" Content="导出当前 PNG" Click="MapExportCurrent_Click" ToolTip="导出当前地图视口" AutomationProperties.Name="导出当前地图视口 PNG" />
                             <Button Height="28" Margin="6,0,0,0" Padding="10,0" Content="导出完整 PNG" Click="MapExportFull_Click" ToolTip="导出未变换的完整地图" AutomationProperties.Name="导出完整地图 PNG" />
-                        </StackPanel>
-                        <WrapPanel Margin="0,8,0,0">
+                    </WrapPanel>
+                    <WrapPanel Margin="0,8,0,0">
                             <CheckBox Margin="0,0,12,0" VerticalAlignment="Center" Content="墙线" IsChecked="{Binding Readiness.Map.Layers.ShowWalls, Mode=TwoWay}" />
                             <CheckBox Margin="0,0,12,0" VerticalAlignment="Center" Content="路线" IsChecked="{Binding Readiness.Map.Layers.ShowRoutes, Mode=TwoWay}" />
                             <CheckBox Margin="0,0,12,0" VerticalAlignment="Center" Content="站点标签" IsChecked="{Binding Readiness.Map.Layers.ShowStationLabels, Mode=TwoWay}" />
@@ -45,21 +44,23 @@
                             <CheckBox VerticalAlignment="Center" Content="障碍扫描" ToolTip="显示 .smap 的障碍扫描点"
                                       IsEnabled="{Binding Readiness.Map.Raster.HasData}"
                                       IsChecked="{Binding Readiness.Map.Layers.ShowRasterBackground, Mode=TwoWay}" />
+                    </WrapPanel>
+                    <StackPanel Margin="0,8,0,0">
+                        <TextBlock Text="{Binding Readiness.Map.Fingerprint}" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Margin="0,3,0,0" Foreground="Gray" Text="{Binding Readiness.Map.LiveFingerprint}" TextTrimming="CharacterEllipsis" />
+                        <WrapPanel Margin="0,3,0,0">
+                            <TextBlock FontWeight="SemiBold" Text="{Binding Readiness.Map.SyncStatus, StringFormat=地图同步：{0}}" />
+                            <TextBlock Margin="12,0,0,0" FontWeight="SemiBold" Text="{Binding Readiness.MapLayoutVerificationStatus, StringFormat=布局校验：{0}}" />
                         </WrapPanel>
                     </StackPanel>
-                    <StackPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
-                        <TextBlock Text="{Binding Readiness.Map.Fingerprint}" />
-                        <TextBlock Margin="0,3,0,0" Foreground="Gray" Text="{Binding Readiness.Map.LiveFingerprint}" />
-                        <TextBlock Margin="0,3,0,0" FontWeight="SemiBold" Text="{Binding Readiness.Map.SyncStatus, StringFormat=地图同步：{0}}" />
-                        <TextBlock Margin="0,3,0,0" FontWeight="SemiBold" Text="{Binding Readiness.MapLayoutVerificationStatus, StringFormat=布局校验：{0}}" />
-                    </StackPanel>
-                </DockPanel>
-                <Grid Grid.Row="1">
+                </StackPanel>
+                <Grid x:Name="MapWorkspaceGrid" Grid.Row="1" MinWidth="0"
+                      SizeChanged="MapWorkspaceGrid_SizeChanged">
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="290" />
+                        <ColumnDefinition x:Name="MapViewportColumn" Width="*" MinWidth="0" />
+                        <ColumnDefinition x:Name="MapDetailsColumn" Width="290" MinWidth="0" />
                     </Grid.ColumnDefinitions>
-                    <Border x:Name="MapViewportHost" Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6" ClipToBounds="True"
+                    <Border x:Name="MapViewportHost" Grid.Column="0" Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6" ClipToBounds="True"
                             PreviewMouseWheel="MapCanvas_MouseWheel"
                             PreviewMouseLeftButtonDown="MapCanvas_MouseLeftButtonDown"
                             PreviewMouseMove="MapCanvas_MouseMove"

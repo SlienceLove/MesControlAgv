@@ -23,14 +23,8 @@
                        Text="{Binding StartupConfiguration.DiagnosticRuleVersion, StringFormat=规则版本：{0}}" />
         </StackPanel>
 
-        <Grid Grid.Row="1" Margin="0,14,0,14">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="1.2*" />
-            </Grid.ColumnDefinitions>
-            <Border Margin="0,0,10,0" Padding="12" Background="#F6F8FA" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8">
+        <WrapPanel Grid.Row="1" Margin="0,14,0,14">
+            <Border Width="180" Margin="0,0,10,8" Padding="12" Background="#F6F8FA" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8">
                 <StackPanel>
                     <TextBlock Foreground="Gray" Text="检查结果" />
                     <TextBlock Margin="0,5,0,0" FontSize="16" FontWeight="SemiBold"
@@ -38,19 +32,19 @@
                                Text="{Binding StartupConfiguration.OverallStatus}" />
                 </StackPanel>
             </Border>
-            <Border Grid.Column="1" Margin="0,0,10,0" Padding="12" Background="#F6F8FA" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8">
+            <Border Width="180" Margin="0,0,10,8" Padding="12" Background="#F6F8FA" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8">
                 <StackPanel>
                     <TextBlock Foreground="Gray" Text="WPF 运行模式" />
                     <TextBlock Margin="0,5,0,0" FontSize="16" FontWeight="SemiBold" Text="{Binding StartupConfiguration.RuntimeMode}" />
                 </StackPanel>
             </Border>
-            <Border Grid.Column="2" Margin="0,0,10,0" Padding="12" Background="#F6F8FA" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8">
+            <Border Width="180" Margin="0,0,10,8" Padding="12" Background="#F6F8FA" BorderBrush="#E2E8F0" BorderThickness="1" CornerRadius="8">
                 <StackPanel>
                     <TextBlock Foreground="Gray" Text="AGV 驱动" />
                     <TextBlock Margin="0,5,0,0" FontSize="16" FontWeight="SemiBold" Text="{Binding StartupConfiguration.AdapterDriver}" TextWrapping="Wrap" />
                 </StackPanel>
             </Border>
-            <Border Grid.Column="3" Padding="12" Background="#FFF6ED" BorderBrush="#FEDFBE" BorderThickness="1" CornerRadius="8">
+            <Border Width="220" Margin="0,0,10,8" Padding="12" Background="#FFF6ED" BorderBrush="#FEDFBE" BorderThickness="1" CornerRadius="8">
                 <StackPanel>
                     <TextBlock Foreground="Gray" Text="真实写入入口" />
                     <TextBlock Margin="0,5,0,0" FontSize="16" FontWeight="SemiBold"
@@ -58,12 +52,14 @@
                                Text="{Binding StartupConfiguration.RealWriteAccess}" TextWrapping="Wrap" />
                 </StackPanel>
             </Border>
-        </Grid>
+        </WrapPanel>
 
         <TabControl Grid.Row="2">
             <TabItem Header="启动配置">
-                <DataGrid x:Name="DiagnosticsGrid" ItemsSource="{Binding StartupConfiguration.Items}" AutoGenerateColumns="False"
-                          CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single">
+                <DataGrid x:Name="DiagnosticsGrid" MinWidth="0" ItemsSource="{Binding StartupConfiguration.Items}" AutoGenerateColumns="False"
+                          CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single"
+                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                          ScrollViewer.VerticalScrollBarVisibility="Auto">
                     <DataGrid.Columns>
                         <DataGridTextColumn Width="170" Header="检查项" Binding="{Binding Name}" />
                         <DataGridTemplateColumn Width="90" Header="结果">
@@ -95,8 +91,10 @@
                         </StackPanel>
                         <TextBlock VerticalAlignment="Center" Foreground="Gray" Text="{Binding LastExportStatus}" />
                     </DockPanel>
-                    <DataGrid x:Name="AuditGrid" Grid.Row="1" ItemsSource="{Binding AuditEntries}" AutoGenerateColumns="False"
-                              CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single">
+                    <DataGrid x:Name="AuditGrid" Grid.Row="1" MinWidth="0" ItemsSource="{Binding AuditEntries}" AutoGenerateColumns="False"
+                              CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single"
+                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                              ScrollViewer.VerticalScrollBarVisibility="Auto">
                         <DataGrid.Columns>
                             <DataGridTextColumn Width="150" Header="时间" Binding="{Binding OccurredAtText}" />
                             <DataGridTextColumn Width="150" Header="分类" Binding="{Binding Category}" />
@@ -118,8 +116,10 @@
                         <TextBlock Margin="0,3,0,0" Foreground="#B54708" TextWrapping="Wrap"
                                    Text="{Binding FieldPreflightChecklist.SummaryText}" />
                     </StackPanel>
-                    <DataGrid x:Name="FieldPreflightGrid" Grid.Row="1" ItemsSource="{Binding FieldPreflightChecklist.Items}" AutoGenerateColumns="False"
-                              CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single">
+                    <DataGrid x:Name="FieldPreflightGrid" Grid.Row="1" MinWidth="0" ItemsSource="{Binding FieldPreflightChecklist.Items}" AutoGenerateColumns="False"
+                              CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single"
+                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                              ScrollViewer.VerticalScrollBarVisibility="Auto">
                         <DataGrid.Columns>
                             <DataGridTextColumn Width="180" Header="输入项" Binding="{Binding Name}" />
                             <DataGridTemplateColumn Width="110" Header="状态">
@@ -178,8 +178,10 @@
                     </ScrollViewer>
                     <TextBlock Grid.Row="2" Margin="0,0,0,8" Foreground="Gray" FontSize="11"
                                HorizontalAlignment="Left" Text="{Binding FilteredDiffSummary}" />
-                    <DataGrid x:Name="ConfigurationDiffGrid" Grid.Row="3" ItemsSource="{Binding FilteredConfigurationDiffItems}" AutoGenerateColumns="False"
-                              CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single">
+                    <DataGrid x:Name="ConfigurationDiffGrid" Grid.Row="3" MinWidth="0" ItemsSource="{Binding FilteredConfigurationDiffItems}" AutoGenerateColumns="False"
+                              CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single"
+                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                              ScrollViewer.VerticalScrollBarVisibility="Auto">
                         <DataGrid.Columns>
                             <DataGridTextColumn Width="190" Header="检查项" Binding="{Binding Name}" />
                             <DataGridTemplateColumn Width="95" Header="差异">
@@ -250,8 +252,10 @@
                         <Run Text="；确认短语：" />
                         <Run Text="{Binding CleanupConfirmationHint, Mode=OneWay}" />
                     </TextBlock>
-                    <DataGrid x:Name="SnapshotLifecycleGrid" Grid.Row="4" ItemsSource="{Binding SnapshotInventory.Items}" AutoGenerateColumns="False"
-                              CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single">
+                    <DataGrid x:Name="SnapshotLifecycleGrid" Grid.Row="4" MinWidth="0" ItemsSource="{Binding SnapshotInventory.Items}" AutoGenerateColumns="False"
+                              CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single"
+                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                              ScrollViewer.VerticalScrollBarVisibility="Auto">
                         <DataGrid.Columns>
                             <DataGridTextColumn Width="260" Header="文件" Binding="{Binding FileName}" />
                             <DataGridTemplateColumn Width="100" Header="格式">
@@ -310,8 +314,10 @@
                                 Content="恢复快照"
                                 IsEnabled="{Binding CanRestoreSnapshotCandidates}" />
                     </StackPanel>
-                    <DataGrid x:Name="SnapshotQuarantineGrid" Grid.Row="2" ItemsSource="{Binding QuarantineInventory.Items}"
-                              AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single">
+                    <DataGrid x:Name="SnapshotQuarantineGrid" Grid.Row="2" MinWidth="0" ItemsSource="{Binding QuarantineInventory.Items}"
+                              AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True" SelectionMode="Single"
+                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                              ScrollViewer.VerticalScrollBarVisibility="Auto">
                         <DataGrid.Columns>
                             <DataGridTextColumn Width="220" Header="回收批次" Binding="{Binding BatchDirectoryName}" />
                             <DataGridTextColumn Width="110" Header="manifest" Binding="{Binding ValidationStatusText}" />

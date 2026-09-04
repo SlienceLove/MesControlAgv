@@ -493,6 +493,56 @@ public sealed class MainWindowNavigationTests
         Assert.Null(failure);
     }
 
+    [Fact]
+    public void Map_view_keeps_viewport_and_runtime_details_inside_compact_window()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var window = new MainWindow
+                {
+                    WindowState = WindowState.Normal,
+                    Width = 820,
+                    Height = 480
+                };
+                window.Show();
+                var tabs = Assert.IsType<TabControl>(window.FindName("MainTabs"));
+                tabs.SelectedItem = Assert.IsType<TabItem>(window.FindName("MapDashboardTab"));
+                window.Measure(new Size(820, 480));
+                window.Arrange(new Rect(0, 0, 820, 480));
+                window.UpdateLayout();
+
+                var view = Assert.Single(FindVisualChildren<Views.MapDashboardView>(window));
+                var workspace = Assert.IsType<Grid>(view.FindName("MapWorkspaceGrid"));
+                var viewport = Assert.IsType<ColumnDefinition>(view.FindName("MapViewportColumn"));
+                var details = Assert.IsType<ColumnDefinition>(view.FindName("MapDetailsColumn"));
+
+                Assert.True(workspace.ActualWidth < 900);
+                Assert.True(viewport.ActualWidth > 0);
+                Assert.True(details.ActualWidth > 0);
+                Assert.True(viewport.ActualWidth + details.ActualWidth <= workspace.ActualWidth + 0.5);
+
+                window.Close();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                Dispatcher.CurrentDispatcher.InvokeShutdown();
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "WPF compact map layout test did not complete.");
+        Assert.Null(failure);
+    }
+
     private static IEnumerable<T> FindVisualChildren<T>(DependencyObject root)
         where T : DependencyObject
     {
