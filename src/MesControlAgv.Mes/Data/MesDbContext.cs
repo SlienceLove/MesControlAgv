@@ -29,6 +29,8 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
 
     public DbSet<ExperimentJobRecord> ExperimentJobs => Set<ExperimentJobRecord>();
 
+    public DbSet<ExperimentRunRecord> ExperimentRuns => Set<ExperimentRunRecord>();
+
     public DbSet<ScheduleEntryRecord> ScheduleEntries => Set<ScheduleEntryRecord>();
 
     public DbSet<ResourceReservationRecord> ResourceReservations => Set<ResourceReservationRecord>();
@@ -209,6 +211,18 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.HasIndex(job => new { job.Status, job.CreatedAtUtc });
             entity.HasIndex(job => new { job.PlanId, job.PlanVersion });
             entity.HasIndex(job => job.WorkflowRunId).IsUnique();
+        });
+
+        modelBuilder.Entity<ExperimentRunRecord>(entity =>
+        {
+            entity.ToTable("ExperimentRuns");
+            entity.HasKey(run => run.ExperimentRunId);
+            entity.Property(run => run.Status).HasMaxLength(32);
+            entity.Property(run => run.StepsJson).HasMaxLength(65535);
+            entity.Property(run => run.LastError).HasMaxLength(2048);
+            entity.HasIndex(run => run.ExperimentJobId).IsUnique();
+            entity.HasIndex(run => run.AdmissionRequestId).IsUnique();
+            entity.HasIndex(run => new { run.Status, run.UpdatedAtUtc });
         });
 
         modelBuilder.Entity<ScheduleEntryRecord>(entity =>

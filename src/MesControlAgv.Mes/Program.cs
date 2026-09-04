@@ -111,6 +111,7 @@ builder.Services.AddScoped<ExperimentRuntimeLeaseLifecycle>();
 builder.Services.AddScoped<ExperimentRuntimeAdmissionService>();
 builder.Services.AddScoped<IExperimentRuntimeAdmissionService>(services =>
     services.GetRequiredService<ExperimentRuntimeAdmissionService>());
+builder.Services.AddScoped<IExperimentCompositeRuntimeService, ExperimentCompositeRuntimeService>();
 builder.Services.AddScoped<ExperimentRuntimeRecoveryCoordinator>();
 builder.Services.AddScoped<FieldNavigationAcceptanceRepository>();
 builder.Services.AddScoped<IFieldNavigationAcceptanceApplicationService, FieldNavigationAcceptanceService>();
@@ -578,6 +579,22 @@ static async Task EnsureExperimentSchedulingTablesAsync(MesDbContext database)
         );
         """,
         """
+        CREATE TABLE IF NOT EXISTS ExperimentRuns (
+            ExperimentRunId TEXT NOT NULL PRIMARY KEY,
+            ExperimentJobId TEXT NOT NULL,
+            PlanId TEXT NOT NULL,
+            PlanVersion INTEGER NOT NULL,
+            AdmissionRequestId TEXT NOT NULL,
+            Status TEXT NOT NULL,
+            CurrentStepOrder INTEGER NOT NULL,
+            CurrentStepRunId TEXT NULL,
+            StepsJson TEXT NOT NULL,
+            LastError TEXT NULL,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL
+        );
+        """,
+        """
         CREATE TABLE IF NOT EXISTS ScheduleEntries (
             ScheduleEntryId TEXT NOT NULL PRIMARY KEY,
             ExperimentJobId TEXT NOT NULL,
@@ -663,6 +680,9 @@ static async Task EnsureExperimentSchedulingTablesAsync(MesDbContext database)
         "CREATE INDEX IF NOT EXISTS IX_ExperimentJobs_Status_CreatedAtUtc ON ExperimentJobs (Status, CreatedAtUtc);",
         "CREATE INDEX IF NOT EXISTS IX_ExperimentJobs_PlanId_PlanVersion ON ExperimentJobs (PlanId, PlanVersion);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentJobs_WorkflowRunId ON ExperimentJobs (WorkflowRunId);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentRuns_ExperimentJobId ON ExperimentRuns (ExperimentJobId);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentRuns_AdmissionRequestId ON ExperimentRuns (AdmissionRequestId);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentRuns_Status_UpdatedAtUtc ON ExperimentRuns (Status, UpdatedAtUtc);",
         "CREATE INDEX IF NOT EXISTS IX_ScheduleEntries_Status_PlannedStartUtc_Priority ON ScheduleEntries (Status, PlannedStartUtc, Priority);",
         "CREATE INDEX IF NOT EXISTS IX_ScheduleEntries_ExperimentJobId ON ScheduleEntries (ExperimentJobId);",
         "CREATE INDEX IF NOT EXISTS IX_ResourceReservations_ScheduleEntryId ON ResourceReservations (ScheduleEntryId);",

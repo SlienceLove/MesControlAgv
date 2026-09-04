@@ -128,6 +128,32 @@ public static class ExperimentSchedulingEndpointRouteBuilderExtensions
             await ExecuteAdmissionAsync(
                 () => service.AdmitJobAsync(jobId, request, cancellationToken)));
 
+        endpoints.MapPost("/api/experiment-runs/prepare", async (
+            PrepareExperimentRunRequest request,
+            IExperimentCompositeRuntimeService service,
+            CancellationToken cancellationToken) =>
+            await ExecuteSchedulingCommandAsync(
+                () => service.PrepareAsync(request, cancellationToken),
+                run => Results.Created($"/api/experiment-runs/{run.ExperimentRunId}", run)));
+
+        endpoints.MapGet("/api/experiment-runs/{runId:guid}", async (
+            Guid runId,
+            IExperimentCompositeRuntimeService service,
+            CancellationToken cancellationToken) =>
+        {
+            var run = await service.GetAsync(runId, cancellationToken);
+            return run is null ? Results.NotFound() : Results.Ok(run);
+        });
+
+        endpoints.MapGet("/api/experiment-jobs/{jobId:guid}/experiment-run", async (
+            Guid jobId,
+            IExperimentCompositeRuntimeService service,
+            CancellationToken cancellationToken) =>
+        {
+            var run = await service.GetForJobAsync(jobId, cancellationToken);
+            return run is null ? Results.NotFound() : Results.Ok(run);
+        });
+
         endpoints.MapPost("/api/experiment-jobs/{jobId:guid}/unschedule", async (
             Guid jobId,
             ExperimentSchedulingActionRequest request,

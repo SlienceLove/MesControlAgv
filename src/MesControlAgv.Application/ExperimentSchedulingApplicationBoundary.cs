@@ -108,3 +108,23 @@ public interface IExperimentRuntimeAdmissionService
         AdmitExperimentJobRequest request,
         CancellationToken cancellationToken);
 }
+
+/// <summary>
+/// Device-free persistence boundary for a composed experiment run. It only
+/// materializes the pinned plan/step snapshot; child workflow admission and
+/// device operations belong to the later coordinator.
+/// </summary>
+public interface IExperimentCompositeRuntimeService
+{
+    Task<ExperimentRun> PrepareAsync(
+        PrepareExperimentRunRequest request,
+        CancellationToken cancellationToken);
+
+    Task<ExperimentRun?> GetAsync(
+        Guid experimentRunId,
+        CancellationToken cancellationToken);
+
+    Task<ExperimentRun?> GetForJobAsync(
+        Guid experimentJobId,
+        CancellationToken cancellationToken);
+}

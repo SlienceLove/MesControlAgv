@@ -86,6 +86,7 @@
 - 实验方案模板下拉投影每个已发布版本的能力、资源、明确的预计时长和最近验证信息；未声明的时长保持“未配置”，不会用超时值臆测。
 - 方案校验问题按 `workflowSteps[n]` 定位到具体步骤，并即时提示多步骤方案缺失预计时长或引用不可用版本。
 - Contracts 增加 `ExperimentRun` / `ExperimentStepRun` 外层运行快照；Domain 状态机按稳定 `StepId/StepRunId` 逐步推进，不允许跳步、活动步骤重复启动或在 Unknown 状态静默取消。
+- MES 以 `ExperimentRuns` 持久化外层快照，提供显式 `/api/experiment-runs/prepare` 与只读查询接口；准备阶段不创建子工作流、不写入设备。
 - 复合运行时尚未完成时，多步骤任务的运行准入返回明确的 `EXP-COMPOSITE-WORKFLOW-NOT-SUPPORTED`，禁止误执行第一步后结束。
 
 ## 4. 后续实施阶段
@@ -102,6 +103,7 @@
 
 - [x] 新增 `ExperimentRun` / `ExperimentStepRun` 运行快照，固定 `PlanId/PlanVersion/StepId/WorkflowVersion`。
 - [x] 完成设备无关的启动、步骤边界、暂停/恢复、取消和 Unknown 人工核销状态机。
+- [x] 持久化 Prepared 外层快照并提供幂等准备/只读查询 API；准备请求不创建子工作流或设备操作。
 - 每一步创建独立的节点执行上下文，步骤完成后才允许进入下一步。
 - 暂停、取消、未知结果和恢复必须在步骤边界和设备操作边界分别留痕。
 - 复合运行时完成并通过模拟器验收前，继续拒绝多步骤实体运行准入。

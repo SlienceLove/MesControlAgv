@@ -160,6 +160,38 @@ internal static class ExperimentSchedulingPersistence
         UpdatedAt = ToOffset(record.UpdatedAtUtc)
     };
 
+    public static ExperimentRun MapExperimentRun(ExperimentRunRecord record) => new()
+    {
+        ExperimentRunId = record.ExperimentRunId,
+        ExperimentJobId = record.ExperimentJobId,
+        PlanId = record.PlanId,
+        PlanVersion = record.PlanVersion,
+        AdmissionRequestId = record.AdmissionRequestId,
+        Status = ParseStatus<ExperimentRunStatus>(record.Status),
+        CurrentStepOrder = record.CurrentStepOrder,
+        CurrentStepRunId = record.CurrentStepRunId,
+        Steps = Deserialize(record.StepsJson, Array.Empty<ExperimentStepRun>()),
+        LastError = record.LastError,
+        CreatedAt = ToOffset(record.CreatedAtUtc),
+        UpdatedAt = ToOffset(record.UpdatedAtUtc)
+    };
+
+    public static void ApplyExperimentRun(ExperimentRunRecord record, ExperimentRun run)
+    {
+        record.ExperimentRunId = run.ExperimentRunId;
+        record.ExperimentJobId = run.ExperimentJobId;
+        record.PlanId = run.PlanId;
+        record.PlanVersion = run.PlanVersion;
+        record.AdmissionRequestId = run.AdmissionRequestId;
+        record.Status = run.Status.ToString();
+        record.CurrentStepOrder = run.CurrentStepOrder;
+        record.CurrentStepRunId = run.CurrentStepRunId;
+        record.StepsJson = Serialize(run.Steps);
+        record.LastError = run.LastError;
+        record.CreatedAtUtc = run.CreatedAt.UtcDateTime;
+        record.UpdatedAtUtc = run.UpdatedAt.UtcDateTime;
+    }
+
     public static ExperimentSchedulingAuditEntry MapAudit(ExperimentSchedulingAuditRecord record)
     {
         var details = Deserialize(record.DetailsJson, new Dictionary<string, string?>());

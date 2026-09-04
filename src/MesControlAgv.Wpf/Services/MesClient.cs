@@ -803,6 +803,31 @@ public sealed class MesClient(HttpClient client) : IMesClient
             cancellationToken,
             mapNotFoundToNull: true);
 
+    public async Task<ExperimentRun?> GetExperimentRunAsync(
+        Guid experimentRunId,
+        CancellationToken cancellationToken) =>
+        await GetExperimentAsync<ExperimentRun>(
+            $"api/experiment-runs/{experimentRunId}",
+            cancellationToken,
+            mapNotFoundToNull: true);
+
+    public async Task<ExperimentRun?> GetExperimentRunForJobAsync(
+        Guid experimentJobId,
+        CancellationToken cancellationToken) =>
+        await GetExperimentAsync<ExperimentRun>(
+            $"api/experiment-jobs/{experimentJobId}/experiment-run",
+            cancellationToken,
+            mapNotFoundToNull: true);
+
+    public Task<ExperimentRun> PrepareExperimentRunAsync(
+        PrepareExperimentRunRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ExperimentRun>(
+            HttpMethod.Post,
+            "api/experiment-runs/prepare",
+            request,
+            cancellationToken);
+
     public Task<ExperimentJob> CreateExperimentJobAsync(
         CreateExperimentJobRequest request,
         CancellationToken cancellationToken) =>

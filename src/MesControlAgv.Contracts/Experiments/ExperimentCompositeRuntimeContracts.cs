@@ -74,3 +74,16 @@ public sealed record ExperimentRun
         ExperimentRunStatus.Failed or
         ExperimentRunStatus.Cancelled;
 }
+
+/// <summary>
+/// Explicit request to materialize a scheduled multi-step plan into an outer
+/// run snapshot. Preparation is device-free; a later coordinator owns child
+/// workflow admission and device-operation evidence.
+/// </summary>
+public sealed record PrepareExperimentRunRequest
+{
+    public Guid RequestId { get; init; }
+    public Guid ExperimentJobId { get; init; }
+    public string Actor { get; init; } = string.Empty;
+    public string Reason { get; init; } = string.Empty;
+}

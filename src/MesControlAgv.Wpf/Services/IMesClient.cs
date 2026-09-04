@@ -480,6 +480,22 @@ public interface IMesClient
         CancellationToken cancellationToken) =>
         Task.FromResult<ExperimentJob?>(null);
 
+    Task<ExperimentRun?> GetExperimentRunAsync(
+        Guid experimentRunId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<ExperimentRun?>(null);
+
+    Task<ExperimentRun?> GetExperimentRunForJobAsync(
+        Guid experimentJobId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<ExperimentRun?>(null);
+
+    Task<ExperimentRun> PrepareExperimentRunAsync(
+        PrepareExperimentRunRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentRun>(
+            new NotSupportedException("Composite experiment runtime APIs are not supported by this MES client."));
+
     Task<ExperimentJob> CreateExperimentJobAsync(
         CreateExperimentJobRequest request,
         CancellationToken cancellationToken) =>

@@ -1,6 +1,6 @@
 # AGV MES MVP Progress
 
-Last updated: 2026-09-04
+Last updated: 2026-09-05
 
 This is the concise active record. Detailed history remains in Git and the
 linked acceptance documents.
@@ -1143,4 +1143,11 @@ AGV/AUBO 只读预检和明确授权。
 - Domain 新增设备无关状态机，支持 Prepared→Running、逐步 Ready/Running/Succeeded、暂停/恢复、边界取消和 Unknown 人工核销；活动步骤禁止重复启动、越过步骤或静默取消。
 - 定向 Domain 回归 `4/4` 通过；本切片未接触 Adapter、AGV 或 AUBO，也未改变现有多步骤实体运行仍拒绝的准入门禁。
 - 完整离线门禁报告为 `artifacts/mes-offline-release-gate-20260905-composite-state.json`：`1012 passed / 5 allowed skipped / 0 failed`，`releaseEligible=true`。
-- 下一切片将把外层快照持久化到 MES，并以模拟器验证逐步骤子工作流上下文和重启恢复。
+- 后续切片继续补齐子工作流上下文、设备证据和重启恢复；当前外层快照准备仍不触发任何设备操作。
+
+## 2026-09-05 实验复合运行时阶段 2：外层快照持久化
+
+- MES 新增 `ExperimentRunRecord` 与 `ExperimentRuns` 表，以单行 JSON 快照持久化 `ExperimentRun/ExperimentStepRun`；只读查询不会改变状态。
+- 新增显式 `/api/experiment-runs/prepare` 和 `/api/experiment-runs/{runId}` 接口，准备前校验 Scheduled 任务、计划/任务步骤快照、已发布工作流版本及幂等请求；准备阶段不创建子工作流、不写入设备。
+- 新增 MES API 回归 `3/3`，覆盖快照持久化、查询、重复请求和错误载荷拒绝；完整离线门禁报告为 `artifacts/mes-offline-release-gate-20260905-composite-runtime.json`：`1015 passed / 5 allowed skipped / 0 failed`，`releaseEligible=true`。
+- 本切片仅扩展 MES 持久化和只读准备边界，现场 AGV/AUBO 未连接；下一步实现有子工作流证据约束的逐步骤协调器。
