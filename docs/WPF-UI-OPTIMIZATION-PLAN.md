@@ -4,6 +4,8 @@
 > 基线：2026-09-04
 > 范围：只优化 WPF 信息架构、布局和可读性，不改变 MES、Adapter、设备协议或实体设备安全边界。
 
+方案与固定流程模板的联动设计见 [EXPERIMENT-PLAN-WORKFLOW-LINKAGE.md](EXPERIMENT-PLAN-WORKFLOW-LINKAGE.md)。
+
 ## 1. 结论先行
 
 当前系统的服务边界基本清晰，WPF 通过 MES HTTP 契约访问业务，MES 负责任务/流程/审计，Adapter 负责设备协议和安全策略，Simulator 用于离线验证。当前最需要优化的是表现层的“信息架构”和“有限空间布局”，不是先重写后端。

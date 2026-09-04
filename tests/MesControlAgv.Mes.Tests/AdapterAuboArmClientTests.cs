@@ -71,6 +71,80 @@ public sealed class AdapterAuboArmClientTests
         Assert.Equal(operationId, body.RootElement.GetProperty("operationId").GetGuid());
     }
 
+    [Fact]
+    public async Task Program_catalog_can_request_a_fresh_scan_explicitly()
+    {
+        var expected = new AuboArmProgramCatalogResponse(
+            "ARM-01",
+            true,
+            "取料盘",
+            ["取料盘"],
+            ["取料盘"],
+            true,
+            [],
+            DateTimeOffset.Parse("2026-09-04T01:00:00Z"));
+        var handler = new RecordingHandler(_ => JsonResponse(expected));
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://adapter/") };
+        var client = new AdapterAuboArmClient(httpClient);
+
+        var result = await client.GetProgramCatalogAsync(
+            "ARM-01", forceFresh: true, CancellationToken.None);
+
+        Assert.Equal("ARM-01", result.DeviceId);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/api/robot-arms/ARM-01/programs", request.RequestUri!.AbsolutePath);
+        Assert.Equal("fresh=true", request.RequestUri.Query.TrimStart('?'));
+    }
+
+    [Fact]
+    public async Task Correlated_program_write_posts_all_durable_identity_fields()
+    {
+        var operationId = Guid.NewGuid();
+        var correlation = AuboArmOperationCorrelation.Create(
+            Guid.NewGuid(),
+            Guid.NewGuid(),
+            operationId,
+            Guid.NewGuid(),
+            "run-correlation",
+            attempt: 2);
+        var expected = new AuboArmProgramOperationResponse(
+            operationId,
+            "ARM-01",
+            "娴嬭瘯",
+            "load",
+            "operator",
+            AuboArmProgramOperationState.Loaded,
+            AuboArmRuntimeState.Stopped,
+            "Stopped",
+            "娴嬭瘯",
+            0,
+            null,
+            true,
+            DateTimeOffset.UtcNow)
+        {
+            WorkflowRunId = correlation.WorkflowRunId,
+            WorkflowNodeExecutionId = correlation.WorkflowNodeExecutionId,
+            DeviceOperationId = operationId,
+            RequestId = correlation.RequestId,
+            CorrelationId = correlation.CorrelationId,
+            Attempt = correlation.Attempt
+        };
+        var handler = new RecordingHandler(_ => JsonResponse(expected));
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://adapter/") };
+        var client = new AdapterAuboArmClient(httpClient);
+
+        await client.LoadProgramAsync(
+            "ARM-01", "娴嬭瘯", "operator", operationId, correlation, CancellationToken.None);
+
+        using var body = JsonDocument.Parse(Assert.Single(handler.Requests).Body!);
+        Assert.Equal(correlation.WorkflowRunId, body.RootElement.GetProperty("workflowRunId").GetGuid());
+        Assert.Equal(correlation.WorkflowNodeExecutionId, body.RootElement.GetProperty("workflowNodeExecutionId").GetGuid());
+        Assert.Equal(operationId, body.RootElement.GetProperty("deviceOperationId").GetGuid());
+        Assert.Equal(correlation.RequestId, body.RootElement.GetProperty("requestId").GetGuid());
+        Assert.Equal("run-correlation", body.RootElement.GetProperty("correlationId").GetString());
+        Assert.Equal(2, body.RootElement.GetProperty("attempt").GetInt32());
+    }
+
     private static HttpResponseMessage JsonResponse<T>(T value) =>
         new(HttpStatusCode.OK) { Content = JsonContent.Create(value) };
 

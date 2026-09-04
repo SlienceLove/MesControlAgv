@@ -62,8 +62,17 @@ public sealed class WorkflowAuboProgramDispatcher(
     {
         if (!CanUseProfile()) return;
 
+        // Running programs have crossed the write boundary and need priority
+        // observation. Do this before a new Ready node enters its potentially
+        // long readiness wait so an unrelated offline/manual robot state cannot
+        // starve completion evidence for work already in motion.
+        await RecoverRunningAsync(cancellationToken);
+
         foreach (var workItem in await workflows.ListAuboProgramDispatchableNodesAsync(cancellationToken))
         {
+            if (!await HasActiveBatchAuthorizationAsync(workItem, cancellationToken))
+                continue;
+
             if (!await WaitForPhysicalReadinessAsync(workItem, cancellationToken))
                 continue;
 
@@ -72,14 +81,36 @@ public sealed class WorkflowAuboProgramDispatcher(
                 cancellationToken);
             await ExecuteClaimedAsync(claimed, cancellationToken);
         }
-
-        await RecoverRunningAsync(cancellationToken);
     }
 
     public async Task RecoverAsync(CancellationToken cancellationToken)
     {
         if (!CanUseProfile()) return;
         await RecoverRunningAsync(cancellationToken);
+    }
+
+    private async Task<bool> HasActiveBatchAuthorizationAsync(
+        WorkflowNodeExecutionWorkItem workItem,
+        CancellationToken cancellationToken)
+    {
+        if (profile.Features.UseSimulator) return true;
+
+        var request = await workflows.GetExecutionRequestAsync(
+            workItem.NodeExecution.WorkflowRunId,
+            cancellationToken);
+        // Legacy/manual physical runs use their existing per-node controls.
+        // When a run-level one-click authorization exists, however, it must
+        // remain valid at every robot-program boundary.
+        if (request?.PhysicalAuthorization is not { } authorization) return true;
+
+        var now = _timeProvider.GetUtcNow();
+        if (authorization.ExpiresAtUtc > now) return true;
+
+        _logger?.LogWarning(
+            "Workflow AUBO node {NodeExecutionId} remains Ready because physical batch authorization expired at {ExpiresAtUtc}.",
+            workItem.NodeExecution.Id,
+            authorization.ExpiresAtUtc);
+        return false;
     }
 
     private bool CanUseProfile() =>
@@ -219,6 +250,18 @@ public sealed class WorkflowAuboProgramDispatcher(
         var mutationMayHaveStarted = false;
         try
         {
+            var operationId = operation.OperationId;
+            var correlation = CreateArmCorrelation(node, operation);
+            if (correlation is null)
+            {
+                await CompleteAsync(
+                    workItem,
+                    WorkflowStepCompletionOutcome.Unknown,
+                    "The robot-program device operation has incomplete workflow correlation; no AUBO write was attempted.",
+                    cancellationToken);
+                return;
+            }
+
             var before = await arm.GetProgramAsync(armId, cancellationToken);
             if (!before.Online)
             {
@@ -239,8 +282,18 @@ public sealed class WorkflowAuboProgramDispatcher(
                     armId,
                     normalizedProgram,
                     "workflow-runtime",
-                    Guid.NewGuid(),
+                    operationId,
+                    correlation,
                     cancellationToken);
+                if (!IsCorrelationCompatible(loaded, correlation))
+                {
+                    await CompleteAsync(
+                        workItem,
+                        WorkflowStepCompletionOutcome.Unknown,
+                        "The AUBO load response did not preserve the durable workflow correlation; reconcile manually.",
+                        cancellationToken);
+                    return;
+                }
                 if (loaded.State == AuboArmProgramOperationState.Unknown || !loaded.Succeeded)
                 {
                     await CompleteAsync(
@@ -259,8 +312,18 @@ public sealed class WorkflowAuboProgramDispatcher(
                 armId,
                 normalizedProgram,
                 "workflow-runtime",
-                Guid.NewGuid(),
+                operationId,
+                correlation,
                 cancellationToken);
+            if (!IsCorrelationCompatible(started, correlation))
+            {
+                await CompleteAsync(
+                    workItem,
+                    WorkflowStepCompletionOutcome.Unknown,
+                    "The AUBO run response did not preserve the durable workflow correlation; reconcile manually.",
+                    cancellationToken);
+                return;
+            }
             if (started.State == AuboArmProgramOperationState.Unknown || !started.Succeeded)
             {
                 await CompleteAsync(
@@ -577,16 +640,40 @@ public sealed class WorkflowAuboProgramDispatcher(
         string? error,
         CancellationToken cancellationToken,
         IReadOnlyDictionary<string, string?>? outputs = null) =>
-        workflows.CompleteNodeExecutionAsync(
+        CompleteWithCorrelationAsync(workItem, outcome, error, cancellationToken, outputs);
+
+    private Task CompleteWithCorrelationAsync(
+        WorkflowNodeExecutionWorkItem workItem,
+        WorkflowStepCompletionOutcome outcome,
+        string? error,
+        CancellationToken cancellationToken,
+        IReadOnlyDictionary<string, string?>? outputs)
+    {
+        var evidence = new Dictionary<string, string?>(
+            outputs ?? new Dictionary<string, string?>(),
+            StringComparer.OrdinalIgnoreCase);
+        if (workItem.DeviceOperation is { } operation &&
+            string.Equals(operation.CapabilityId, WorkflowCapabilityIds.RobotExecuteProgram, StringComparison.OrdinalIgnoreCase))
+        {
+            evidence["deviceOperationId"] = operation.OperationId.ToString("D");
+            evidence["workflowRunId"] = operation.WorkflowRunId.ToString("D");
+            evidence["workflowNodeExecutionId"] = operation.NodeExecutionId.ToString("D");
+            evidence["requestId"] = operation.RequestId.ToString("D");
+            evidence["correlationId"] = operation.CorrelationId;
+            evidence["attempt"] = operation.Attempt.ToString(CultureInfo.InvariantCulture);
+        }
+
+        return workflows.CompleteNodeExecutionAsync(
             workItem.NodeExecution.Id,
             new WorkflowNodeExecutionCompletionRequest
             {
                 DeviceOperationId = workItem.DeviceOperation?.OperationId,
                 Outcome = outcome,
                 Error = error,
-                Outputs = outputs ?? new Dictionary<string, string?>()
+                Outputs = evidence
             },
             cancellationToken);
+    }
 
     private string? ResolveArmId(IReadOnlyDictionary<string, string?> inputs)
     {
@@ -615,6 +702,71 @@ public sealed class WorkflowAuboProgramDispatcher(
                 StringComparer.OrdinalIgnoreCase))
             .Select(device => device.DeviceId)
             .FirstOrDefault();
+    }
+
+    private static AuboArmOperationCorrelation? CreateArmCorrelation(
+        WorkflowNodeExecutionSnapshot node,
+        WorkflowDeviceOperationSnapshot operation)
+    {
+        if (node.WorkflowRunId == Guid.Empty ||
+            node.Id == Guid.Empty ||
+            operation.OperationId == Guid.Empty ||
+            operation.WorkflowRunId != node.WorkflowRunId ||
+            operation.NodeExecutionId != node.Id ||
+            operation.RequestId == Guid.Empty ||
+            operation.Attempt <= 0)
+        {
+            return null;
+        }
+
+        // Legacy runs may not have persisted a correlation string. Derive a
+        // deterministic value from the durable identifiers rather than issuing
+        // an uncorrelated physical write or inventing a new operation id.
+        var correlationId = string.IsNullOrWhiteSpace(operation.CorrelationId)
+            ? $"workflow:{node.WorkflowRunId:N}:node:{node.Id:N}:operation:{operation.OperationId:N}"
+            : operation.CorrelationId.Trim();
+        return AuboArmOperationCorrelation.Create(
+            node.WorkflowRunId,
+            node.Id,
+            operation.OperationId,
+            operation.RequestId,
+            correlationId,
+            operation.Attempt);
+    }
+
+    private bool IsCorrelationCompatible(
+        AuboArmProgramOperationResponse response,
+        AuboArmOperationCorrelation expected)
+    {
+        if (response.OperationId != expected.DeviceOperationId)
+        {
+            _logger?.LogWarning(
+                "AUBO response operation id {ResponseOperationId} did not match durable device operation {ExpectedOperationId}.",
+                response.OperationId,
+                expected.DeviceOperationId);
+            return false;
+        }
+
+        if (!response.IsWorkflowCorrelated)
+        {
+            // Older Adapter binaries did not echo additive correlation fields.
+            // The request was still sent with the durable id; retain compatibility
+            // while making the downgrade visible in the worker log.
+            _logger?.LogWarning(
+                "AUBO response for durable operation {OperationId} omitted workflow correlation fields; verify the Adapter deployment before field use.",
+                expected.DeviceOperationId);
+            return true;
+        }
+
+        return response.WorkflowRunId == expected.WorkflowRunId &&
+               response.WorkflowNodeExecutionId == expected.WorkflowNodeExecutionId &&
+               response.DeviceOperationId == expected.DeviceOperationId &&
+               response.RequestId == expected.RequestId &&
+               string.Equals(
+                   response.CorrelationId ?? expected.EffectiveCorrelationId,
+                   expected.EffectiveCorrelationId,
+                   StringComparison.Ordinal) &&
+               response.Attempt == expected.Attempt;
     }
 
     private static bool TryReadInput(

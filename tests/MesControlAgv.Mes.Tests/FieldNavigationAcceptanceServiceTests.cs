@@ -115,6 +115,50 @@ public sealed class FieldNavigationAcceptanceServiceTests
             CancellationToken.None));
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.BadGateway)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.GatewayTimeout)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    public async Task Adapter_gateway_uncertainty_is_unknown_and_not_a_confirmed_failure(
+        HttpStatusCode statusCode)
+    {
+        var adapter = new FieldAcceptanceAdapter
+        {
+            DispatchException = new AdapterHttpException(statusCode, "navigation confirmation unavailable")
+        };
+        var service = CreateService(adapter);
+        var authorized = await CreateAuthorizedAsync(service, $"permit-{(int)statusCode}");
+
+        var unknown = await service.DispatchAsync(authorized.Id, CancellationToken.None);
+
+        Assert.Equal(FieldNavigationAcceptanceStatuses.Unknown, unknown.Status);
+        Assert.Contains("confirmation unavailable", unknown.LastError, StringComparison.Ordinal);
+        Assert.Equal(1, adapter.DispatchCalls);
+        var persisted = await service.GetAsync(authorized.Id, CancellationToken.None);
+        Assert.Contains(persisted!.Audits, audit => audit.EventType == "DispatchUnknown");
+    }
+
+    [Fact]
+    public async Task Adapter_cancel_gateway_timeout_is_unknown_and_never_confirmed_cancelled()
+    {
+        var adapter = new FieldAcceptanceAdapter { DispatchState = "moving" };
+        var service = CreateService(adapter);
+        var authorized = await CreateAuthorizedAsync(service, "permit-cancel-timeout");
+        var moving = await service.DispatchAsync(authorized.Id, CancellationToken.None);
+        Assert.Equal(FieldNavigationAcceptanceStatuses.Moving, moving.Status);
+        adapter.CancelException = new AdapterHttpException(
+            HttpStatusCode.GatewayTimeout,
+            "cancel confirmation unavailable");
+
+        var unknown = await service.CancelAsync(authorized.Id, CancellationToken.None);
+
+        Assert.Equal(FieldNavigationAcceptanceStatuses.Unknown, unknown.Status);
+        Assert.Contains("confirmation unavailable", unknown.LastError, StringComparison.Ordinal);
+        var persisted = await service.GetAsync(authorized.Id, CancellationToken.None);
+        Assert.Contains(persisted!.Audits, audit => audit.EventType == "CancelUnknown");
+    }
+
     private static async Task<FieldNavigationAcceptanceResponse> CreateAuthorizedAsync(
         FieldNavigationAcceptanceService service,
         string permitId)
@@ -205,6 +249,7 @@ public sealed class FieldNavigationAcceptanceServiceTests
     {
         public string DispatchState { get; set; } = "moving";
         public Exception? DispatchException { get; set; }
+        public Exception? CancelException { get; set; }
         public int DispatchCalls { get; private set; }
         public Guid LastAcceptanceId { get; private set; }
 
@@ -241,7 +286,9 @@ public sealed class FieldNavigationAcceptanceServiceTests
             Task.FromResult<AgvTaskResponse?>(null);
 
         public Task<AgvTaskResponse?> CancelAsync(Guid operationId, CancellationToken cancellationToken) =>
-            Task.FromResult<AgvTaskResponse?>(new AgvTaskResponse(operationId, operationId.ToString("N"), "LM2", "cancelled", null));
+            CancelException is not null
+                ? Task.FromException<AgvTaskResponse?>(CancelException)
+                : Task.FromResult<AgvTaskResponse?>(new AgvTaskResponse(operationId, operationId.ToString("N"), "LM2", "cancelled", null));
 
         public Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken) =>
             Task.FromResult(new AgvSnapshotResponse(true, "adapter", "LM1", null, "AGV-01"));

@@ -231,6 +231,42 @@ public sealed class TcpAgvClientTests
         await Task.WhenAll(statusServer.Completion, controlServer.Completion);
     }
 
+    [Fact]
+    public async Task Release_control_status_disconnect_is_audited_and_never_sends_4006()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var statusServer = new TcpApiTestServer(
+            1,
+            _ => Task.FromResult(Array.Empty<byte>()),
+            (_, _) => true);
+        await using var controlServer = new TcpApiTestServer(0, _ =>
+            throw new InvalidOperationException("4006 must not be sent when ownership cannot be read."));
+        var logger = new RecordingLogger<TcpAgvClient>();
+        using var client = new TcpAgvClient(
+            Options.Create(new TcpAgvOptions
+            {
+                Host = "127.0.0.1",
+                StatusPort = statusServer.Port,
+                CommandPort = statusServer.Port,
+                ControlPort = controlServer.Port,
+                EnablePush = false,
+                RequestTimeoutMs = 1000,
+                ConnectTimeoutMs = 1000
+            }),
+            logger);
+
+        await Assert.ThrowsAsync<EndOfStreamException>(
+            () => client.ReleaseControlAsync(cancellation.Token));
+
+        Assert.Equal([1060], statusServer.ApiIds);
+        Assert.Empty(controlServer.ApiIds);
+        Assert.Contains(
+            logger.Messages,
+            message => message.Contains("release command was not sent", StringComparison.OrdinalIgnoreCase) &&
+                       message.Contains("\"commandSent\":false", StringComparison.Ordinal));
+        await statusServer.Completion;
+    }
+
     [Theory]
     [InlineData("{\"ret_code\":0}")]
     [InlineData("{\"ret_code\":0,\"locked\":null}")]

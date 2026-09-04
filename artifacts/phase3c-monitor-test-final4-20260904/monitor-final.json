@@ -1,0 +1,80 @@
+{
+    "schema":  "mes.physical-workflow-monitor-snapshot/1.0",
+    "observedAtUtc":  "2026-09-04T09:11:47.3386295+00:00",
+    "execution":  {
+                      "executionId":  "937e061e-82c8-434e-ba38-8b9ac320a0c1",
+                      "runtimeStatus":  5,
+                      "isTerminal":  true
+                  },
+    "nodes":  [
+                  {
+                      "id":  "00000000-0000-0000-0000-000000000001",
+                      "nodeId":  "start",
+                      "nodeName":  "Start",
+                      "nodeTypeId":  "workflow.start",
+                      "status":  6
+                  },
+                  {
+                      "id":  "00000000-0000-0000-0000-000000000002",
+                      "nodeId":  "move",
+                      "nodeName":  "前往站点1（LM7）",
+                      "nodeTypeId":  "agv.move",
+                      "status":  6
+                  }
+              ],
+    "deviceOperations":  [
+                             {
+                                 "operationId":  "10000000-0000-0000-0000-000000000001",
+                                 "nodeExecutionId":  "00000000-0000-0000-0000-000000000001",
+                                 "status":  3,
+                                 "capabilityId":  "agv.navigate-to-station"
+                             },
+                             {
+                                 "operationId":  "10000000-0000-0000-0000-000000000002",
+                                 "nodeExecutionId":  "00000000-0000-0000-0000-000000000002",
+                                 "status":  3,
+                                 "capabilityId":  "robot.execute-program"
+                             }
+                         ],
+    "acceptances":  [
+                        {
+                            "id":  "20000000-0000-0000-0000-000000000001",
+                            "status":  "arrived",
+                            "targetStationId":  "LM7"
+                        }
+                    ],
+    "timeline":  [
+                     {
+                         "id":  "30000000-0000-0000-0000-000000000001",
+                         "eventType":  "WorkflowExecutionAccepted",
+                         "outcome":  "Accepted"
+                     },
+                     {
+                         "id":  "30000000-0000-0000-0000-000000000002",
+                         "eventType":  "WorkflowStepCompleted",
+                         "outcome":  "Succeeded"
+                     }
+                 ],
+    "agv":  {
+                "online":  true,
+                "controlOwner":  "none",
+                "currentStationId":  "LM1"
+            },
+    "auboStatus":  {
+                       "online":  true,
+                       "mode":  "Running",
+                       "runtimeState":  "Stopped"
+                   },
+    "auboProgram":  {
+                        "online":  true,
+                        "currentProgram":  "取料盘",
+                        "runtimeState":  "Stopped"
+                    },
+    "physicalPreflight":  {
+                              "dispatchPermitted":  true,
+                              "blockingReasons":  [
+
+                                                  ]
+                          },
+    "replay":  true
+}

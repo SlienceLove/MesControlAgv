@@ -135,6 +135,8 @@ New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
 
 .\scripts\run-local.ps1 `
   -Configuration Release `
+  -EnvironmentName FieldSimulation `
+  -EnableAutomaticDispatch `
   -RunId $runId `
   -SimulatorUrl http://localhost:5361 `
   -AdapterUrl http://localhost:5362 `

@@ -1,0 +1,4 @@
+[
+  { "id": "00000000-0000-0000-0000-000000000001", "nodeId": "start", "nodeName": "Start", "nodeTypeId": "workflow.start", "status": 6 },
+  { "id": "00000000-0000-0000-0000-000000000002", "nodeId": "move", "nodeName": "前往站点1（LM7）", "nodeTypeId": "agv.move", "status": 6 }
+]

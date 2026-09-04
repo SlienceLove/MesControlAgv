@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
 using Microsoft.AspNetCore.Hosting;
@@ -27,6 +28,10 @@ public sealed class AuboArmProgramApiTests
         var status = await client.GetAsync("/api/robot-arms/ARM-01/program");
         Assert.Equal(HttpStatusCode.OK, status.StatusCode);
 
+        var catalog = await client.GetAsync("/api/robot-arms/ARM-01/programs?fresh=true");
+        Assert.Equal(HttpStatusCode.OK, catalog.StatusCode);
+        Assert.True(gateway.LastCatalogForceFresh);
+
         var load = await client.PostAsJsonAsync(
             "/api/robot-arms/ARM-01/program/load",
             new { program = "测试.pro", @operator = "alice" });
@@ -49,6 +54,34 @@ public sealed class AuboArmProgramApiTests
         Assert.Equal(1, gateway.StopCalls);
     }
 
+    [Fact]
+    public async Task Partial_workflow_correlation_is_rejected_before_the_arm_gateway()
+    {
+        var gateway = new FakeAuboGateway();
+        using var factory = new MesWebApplicationFactory().WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IAuboArmGateway>();
+                services.AddSingleton<IAuboArmGateway>(gateway);
+            }));
+        using var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync(
+            "/api/robot-arms/ARM-01/program/load",
+            new
+            {
+                program = "娴嬭瘯",
+                @operator = "alice",
+                operationId = Guid.NewGuid(),
+                workflowRunId = Guid.NewGuid()
+            });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("AUBO_WORKFLOW_CORRELATION_INVALID", body.GetProperty("code").GetString());
+        Assert.Equal(0, gateway.LoadCalls);
+    }
+
     private sealed class FakeAuboGateway : IAuboArmGateway
     {
         public int LoadCalls { get; private set; }
@@ -56,6 +89,7 @@ public sealed class AuboArmProgramApiTests
         public int StopCalls { get; private set; }
         public string? LastProgram { get; private set; }
         public string? LastOperator { get; private set; }
+        public bool LastCatalogForceFresh { get; private set; }
 
         public Task<AuboArmStatusResponse> GetStatusAsync(string deviceId, CancellationToken cancellationToken) =>
             Task.FromResult(new AuboArmStatusResponse(
@@ -83,6 +117,19 @@ public sealed class AuboArmProgramApiTests
 
         public Task<AuboArmProgramStatusResponse> GetProgramAsync(string deviceId, CancellationToken cancellationToken) =>
             Task.FromResult(new AuboArmProgramStatusResponse(deviceId, true, "测试", AuboArmRuntimeState.Stopped, "Stopped", DateTimeOffset.UtcNow));
+
+        public Task<AuboArmProgramCatalogResponse> GetProgramCatalogAsync(string deviceId, CancellationToken cancellationToken) =>
+            GetProgramCatalogAsync(deviceId, forceFresh: false, cancellationToken);
+
+        public Task<AuboArmProgramCatalogResponse> GetProgramCatalogAsync(
+            string deviceId,
+            bool forceFresh,
+            CancellationToken cancellationToken)
+        {
+            LastCatalogForceFresh = forceFresh;
+            return Task.FromResult(new AuboArmProgramCatalogResponse(
+                deviceId, true, "测试", ["测试"], ["测试"], true, [], DateTimeOffset.UtcNow));
+        }
 
         public Task<AuboArmProgramOperationResponse> LoadProgramAsync(string deviceId, string programName, string operatorName, Guid operationId, CancellationToken cancellationToken)
         {

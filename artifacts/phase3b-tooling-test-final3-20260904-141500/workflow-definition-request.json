@@ -1,0 +1,651 @@
+{
+    "id":  "feda8171-d727-4f8a-9cda-2453033bc277",
+    "schemaVersion":  3,
+    "name":  "料盘标准流程（LM1→LM7→LM2→LM7→LM1）",
+    "description":  "从原点 LM1 出发，到站点1 LM7 执行 取料盘.pro，到站点2 LM2 执行 放料盘.pro，返回站点1执行 回收料盘.pro，最后回到原点。程序节点均为单次执行。",
+    "isPreset":  true,
+    "nodes":  [
+                  {
+                      "id":  "180c8a23-d466-425f-9c65-19b458598060",
+                      "type":  0,
+                      "nodeTypeId":  "core.start",
+                      "schemaVersion":  "1.0",
+                      "name":  "从原点开始",
+                      "description":  "前置条件：AGV 已位于原点 LM1，现场区域安全",
+                      "targetStation":  null,
+                      "x":  0,
+                      "y":  600,
+                      "order":  1,
+                      "parameters":  [
+
+                                     ],
+                      "nextNodeIds":  [
+                                          "bd7c62b5-2d88-4a8b-a182-059e24fd5fc1"
+                                      ],
+                      "ports":  [
+                                    {
+                                        "key":  "success",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  0
+                                    }
+                                ],
+                      "configuration":  {
+
+                                        }
+                  },
+                  {
+                      "id":  "bd7c62b5-2d88-4a8b-a182-059e24fd5fc1",
+                      "type":  1,
+                      "nodeTypeId":  "agv.move",
+                      "schemaVersion":  "1.0",
+                      "name":  "前往站点1（LM7）",
+                      "description":  "AGV 从原点前往站点1 LM7",
+                      "targetStation":  "LM7",
+                      "x":  180,
+                      "y":  600,
+                      "order":  2,
+                      "parameters":  [
+
+                                     ],
+                      "nextNodeIds":  [
+                                          "026892b6-e0fc-4174-a2dd-d59317a88a0c"
+                                      ],
+                      "ports":  [
+                                    {
+                                        "key":  "in",
+                                        "displayName":  "Input",
+                                        "direction":  0,
+                                        "dataType":  "control",
+                                        "cardinality":  1,
+                                        "edgeKind":  null
+                                    },
+                                    {
+                                        "key":  "success",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  0
+                                    },
+                                    {
+                                        "key":  "failure",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  1
+                                    },
+                                    {
+                                        "key":  "timeout",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  2
+                                    }
+                                ],
+                      "configuration":  {
+                                            "$targetStation":  "LM7",
+                                            "timeoutSeconds":  "300",
+                                            "retryCount":  "0"
+                                        }
+                  },
+                  {
+                      "id":  "026892b6-e0fc-4174-a2dd-d59317a88a0c",
+                      "type":  8,
+                      "nodeTypeId":  "robot.execute-program",
+                      "schemaVersion":  "1.0",
+                      "name":  "站点1：取料盘.pro",
+                      "description":  "到站后单次加载并启动 AUBO 程序 取料盘.pro",
+                      "targetStation":  null,
+                      "x":  360,
+                      "y":  600,
+                      "order":  3,
+                      "parameters":  [
+
+                                     ],
+                      "nextNodeIds":  [
+                                          "66bbc111-d33d-44a7-82bd-4662a16fd1b7"
+                                      ],
+                      "ports":  [
+                                    {
+                                        "key":  "in",
+                                        "displayName":  "Input",
+                                        "direction":  0,
+                                        "dataType":  "control",
+                                        "cardinality":  1,
+                                        "edgeKind":  null
+                                    },
+                                    {
+                                        "key":  "success",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  0
+                                    },
+                                    {
+                                        "key":  "failure",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  1
+                                    },
+                                    {
+                                        "key":  "timeout",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  2
+                                    }
+                                ],
+                      "configuration":  {
+                                            "deviceId":  "ARM-01",
+                                            "programName":  "取料盘.pro"
+                                        }
+                  },
+                  {
+                      "id":  "66bbc111-d33d-44a7-82bd-4662a16fd1b7",
+                      "type":  1,
+                      "nodeTypeId":  "agv.move",
+                      "schemaVersion":  "1.0",
+                      "name":  "前往站点2（LM2）",
+                      "description":  "AGV 从站点1前往站点2 LM2",
+                      "targetStation":  "LM2",
+                      "x":  540,
+                      "y":  600,
+                      "order":  4,
+                      "parameters":  [
+
+                                     ],
+                      "nextNodeIds":  [
+                                          "e692486b-fe1b-4162-a787-fa0e3dccd11d"
+                                      ],
+                      "ports":  [
+                                    {
+                                        "key":  "in",
+                                        "displayName":  "Input",
+                                        "direction":  0,
+                                        "dataType":  "control",
+                                        "cardinality":  1,
+                                        "edgeKind":  null
+                                    },
+                                    {
+                                        "key":  "success",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  0
+                                    },
+                                    {
+                                        "key":  "failure",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  1
+                                    },
+                                    {
+                                        "key":  "timeout",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  2
+                                    }
+                                ],
+                      "configuration":  {
+                                            "$targetStation":  "LM2",
+                                            "timeoutSeconds":  "300",
+                                            "retryCount":  "0"
+                                        }
+                  },
+                  {
+                      "id":  "e692486b-fe1b-4162-a787-fa0e3dccd11d",
+                      "type":  8,
+                      "nodeTypeId":  "robot.execute-program",
+                      "schemaVersion":  "1.0",
+                      "name":  "站点2：放料盘.pro",
+                      "description":  "到站后单次加载并启动 AUBO 程序 放料盘.pro",
+                      "targetStation":  null,
+                      "x":  720,
+                      "y":  600,
+                      "order":  5,
+                      "parameters":  [
+
+                                     ],
+                      "nextNodeIds":  [
+                                          "89e0aa37-d460-449e-a745-57439cba3499"
+                                      ],
+                      "ports":  [
+                                    {
+                                        "key":  "in",
+                                        "displayName":  "Input",
+                                        "direction":  0,
+                                        "dataType":  "control",
+                                        "cardinality":  1,
+                                        "edgeKind":  null
+                                    },
+                                    {
+                                        "key":  "success",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  0
+                                    },
+                                    {
+                                        "key":  "failure",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  1
+                                    },
+                                    {
+                                        "key":  "timeout",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  2
+                                    }
+                                ],
+                      "configuration":  {
+                                            "deviceId":  "ARM-01",
+                                            "programName":  "放料盘.pro"
+                                        }
+                  },
+                  {
+                      "id":  "89e0aa37-d460-449e-a745-57439cba3499",
+                      "type":  1,
+                      "nodeTypeId":  "agv.move",
+                      "schemaVersion":  "1.0",
+                      "name":  "返回站点1（LM7）",
+                      "description":  "AGV 从站点2返回站点1 LM7",
+                      "targetStation":  "LM7",
+                      "x":  900,
+                      "y":  600,
+                      "order":  6,
+                      "parameters":  [
+
+                                     ],
+                      "nextNodeIds":  [
+                                          "883cffa8-e12b-48be-a646-a1614cc4dba0"
+                                      ],
+                      "ports":  [
+                                    {
+                                        "key":  "in",
+                                        "displayName":  "Input",
+                                        "direction":  0,
+                                        "dataType":  "control",
+                                        "cardinality":  1,
+                                        "edgeKind":  null
+                                    },
+                                    {
+                                        "key":  "success",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  0
+                                    },
+                                    {
+                                        "key":  "failure",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  1
+                                    },
+                                    {
+                                        "key":  "timeout",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  2
+                                    }
+                                ],
+                      "configuration":  {
+                                            "$targetStation":  "LM7",
+                                            "timeoutSeconds":  "300",
+                                            "retryCount":  "0"
+                                        }
+                  },
+                  {
+                      "id":  "883cffa8-e12b-48be-a646-a1614cc4dba0",
+                      "type":  8,
+                      "nodeTypeId":  "robot.execute-program",
+                      "schemaVersion":  "1.0",
+                      "name":  "站点1：回收料盘.pro",
+                      "description":  "到站后单次加载并启动 AUBO 程序 回收料盘.pro",
+                      "targetStation":  null,
+                      "x":  1080,
+                      "y":  600,
+                      "order":  7,
+                      "parameters":  [
+
+                                     ],
+                      "nextNodeIds":  [
+                                          "4ca7bf9f-8601-4f9e-b140-e4a7a4440a6e"
+                                      ],
+                      "ports":  [
+                                    {
+                                        "key":  "in",
+                                        "displayName":  "Input",
+                                        "direction":  0,
+                                        "dataType":  "control",
+                                        "cardinality":  1,
+                                        "edgeKind":  null
+                                    },
+                                    {
+                                        "key":  "success",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  0
+                                    },
+                                    {
+                                        "key":  "failure",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  1
+                                    },
+                                    {
+                                        "key":  "timeout",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  2
+                                    }
+                                ],
+                      "configuration":  {
+                                            "deviceId":  "ARM-01",
+                                            "programName":  "回收料盘.pro"
+                                        }
+                  },
+                  {
+                      "id":  "4ca7bf9f-8601-4f9e-b140-e4a7a4440a6e",
+                      "type":  1,
+                      "nodeTypeId":  "agv.move",
+                      "schemaVersion":  "1.0",
+                      "name":  "返回原点（LM1）",
+                      "description":  "AGV 返回原点 LM1",
+                      "targetStation":  "LM1",
+                      "x":  1260,
+                      "y":  600,
+                      "order":  8,
+                      "parameters":  [
+
+                                     ],
+                      "nextNodeIds":  [
+                                          "6f2eef62-a7f4-454f-bb6e-46a6dd1874f7"
+                                      ],
+                      "ports":  [
+                                    {
+                                        "key":  "in",
+                                        "displayName":  "Input",
+                                        "direction":  0,
+                                        "dataType":  "control",
+                                        "cardinality":  1,
+                                        "edgeKind":  null
+                                    },
+                                    {
+                                        "key":  "success",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  0
+                                    },
+                                    {
+                                        "key":  "failure",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  1
+                                    },
+                                    {
+                                        "key":  "timeout",
+                                        "displayName":  "Success",
+                                        "direction":  1,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  2
+                                    }
+                                ],
+                      "configuration":  {
+                                            "$targetStation":  "LM1",
+                                            "timeoutSeconds":  "300",
+                                            "retryCount":  "0"
+                                        }
+                  },
+                  {
+                      "id":  "6f2eef62-a7f4-454f-bb6e-46a6dd1874f7",
+                      "type":  5,
+                      "nodeTypeId":  "core.end",
+                      "schemaVersion":  "1.0",
+                      "name":  "结束",
+                      "description":  "料盘取料、放料、回收及回原点完成",
+                      "targetStation":  null,
+                      "x":  1440,
+                      "y":  600,
+                      "order":  9,
+                      "parameters":  [
+
+                                     ],
+                      "nextNodeIds":  [
+
+                                      ],
+                      "ports":  [
+                                    {
+                                        "key":  "in",
+                                        "displayName":  "Input",
+                                        "direction":  0,
+                                        "dataType":  "control",
+                                        "cardinality":  0,
+                                        "edgeKind":  null
+                                    }
+                                ],
+                      "configuration":  {
+
+                                        }
+                  }
+              ],
+    "edges":  [
+                  {
+                      "id":  "0c117f53-0302-48c0-8b18-c1f781d208b6",
+                      "sourceNodeId":  "180c8a23-d466-425f-9c65-19b458598060",
+                      "sourcePort":  "success",
+                      "targetNodeId":  "bd7c62b5-2d88-4a8b-a182-059e24fd5fc1",
+                      "targetPort":  "in",
+                      "kind":  0,
+                      "condition":  null,
+                      "conditionExpression":  null,
+                      "priority":  0,
+                      "metadata":  {
+
+                                   }
+                  },
+                  {
+                      "id":  "ec45488c-ff22-4040-9f5e-3abc1e564cbc",
+                      "sourceNodeId":  "bd7c62b5-2d88-4a8b-a182-059e24fd5fc1",
+                      "sourcePort":  "success",
+                      "targetNodeId":  "026892b6-e0fc-4174-a2dd-d59317a88a0c",
+                      "targetPort":  "in",
+                      "kind":  0,
+                      "condition":  null,
+                      "conditionExpression":  null,
+                      "priority":  0,
+                      "metadata":  {
+
+                                   }
+                  },
+                  {
+                      "id":  "cc44a7e4-c0c8-40e0-944d-f2da3808e04e",
+                      "sourceNodeId":  "026892b6-e0fc-4174-a2dd-d59317a88a0c",
+                      "sourcePort":  "success",
+                      "targetNodeId":  "66bbc111-d33d-44a7-82bd-4662a16fd1b7",
+                      "targetPort":  "in",
+                      "kind":  0,
+                      "condition":  null,
+                      "conditionExpression":  null,
+                      "priority":  0,
+                      "metadata":  {
+
+                                   }
+                  },
+                  {
+                      "id":  "36c157cc-b971-46b8-a7c4-af2addab9fa6",
+                      "sourceNodeId":  "66bbc111-d33d-44a7-82bd-4662a16fd1b7",
+                      "sourcePort":  "success",
+                      "targetNodeId":  "e692486b-fe1b-4162-a787-fa0e3dccd11d",
+                      "targetPort":  "in",
+                      "kind":  0,
+                      "condition":  null,
+                      "conditionExpression":  null,
+                      "priority":  0,
+                      "metadata":  {
+
+                                   }
+                  },
+                  {
+                      "id":  "ae016ba5-d3f6-472f-a8dd-9f565fb7a3a4",
+                      "sourceNodeId":  "e692486b-fe1b-4162-a787-fa0e3dccd11d",
+                      "sourcePort":  "success",
+                      "targetNodeId":  "89e0aa37-d460-449e-a745-57439cba3499",
+                      "targetPort":  "in",
+                      "kind":  0,
+                      "condition":  null,
+                      "conditionExpression":  null,
+                      "priority":  0,
+                      "metadata":  {
+
+                                   }
+                  },
+                  {
+                      "id":  "19ffa171-38fa-42b7-936d-2803a70628b2",
+                      "sourceNodeId":  "89e0aa37-d460-449e-a745-57439cba3499",
+                      "sourcePort":  "success",
+                      "targetNodeId":  "883cffa8-e12b-48be-a646-a1614cc4dba0",
+                      "targetPort":  "in",
+                      "kind":  0,
+                      "condition":  null,
+                      "conditionExpression":  null,
+                      "priority":  0,
+                      "metadata":  {
+
+                                   }
+                  },
+                  {
+                      "id":  "ddccf142-6e06-4f64-aaa1-04baedd1494c",
+                      "sourceNodeId":  "883cffa8-e12b-48be-a646-a1614cc4dba0",
+                      "sourcePort":  "success",
+                      "targetNodeId":  "4ca7bf9f-8601-4f9e-b140-e4a7a4440a6e",
+                      "targetPort":  "in",
+                      "kind":  0,
+                      "condition":  null,
+                      "conditionExpression":  null,
+                      "priority":  0,
+                      "metadata":  {
+
+                                   }
+                  },
+                  {
+                      "id":  "82dd9752-7e0f-4237-9fc0-d03d0b222f3e",
+                      "sourceNodeId":  "4ca7bf9f-8601-4f9e-b140-e4a7a4440a6e",
+                      "sourcePort":  "success",
+                      "targetNodeId":  "6f2eef62-a7f4-454f-bb6e-46a6dd1874f7",
+                      "targetPort":  "in",
+                      "kind":  0,
+                      "condition":  null,
+                      "conditionExpression":  null,
+                      "priority":  0,
+                      "metadata":  {
+
+                                   }
+                  }
+              ],
+    "layouts":  [
+                    {
+                        "nodeId":  "180c8a23-d466-425f-9c65-19b458598060",
+                        "x":  0,
+                        "y":  600,
+                        "width":  200,
+                        "height":  120
+                    },
+                    {
+                        "nodeId":  "bd7c62b5-2d88-4a8b-a182-059e24fd5fc1",
+                        "x":  180,
+                        "y":  600,
+                        "width":  200,
+                        "height":  120
+                    },
+                    {
+                        "nodeId":  "026892b6-e0fc-4174-a2dd-d59317a88a0c",
+                        "x":  360,
+                        "y":  600,
+                        "width":  200,
+                        "height":  120
+                    },
+                    {
+                        "nodeId":  "66bbc111-d33d-44a7-82bd-4662a16fd1b7",
+                        "x":  540,
+                        "y":  600,
+                        "width":  200,
+                        "height":  120
+                    },
+                    {
+                        "nodeId":  "e692486b-fe1b-4162-a787-fa0e3dccd11d",
+                        "x":  720,
+                        "y":  600,
+                        "width":  200,
+                        "height":  120
+                    },
+                    {
+                        "nodeId":  "89e0aa37-d460-449e-a745-57439cba3499",
+                        "x":  900,
+                        "y":  600,
+                        "width":  200,
+                        "height":  120
+                    },
+                    {
+                        "nodeId":  "883cffa8-e12b-48be-a646-a1614cc4dba0",
+                        "x":  1080,
+                        "y":  600,
+                        "width":  200,
+                        "height":  120
+                    },
+                    {
+                        "nodeId":  "4ca7bf9f-8601-4f9e-b140-e4a7a4440a6e",
+                        "x":  1260,
+                        "y":  600,
+                        "width":  200,
+                        "height":  120
+                    },
+                    {
+                        "nodeId":  "6f2eef62-a7f4-454f-bb6e-46a6dd1874f7",
+                        "x":  1440,
+                        "y":  600,
+                        "width":  200,
+                        "height":  120
+                    }
+                ],
+    "viewport":  {
+                     "x":  -30,
+                     "y":  319.28683834048644,
+                     "zoom":  0.27379553466509976
+                 }
+}

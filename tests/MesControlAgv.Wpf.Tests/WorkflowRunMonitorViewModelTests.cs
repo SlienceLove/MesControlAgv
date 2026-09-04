@@ -518,6 +518,49 @@ public sealed class WorkflowRunMonitorViewModelTests
         monitor.Dispose();
     }
 
+    [Theory]
+    [InlineData("adapter", true)]
+    [InlineData("none", false)]
+    public async Task Cancelled_physical_run_rechecks_control_release_state(
+        string owner,
+        bool expectsWarning)
+    {
+        var fixture = WorkflowRunMonitorFixture.Create();
+        var authorization = new WorkflowPhysicalRunAuthorization
+        {
+            AgvId = "AGV-01",
+            OperatorName = "operator",
+            SafetyObserverName = "observer",
+            PermitPrefix = "cancelled-run",
+            ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(1)
+        };
+        var client = new WorkflowRunMonitorClientStub(fixture)
+        {
+            Run = fixture.Run with
+            {
+                RuntimeStatus = WorkflowRuntimeStatus.Cancelled,
+                PhysicalAuthorization = authorization
+            },
+            PhysicalPreflight = new PhysicalAgvPreflightResponse(
+                new AgvSnapshotResponse(true, owner, "LM2", null, "AGV-01"),
+                null,
+                false,
+                ["automatic_dispatch_disabled"])
+        };
+        var monitor = new WorkflowRunMonitorViewModel(client, physicalRuntime: true);
+
+        await monitor.LoadAsync(fixture.Run.ExecutionId);
+
+        Assert.Equal(expectsWarning, monitor.HasPhysicalGateWarning);
+        Assert.Contains("\u6D41\u7A0B\u5DF2\u53D6\u6D88", monitor.PhysicalGateStatus, StringComparison.Ordinal);
+        Assert.Contains(
+            expectsWarning
+                ? "\u91CA\u653E\u5C1A\u672A\u786E\u8BA4"
+                : "\u63A7\u5236\u6743\u5DF2\u91CA\u653E",
+            monitor.PhysicalGateStatus,
+            StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Physical_robot_node_warns_once_for_unready_arm_and_clears_after_recovery()
     {
@@ -647,6 +690,7 @@ internal sealed class WorkflowRunMonitorClientStub : IMesClient
     public IReadOnlyList<ExperimentJob> ExperimentJobs { get; set; } = [];
     public IReadOnlyList<ExperimentPlan> ExperimentPlans { get; set; } = [];
     public AuboArmProgramStatusResponse? AuboProgramStatus { get; set; }
+    public PhysicalAgvPreflightResponse? PhysicalPreflight { get; set; }
     public IReadOnlyList<string> GrantedPermissions { get; set; } = [];
     public List<WorkflowRunControlRequest> PauseRequests { get; } = [];
     public List<WorkflowRunControlRequest> ResumeRequests { get; } = [];
@@ -699,6 +743,9 @@ internal sealed class WorkflowRunMonitorClientStub : IMesClient
     public Task<AuboArmProgramStatusResponse?> GetAuboArmProgramAsync(
         string deviceId,
         CancellationToken cancellationToken) => Task.FromResult(AuboProgramStatus);
+
+    public Task<PhysicalAgvPreflightResponse?> GetPhysicalPreflightAsync(
+        CancellationToken cancellationToken) => Task.FromResult(PhysicalPreflight);
 
     public Task<FieldNavigationAcceptanceResponse> CreateFieldNavigationAcceptanceAsync(
         CreateFieldNavigationAcceptanceRequest request,

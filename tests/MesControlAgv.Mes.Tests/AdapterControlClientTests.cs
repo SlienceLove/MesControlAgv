@@ -38,6 +38,28 @@ public sealed class AdapterControlClientTests
         Assert.Single(handler.Requests);
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.BadGateway)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.GatewayTimeout)]
+    public async Task Control_release_transport_failure_preserves_gateway_status_without_retry(
+        HttpStatusCode statusCode)
+    {
+        var handler = new RecordingHandler(new HttpResponseMessage(statusCode)
+        {
+            Content = JsonContent.Create(new { detail = "ownership read unavailable; release not sent" })
+        });
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://adapter.local/") };
+        var client = new AdapterClient(http);
+
+        var exception = await Assert.ThrowsAsync<AdapterHttpException>(
+            () => client.ReleaseControlAsync(CancellationToken.None));
+
+        Assert.Equal(statusCode, exception.ResponseStatusCode);
+        Assert.Contains("release not sent", exception.Detail, StringComparison.OrdinalIgnoreCase);
+        Assert.Single(handler.Requests);
+    }
+
     private sealed class RecordingHandler(HttpResponseMessage response) : HttpMessageHandler
     {
         public List<HttpRequestMessage> Requests { get; } = [];

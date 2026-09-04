@@ -323,6 +323,16 @@
                                             <ColumnDefinition Width="88" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
+                                        <TextBlock VerticalAlignment="Center" Foreground="#667085" Text="操作员" />
+                                        <TextBox Grid.Column="1"
+                                                 AutomationProperties.AutomationId="WorkflowPhysicalBatchOperatorInput"
+                                                 Text="{Binding WorkflowEditor.PhysicalBatchOperatorName, UpdateSourceTrigger=PropertyChanged}" />
+                                    </Grid>
+                                    <Grid Margin="0,6,0,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="88" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
                                         <TextBlock VerticalAlignment="Center" Foreground="#667085" Text="安全监护人" />
                                         <TextBox Grid.Column="1"
                                                  AutomationProperties.AutomationId="WorkflowPhysicalBatchObserverInput"

@@ -1,7 +1,12 @@
 [CmdletBinding()]
 param(
     [switch]$SkipTests,
-    [string]$OutputPath
+    [string]$OutputPath,
+    [ValidateSet('Debug', 'Release')]
+    [string]$Configuration = 'Debug',
+    [switch]$NoBuild,
+    [switch]$NoRestore,
+    [switch]$DisableBuildServers
 )
 
 $ErrorActionPreference = 'Stop'
@@ -139,6 +144,16 @@ try {
     $snapshotLifecycleSource = Read-RepoFile 'src\MesControlAgv.Wpf\Services\OfflineDiagnosticSnapshotLifecycle.cs'
     $workflowSource = Read-RepoFile '.github\workflows\offline-release-gate.yml'
     $archiveValidatorSource = Read-RepoFile 'scripts\assert-offline-release-report.ps1'
+    $fieldHttpSource = Read-RepoFile 'scripts\Invoke-MesJsonUtf8.ps1'
+    $workflowImportSource = Read-RepoFile 'scripts\Import-WorkflowGraph.ps1'
+    $workflowToolingTestSource = Read-RepoFile 'scripts\Test-FieldWorkflowTooling.ps1'
+    $physicalMonitorSource = Read-RepoFile 'scripts\Monitor-PhysicalWorkflow.ps1'
+    $physicalMonitorTestSource = Read-RepoFile 'scripts\Test-PhysicalWorkflowMonitor.ps1'
+    $auboCorrelationSource = Read-RepoFile 'src\MesControlAgv.Mes\Services\AuboArmWorkflowCorrelationValidator.cs'
+    $auboWorkerSource = Read-RepoFile 'src\MesControlAgv.Mes\Services\WorkflowAuboProgramWorker.cs'
+    $auboContractSource = Read-RepoFile 'src\MesControlAgv.Contracts\Devices\AuboArmContracts.cs'
+    $wpfStartupBindingSource = Read-RepoFile 'src\MesControlAgv.Wpf\Services\WorkflowRunStartupBinding.cs'
+    $wpfAppSource = Read-RepoFile 'src\MesControlAgv.Wpf\App.xaml.cs'
     $e2eSource = Read-RepoFile 'tests\MesControlAgv.E2E.Tests\CompoundTaskIntegrationTests.cs'
     Add-Check 'diagnostic-export-schema' ($auditSource -match 'ExportSchema\s*=\s*"mes\.offline-diagnostics/1\.0"') 'Current export schema is declared.'
     Add-Check 'diagnostic-rule-schema' ($auditSource -match 'RuleSchema\s*=\s*"mes\.startup-diagnostics/1\.0"') 'Current startup rule schema is declared.'
@@ -152,6 +167,51 @@ try {
     Add-Check 'ci-workflow-uses-gate' ($workflowSource -match 'verify-offline-release\.ps1' -and $workflowSource -match 'assert-offline-release-report\.ps1') 'CI invokes the offline gate and archive validator.'
     Add-Check 'ci-uploads-json-only' ($workflowSource -match 'upload-artifact@v4' -and $workflowSource -match 'runner\.temp.*mes-offline-release-gate\.json' -and $workflowSource -notmatch '(?i)\.trx|\.log') 'CI artifact path is limited to the redacted JSON report.'
     Add-Check 'archive-validator-enforces-boundary' ($archiveValidatorSource -match 'canDetermineGo' -and $archiveValidatorSource -match '\[REDACTED\]' -and $archiveValidatorSource -match 'field-preflight') 'Archive validator checks schema, redaction, and the no-GO field.'
+    Add-Check 'field-http-uses-explicit-utf8' (
+        $fieldHttpSource -match 'HttpClient' -and
+        $fieldHttpSource -match 'ByteArrayContent' -and
+        $fieldHttpSource -match 'Encoding\]::UTF8' -and
+        $fieldHttpSource -match 'SendAsync' -and
+        $fieldHttpSource -notmatch 'Invoke-WebRequest|Invoke-RestMethod' -and
+        $fieldHttpSource -match 'Date\\\(') 'Field JSON HTTP helper sends one explicit UTF-8 request and rejects legacy dates.'
+    Add-Check 'workflow-import-tool-is-fail-closed' (
+        $workflowImportSource -match 'ConvertFrom-Json' -and
+        $workflowImportSource -match 'workflow-definition-request' -and
+        $workflowImportSource -match 'automaticRetry\s*=\s*\$false' -and
+        $workflowImportSource -match 'writesToDevicesAttempted\s*=\s*\$false' -and
+        $workflowImportSource -notmatch 'Invoke-WebRequest\s+-Body') 'Workflow graph importer preserves UTF-8 and does not retry or write devices.'
+    Add-Check 'workflow-tooling-replay-test' (
+        $workflowToolingTestSource -match 'phase2-std-20260904-093754' -and
+        $workflowToolingTestSource -match 'nodes\.Count\s*-ne\s*9' -and
+        $workflowToolingTestSource -match 'publicationAttempted') 'Offline workflow tooling replay covers the saved nine-node field graph.'
+    Add-Check 'physical-monitor-collection-normalization' (
+        $physicalMonitorSource -match 'Expand-JsonCollection' -and
+        $physicalMonitorSource -match "'value'.*'items'.*'data'" -and
+        $physicalMonitorSource -match 'ReplayDirectory' -and
+        $physicalMonitorSource -notmatch '(?i)\b(?:POST|PUT|DELETE)\b|Invoke-WebRequest\s+-Method\s+(?:POST|PUT|DELETE)') 'Physical monitor normalizes JSON collections and remains read-only.'
+    Add-Check 'physical-monitor-replay-test' (
+        $physicalMonitorTestSource -match 'fixtures\\physical-workflow-monitor' -and
+        $physicalMonitorTestSource -match 'wrappersLeaked' -and
+        $physicalMonitorTestSource -match 'deviceWritesAttempted') 'Physical monitor has an offline real-array replay test.'
+    Add-Check 'aubo-workflow-correlation-contract' (
+        $auboContractSource -match 'AuboArmOperationCorrelation' -and
+        $auboContractSource -match 'workflowRunId' -and
+        $auboContractSource -match 'workflowNodeExecutionId' -and
+        $auboContractSource -match 'deviceOperationId' -and
+        $auboContractSource -match 'correlationWarningCode') 'AUBO write contracts carry durable workflow identity and warning metadata.'
+    Add-Check 'aubo-worker-reuses-durable-operation' (
+        $auboWorkerSource -match 'operationId\s*=\s*operation\.OperationId' -and
+        $auboWorkerSource -match 'CreateArmCorrelation' -and
+        $auboWorkerSource -notmatch 'LoadProgramAsync\([\s\S]{0,500}Guid\.NewGuid\(\)') 'AUBO workflow worker reuses the claimed operation id and never invents a write id.'
+    Add-Check 'aubo-correlation-boundary' (
+        $auboCorrelationSource -match 'AUBO_WORKFLOW_CORRELATION_INVALID' -and
+        $auboCorrelationSource -match 'AUBO_UNCORRELATED_WRITE' -and
+        $auboCorrelationSource -match 'ListDeviceOperationsAsync') 'MES validates correlated writes and marks unassociated manual writes.'
+    Add-Check 'wpf-explicit-run-binding' (
+        $wpfStartupBindingSource -match 'workflow-execution-id' -and
+        $wpfStartupBindingSource -match 'workflow-request-id' -and
+        $wpfAppSource -match 'StartMainWindowAsync' -and
+        $wpfAppSource -notmatch '(?i)GetLatest|latestRun|lastRun') 'WPF accepts only explicit execution/request startup identities.'
     Add-Check 'release-summary-no-go' ($fieldPreflightSource -match 'CanDetermineGo\s*=>\s*false') 'The release summary must preserve the no-GO contract.'
     Add-Check 'snapshot-lifecycle-read-only' ($snapshotLifecycleSource -match 'class OfflineDiagnosticSnapshotLifecycle' -and $snapshotLifecycleSource -match 'Inspect\s*\(' -and $snapshotLifecycleSource -notmatch '(?i)File\.Delete|Remove-Item|Directory\.Delete') 'Snapshot lifecycle only previews retention and never deletes files.'
     $knownAllowedSkipCount = ([regex]::Matches($e2eSource, '\[Fact\(Skip\s*=\s*"Requires full AGV simulator setup"\)\]')).Count
@@ -185,7 +245,24 @@ try {
         $resultsDirectory = Join-Path ([IO.Path]::GetTempPath()) "MesControlAgv-offline-release-$([Guid]::NewGuid().ToString('N'))"
         New-Item -ItemType Directory -Path $resultsDirectory -Force | Out-Null
         try {
-            $testOutput = @(& dotnet test (Join-Path $repoRoot 'MesControlAgv.sln') -m:1 --nologo --results-directory $resultsDirectory --logger trx 2>&1)
+            # Keep the default gate behavior intact, while allowing an already
+            # built Release tree to be verified without touching binaries that
+            # may be held by a local service. The explicit argument list also
+            # avoids Windows PowerShell's positional-array binding surprises.
+            $testArguments = [System.Collections.Generic.List[string]]::new()
+            $testArguments.Add((Join-Path $repoRoot 'MesControlAgv.sln'))
+            $testArguments.Add('-m:1')
+            $testArguments.Add('--nologo')
+            $testArguments.Add('--configuration')
+            $testArguments.Add($Configuration)
+            $testArguments.Add('--results-directory')
+            $testArguments.Add($resultsDirectory)
+            $testArguments.Add('--logger')
+            $testArguments.Add('trx')
+            if ($NoBuild) { $testArguments.Add('--no-build') }
+            if ($NoRestore) { $testArguments.Add('--no-restore') }
+            if ($DisableBuildServers) { $testArguments.Add('--disable-build-servers') }
+            $testOutput = @(& dotnet test @($testArguments.ToArray()) 2>&1)
             $testExitCode = $LASTEXITCODE
             $trxFiles = @(Get-ChildItem -LiteralPath $resultsDirectory -Filter '*.trx' -File -Recurse)
             if ($trxFiles.Count -gt 0) {

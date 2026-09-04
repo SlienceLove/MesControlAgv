@@ -81,6 +81,16 @@ public interface IAuboArmProgramController
         Task.FromException<AuboArmProgramCatalogResponse>(
             new NotSupportedException("AUBO program catalog is not supported by this controller."));
 
+    /// <summary>
+    /// Reads the catalog, optionally bypassing the Adapter's short-lived cache.
+    /// The default keeps older controller implementations source compatible.
+    /// </summary>
+    Task<AuboArmProgramCatalogResponse> GetProgramCatalogAsync(
+        string deviceId,
+        bool forceFresh,
+        CancellationToken cancellationToken) =>
+        GetProgramCatalogAsync(deviceId, cancellationToken);
+
     Task<AuboArmProgramOperationResponse> LoadProgramAsync(
         string deviceId,
         string programName,
@@ -100,6 +110,38 @@ public interface IAuboArmProgramController
         string operatorName,
         Guid operationId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Executes a program mutation while carrying the durable workflow/device
+    /// correlation. Older controller implementations may ignore the additive
+    /// context through this default forwarding method; the production Adapter
+    /// driver overrides it and validates the context before any RPC is sent.
+    /// </summary>
+    Task<AuboArmProgramOperationResponse> LoadProgramAsync(
+        string deviceId,
+        string programName,
+        string operatorName,
+        Guid operationId,
+        AuboArmOperationCorrelation? correlation,
+        CancellationToken cancellationToken) =>
+        LoadProgramAsync(deviceId, programName, operatorName, operationId, cancellationToken);
+
+    Task<AuboArmProgramOperationResponse> RunProgramAsync(
+        string deviceId,
+        string? programName,
+        string operatorName,
+        Guid operationId,
+        AuboArmOperationCorrelation? correlation,
+        CancellationToken cancellationToken) =>
+        RunProgramAsync(deviceId, programName, operatorName, operationId, cancellationToken);
+
+    Task<AuboArmProgramOperationResponse> StopProgramAsync(
+        string deviceId,
+        string operatorName,
+        Guid operationId,
+        AuboArmOperationCorrelation? correlation,
+        CancellationToken cancellationToken) =>
+        StopProgramAsync(deviceId, operatorName, operationId, cancellationToken);
 
     Task<AuboArmProgramOperationResponse> LoadProgramAsync(
         string deviceId,
@@ -130,6 +172,7 @@ public interface IAuboArmProgramController
             request.EffectiveProgramName,
             request.EffectiveOperatorName,
             request.OperationId.GetValueOrDefault(Guid.NewGuid()),
+            request.WorkflowCorrelation,
             cancellationToken);
 
     Task<AuboArmProgramOperationResponse> RunProgramAsync(
@@ -141,6 +184,7 @@ public interface IAuboArmProgramController
             request.EffectiveProgramName,
             request.EffectiveOperatorName,
             request.OperationId.GetValueOrDefault(Guid.NewGuid()),
+            request.WorkflowCorrelation,
             cancellationToken);
 
     Task<AuboArmProgramOperationResponse> StopProgramAsync(
@@ -151,6 +195,7 @@ public interface IAuboArmProgramController
             deviceId,
             request.EffectiveOperatorName,
             request.OperationId.GetValueOrDefault(Guid.NewGuid()),
+            request.WorkflowCorrelation,
             cancellationToken);
 }
 
@@ -175,6 +220,13 @@ public interface IAuboArmProgramGateway
         Task.FromException<AuboArmProgramCatalogResponse>(
             new NotSupportedException("AUBO program catalog is not supported by this gateway."));
 
+    /// <summary>Requests a fresh controller scan when <paramref name="forceFresh"/> is true.</summary>
+    Task<AuboArmProgramCatalogResponse> GetProgramCatalogAsync(
+        string deviceId,
+        bool forceFresh,
+        CancellationToken cancellationToken) =>
+        GetProgramCatalogAsync(deviceId, cancellationToken);
+
     Task<AuboArmProgramOperationResponse> LoadProgramAsync(
         string deviceId,
         string programName,
@@ -221,6 +273,33 @@ public interface IAuboArmProgramGateway
         Task.FromException<AuboArmProgramOperationResponse>(
             new NotSupportedException("AUBO program control is not supported by this gateway."));
 
+    /// <summary>Additive workflow correlation overloads for MES gateways.</summary>
+    Task<AuboArmProgramOperationResponse> LoadProgramAsync(
+        string deviceId,
+        string programName,
+        string operatorName,
+        Guid operationId,
+        AuboArmOperationCorrelation? correlation,
+        CancellationToken cancellationToken) =>
+        LoadProgramAsync(deviceId, programName, operatorName, operationId, cancellationToken);
+
+    Task<AuboArmProgramOperationResponse> RunProgramAsync(
+        string deviceId,
+        string? programName,
+        string operatorName,
+        Guid operationId,
+        AuboArmOperationCorrelation? correlation,
+        CancellationToken cancellationToken) =>
+        RunProgramAsync(deviceId, programName, operatorName, operationId, cancellationToken);
+
+    Task<AuboArmProgramOperationResponse> StopProgramAsync(
+        string deviceId,
+        string operatorName,
+        Guid operationId,
+        AuboArmOperationCorrelation? correlation,
+        CancellationToken cancellationToken) =>
+        StopProgramAsync(deviceId, operatorName, operationId, cancellationToken);
+
     Task<AuboArmProgramOperationResponse> LoadProgramAsync(
         string deviceId,
         AuboArmProgramRequest request,
@@ -230,6 +309,7 @@ public interface IAuboArmProgramGateway
             request.EffectiveProgramName,
             request.EffectiveOperatorName,
             request.OperationId.GetValueOrDefault(Guid.NewGuid()),
+            request.WorkflowCorrelation,
             cancellationToken);
 
     Task<AuboArmProgramOperationResponse> RunProgramAsync(
@@ -241,6 +321,7 @@ public interface IAuboArmProgramGateway
             request.EffectiveProgramName,
             request.EffectiveOperatorName,
             request.OperationId.GetValueOrDefault(Guid.NewGuid()),
+            request.WorkflowCorrelation,
             cancellationToken);
 
     Task<AuboArmProgramOperationResponse> StopProgramAsync(
@@ -251,6 +332,7 @@ public interface IAuboArmProgramGateway
             deviceId,
             request.EffectiveOperatorName,
             request.OperationId.GetValueOrDefault(Guid.NewGuid()),
+            request.WorkflowCorrelation,
             cancellationToken);
 }
 
@@ -276,11 +358,16 @@ public interface IAuboArmGateway : IAuboArmReader, IAuboArmProgramGateway
 /// </summary>
 public sealed class AuboArmOutcomeUnknownException : InvalidOperationException
 {
-    public AuboArmOutcomeUnknownException(string message, bool mayHaveWritten = true)
+    public AuboArmOutcomeUnknownException(
+        string message,
+        bool mayHaveWritten = true,
+        AuboArmOperationCorrelation? correlation = null)
         : base($"{message} Do not retry automatically; reconcile the arm state first.")
     {
         MayHaveWritten = mayHaveWritten;
+        Correlation = correlation;
     }
 
     public bool MayHaveWritten { get; }
+    public AuboArmOperationCorrelation? Correlation { get; }
 }

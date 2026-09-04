@@ -50,6 +50,8 @@ public sealed class AuboArmAdapterModule : IDeviceAdapterModule
         _legacyHandshakeEnabled = options.EnableLegacyHandshake;
         services.AddSingleton(options);
         services.TryAddSingleton(TimeProvider.System);
+        services.AddSingleton<AuboArmProgramCatalogCache>(serviceProvider =>
+            new AuboArmProgramCatalogCache(serviceProvider.GetRequiredService<TimeProvider>()));
 
         if (options.IsSimulator)
         {
@@ -80,7 +82,8 @@ public sealed class AuboArmAdapterModule : IDeviceAdapterModule
                 serviceProvider.GetRequiredService<IAuboArmReadOnlyRpcTransport>(),
                 options,
                 serviceProvider.GetRequiredService<TimeProvider>(),
-                serviceProvider.GetService<IAuboArmLoadedProgramReader>()));
+                serviceProvider.GetService<IAuboArmLoadedProgramReader>(),
+                serviceProvider.GetRequiredService<AuboArmProgramCatalogCache>()));
         services.AddScoped<IAuboArmDriver>(serviceProvider =>
             serviceProvider.GetRequiredService<AuboArmReadOnlyDriver>());
 
@@ -93,7 +96,9 @@ public sealed class AuboArmAdapterModule : IDeviceAdapterModule
                 serviceProvider.GetRequiredService<AuboArmReadOnlyDriver>(),
                 options,
                 serviceProvider.GetRequiredService<TimeProvider>(),
-                serviceProvider.GetService<IAuboArmLoadedProgramReader>()));
+                serviceProvider.GetService<IAuboArmLoadedProgramReader>(),
+                serviceProvider.GetRequiredService<AuboArmProgramCatalogCache>(),
+                serviceProvider.GetService<ILogger<AuboArmProgramDriver>>()));
         services.AddScoped<IAuboArmProgramDriver>(serviceProvider =>
             serviceProvider.GetRequiredService<AuboArmProgramDriver>());
         services.AddScoped<IAuboArmProgramController>(serviceProvider =>
@@ -200,13 +205,14 @@ public sealed class AuboArmAdapterModule : IDeviceAdapterModule
 
         endpoints.MapGet("/api/robot-arms/{deviceId}/programs", async (
             string deviceId,
+            bool fresh,
             IAuboArmProgramController controller,
             DeviceOperationPolicy policy,
             CancellationToken cancellationToken) =>
             await ExecuteAsync(async () =>
             {
                 EnsureArm(policy.EnsureReadEnabled(deviceId));
-                return await controller.GetProgramCatalogAsync(deviceId, cancellationToken);
+                return await controller.GetProgramCatalogAsync(deviceId, fresh, cancellationToken);
             }));
 
         endpoints.MapPost("/api/robot-arms/{deviceId}/program/load", async (
@@ -219,12 +225,14 @@ public sealed class AuboArmAdapterModule : IDeviceAdapterModule
             {
                 EnsureArm(policy.EnsureControlEnabled(deviceId));
                 var operationId = request.OperationId.GetValueOrDefault(Guid.NewGuid());
-                return await controller.LoadProgramAsync(
+                var result = await controller.LoadProgramAsync(
                     deviceId,
                     request.EffectiveProgramName,
                     request.EffectiveOperatorName,
                     operationId,
+                    request.WorkflowCorrelation,
                     cancellationToken);
+                return MarkUncorrelated(result, request.WorkflowCorrelation);
             }));
 
         endpoints.MapPost("/api/robot-arms/{deviceId}/program/run", async (
@@ -237,12 +245,14 @@ public sealed class AuboArmAdapterModule : IDeviceAdapterModule
             {
                 EnsureArm(policy.EnsureControlEnabled(deviceId));
                 var operationId = request.OperationId.GetValueOrDefault(Guid.NewGuid());
-                return await controller.RunProgramAsync(
+                var result = await controller.RunProgramAsync(
                     deviceId,
                     request.EffectiveProgramName,
                     request.EffectiveOperatorName,
                     operationId,
+                    request.WorkflowCorrelation,
                     cancellationToken);
+                return MarkUncorrelated(result, request.WorkflowCorrelation);
             }));
 
         endpoints.MapPost("/api/robot-arms/{deviceId}/program/stop", async (
@@ -255,11 +265,13 @@ public sealed class AuboArmAdapterModule : IDeviceAdapterModule
             {
                 EnsureArm(policy.EnsureControlEnabled(deviceId));
                 var operationId = request.OperationId.GetValueOrDefault(Guid.NewGuid());
-                return await controller.StopProgramAsync(
+                var result = await controller.StopProgramAsync(
                     deviceId,
                     request.EffectiveOperatorName,
                     operationId,
+                    request.WorkflowCorrelation,
                     cancellationToken);
+                return MarkUncorrelated(result, request.WorkflowCorrelation);
             }));
     }
 
@@ -268,6 +280,17 @@ public sealed class AuboArmAdapterModule : IDeviceAdapterModule
         if (!string.Equals(device.ModuleId, ModuleId, StringComparison.OrdinalIgnoreCase))
             throw new KeyNotFoundException($"Adapter device '{device.DeviceId}' is not an AUBO arm.");
     }
+
+    private static AuboArmProgramOperationResponse MarkUncorrelated(
+        AuboArmProgramOperationResponse result,
+        AuboArmOperationCorrelation? correlation) =>
+        correlation is null
+            ? result with
+            {
+                CorrelationWarningCode = "AUBO_UNCORRELATED_WRITE",
+                CorrelationWarning = "AUBO program write was not associated with a workflow device operation; reconcile it manually."
+            }
+            : result;
 
     private static async Task<IResult> ExecuteAsync<T>(Func<Task<T>> action)
     {
@@ -318,7 +341,13 @@ public sealed class AuboArmAdapterModule : IDeviceAdapterModule
                 detail = exception.Message,
                 state = AuboArmHandshakeState.Unknown,
                 programState = AuboArmProgramOperationState.Unknown,
-                mayHaveWritten = exception.MayHaveWritten
+                mayHaveWritten = exception.MayHaveWritten,
+                workflowRunId = exception.Correlation?.WorkflowRunId,
+                workflowNodeExecutionId = exception.Correlation?.WorkflowNodeExecutionId,
+                deviceOperationId = exception.Correlation?.DeviceOperationId,
+                requestId = exception.Correlation?.RequestId,
+                correlationId = exception.Correlation?.CorrelationId,
+                attempt = exception.Correlation?.Attempt
             });
         }
         catch (InvalidOperationException exception)

@@ -21,7 +21,7 @@ internal sealed class MesHttpTimeoutHandler : DelegatingHandler
         : base(innerHandler ?? new HttpClientHandler())
     {
         _readTimeout = Validate(readTimeout ?? TimeSpan.FromSeconds(5), nameof(readTimeout));
-        _catalogTimeout = Validate(catalogTimeout ?? TimeSpan.FromSeconds(20), nameof(catalogTimeout));
+        _catalogTimeout = Validate(catalogTimeout ?? TimeSpan.FromSeconds(30), nameof(catalogTimeout));
         _writeTimeout = Validate(writeTimeout ?? TimeSpan.FromSeconds(90), nameof(writeTimeout));
     }
 

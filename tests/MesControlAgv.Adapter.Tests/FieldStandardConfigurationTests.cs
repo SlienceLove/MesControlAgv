@@ -26,6 +26,8 @@ public sealed class FieldStandardConfigurationTests
         Assert.True(configuration.GetValue<bool>("Agv:Tcp:AcquireControl"));
         Assert.False(configuration.GetValue<bool>("Agv:Tcp:EnablePush"));
         Assert.Equal("9012", configuration["Devices:AuboArm:Port"]);
+        Assert.Equal(15000, configuration.GetValue<int>("Devices:AuboArm:ProgramCatalogScanTimeoutMs"));
+        Assert.Equal(30000, configuration.GetValue<int>("Devices:AuboArm:ProgramCatalogCacheTtlMs"));
         Assert.Equal("standard", configuration["Adapter:RunMode"]);
         Assert.Equal(
             new[] { "取料盘.pro", "放料盘.pro", "回收料盘.pro" },
@@ -38,6 +40,7 @@ public sealed class FieldStandardConfigurationTests
             .AddServices(configuration, "Data Source=field-standard-template-test.db")
             .BuildServiceProvider();
         Assert.IsType<AuboArmProgramDriver>(provider.GetRequiredService<IAuboArmProgramController>());
+        Assert.NotNull(provider.GetRequiredService<AuboArmProgramCatalogCache>());
     }
 
     private static string FindRepositoryRoot()

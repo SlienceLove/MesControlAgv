@@ -5,6 +5,29 @@ namespace MesControlAgv.E2E.Tests;
 public sealed class LocalPortContractTests
 {
     [Fact]
+    public void Multi_agv_field_simulation_overrides_are_three_simulator_vehicles_only()
+    {
+        var root = FindRepositoryRoot();
+        foreach (var project in new[] { "MesControlAgv.Adapter", "MesControlAgv.Mes" })
+        {
+            using var multiAgv = JsonDocument.Parse(File.ReadAllText(Path.Combine(
+                root, "src", project, "appsettings.FieldSimulation.MultiAgv.json")));
+            var ids = multiAgv.RootElement.GetProperty("Profile").GetProperty("agvs")
+                .EnumerateArray()
+                .Select(agv => agv.GetProperty("agvId").GetString())
+                .ToArray();
+
+            Assert.Equal(["AGV-01", "AGV-02", "AGV-03"], ids);
+            Assert.All(multiAgv.RootElement.GetProperty("Profile").GetProperty("agvs").EnumerateArray(),
+                agv => Assert.Equal("simulator", agv.GetProperty("driver").GetString()));
+
+            using var physical = JsonDocument.Parse(File.ReadAllText(Path.Combine(
+                root, "src", project, "appsettings.PhysicalAcceptance.json")));
+            Assert.Single(physical.RootElement.GetProperty("Profile").GetProperty("agvs").EnumerateArray());
+        }
+    }
+
+    [Fact]
     public void Development_files_and_defaults_use_the_shared_port_contract()
     {
         var root = FindRepositoryRoot();
@@ -52,6 +75,15 @@ public sealed class LocalPortContractTests
         Assert.Contains("Wait-Health", launcher);
         Assert.Contains("ConnectionStrings__Mes", launcher);
         Assert.Contains("ConnectionStrings__Adapter", launcher);
+        Assert.Contains("EnvironmentName", launcher);
+        Assert.Contains("FieldSimulation", launcher);
+        Assert.Contains("Agv__DefaultStationId", launcher);
+        Assert.Contains("EnableAutomaticDispatch", launcher);
+        Assert.Contains("EnableMultiAgv", launcher);
+        Assert.Contains("MES_FIELD_SIMULATION_MULTI_AGV", launcher);
+        Assert.Contains("Profile__features__enableAutomaticDispatch", launcher);
+        Assert.Contains("EnableTaskCancellation", launcher);
+        Assert.Contains("Profile__features__enableTaskCancellation", launcher);
 
         Assert.Contains("Wait-Listening", physicalLauncher);
         Assert.Contains("Wait-Health", physicalLauncher);
@@ -117,6 +149,10 @@ public sealed class LocalPortContractTests
         Assert.Contains("Dll", launcher);
         Assert.Contains("ProjectRoot", restarter);
         Assert.Contains("Simulator remained running", restarter);
+        Assert.Contains("EnvironmentName", restarter);
+        Assert.Contains("ASPNETCORE_ENVIRONMENT", restarter);
+        Assert.Contains("EnvironmentVariables", restarter);
+        Assert.Contains("run-scoped override", restarter);
         Assert.Contains("Local Simulator transport verification", verifier);
         Assert.DoesNotContain("Live AGV transport verification", verifier);
     }

@@ -28,6 +28,10 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>Shows the monitor tab after an explicit external-run handoff.</summary>
+    public void ShowWorkflowRunMonitor() =>
+        MainTabs.SelectedItem = FindTab(nameof(WorkflowRunMonitorTab));
+
     private void MainTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (MainTabs.SelectedItem is not TabItem selectedTab)

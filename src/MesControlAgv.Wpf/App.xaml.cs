@@ -34,6 +34,10 @@ public partial class App : Application
             return;
         }
 
+        // An external one-shot workflow client can hand an explicit execution
+        // or request id to the WPF process. Never infer a "latest" run.
+        var startupWorkflowBinding = WorkflowRunStartupBinding.Parse(e.Args);
+
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
         var startupWindow = new StartupWindow();
@@ -49,6 +53,11 @@ public partial class App : Application
         try
         {
             startupWindow.SetStatus("正在执行离线启动配置检查...");
+            if (startupWorkflowBinding.IsSpecified && !startupWorkflowBinding.IsValid)
+            {
+                throw new InvalidOperationException(startupWorkflowBinding.Error ??
+                    "流程启动绑定无效。");
+            }
             var startupConfiguration = StartupConfigurationInspector.InspectEnvironment(AppContext.BaseDirectory);
             if (!startupConfiguration.CanStart)
             {
@@ -129,7 +138,7 @@ public partial class App : Application
             startupWindow.Close();
             ShutdownMode = ShutdownMode.OnMainWindowClose;
             window.Show();
-            _ = _viewModel.StartAsync();
+            _ = StartMainWindowAsync(window, startupWorkflowBinding);
         }
         catch (OperationCanceledException) when (_startupCancellation.IsCancellationRequested)
         {
@@ -151,6 +160,33 @@ public partial class App : Application
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
             Shutdown(-1);
+        }
+    }
+
+    private async Task StartMainWindowAsync(
+        MainWindow window,
+        WorkflowRunStartupBinding startupWorkflowBinding)
+    {
+        if (_viewModel is null) return;
+        try
+        {
+            await _viewModel.StartAsync();
+            if (!startupWorkflowBinding.IsSpecified) return;
+
+            if (await _viewModel.BindWorkflowRunAsync(startupWorkflowBinding, _startupCancellation.Token))
+            {
+                window.ShowWorkflowRunMonitor();
+            }
+        }
+        catch (OperationCanceledException) when (_startupCancellation.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception)
+        {
+            // Keep the shell available for a manually verified read-only bind;
+            // an invalid external id must not trigger another request.
+            _viewModel.WorkflowRunMonitor.SetStatusMessage(
+                $"显式流程绑定失败：{exception.Message}");
         }
     }
 

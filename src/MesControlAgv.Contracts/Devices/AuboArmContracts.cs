@@ -192,6 +192,75 @@ public enum AuboArmProgramOperationState
 }
 
 /// <summary>
+/// Durable workflow identity carried across one AUBO program write.  The
+/// Adapter never uses these values as vendor parameters; they are an audit
+/// boundary which lets MES prove that a load/run/stop request belongs to the
+/// claimed workflow device operation.  All identifiers are required for a
+/// workflow-associated write.  A null value on an HTTP request denotes an
+/// explicitly unassociated/manual operation and is surfaced as a warning.
+/// </summary>
+public sealed record AuboArmOperationCorrelation
+{
+    public Guid WorkflowRunId { get; init; }
+    public Guid WorkflowNodeExecutionId { get; init; }
+    public Guid DeviceOperationId { get; init; }
+    public Guid RequestId { get; init; }
+    public string? CorrelationId { get; init; }
+    public int Attempt { get; init; } = 1;
+
+    [JsonIgnore]
+    public bool IsComplete =>
+        WorkflowRunId != Guid.Empty &&
+        WorkflowNodeExecutionId != Guid.Empty &&
+        DeviceOperationId != Guid.Empty &&
+        RequestId != Guid.Empty &&
+        Attempt > 0;
+
+    [JsonIgnore]
+    public string? ValidationError
+    {
+        get
+        {
+            if (WorkflowRunId == Guid.Empty) return "WorkflowRunId is required.";
+            if (WorkflowNodeExecutionId == Guid.Empty) return "WorkflowNodeExecutionId is required.";
+            if (DeviceOperationId == Guid.Empty) return "DeviceOperationId is required.";
+            if (RequestId == Guid.Empty) return "RequestId is required.";
+            if (Attempt <= 0) return "Attempt must be greater than zero.";
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Returns the supplied audit string, or a deterministic fallback for
+    /// legacy workflow records that predate a textual correlation id.
+    /// </summary>
+    [JsonIgnore]
+    public string EffectiveCorrelationId =>
+        !string.IsNullOrWhiteSpace(CorrelationId)
+            ? CorrelationId.Trim()
+            : WorkflowRunId != Guid.Empty && WorkflowNodeExecutionId != Guid.Empty &&
+              DeviceOperationId != Guid.Empty
+                ? $"workflow:{WorkflowRunId:N}:node:{WorkflowNodeExecutionId:N}:operation:{DeviceOperationId:N}"
+                : string.Empty;
+
+    public static AuboArmOperationCorrelation Create(
+        Guid workflowRunId,
+        Guid workflowNodeExecutionId,
+        Guid deviceOperationId,
+        Guid requestId,
+        string? correlationId,
+        int attempt = 1) => new()
+        {
+            WorkflowRunId = workflowRunId,
+            WorkflowNodeExecutionId = workflowNodeExecutionId,
+            DeviceOperationId = deviceOperationId,
+            RequestId = requestId,
+            CorrelationId = correlationId,
+            Attempt = attempt
+        };
+}
+
+/// <summary>
 /// Read-only project/runtime projection used by the MES and WPF program panel.
 /// RuntimeStatus is retained as the controller's string observation so a newly
 /// introduced vendor state is not silently converted to an integer.
@@ -232,6 +301,18 @@ public sealed record AuboArmProgramCatalogResponse(
     DateTimeOffset ObservedAtUtc)
 {
     public IReadOnlyList<AuboArmProgramSlot> Slots { get; init; } = Array.Empty<AuboArmProgramSlot>();
+
+    /// <summary>
+    /// True when this response came from the Adapter's short-lived read-only
+    /// catalog cache. A cached response still carries the original observation
+    /// timestamp in <see cref="ObservedAtUtc" />; callers must not treat it as a
+    /// fresh controller read.
+    /// </summary>
+    public bool IsCached { get; init; }
+
+    /// <summary>When a successful catalog cache entry will expire, if known.</summary>
+    public DateTimeOffset? CacheExpiresAtUtc { get; init; }
+
     public IReadOnlyList<string> AvailablePrograms =>
         (CurrentProgram is { } loadedProgram ? [loadedProgram] : Array.Empty<string>())
             .Concat(PreloadedPrograms)
@@ -268,6 +349,47 @@ public sealed record AuboArmProgramRequest(
 
     [JsonIgnore]
     public string EffectiveOperatorName => string.IsNullOrWhiteSpace(Operator) ? OperatorName : Operator!;
+
+    /// <summary>Optional workflow correlation for an explicitly claimed device operation.</summary>
+    [JsonPropertyName("workflowRunId")]
+    public Guid? WorkflowRunId { get; init; }
+
+    [JsonPropertyName("workflowNodeExecutionId")]
+    public Guid? WorkflowNodeExecutionId { get; init; }
+
+    [JsonPropertyName("deviceOperationId")]
+    public Guid? DeviceOperationId { get; init; }
+
+    [JsonPropertyName("requestId")]
+    public Guid? RequestId { get; init; }
+
+    [JsonPropertyName("correlationId")]
+    public string? CorrelationId { get; init; }
+
+    [JsonPropertyName("attempt")]
+    public int? Attempt { get; init; }
+
+    /// <summary>Accepted for callers that prefer a nested correlation object.</summary>
+    [JsonPropertyName("correlation")]
+    public AuboArmOperationCorrelation? Correlation { get; init; }
+
+    [JsonIgnore]
+    public AuboArmOperationCorrelation? WorkflowCorrelation =>
+        Correlation ?? (WorkflowRunId is null && WorkflowNodeExecutionId is null && DeviceOperationId is null &&
+        RequestId is null && string.IsNullOrWhiteSpace(CorrelationId) && Attempt is null
+            ? null
+            : new AuboArmOperationCorrelation
+            {
+                WorkflowRunId = WorkflowRunId.GetValueOrDefault(),
+                WorkflowNodeExecutionId = WorkflowNodeExecutionId.GetValueOrDefault(),
+                DeviceOperationId = DeviceOperationId.GetValueOrDefault(),
+                RequestId = RequestId.GetValueOrDefault(),
+                CorrelationId = CorrelationId,
+                Attempt = Attempt.GetValueOrDefault(1)
+            });
+
+    [JsonIgnore]
+    public bool HasWorkflowCorrelation => WorkflowCorrelation is not null;
 }
 
 public sealed record AuboArmProgramRunRequest(
@@ -286,6 +408,45 @@ public sealed record AuboArmProgramRunRequest(
 
     [JsonIgnore]
     public string EffectiveOperatorName => string.IsNullOrWhiteSpace(Operator) ? OperatorName : Operator!;
+
+    [JsonPropertyName("workflowRunId")]
+    public Guid? WorkflowRunId { get; init; }
+
+    [JsonPropertyName("workflowNodeExecutionId")]
+    public Guid? WorkflowNodeExecutionId { get; init; }
+
+    [JsonPropertyName("deviceOperationId")]
+    public Guid? DeviceOperationId { get; init; }
+
+    [JsonPropertyName("requestId")]
+    public Guid? RequestId { get; init; }
+
+    [JsonPropertyName("correlationId")]
+    public string? CorrelationId { get; init; }
+
+    [JsonPropertyName("attempt")]
+    public int? Attempt { get; init; }
+
+    [JsonPropertyName("correlation")]
+    public AuboArmOperationCorrelation? Correlation { get; init; }
+
+    [JsonIgnore]
+    public AuboArmOperationCorrelation? WorkflowCorrelation =>
+        Correlation ?? (WorkflowRunId is null && WorkflowNodeExecutionId is null && DeviceOperationId is null &&
+        RequestId is null && string.IsNullOrWhiteSpace(CorrelationId) && Attempt is null
+            ? null
+            : new AuboArmOperationCorrelation
+            {
+                WorkflowRunId = WorkflowRunId.GetValueOrDefault(),
+                WorkflowNodeExecutionId = WorkflowNodeExecutionId.GetValueOrDefault(),
+                DeviceOperationId = DeviceOperationId.GetValueOrDefault(),
+                RequestId = RequestId.GetValueOrDefault(),
+                CorrelationId = CorrelationId,
+                Attempt = Attempt.GetValueOrDefault(1)
+            });
+
+    [JsonIgnore]
+    public bool HasWorkflowCorrelation => WorkflowCorrelation is not null;
 }
 
 public sealed record AuboArmProgramStopRequest(
@@ -297,6 +458,45 @@ public sealed record AuboArmProgramStopRequest(
 
     [JsonIgnore]
     public string EffectiveOperatorName => string.IsNullOrWhiteSpace(Operator) ? OperatorName : Operator!;
+
+    [JsonPropertyName("workflowRunId")]
+    public Guid? WorkflowRunId { get; init; }
+
+    [JsonPropertyName("workflowNodeExecutionId")]
+    public Guid? WorkflowNodeExecutionId { get; init; }
+
+    [JsonPropertyName("deviceOperationId")]
+    public Guid? DeviceOperationId { get; init; }
+
+    [JsonPropertyName("requestId")]
+    public Guid? RequestId { get; init; }
+
+    [JsonPropertyName("correlationId")]
+    public string? CorrelationId { get; init; }
+
+    [JsonPropertyName("attempt")]
+    public int? Attempt { get; init; }
+
+    [JsonPropertyName("correlation")]
+    public AuboArmOperationCorrelation? Correlation { get; init; }
+
+    [JsonIgnore]
+    public AuboArmOperationCorrelation? WorkflowCorrelation =>
+        Correlation ?? (WorkflowRunId is null && WorkflowNodeExecutionId is null && DeviceOperationId is null &&
+        RequestId is null && string.IsNullOrWhiteSpace(CorrelationId) && Attempt is null
+            ? null
+            : new AuboArmOperationCorrelation
+            {
+                WorkflowRunId = WorkflowRunId.GetValueOrDefault(),
+                WorkflowNodeExecutionId = WorkflowNodeExecutionId.GetValueOrDefault(),
+                DeviceOperationId = DeviceOperationId.GetValueOrDefault(),
+                RequestId = RequestId.GetValueOrDefault(),
+                CorrelationId = CorrelationId,
+                Attempt = Attempt.GetValueOrDefault(1)
+            });
+
+    [JsonIgnore]
+    public bool HasWorkflowCorrelation => WorkflowCorrelation is not null;
 }
 
 /// <summary>
@@ -330,6 +530,58 @@ public sealed record AuboArmProgramOperationResponse(
     public string? Program => ProgramName;
     public int? ResultCode => VendorResultCode;
     public string? Error => ErrorMessage;
+
+    /// <summary>Workflow identity echoed by the Adapter when the write was associated.</summary>
+    [JsonPropertyName("workflowRunId")]
+    public Guid? WorkflowRunId { get; init; }
+
+    [JsonPropertyName("workflowNodeExecutionId")]
+    public Guid? WorkflowNodeExecutionId { get; init; }
+
+    [JsonPropertyName("deviceOperationId")]
+    public Guid? DeviceOperationId { get; init; }
+
+    [JsonPropertyName("requestId")]
+    public Guid? RequestId { get; init; }
+
+    [JsonPropertyName("correlationId")]
+    public string? CorrelationId { get; init; }
+
+    [JsonPropertyName("attempt")]
+    public int? Attempt { get; init; }
+
+    /// <summary>Machine-readable warning for a permitted manual/unassociated write.</summary>
+    [JsonPropertyName("correlationWarningCode")]
+    public string? CorrelationWarningCode { get; init; }
+
+    [JsonPropertyName("correlationWarning")]
+    public string? CorrelationWarning { get; init; }
+
+    [JsonIgnore]
+    public bool IsWorkflowCorrelated =>
+        WorkflowRunId.HasValue && WorkflowNodeExecutionId.HasValue && DeviceOperationId.HasValue &&
+        RequestId.HasValue && Attempt.GetValueOrDefault() > 0;
+
+    [JsonIgnore]
+    public string EffectiveCorrelationId =>
+        !string.IsNullOrWhiteSpace(CorrelationId)
+            ? CorrelationId.Trim()
+            : WorkflowRunId.HasValue && WorkflowNodeExecutionId.HasValue && DeviceOperationId.HasValue
+                ? $"workflow:{WorkflowRunId.Value:N}:node:{WorkflowNodeExecutionId.Value:N}:operation:{DeviceOperationId.Value:N}"
+                : string.Empty;
+
+    [JsonIgnore]
+    public AuboArmOperationCorrelation? WorkflowCorrelation => IsWorkflowCorrelated
+        ? new AuboArmOperationCorrelation
+        {
+            WorkflowRunId = WorkflowRunId!.Value,
+            WorkflowNodeExecutionId = WorkflowNodeExecutionId!.Value,
+            DeviceOperationId = DeviceOperationId!.Value,
+            RequestId = RequestId!.Value,
+            CorrelationId = EffectiveCorrelationId,
+            Attempt = Attempt!.Value
+        }
+        : null;
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter))]

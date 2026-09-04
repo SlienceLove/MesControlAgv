@@ -13,7 +13,8 @@ public sealed class AuboArmReadOnlyDriver(
     IAuboArmReadOnlyRpcTransport transport,
     AuboArmOptions options,
     TimeProvider timeProvider,
-    IAuboArmLoadedProgramReader? loadedProgramReader = null) : IAuboArmDriver
+    IAuboArmLoadedProgramReader? loadedProgramReader = null,
+    AuboArmProgramCatalogCache? programCatalogCache = null) : IAuboArmDriver
 {
     private const string RegisterControl = "RegisterControl";
 
@@ -114,12 +115,53 @@ public sealed class AuboArmReadOnlyDriver(
             timeProvider.GetUtcNow());
     }
 
+    public Task<AuboArmProgramCatalogResponse> GetProgramCatalogAsync(
+        string deviceId,
+        CancellationToken cancellationToken) =>
+        GetProgramCatalogAsync(deviceId, forceFresh: false, cancellationToken);
+
     public async Task<AuboArmProgramCatalogResponse> GetProgramCatalogAsync(
+        string deviceId,
+        bool forceFresh,
+        CancellationToken cancellationToken)
+    {
+        EnsureDevice(deviceId);
+        if (programCatalogCache is not null)
+        {
+            return await programCatalogCache.GetOrRefreshAsync(
+                deviceId,
+                TimeSpan.FromMilliseconds(options.ProgramCatalogCacheTtlMs),
+                forceFresh,
+                token => ReadProgramCatalogFreshAsync(deviceId, token),
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        return await ReadProgramCatalogFreshAsync(deviceId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<AuboArmProgramCatalogResponse> ReadProgramCatalogFreshAsync(
         string deviceId,
         CancellationToken cancellationToken)
     {
         EnsureDevice(deviceId);
         var status = await GetStatusAsync(deviceId, cancellationToken);
+        if (!status.Online)
+        {
+            // Do not spend the full 0..99 pacing budget probing a controller
+            // that did not answer even its basic mode read. The configured
+            // allowlist remains visible through AvailablePrograms, but this
+            // response is intentionally incomplete and is never cached.
+            return new AuboArmProgramCatalogResponse(
+                options.DeviceId,
+                Online: false,
+                CurrentProgram: null,
+                PreloadedPrograms: [],
+                AllowedProgramNames: options.AllowedProgramNames.ToArray(),
+                IsComplete: false,
+                ReadErrors: ["controller did not report a robot mode; catalog scan skipped"],
+                ObservedAtUtc: timeProvider.GetUtcNow());
+        }
+
         var preloaded = new List<string>();
         var slots = new List<AuboArmProgramSlot>();
         var errors = new List<string>();

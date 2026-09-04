@@ -71,13 +71,23 @@ public sealed class AdapterAuboArmClient(HttpClient client) : IAuboArmGateway
             "Adapter returned no AUBO program status.",
             cancellationToken);
 
-    public async Task<AuboArmProgramCatalogResponse> GetProgramCatalogAsync(
+    public Task<AuboArmProgramCatalogResponse> GetProgramCatalogAsync(
         string deviceId,
         CancellationToken cancellationToken) =>
-        await GetAsync<AuboArmProgramCatalogResponse>(
-            $"api/robot-arms/{Uri.EscapeDataString(deviceId)}/programs",
+        GetProgramCatalogAsync(deviceId, forceFresh: false, cancellationToken);
+
+    public async Task<AuboArmProgramCatalogResponse> GetProgramCatalogAsync(
+        string deviceId,
+        bool forceFresh,
+        CancellationToken cancellationToken)
+    {
+        var path = $"api/robot-arms/{Uri.EscapeDataString(deviceId)}/programs";
+        if (forceFresh) path += "?fresh=true";
+        return await GetAsync<AuboArmProgramCatalogResponse>(
+            path,
             "Adapter returned no AUBO program catalog.",
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+    }
 
     public Task<AuboArmProgramOperationResponse> LoadProgramAsync(
         string deviceId,
@@ -85,12 +95,22 @@ public sealed class AdapterAuboArmClient(HttpClient client) : IAuboArmGateway
         string operatorName,
         Guid operationId,
         CancellationToken cancellationToken) =>
+        LoadProgramAsync(deviceId, programName, operatorName, operationId, correlation: null, cancellationToken);
+
+    public Task<AuboArmProgramOperationResponse> LoadProgramAsync(
+        string deviceId,
+        string programName,
+        string operatorName,
+        Guid operationId,
+        AuboArmOperationCorrelation? correlation,
+        CancellationToken cancellationToken) =>
         SendProgramAsync(
             $"api/robot-arms/{Uri.EscapeDataString(deviceId)}/program/load",
-            new AuboArmProgramRequest(
+            ApplyCorrelation(new AuboArmProgramRequest(
                 RequireText(programName, nameof(programName)),
                 RequireText(operatorName, nameof(operatorName)),
-                operationId),
+                operationId), correlation, operationId),
+            correlation,
             cancellationToken);
 
     public Task<AuboArmProgramOperationResponse> RunProgramAsync(
@@ -99,12 +119,22 @@ public sealed class AdapterAuboArmClient(HttpClient client) : IAuboArmGateway
         string operatorName,
         Guid operationId,
         CancellationToken cancellationToken) =>
+        RunProgramAsync(deviceId, programName, operatorName, operationId, correlation: null, cancellationToken);
+
+    public Task<AuboArmProgramOperationResponse> RunProgramAsync(
+        string deviceId,
+        string? programName,
+        string operatorName,
+        Guid operationId,
+        AuboArmOperationCorrelation? correlation,
+        CancellationToken cancellationToken) =>
         SendProgramAsync(
             $"api/robot-arms/{Uri.EscapeDataString(deviceId)}/program/run",
-            new AuboArmProgramRunRequest(
+            ApplyCorrelation(new AuboArmProgramRunRequest(
                 programName,
                 RequireText(operatorName, nameof(operatorName)),
-                operationId),
+                operationId), correlation, operationId),
+            correlation,
             cancellationToken);
 
     public Task<AuboArmProgramOperationResponse> StopProgramAsync(
@@ -112,9 +142,18 @@ public sealed class AdapterAuboArmClient(HttpClient client) : IAuboArmGateway
         string operatorName,
         Guid operationId,
         CancellationToken cancellationToken) =>
+        StopProgramAsync(deviceId, operatorName, operationId, correlation: null, cancellationToken);
+
+    public Task<AuboArmProgramOperationResponse> StopProgramAsync(
+        string deviceId,
+        string operatorName,
+        Guid operationId,
+        AuboArmOperationCorrelation? correlation,
+        CancellationToken cancellationToken) =>
         SendProgramAsync(
             $"api/robot-arms/{Uri.EscapeDataString(deviceId)}/program/stop",
-            new AuboArmProgramStopRequest(RequireText(operatorName, nameof(operatorName)), operationId),
+            ApplyCorrelation(new AuboArmProgramStopRequest(RequireText(operatorName, nameof(operatorName)), operationId), correlation, operationId),
+            correlation,
             cancellationToken);
 
     public Task<AuboArmProgramOperationResponse> LoadProgramAsync(
@@ -126,6 +165,7 @@ public sealed class AdapterAuboArmClient(HttpClient client) : IAuboArmGateway
             request.EffectiveProgramName,
             request.EffectiveOperatorName,
             request.OperationId.GetValueOrDefault(Guid.NewGuid()),
+            request.WorkflowCorrelation,
             cancellationToken);
 
     public Task<AuboArmProgramOperationResponse> RunProgramAsync(
@@ -137,6 +177,7 @@ public sealed class AdapterAuboArmClient(HttpClient client) : IAuboArmGateway
             request.EffectiveProgramName,
             request.EffectiveOperatorName,
             request.OperationId.GetValueOrDefault(Guid.NewGuid()),
+            request.WorkflowCorrelation,
             cancellationToken);
 
     public Task<AuboArmProgramOperationResponse> StopProgramAsync(
@@ -147,6 +188,7 @@ public sealed class AdapterAuboArmClient(HttpClient client) : IAuboArmGateway
             deviceId,
             request.EffectiveOperatorName,
             request.OperationId.GetValueOrDefault(Guid.NewGuid()),
+            request.WorkflowCorrelation,
             cancellationToken);
 
     public Task<AuboArmProgramOperationResponse> LoadProgramAsync(
@@ -180,12 +222,24 @@ public sealed class AdapterAuboArmClient(HttpClient client) : IAuboArmGateway
     private async Task<AuboArmProgramOperationResponse> SendProgramAsync(
         string path,
         object request,
+        AuboArmOperationCorrelation? correlation,
         CancellationToken cancellationToken)
     {
         using var response = await client.PostAsJsonAsync(path, request, cancellationToken);
         await EnsureSuccessAsync(response, cancellationToken);
-        return await response.Content.ReadFromJsonAsync<AuboArmProgramOperationResponse>(cancellationToken)
+        var result = await response.Content.ReadFromJsonAsync<AuboArmProgramOperationResponse>(cancellationToken)
             ?? throw new InvalidOperationException("Adapter returned no AUBO program operation result.");
+        return correlation is null
+            ? result
+            : result with
+            {
+                WorkflowRunId = correlation.WorkflowRunId,
+                WorkflowNodeExecutionId = correlation.WorkflowNodeExecutionId,
+                DeviceOperationId = correlation.DeviceOperationId,
+                RequestId = correlation.RequestId,
+                CorrelationId = correlation.EffectiveCorrelationId,
+                Attempt = correlation.Attempt
+            };
     }
 
     private static async Task EnsureSuccessAsync(
@@ -218,5 +272,54 @@ public sealed class AdapterAuboArmClient(HttpClient client) : IAuboArmGateway
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(value, name);
         return value.Trim();
+    }
+
+    private static object ApplyCorrelation<TRequest>(
+        TRequest request,
+        AuboArmOperationCorrelation? correlation,
+        Guid operationId)
+        where TRequest : notnull
+    {
+        if (correlation is null) return request;
+        if (!correlation.IsComplete)
+            throw new ArgumentException(
+                $"AUBO workflow correlation is incomplete: {correlation.ValidationError}",
+                nameof(correlation));
+        if (correlation.DeviceOperationId != operationId)
+            throw new ArgumentException(
+                "AUBO workflow correlation DeviceOperationId must equal operationId.",
+                nameof(correlation));
+
+        return request switch
+        {
+            AuboArmProgramRequest value => value with
+            {
+                WorkflowRunId = correlation.WorkflowRunId,
+                WorkflowNodeExecutionId = correlation.WorkflowNodeExecutionId,
+                DeviceOperationId = correlation.DeviceOperationId,
+                RequestId = correlation.RequestId,
+                CorrelationId = correlation.EffectiveCorrelationId,
+                Attempt = correlation.Attempt
+            },
+            AuboArmProgramRunRequest value => value with
+            {
+                WorkflowRunId = correlation.WorkflowRunId,
+                WorkflowNodeExecutionId = correlation.WorkflowNodeExecutionId,
+                DeviceOperationId = correlation.DeviceOperationId,
+                RequestId = correlation.RequestId,
+                CorrelationId = correlation.EffectiveCorrelationId,
+                Attempt = correlation.Attempt
+            },
+            AuboArmProgramStopRequest value => value with
+            {
+                WorkflowRunId = correlation.WorkflowRunId,
+                WorkflowNodeExecutionId = correlation.WorkflowNodeExecutionId,
+                DeviceOperationId = correlation.DeviceOperationId,
+                RequestId = correlation.RequestId,
+                CorrelationId = correlation.EffectiveCorrelationId,
+                Attempt = correlation.Attempt
+            },
+            _ => throw new ArgumentException("Unsupported AUBO program request type.", nameof(request))
+        };
     }
 }

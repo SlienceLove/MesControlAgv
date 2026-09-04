@@ -1,6 +1,6 @@
 # AGV MES MVP Progress
 
-Last updated: 2026-09-02
+Last updated: 2026-09-04
 
 This is the concise active record. Detailed history remains in Git and the
 linked acceptance documents.
@@ -1068,3 +1068,62 @@ AGV/AUBO 只读预检和明确授权。
 - 修复 AUBO 100 槽位目录扫描必然在 5 秒超时的问题：现场预算调整为 15 秒、WPF 请求预算 30 秒，并增加槽位节流预算校验。
 - Release 构建 0 警告/0 错误；离线门禁 963 通过、5 个已登记 E2E 跳过、0 失败。阶段一收尾见 [收尾记录](FIELD-ONE-CLICK-PHASE1-CLOSEOUT-2026-09-04.md)，新会话从 [第二阶段交接](FIELD-ONE-CLICK-PHASE2-HANDOFF-2026-09-04.md) 开始。
 - 当前控制器和设备已断电、网线已拔，WPF/MES/Adapter 均停止；下一次不得复用旧运行、验收单或许可，必须重新只读预检和授权。
+
+## 2026-09-04 现场一键全流程第二阶段完成
+
+- 已在新授权下完成一次完整料盘标准流程：Workflow execution
+  `937e061e-82c8-434e-ba38-8b9ac320a0c1`，Request
+  `b572ebf6-a38e-4140-aad3-d1d24a71b529`，Workflow
+  `65d9bd5e-73e8-49ae-9510-8541842637fb` / v1，最终 `Completed`。
+- 操作员/安全监护人均为 `admin`，许可前缀为 `一键启动流程-0904`，有效期 60 分钟；现场操作员确认本次运行正常、无中途错误。
+- 新鲜只读预检确认 AGV 在线、`LM1`、无活动任务、owner=`none`、定位置信度 `0.9376`、重定位 `1`、无急停/阻挡/故障；AUBO 为 `Running / Normal / Automatic / Stopped`，目录扫描完整并确认三项目标程序名。
+- 运行记录包含 7 个可执行节点（4 个 Move + 3 个 AUBO Program），全部 `Succeeded` 且 attempt=1；Start/End 由工作流边界状态表示，语义节点共 9/9。4/4 AGV 验收单 `arrived`，3/3 AUBO 程序均有 load/run/Stopped 结果。
+- 收尾状态：AGV 回到 `LM1`、无活动任务、控制权 `none`；AUBO Runtime=`Stopped`。最终 Move 前仅一次释放控制权，Adapter 返回 HTTP 200；WPF、MES、Adapter 已关闭，现场端口无监听。
+- 完整机器记录见 [第二阶段现场证据](../artifacts/physical-acceptance/phase2-std-20260904-093754/phase2-field-acceptance-evidence-20260904.md)、[后台验收 JSON](../artifacts/physical-acceptance/phase2-std-20260904-093754/phase2-field-acceptance-summary.json) 和 [证据压缩包](../artifacts/physical-acceptance/phase2-field-acceptance-evidence-20260904-093754.zip)。
+- 本次运行使用的隔离 Release 包快照为 `ab34c7f`；WPF 未自动绑定由外部一次性客户端提交的运行 ID。PowerShell 编码/参数、临时监控器和一条未关联 AUBO load 请求已集中列入 [流程后修复清单](../artifacts/physical-acceptance/phase2-std-20260904-093754/phase2-followup-fixes.md)，不得把这些问题静默当作已修复。
+
+## 2026-09-04 第三阶段启动：AUBO 目录刷新优化
+
+- 已建立 [第三阶段计划](FIELD-ONE-CLICK-PHASE3-PLAN-2026-09-04.md)。本阶段继续保持“新鲜只读预检 → 新授权 → 一次完整流程”的现场门禁，当前未连接或操作现场设备。
+- AUBO 普通程序目录读取增加可配置短 TTL 缓存（默认 30 秒），同一设备的并发读取合并为一次底层扫描；完整、在线结果才可缓存，超时/部分/离线结果不缓存。
+- `load`、`run`、`stop` 进入可能写入边界时立即失效缓存，并以 generation 防止旧扫描迟到后重新填充缓存。
+- Adapter/MES/WPF 目录接口支持 `?fresh=true`；现场只读预检必须使用该参数，继续执行 0..99 完整扫描（100 ms 节流、15 秒预算不变）。返回 `IsCached`、`ObservedAtUtc` 和 `CacheExpiresAtUtc`，WPF 明确显示缓存或新鲜观测。
+- 详细离线验证记录见 [AUBO 目录缓存验证](../artifacts/aubo-program-catalog-cache-verification-20260904.md)。
+- 新增缓存、并发、fresh、失效和 HTTP 转发回归；完整 Release 构建 0 警告/0 错误。当前工作树快照的离线门禁报告 [mes-offline-release-gate-20260904-phase3-cache-final.json](../artifacts/mes-offline-release-gate-20260904-phase3-cache-final.json)：992 项测试，987 通过、5 个登记跳过、0 失败，`releaseEligible=true`。
+- 新独立部署包：[PhysicalOneClickPhase3-cache-final-20260904-121500](../bin/Verify/PhysicalOneClickPhase3-cache-final-20260904-121500/)；压缩包：[PhysicalOneClickPhase3-cache-final-20260904-121500.zip](../bin/Verify/PhysicalOneClickPhase3-cache-final-20260904-121500.zip)。包内 manifest 记录源码 revision、门禁哈希、缓存参数和核心文件 SHA-256；压缩包 SHA-256 为 `7D7E5E2D805121AA4552C55CDA9D3FD5BCCC16312D1E47FFFB748F78B3E9E08A`。
+- 第二阶段清单中的 UTF-8 工具、正式工作流导入、监控回放、WPF execution ID 绑定和 AUBO 未关联写入审计仍列为后续离线任务，尚未宣称完成。
+
+## 2026-09-04 第三阶段 B 切片：现场工具可靠性
+
+- 新增 `scripts/Invoke-MesJsonUtf8.ps1`：Windows PowerShell 5.1 使用 .NET `HttpClient`、显式 UTF-8 字节和一次性请求；检测并拒绝 `/Date(...)/` 日期格式，不自动重试。
+- 新增 `scripts/Import-WorkflowGraph.ps1`：读取 UTF-8 `mes.workflow.graph`，严格校验料盘标准九节点/八边结构，重映射工作流/节点/边 ID，生成 MES `WorkflowDefinition`；默认只导出，只有显式 `-Publish` 才调用草稿、校验和发布接口。
+- 新增 `scripts/Test-FieldWorkflowTooling.ps1`，使用第二阶段保存的中文图文档离线回放通过：9 个节点、8 条边、ID 唯一、中文保留，未发布且未产生设备写入。最终证据目录为 `artifacts/phase3b-tooling-test-final3-20260904-141500/`。
+- UTF-8 工具、导入器和回放脚本静态门禁通过；完整离线门禁报告 [mes-offline-release-gate-20260904-phase3b-final2.json](../artifacts/mes-offline-release-gate-20260904-phase3b-final2.json)：996 项测试，991 通过、5 个登记跳过、0 失败，`releaseEligible=true`。
+- 新独立部署包：[PhysicalOneClickPhase3B-Tooling-final4-20260904-142500](../bin/Verify/PhysicalOneClickPhase3B-Tooling-final4-20260904-142500/)；压缩包：[PhysicalOneClickPhase3B-Tooling-final4-20260904-142500.zip](../bin/Verify/PhysicalOneClickPhase3B-Tooling-final4-20260904-142500.zip)，SHA-256 为 `622451FA6118D059667449187F29CEC339BDFD3A7A9AEF7CC2F1204C8F3697F6`。包内 `Tools/` 包含三个脚本，manifest 指向本切片计划。
+- 该工具包固定在门禁快照 `34b1e65`；之后并行 WPF/UI 任务提交的 `296beb5` 等改动未纳入，现场部署前需等并行任务结束后重新打包。
+- 详细证据见 [第三阶段 B 工具证据](../artifacts/phase3b-field-tooling-evidence-20260904.md)。
+- 本切片仍遵守“新鲜只读预检 → 新授权 → 一次完整流程”；本轮未连接现场设备。WPF execution ID 绑定、AUBO 写入 correlation 和监控数组回放仍待后续切片。
+## 2026-09-04 Phase 3C correlation, monitor and WPF handoff
+
+- Added durable AUBO workflow correlation fields for `load/run/stop`; the AUBO
+  worker now reuses the claimed `WorkflowDeviceOperation.OperationId` and emits
+  correlation evidence instead of generating an unrelated mutation id.
+- MES rejects mismatched workflow/node/device-operation identities before the
+  Adapter boundary and marks explicitly unassociated manual writes with
+  `AUBO_UNCORRELATED_WRITE` warnings. Existing control-disabled/read-only gates
+  remain unchanged.
+- Added `scripts/Monitor-PhysicalWorkflow.ps1` with PowerShell 5.1 collection
+  normalization and `scripts/Test-PhysicalWorkflowMonitor.ps1` offline replay;
+  replay evidence records `wrappersLeaked=false`, `deviceWritesAttempted=false`,
+  and `automaticRetry=false`.
+- WPF accepts only explicit startup `--workflow-execution-id` or
+  `--workflow-request-id` (also `WPF_INITIAL_WORKFLOW_*` environment variables),
+  preserves an existing run when the supplied identity is unknown, and opens the
+  monitor tab only after a successful bind. No “latest run” lookup is used.
+- Offline monitor replay and targeted Adapter/MES/WPF tests pass. The complete
+  Release gate is `artifacts/mes-offline-release-gate-20260904-phase3c-final6.json`
+  (1004 passed / 5 allowed skipped / 0 failed, `releaseEligible=true`). The
+  independent deployment package is
+  `bin/Verify/PhysicalOneClickPhase3C-Correlation-final-20260904-165050.zip`
+  with its SHA-256 recorded in the adjacent `.zip.sha256` sidecar file.
+  No field device was connected or authorized in this slice.

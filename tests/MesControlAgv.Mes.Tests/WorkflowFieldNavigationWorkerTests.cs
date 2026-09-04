@@ -306,6 +306,92 @@ public sealed class WorkflowFieldNavigationWorkerTests
     }
 
     [Fact]
+    public async Task Cancelled_one_click_move_attempts_control_release_once_even_when_unconfirmed()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var dbOptions = new DbContextOptionsBuilder<MesDbContext>().UseSqlite(connection).Options;
+        await using var database = new MesDbContext(dbOptions);
+        await database.Database.EnsureCreatedAsync();
+        var profile = CreateProfile();
+        var validator = new WorkflowValidator(
+            BuiltInWorkflowCatalog.Create(),
+            WorkflowPublicationContext.FromProfile(profile));
+        var reader = new MesWorkflowVersionReader(database);
+        var workflows = new WorkflowApplicationService(
+            database,
+            reader,
+            new WorkflowRuntimeExecutor(reader, validator),
+            validator);
+        var draft = await workflows.CreateDraftAsync(CreateSingleMoveWorkflow(), "test", CancellationToken.None);
+        Assert.True((await workflows.ValidateVersionAsync(draft.WorkflowId, draft.Version, CancellationToken.None)).IsValid);
+        await workflows.PublishAsync(draft.WorkflowId, draft.Version, "test", CancellationToken.None);
+        var execution = await workflows.ExecuteAsync(new WorkflowExecutionRequest
+        {
+            WorkflowId = draft.WorkflowId,
+            Version = draft.Version,
+            RequestId = Guid.NewGuid(),
+            RequestedBy = "operator",
+            PhysicalAuthorization = new WorkflowPhysicalRunAuthorization
+            {
+                AgvId = "AGV-01",
+                OperatorName = "operator",
+                SafetyObserverName = "observer",
+                PermitPrefix = "cancelled-move",
+                ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(1)
+            }
+        }, CancellationToken.None);
+        var move = Assert.Single(await workflows.ListFieldNavigationDispatchableNodesAsync(CancellationToken.None));
+        var adapter = new FieldAcceptanceAdapter();
+        var repository = new FieldNavigationAcceptanceRepository(database);
+        var acceptanceService = new FieldNavigationAcceptanceService(
+            repository,
+            adapter,
+            profile,
+            new PathPlanner(AgvMap.FromProfile(profile.Map)),
+            workflows: workflows);
+        var draftAcceptance = await acceptanceService.CreateAsync(
+            new CreateFieldNavigationAcceptanceRequest("AGV-01", "LM1", "LM4")
+            {
+                WorkflowRunId = execution.ExecutionId,
+                WorkflowNodeExecutionId = move.NodeExecution.Id
+            },
+            CancellationToken.None);
+        await acceptanceService.AuthorizeAsync(
+            draftAcceptance.Id,
+            new AuthorizeFieldNavigationAcceptanceRequest(
+                "operator", "observer", "permit-cancelled-move", DateTimeOffset.UtcNow.AddHours(1)),
+            CancellationToken.None);
+        var dispatcher = new WorkflowFieldNavigationDispatcher(
+            workflows,
+            acceptanceService,
+            repository,
+            profile,
+            new WorkflowFieldNavigationWorkerOptions { Enabled = true },
+            agv: adapter);
+
+        await dispatcher.ProcessAsync(CancellationToken.None);
+        var acceptance = await repository.GetAsync(draftAcceptance.Id, CancellationToken.None);
+        Assert.Equal(FieldNavigationAcceptanceStatuses.Moving, acceptance!.Status);
+        adapter.ReleaseControlException = new TimeoutException("release response unavailable");
+        acceptance.Status = FieldNavigationAcceptanceStatuses.Cancelled;
+        await repository.SaveWithAuditAsync(
+            acceptance,
+            "AdapterStateReconciled",
+            new { state = "cancelled" },
+            CancellationToken.None);
+
+        await dispatcher.ProcessAsync(CancellationToken.None);
+        await dispatcher.ProcessAsync(CancellationToken.None);
+
+        Assert.Equal(WorkflowRuntimeStatus.Cancelled,
+            (await workflows.GetExecutionAsync(execution.ExecutionId, CancellationToken.None))!.RuntimeStatus);
+        Assert.Equal(WorkflowNodeExecutionStatus.Cancelled,
+            Assert.Single(await workflows.ListNodeExecutionsAsync(execution.ExecutionId, CancellationToken.None)).Status);
+        Assert.Equal(1, adapter.ReleaseControlCalls);
+    }
+
+    [Fact]
     public async Task Acceptance_link_rejects_a_node_from_another_run()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
@@ -511,6 +597,7 @@ public sealed class WorkflowFieldNavigationWorkerTests
     {
         public int DispatchCalls { get; private set; }
         public int ReleaseControlCalls { get; private set; }
+        public Exception? ReleaseControlException { get; set; }
 
         public Task<AgvTaskResponse> DispatchFieldNavigationAcceptanceAsync(
             Guid acceptanceId,
@@ -552,6 +639,8 @@ public sealed class WorkflowFieldNavigationWorkerTests
         public Task<bool> ReleaseControlAsync(CancellationToken cancellationToken)
         {
             ReleaseControlCalls++;
+            if (ReleaseControlException is not null)
+                return Task.FromException<bool>(ReleaseControlException);
             return Task.FromResult(true);
         }
     }

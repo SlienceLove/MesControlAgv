@@ -353,7 +353,31 @@ public sealed class TcpAgvClient :
     private async Task<bool> ReleaseControlCoreAsync(CancellationToken cancellationToken)
     {
         // Keep ownership read, mutation audit, 4006 write, and confirmation as one transaction.
-        var current = await QueryControlAsync(cancellationToken);
+        ControlInfo current;
+        try
+        {
+            current = await QueryControlAsync(cancellationToken);
+        }
+        catch (Exception exception) when (IsReleaseTransportFailure(exception))
+        {
+            // A controller that is powered off (or whose status channel is
+            // disconnected) must never be treated as "not owned".  Preserve
+            // the transport failure for the HTTP boundary, and record that no
+            // 4006 write was attempted so operators have an auditable,
+            // fail-closed result.
+            _logger.LogWarning(
+                exception,
+                "AGV control release audit: ownership read failed; release command was not sent. {ReleaseAudit}",
+                JsonSerializer.Serialize(new
+                {
+                    operation = "control-release",
+                    stage = "ownership-read",
+                    attempted = false,
+                    commandSent = false,
+                    reason = "controller-status-unavailable"
+                }));
+            throw;
+        }
         if (current.Owner != "adapter") return false;
 
         LogMutationRequest(ReleaseControlApi, new { });
@@ -365,6 +389,9 @@ public sealed class TcpAgvClient :
         if (released.Owner == "adapter") throw new ControlReleaseUnconfirmedException();
         return true;
     }
+
+    private static bool IsReleaseTransportFailure(Exception exception) =>
+        exception is SocketException or IOException or TimeoutException;
 
     public async Task<AgvSnapshotResponse> GetSnapshotAsync(CancellationToken cancellationToken)
     {

@@ -257,6 +257,24 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
                 acceptance.LastError
             }, cancellationToken);
         }
+        catch (AdapterHttpException exception) when (exception.ResponseStatusCode is
+                   HttpStatusCode.BadGateway or
+                   HttpStatusCode.ServiceUnavailable or
+                   HttpStatusCode.GatewayTimeout or
+                   HttpStatusCode.InternalServerError)
+        {
+            // The Adapter may have crossed the navigation write boundary
+            // before its controller/status channel failed. Treat every
+            // gateway/transport response as Unknown, never as a confirmed
+            // failure that an automatic caller might safely replay.
+            acceptance.Status = FieldNavigationAcceptanceStatuses.Unknown;
+            acceptance.LastError = exception.Detail ?? exception.Message;
+            await _repository.SaveWithAuditAsync(acceptance, "DispatchUnknown", new
+            {
+                statusCode = (int)exception.ResponseStatusCode,
+                acceptance.LastError
+            }, cancellationToken);
+        }
         catch (TimeoutException exception)
         {
             acceptance.Status = FieldNavigationAcceptanceStatuses.Unknown;
@@ -324,11 +342,42 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
                 await _repository.SaveWithAuditAsync(acceptance, "CancelUnknown", new { acceptance.LastError }, cancellationToken);
             }
         }
+        catch (AdapterHttpException exception) when (exception.ResponseStatusCode is
+                   HttpStatusCode.BadGateway or
+                   HttpStatusCode.ServiceUnavailable or
+                   HttpStatusCode.GatewayTimeout or
+                   HttpStatusCode.InternalServerError)
+        {
+            acceptance.Status = FieldNavigationAcceptanceStatuses.Unknown;
+            acceptance.LastError = exception.Detail ?? exception.Message;
+            await _repository.SaveWithAuditAsync(acceptance, "CancelUnknown", new
+            {
+                statusCode = (int)exception.ResponseStatusCode,
+                acceptance.LastError
+            }, cancellationToken);
+        }
         catch (HttpRequestException exception)
         {
             acceptance.Status = FieldNavigationAcceptanceStatuses.Unknown;
             acceptance.LastError = exception.Message;
             await _repository.SaveWithAuditAsync(acceptance, "CancelUnknown", new { acceptance.LastError }, cancellationToken);
+        }
+        catch (TimeoutException exception)
+        {
+            acceptance.Status = FieldNavigationAcceptanceStatuses.Unknown;
+            acceptance.LastError = exception.Message;
+            await _repository.SaveWithAuditAsync(acceptance, "CancelUnknown", new { acceptance.LastError }, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            acceptance.Status = FieldNavigationAcceptanceStatuses.Unknown;
+            acceptance.LastError = "field_navigation_cancel_cancellation_unconfirmed";
+            await _repository.SaveWithAuditAsync(
+                acceptance,
+                "CancelUnknown",
+                new { acceptance.LastError },
+                CancellationToken.None);
+            throw;
         }
 
         return ToResponse(acceptance);

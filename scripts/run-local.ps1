@@ -1,6 +1,11 @@
 param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Debug',
+    [ValidateSet('FieldSimulation', 'Development')]
+    [string]$EnvironmentName = 'FieldSimulation',
+    [switch]$EnableAutomaticDispatch,
+    [switch]$EnableMultiAgv,
+    [switch]$EnableTaskCancellation,
     [string]$SimulatorUrl = 'http://localhost:5183',
     [string]$AdapterUrl = 'http://localhost:5041',
     [string]$MesUrl = 'http://localhost:5045',
@@ -14,8 +19,17 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# FieldSimulation is the default local profile because it contains the LM1/LMn
+# station graph used by verify-local.ps1. Automatic dispatch remains opt-in:
+# pass -EnableAutomaticDispatch only for an isolated simulator run. Enable
+# cancellation separately when exercising the cancellation scenario.
+
 if ($StartupTimeoutSeconds -lt 1) {
     throw 'StartupTimeoutSeconds must be at least 1.'
+}
+
+if ($EnableMultiAgv -and $EnvironmentName -ne 'FieldSimulation') {
+    throw '-EnableMultiAgv is available only with -EnvironmentName FieldSimulation.'
 }
 
 if ([string]::IsNullOrWhiteSpace($RunId)) {
@@ -111,7 +125,10 @@ $services = @(
         Url = $simulatorEndpoint.Url
         Port = $simulatorEndpoint.Port
         DatabasePath = $null
-        EnvironmentVariables = @{}
+        EnvironmentVariables = if ($EnvironmentName -eq 'FieldSimulation') {
+            @{ 'Agv__DefaultStationId' = 'LM1' }
+        }
+        else { @{} }
     }
     [pscustomobject]@{
         Name = 'Adapter'
@@ -122,10 +139,18 @@ $services = @(
         Port = $adapterEndpoint.Port
         DatabasePath = $AdapterDatabasePath
         EnvironmentVariables = if ([string]::IsNullOrWhiteSpace($AdapterDatabasePath)) {
-            @{ 'Simulator__BaseUrl' = "$($simulatorEndpoint.Url)/" }
+            $environment = @{ 'Simulator__BaseUrl' = "$($simulatorEndpoint.Url)/" }
+            if ($EnableMultiAgv) { $environment['MES_FIELD_SIMULATION_MULTI_AGV'] = 'true' }
+            if ($EnableAutomaticDispatch) { $environment['Profile__features__enableAutomaticDispatch'] = 'true' }
+            if ($EnableTaskCancellation) { $environment['Profile__features__enableTaskCancellation'] = 'true' }
+            $environment
         }
         else {
-            @{ 'ConnectionStrings__Adapter' = "Data Source=$AdapterDatabasePath"; 'Simulator__BaseUrl' = "$($simulatorEndpoint.Url)/" }
+            $environment = @{ 'ConnectionStrings__Adapter' = "Data Source=$AdapterDatabasePath"; 'Simulator__BaseUrl' = "$($simulatorEndpoint.Url)/" }
+            if ($EnableMultiAgv) { $environment['MES_FIELD_SIMULATION_MULTI_AGV'] = 'true' }
+            if ($EnableAutomaticDispatch) { $environment['Profile__features__enableAutomaticDispatch'] = 'true' }
+            if ($EnableTaskCancellation) { $environment['Profile__features__enableTaskCancellation'] = 'true' }
+            $environment
         }
     }
     [pscustomobject]@{
@@ -137,10 +162,18 @@ $services = @(
         Port = $mesEndpoint.Port
         DatabasePath = $MesDatabasePath
         EnvironmentVariables = if ([string]::IsNullOrWhiteSpace($MesDatabasePath)) {
-            @{ 'Adapter__BaseUrl' = "$($adapterEndpoint.Url)/" }
+            $environment = @{ 'Adapter__BaseUrl' = "$($adapterEndpoint.Url)/" }
+            if ($EnableMultiAgv) { $environment['MES_FIELD_SIMULATION_MULTI_AGV'] = 'true' }
+            if ($EnableAutomaticDispatch) { $environment['Profile__features__enableAutomaticDispatch'] = 'true' }
+            if ($EnableTaskCancellation) { $environment['Profile__features__enableTaskCancellation'] = 'true' }
+            $environment
         }
         else {
-            @{ 'ConnectionStrings__Mes' = "Data Source=$MesDatabasePath"; 'Adapter__BaseUrl' = "$($adapterEndpoint.Url)/" }
+            $environment = @{ 'ConnectionStrings__Mes' = "Data Source=$MesDatabasePath"; 'Adapter__BaseUrl' = "$($adapterEndpoint.Url)/" }
+            if ($EnableMultiAgv) { $environment['MES_FIELD_SIMULATION_MULTI_AGV'] = 'true' }
+            if ($EnableAutomaticDispatch) { $environment['Profile__features__enableAutomaticDispatch'] = 'true' }
+            if ($EnableTaskCancellation) { $environment['Profile__features__enableTaskCancellation'] = 'true' }
+            $environment
         }
     }
 )
@@ -227,7 +260,7 @@ try {
     }
 
     foreach ($service in $services) {
-        $arguments = '"{0}" --urls {1} --environment Development' -f $service.Dll, $service.Url
+        $arguments = '"{0}" --urls {1} --environment {2}' -f $service.Dll, $service.Url, $EnvironmentName
         $psi = [System.Diagnostics.ProcessStartInfo]::new()
         $psi.FileName = $dotnet
         $psi.WorkingDirectory = $service.ProjectRoot
@@ -255,6 +288,7 @@ try {
             WorkingDirectory = $service.ProjectRoot
             EnvironmentVariables = $service.EnvironmentVariables
             Configuration = $Configuration
+            EnvironmentName = $EnvironmentName
             DatabasePath = $service.DatabasePath
             StartedAtUtc = [DateTime]::UtcNow.ToString('O')
         })
@@ -269,6 +303,9 @@ try {
         CreatedAtUtc = [DateTime]::UtcNow.ToString('O')
         StatePath = $StatePath
         IsolatedStores = (-not [string]::IsNullOrWhiteSpace($MesDatabasePath) -and -not [string]::IsNullOrWhiteSpace($AdapterDatabasePath))
+        EnvironmentName = $EnvironmentName
+        AutomaticDispatchEnabled = [bool]$EnableAutomaticDispatch
+        TaskCancellationEnabled = [bool]$EnableTaskCancellation
         Services = @($started)
     }
     $state | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $StatePath -Encoding UTF8
@@ -277,6 +314,9 @@ try {
         Write-Host ("{0}: {1}" -f $service.Name, $service.Url)
     }
     Write-Host "Run ID: $RunId"
+    Write-Host "Environment: $EnvironmentName"
+    Write-Host "Automatic dispatch: $([bool]$EnableAutomaticDispatch)"
+    Write-Host "Task cancellation: $([bool]$EnableTaskCancellation)"
     Write-Host "Service state saved to: $StatePath"
     Write-Host ("Stop services with: .\scripts\stop-local.ps1 -StatePath `"{0}`"" -f $StatePath)
     Write-Host 'Start the desktop client separately: dotnet run --project src/MesControlAgv.Wpf'

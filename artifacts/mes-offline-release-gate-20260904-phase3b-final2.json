@@ -1,0 +1,187 @@
+{
+    "schemaVersion":  "mes.offline-release-gate/1.0",
+    "generatedAt":  "\/Date(1788501272463)\/",
+    "repository":  "[REDACTED]",
+    "revision":  "34b1e65",
+    "workingTree":  "dirty",
+    "releaseEligible":  true,
+    "gatePassed":  true,
+    "diagnosticSchemas":  {
+                              "export":  "mes.offline-diagnostics/1.0",
+                              "startupRules":  "mes.startup-diagnostics/1.0",
+                              "fieldPreflight":  "mes.field-preflight/1.0",
+                              "diff":  "mes.offline-diagnostic-diff/1.0"
+                          },
+    "fieldPreflight":  {
+                           "schemaVersion":  "mes.field-preflight/1.0",
+                           "canDetermineGo":  false,
+                           "decision":  "field-go-not-determined-offline"
+                       },
+    "fixtureCount":  7,
+    "fixtureNames":  [
+                         "instrument-invalid.json",
+                         "instrument-physical-readonly.json",
+                         "instrument-valid.json",
+                         "physical-readonly-adapter.json",
+                         "physical-standard-conflict-adapter.json",
+                         "simulator-adapter.json",
+                         "vision-proposed-readonly.json"
+                     ],
+    "tests":  {
+                  "executed":  true,
+                  "passed":  991,
+                  "failed":  0,
+                  "skipped":  5,
+                  "total":  996,
+                  "allowedSkipped":  5,
+                  "unexpectedSkipped":  0
+              },
+    "checks":  [
+                   {
+                       "name":  "diagnostic-export-schema",
+                       "passed":  true,
+                       "detail":  "Current export schema is declared."
+                   },
+                   {
+                       "name":  "diagnostic-rule-schema",
+                       "passed":  true,
+                       "detail":  "Current startup rule schema is declared."
+                   },
+                   {
+                       "name":  "field-preflight-schema",
+                       "passed":  true,
+                       "detail":  "Field preflight schema is declared."
+                   },
+                   {
+                       "name":  "diagnostic-diff-schema",
+                       "passed":  true,
+                       "detail":  "Configuration diff schema is declared."
+                   },
+                   {
+                       "name":  "field-preflight-exported",
+                       "passed":  true,
+                       "detail":  "Field preflight inputs are included in diagnostic exports."
+                   },
+                   {
+                       "name":  "diagnostic-diff-exported",
+                       "passed":  true,
+                       "detail":  "Configuration diff is included when a baseline is supplied."
+                   },
+                   {
+                       "name":  "diagnostic-diff-no-go",
+                       "passed":  true,
+                       "detail":  "Configuration diff exports preserve the no-GO contract."
+                   },
+                   {
+                       "name":  "field-preflight-no-go",
+                       "passed":  true,
+                       "detail":  "Field preflight checklist cannot determine a field GO decision."
+                   },
+                   {
+                       "name":  "startup-inspector-version",
+                       "passed":  true,
+                       "detail":  "Startup reports the active rule version."
+                   },
+                   {
+                       "name":  "ci-workflow-uses-gate",
+                       "passed":  true,
+                       "detail":  "CI invokes the offline gate and archive validator."
+                   },
+                   {
+                       "name":  "ci-uploads-json-only",
+                       "passed":  true,
+                       "detail":  "CI artifact path is limited to the redacted JSON report."
+                   },
+                   {
+                       "name":  "archive-validator-enforces-boundary",
+                       "passed":  true,
+                       "detail":  "Archive validator checks schema, redaction, and the no-GO field."
+                   },
+                   {
+                       "name":  "field-http-uses-explicit-utf8",
+                       "passed":  true,
+                       "detail":  "Field JSON HTTP helper sends one explicit UTF-8 request and rejects legacy dates."
+                   },
+                   {
+                       "name":  "workflow-import-tool-is-fail-closed",
+                       "passed":  true,
+                       "detail":  "Workflow graph importer preserves UTF-8 and does not retry or write devices."
+                   },
+                   {
+                       "name":  "workflow-tooling-replay-test",
+                       "passed":  true,
+                       "detail":  "Offline workflow tooling replay covers the saved nine-node field graph."
+                   },
+                   {
+                       "name":  "release-summary-no-go",
+                       "passed":  true,
+                       "detail":  "The release summary must preserve the no-GO contract."
+                   },
+                   {
+                       "name":  "snapshot-lifecycle-read-only",
+                       "passed":  true,
+                       "detail":  "Snapshot lifecycle only previews retention and never deletes files."
+                   },
+                   {
+                       "name":  "known-e2e-skip-policy",
+                       "passed":  true,
+                       "detail":  "The only allowed skipped tests are the five documented full-simulator E2E cases (found 5)."
+                   },
+                   {
+                       "name":  "startup-diagnostic-fixtures",
+                       "passed":  true,
+                       "detail":  "Found 7 startup diagnostic fixtures."
+                   },
+                   {
+                       "name":  "fixture-instrument-invalid.json",
+                       "passed":  true,
+                       "detail":  "No credentials or non-loopback addresses found."
+                   },
+                   {
+                       "name":  "fixture-instrument-physical-readonly.json",
+                       "passed":  true,
+                       "detail":  "No credentials or non-loopback addresses found."
+                   },
+                   {
+                       "name":  "fixture-instrument-valid.json",
+                       "passed":  true,
+                       "detail":  "No credentials or non-loopback addresses found."
+                   },
+                   {
+                       "name":  "fixture-physical-readonly-adapter.json",
+                       "passed":  true,
+                       "detail":  "No credentials or non-loopback addresses found."
+                   },
+                   {
+                       "name":  "fixture-physical-standard-conflict-adapter.json",
+                       "passed":  true,
+                       "detail":  "No credentials or non-loopback addresses found."
+                   },
+                   {
+                       "name":  "fixture-simulator-adapter.json",
+                       "passed":  true,
+                       "detail":  "No credentials or non-loopback addresses found."
+                   },
+                   {
+                       "name":  "fixture-vision-proposed-readonly.json",
+                       "passed":  true,
+                       "detail":  "No credentials or non-loopback addresses found."
+                   },
+                   {
+                       "name":  "physical-handoff-no-go",
+                       "passed":  true,
+                       "detail":  "Physical handoff still declares the NO-GO boundary."
+                   },
+                   {
+                       "name":  "physical-record-no-go",
+                       "passed":  true,
+                       "detail":  "Physical acceptance record still declares the NO-GO boundary."
+                   },
+                   {
+                       "name":  "solution-tests",
+                       "passed":  true,
+                       "detail":  "dotnet test exit code 0. 已通过! - 失败:     0，通过:    80，已跳过:     0，总计:    80，持续时间: 161 ms - MesControlAgv.InstrumentGateway.Tests.dll (net8.0)"
+                   }
+               ],
+    "passed":  true
+}

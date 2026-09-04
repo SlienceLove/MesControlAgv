@@ -178,7 +178,11 @@ public sealed partial class WorkflowApplicationService
                 CapabilityId = ResolveDeviceCapability(step),
                 DeviceId = ResolveDeviceId(step),
                 IdempotencyKey = operationId.ToString("N"),
-                CorrelationId = request.CorrelationId,
+                CorrelationId = ResolveDeviceOperationCorrelation(
+                    request.CorrelationId,
+                    run.ExecutionId,
+                    node.Id,
+                    operationId),
                 Status = WorkflowDeviceOperationStatus.Prepared.ToString(),
                 RequestSummaryJson = WorkflowPersistence.Serialize(CreateDeviceRequestSummary(step, node.Id)),
                 ResultSummaryJson = "{}",
@@ -498,6 +502,21 @@ public sealed partial class WorkflowApplicationService
         !string.IsNullOrWhiteSpace(value)
             ? value.Trim()
             : null;
+
+    private static string ResolveDeviceOperationCorrelation(
+        string? requestCorrelationId,
+        Guid workflowRunId,
+        Guid nodeExecutionId,
+        Guid operationId)
+    {
+        if (!string.IsNullOrWhiteSpace(requestCorrelationId))
+            return requestCorrelationId.Trim();
+
+        // Older admission callers did not provide a correlation string. Keep
+        // those runs auditable without changing their request identity by
+        // deriving a stable, non-secret value from the durable records.
+        return $"workflow:{workflowRunId:N}:node:{nodeExecutionId:N}:operation:{operationId:N}";
+    }
 
     private static IReadOnlyDictionary<string, string?> CreateOutcomeSummary(
         string? outcome,

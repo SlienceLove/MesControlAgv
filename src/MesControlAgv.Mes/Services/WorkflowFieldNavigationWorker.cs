@@ -88,6 +88,12 @@ public sealed class WorkflowFieldNavigationDispatcher(
     {
         if (!CanRun()) return;
 
+        // Reconcile already claimed physical work before waiting on any new
+        // Ready node. A five-minute preflight window for a disconnected new
+        // batch must never starve status propagation for a navigation command
+        // that may already be moving on the controller.
+        await RecoverAsync(cancellationToken);
+
         foreach (var workItem in await workflows.ListFieldNavigationDispatchableNodesAsync(cancellationToken))
         {
             if (!await WaitForTransientPhysicalReadinessAsync(workItem, cancellationToken))
@@ -149,8 +155,6 @@ public sealed class WorkflowFieldNavigationDispatcher(
                     cancellationToken);
             }
         }
-
-        await RecoverAsync(cancellationToken);
     }
 
     private async Task<FieldNavigationAcceptanceResponse?> TryCreateAndAuthorizeFromRunAsync(
@@ -495,10 +499,8 @@ public sealed class WorkflowFieldNavigationDispatcher(
                 workItem,
                 acceptance,
                 cancellationToken),
-            FieldNavigationAcceptanceStatuses.Cancelled => CompleteAsync(
+            FieldNavigationAcceptanceStatuses.Cancelled => CompleteCancelledAsync(
                 workItem,
-                WorkflowStepCompletionOutcome.Cancelled,
-                acceptance.LastError,
                 acceptance,
                 cancellationToken),
             FieldNavigationAcceptanceStatuses.Failed or
@@ -547,41 +549,12 @@ public sealed class WorkflowFieldNavigationDispatcher(
                 workItem.NodeExecution.Id);
         }
 
-        if (isFinalPhysicalMove && _agv is IPhysicalAgvControlGateway control)
+        if (isFinalPhysicalMove)
         {
             // Release before marking the run Completed. The active-run gate
             // therefore prevents a new physical batch from being admitted
-            // while cleanup is in progress, and Adapter serializes 4006 with
-            // any later dispatch. A lost response is never replayed.
-            var timeout = options.ControlReleaseTimeout <= TimeSpan.Zero
-                ? TimeSpan.FromSeconds(10)
-                : options.ControlReleaseTimeout;
-            using var cleanup = new CancellationTokenSource(timeout);
-            try
-            {
-                var released = await control.ReleaseControlAsync(cleanup.Token);
-                if (released)
-                {
-                    _logger?.LogInformation(
-                        "Released Adapter AGV control before workflow run {WorkflowRunId} completed its final Move node.",
-                        workItem.NodeExecution.WorkflowRunId);
-                }
-                else
-                {
-                    _logger?.LogWarning(
-                        "Workflow run {WorkflowRunId} reached its final Move, but Adapter control was not owned at cleanup time; no release command was sent.",
-                        workItem.NodeExecution.WorkflowRunId);
-                }
-            }
-            catch (Exception exception)
-            {
-                // A lost response after POST is ambiguous. Never retry release
-                // automatically; the next read-only preflight exposes the owner.
-                _logger?.LogWarning(
-                    exception,
-                    "Workflow run {WorkflowRunId} reached its final Move, but AGV control release could not be confirmed. Recheck ownership without replaying the request.",
-                    workItem.NodeExecution.WorkflowRunId);
-            }
+            // while cleanup is in progress. A lost response is never replayed.
+            await TryReleaseBatchControlOnceAsync(workItem, "completed its final Move node");
         }
 
         await CompleteAsync(
@@ -590,6 +563,70 @@ public sealed class WorkflowFieldNavigationDispatcher(
             null,
             acceptance,
             cancellationToken);
+    }
+
+    private async Task CompleteCancelledAsync(
+        WorkflowNodeExecutionWorkItem workItem,
+        FieldNavigationAcceptanceResponse acceptance,
+        CancellationToken cancellationToken)
+    {
+        // A cancelled one-click batch is terminal just like a completed final
+        // Move. Release the control lease once before persisting the terminal
+        // run state so a later batch cannot inherit it. Legacy/manual
+        // acceptances do not carry run-level PhysicalAuthorization and retain
+        // their existing operator-managed ownership behavior.
+        var run = await workflows.GetExecutionAsync(
+            workItem.NodeExecution.WorkflowRunId,
+            cancellationToken);
+        if (run?.PhysicalAuthorization is not null)
+            await TryReleaseBatchControlOnceAsync(workItem, "was cancelled");
+
+        await CompleteAsync(
+            workItem,
+            WorkflowStepCompletionOutcome.Cancelled,
+            acceptance.LastError,
+            acceptance,
+            cancellationToken);
+    }
+
+    private async Task TryReleaseBatchControlOnceAsync(
+        WorkflowNodeExecutionWorkItem workItem,
+        string terminalContext)
+    {
+        if (_agv is not IPhysicalAgvControlGateway control) return;
+
+        var timeout = options.ControlReleaseTimeout <= TimeSpan.Zero
+            ? TimeSpan.FromSeconds(10)
+            : options.ControlReleaseTimeout;
+        using var cleanup = new CancellationTokenSource(timeout);
+        try
+        {
+            var released = await control.ReleaseControlAsync(cleanup.Token);
+            if (released)
+            {
+                _logger?.LogInformation(
+                    "Released Adapter AGV control before workflow run {WorkflowRunId} {TerminalContext}.",
+                    workItem.NodeExecution.WorkflowRunId,
+                    terminalContext);
+            }
+            else
+            {
+                _logger?.LogWarning(
+                    "Workflow run {WorkflowRunId} {TerminalContext}, but Adapter control was not owned at cleanup time; no release command was sent.",
+                    workItem.NodeExecution.WorkflowRunId,
+                    terminalContext);
+            }
+        }
+        catch (Exception exception)
+        {
+            // A lost response after POST is ambiguous. Never retry release;
+            // the next read-only preflight must expose the owner.
+            _logger?.LogWarning(
+                exception,
+                "Workflow run {WorkflowRunId} {TerminalContext}, but AGV control release could not be confirmed. Recheck ownership without replaying the request.",
+                workItem.NodeExecution.WorkflowRunId,
+                terminalContext);
+        }
     }
 
     private async Task<bool> IsFinalPhysicalMoveAsync(

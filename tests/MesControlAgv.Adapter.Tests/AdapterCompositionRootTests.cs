@@ -176,6 +176,44 @@ public sealed class AdapterCompositionRootTests
     }
 
     [Fact]
+    public async Task Aubo_catalog_cache_is_shared_across_http_scopes()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Agv:Driver"] = "simulator",
+                ["Devices:AuboArm:Driver"] = "simulator",
+                ["Devices:AuboArm:Enabled"] = "true",
+                ["Devices:AuboArm:AllowedProgramNames:0"] = "测试1",
+                ["Devices:AuboArm:ProgramCatalogMaxSlots"] = "2",
+                ["Devices:AuboArm:ProgramCatalogInterRequestDelayMs"] = "0",
+                ["Devices:AuboArm:ProgramCatalogCacheTtlMs"] = "60000"
+            })
+            .Build();
+        using var provider = AddServices(configuration).BuildServiceProvider();
+
+        AuboArmProgramCatalogResponse first;
+        using (var scope = provider.CreateScope())
+        {
+            first = await scope.ServiceProvider
+                .GetRequiredService<IAuboArmProgramController>()
+                .GetProgramCatalogAsync("ARM-01", CancellationToken.None);
+        }
+
+        AuboArmProgramCatalogResponse second;
+        using (var scope = provider.CreateScope())
+        {
+            second = await scope.ServiceProvider
+                .GetRequiredService<IAuboArmProgramController>()
+                .GetProgramCatalogAsync("ARM-01", CancellationToken.None);
+        }
+
+        Assert.False(first.IsCached);
+        Assert.True(second.IsCached);
+        Assert.Equal(first.ObservedAtUtc, second.ObservedAtUtc);
+    }
+
+    [Fact]
     public void Physical_environment_replaces_default_json_arrays_instead_of_merging_them()
     {
         var directory = Path.Combine(Path.GetTempPath(), $"adapter-physical-config-{Guid.NewGuid():N}");

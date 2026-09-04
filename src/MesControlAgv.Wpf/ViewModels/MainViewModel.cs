@@ -443,6 +443,78 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         _refreshLoop = RefreshLoopAsync(_timer, _shutdown.Token);
     }
 
+    /// <summary>
+    /// Binds the read-only monitor to an explicit execution/request identity
+    /// supplied by an external client. Unknown identities never replace a run
+    /// already shown in the UI, and this method never performs "latest run"
+    /// discovery.
+    /// </summary>
+    public async Task<bool> BindWorkflowRunAsync(
+        WorkflowRunStartupBinding binding,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(binding);
+        if (!binding.IsSpecified)
+            return false;
+        if (!binding.IsValid)
+        {
+            WorkflowRunMonitor.SetStatusMessage(binding.Error ??
+                "流程启动绑定无效；请提供一个显式 execution ID 或 request ID。");
+            return false;
+        }
+
+        Guid executionId;
+        if (binding.ExecutionId is { } suppliedExecutionId)
+        {
+            executionId = suppliedExecutionId;
+        }
+        else if (binding.RequestId is { } requestId)
+        {
+            var snapshot = await _mes.GetWorkflowExecutionByRequestAsync(requestId, cancellationToken);
+            if (snapshot is null)
+            {
+                WorkflowRunMonitor.SetStatusMessage(
+                    $"未找到显式指定的流程 request ID {requestId:D}；保留当前已加载运行。");
+                return false;
+            }
+            executionId = snapshot.ExecutionId;
+            if (executionId == Guid.Empty)
+            {
+                WorkflowRunMonitor.SetStatusMessage(
+                    $"request ID {requestId:D} 未返回有效 execution ID；保留当前已加载运行。");
+                return false;
+            }
+        }
+        else
+        {
+            return false;
+        }
+
+        var bound = await WorkflowRunMonitor.LoadExplicitAsync(executionId, cancellationToken);
+        if (bound)
+        {
+            WorkflowRunMonitor.SetStatusMessage(
+                $"已按显式 execution ID 绑定流程运行 {executionId:D}。");
+        }
+        return bound;
+    }
+
+    /// <summary>Convenience overload for hosts that already parsed an execution id.</summary>
+    public Task<bool> BindWorkflowRunAsync(
+        Guid executionId,
+        CancellationToken cancellationToken = default) =>
+        BindWorkflowRunAsync(
+            new WorkflowRunStartupBinding(executionId, null),
+            cancellationToken);
+
+    /// <summary>Convenience overload for an explicitly supplied admission request id.</summary>
+    public Task<bool> BindWorkflowRequestAsync(
+        Guid requestId,
+        CancellationToken cancellationToken = default) =>
+        BindWorkflowRunAsync(
+            new WorkflowRunStartupBinding(null, requestId),
+            cancellationToken);
+
     public async Task RefreshAsync(Guid? preferredTaskId = null)
     {
         if (!await TryEnterRefreshAsync()) return;
@@ -984,6 +1056,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         // before raising LastExecution. Reuse the monitor's normal read path so
         // the UI shows the same server-side evidence as a manually entered run ID.
         WorkflowRunMonitor.RunIdText = execution.ExecutionId.ToString("D");
+        if (isPhysicalBatchExecution)
+            WorkflowRunMonitor.OperatorName = WorkflowEditor.PhysicalBatchOperatorName;
         WorkflowRunMonitor.RefreshCommand.Execute(null);
     }
 

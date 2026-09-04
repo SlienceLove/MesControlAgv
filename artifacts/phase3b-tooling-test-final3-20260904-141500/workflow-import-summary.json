@@ -1,0 +1,22 @@
+{
+    "schema":  "mes.physical-workflow-import/1.0",
+    "createdAtUtc":  "2026-09-04T06:04:12.3076445+00:00",
+    "workflowId":  "feda8171-d727-4f8a-9cda-2453033bc277",
+    "name":  "料盘标准流程（LM1→LM7→LM2→LM7→LM1）",
+    "nodes":  9,
+    "edges":  8,
+    "nodeTypes":  [
+                      "core.start",
+                      "agv.move",
+                      "robot.execute-program",
+                      "agv.move",
+                      "robot.execute-program",
+                      "agv.move",
+                      "robot.execute-program",
+                      "agv.move",
+                      "core.end"
+                  ],
+    "publicationAttempted":  false,
+    "writesToDevicesAttempted":  false,
+    "automaticRetry":  false
+}

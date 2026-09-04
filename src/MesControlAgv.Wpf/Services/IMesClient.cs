@@ -175,6 +175,16 @@ public interface IMesClient
         CancellationToken cancellationToken) =>
         Task.FromResult<AuboArmProgramCatalogResponse?>(null);
 
+    /// <summary>
+    /// Reads the AUBO catalog, optionally bypassing the Adapter's short-lived
+    /// cache. Existing clients keep the ordinary cached-read behavior.
+    /// </summary>
+    Task<AuboArmProgramCatalogResponse?> GetAuboArmProgramCatalogAsync(
+        string deviceId,
+        bool forceFresh,
+        CancellationToken cancellationToken) =>
+        GetAuboArmProgramCatalogAsync(deviceId, cancellationToken);
+
     Task<AuboArmProgramOperationResponse> LoadAuboProgramAsync(
         string deviceId,
         string programName,
@@ -201,6 +211,38 @@ public interface IMesClient
         Task.FromException<AuboArmProgramOperationResponse>(
             new NotSupportedException("AUBO program control is not supported by this MES client."));
 
+    /// <summary>
+    /// Additive overloads used by a workflow worker or an explicitly correlated
+    /// control surface. Legacy/manual callers may continue to use the four
+    /// argument methods above; production implementations forward the durable
+    /// identity in the JSON body when supplied.
+    /// </summary>
+    Task<AuboArmProgramOperationResponse> LoadAuboProgramAsync(
+        string deviceId,
+        string programName,
+        string operatorName,
+        Guid operationId,
+        AuboArmOperationCorrelation? correlation,
+        CancellationToken cancellationToken) =>
+        LoadAuboProgramAsync(deviceId, programName, operatorName, operationId, cancellationToken);
+
+    Task<AuboArmProgramOperationResponse> RunAuboProgramAsync(
+        string deviceId,
+        string? programName,
+        string operatorName,
+        Guid operationId,
+        AuboArmOperationCorrelation? correlation,
+        CancellationToken cancellationToken) =>
+        RunAuboProgramAsync(deviceId, programName, operatorName, operationId, cancellationToken);
+
+    Task<AuboArmProgramOperationResponse> StopAuboProgramAsync(
+        string deviceId,
+        string operatorName,
+        Guid operationId,
+        AuboArmOperationCorrelation? correlation,
+        CancellationToken cancellationToken) =>
+        StopAuboProgramAsync(deviceId, operatorName, operationId, cancellationToken);
+
     // More generic aliases make the boundary convenient for callers that refer to
     // the device family as a robot arm rather than by the AUBO vendor name.
     Task<AuboArmStatusResponse?> GetRobotArmStatusAsync(string deviceId, CancellationToken cancellationToken) =>
@@ -213,6 +255,11 @@ public interface IMesClient
         GetAuboArmProgramAsync(deviceId, cancellationToken);
     Task<AuboArmProgramCatalogResponse?> GetRobotArmProgramCatalogAsync(string deviceId, CancellationToken cancellationToken) =>
         GetAuboArmProgramCatalogAsync(deviceId, cancellationToken);
+    Task<AuboArmProgramCatalogResponse?> GetRobotArmProgramCatalogAsync(
+        string deviceId,
+        bool forceFresh,
+        CancellationToken cancellationToken) =>
+        GetAuboArmProgramCatalogAsync(deviceId, forceFresh, cancellationToken);
     Task<AuboArmProgramOperationResponse> LoadRobotArmProgramAsync(
         string deviceId,
         string programName,
@@ -233,6 +280,32 @@ public interface IMesClient
         Guid operationId,
         CancellationToken cancellationToken) =>
         StopAuboProgramAsync(deviceId, operatorName, operationId, cancellationToken);
+
+    Task<AuboArmProgramOperationResponse> LoadRobotArmProgramAsync(
+        string deviceId,
+        string programName,
+        string operatorName,
+        Guid operationId,
+        AuboArmOperationCorrelation? correlation,
+        CancellationToken cancellationToken) =>
+        LoadAuboProgramAsync(deviceId, programName, operatorName, operationId, correlation, cancellationToken);
+
+    Task<AuboArmProgramOperationResponse> RunRobotArmProgramAsync(
+        string deviceId,
+        string? programName,
+        string operatorName,
+        Guid operationId,
+        AuboArmOperationCorrelation? correlation,
+        CancellationToken cancellationToken) =>
+        RunAuboProgramAsync(deviceId, programName, operatorName, operationId, correlation, cancellationToken);
+
+    Task<AuboArmProgramOperationResponse> StopRobotArmProgramAsync(
+        string deviceId,
+        string operatorName,
+        Guid operationId,
+        AuboArmOperationCorrelation? correlation,
+        CancellationToken cancellationToken) =>
+        StopAuboProgramAsync(deviceId, operatorName, operationId, correlation, cancellationToken);
     Task<DashboardTask> CreateTaskAsync(CancellationToken cancellationToken);
     Task<DashboardTask> CreateTaskAsync(int sourceStationCode, int targetStationCode, int priority, string? description, string? externalId, CancellationToken cancellationToken);
     Task<DashboardTask> DispatchTaskAsync(Guid taskId, CancellationToken cancellationToken) =>

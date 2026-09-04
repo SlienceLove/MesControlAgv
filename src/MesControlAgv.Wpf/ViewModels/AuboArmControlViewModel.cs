@@ -258,12 +258,15 @@ public sealed class AuboArmControlViewModel : INotifyPropertyChanged, IDisposabl
             {
                 foreach (var program in catalog.AvailablePrograms)
                     AvailablePrograms.Add(program);
+                var observation = catalog.IsCached
+                    ? $"缓存，观测于 {catalog.ObservedAtUtc.ToLocalTime():HH:mm:ss}"
+                    : $"新鲜读取，观测于 {catalog.ObservedAtUtc.ToLocalTime():HH:mm:ss}";
                 ProgramCatalogStatus = catalog.IsComplete
-                    ? $"已读取 {AvailablePrograms.Count} 个程序（含配置允许列表）"
+                    ? $"已读取 {AvailablePrograms.Count} 个程序（含配置允许列表；{observation}）"
                     : catalog.ReadErrors.Any(error =>
                         error.Contains("program catalog scan timed out", StringComparison.OrdinalIgnoreCase))
-                        ? $"程序目录读取超时，已显示当前/允许列表（另有 {catalog.ReadErrors.Count} 条读取信息）"
-                        : $"程序列表部分读取：{catalog.ReadErrors.Count} 个槽位失败";
+                        ? $"程序目录读取超时，已显示当前/允许列表（另有 {catalog.ReadErrors.Count} 条读取信息；{observation}）"
+                        : $"程序列表部分读取：{catalog.ReadErrors.Count} 个槽位失败（{observation}）";
                 if (!string.IsNullOrWhiteSpace(catalog.CurrentProgram))
                 {
                     LoadedProgram = catalog.CurrentProgram!;
@@ -377,7 +380,7 @@ public sealed class AuboArmControlViewModel : INotifyPropertyChanged, IDisposabl
             LoadedProgram = string.IsNullOrWhiteSpace(result.LoadedProgram) ? LoadedProgram : result.LoadedProgram!;
             Runtime = string.IsNullOrWhiteSpace(result.RuntimeStatus) ? result.RuntimeState.ToString() : result.RuntimeStatus!;
             LastResponse = $"{result.Operation}：{result.State}（操作 {result.OperationId:N}）";
-            ErrorMessage = result.ErrorMessage ?? string.Empty;
+            ErrorMessage = result.ErrorMessage ?? result.CorrelationWarning ?? string.Empty;
             OnPropertyChanged(nameof(HasLoadedProgram));
             OnPropertyChanged(nameof(CanOperate));
         });

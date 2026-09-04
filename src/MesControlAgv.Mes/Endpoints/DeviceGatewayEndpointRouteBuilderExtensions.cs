@@ -296,54 +296,103 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
 
         endpoints.MapGet("/api/robot-arms/{deviceId}/programs", async (
             string deviceId,
+            bool fresh,
             IAuboArmGateway arm,
             CancellationToken cancellationToken) =>
             await ExecuteArmReadAsync(
-                () => arm.GetProgramCatalogAsync(deviceId, cancellationToken)));
+                () => arm.GetProgramCatalogAsync(deviceId, fresh, cancellationToken)));
 
         endpoints.MapPost("/api/robot-arms/{deviceId}/program/load", async (
             string deviceId,
             AuboArmProgramRequest request,
             IAuboArmGateway arm,
+            IWorkflowApplicationService workflows,
+            ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
             await ExecuteArmProgramWriteAsync(
-                () => RequireProgramRequest(request.EffectiveProgramName, request.EffectiveOperatorName)
-                    ? arm.LoadProgramAsync(
-                    deviceId,
-                    request.EffectiveProgramName,
-                    request.EffectiveOperatorName,
-                    request.OperationId.GetValueOrDefault(Guid.NewGuid()),
-                    cancellationToken)
-                    : throw new ArgumentException("ProgramName and OperatorName are required.")));
+                async () =>
+                {
+                    if (!RequireProgramRequest(request.EffectiveProgramName, request.EffectiveOperatorName))
+                        throw new ArgumentException("ProgramName and OperatorName are required.");
+                    var operationId = request.OperationId.GetValueOrDefault(Guid.NewGuid());
+                    var correlation = await AuboArmWorkflowCorrelationValidator.ValidateAsync(
+                        deviceId,
+                        operationId,
+                        request.WorkflowCorrelation,
+                        workflows,
+                        loggerFactory.CreateLogger("AuboArmWorkflowCorrelation"),
+                        "load",
+                        cancellationToken);
+                    var result = await arm.LoadProgramAsync(
+                        deviceId,
+                        request.EffectiveProgramName,
+                        request.EffectiveOperatorName,
+                        operationId,
+                        correlation,
+                        cancellationToken);
+                    return MarkUncorrelated(result, correlation);
+                }));
 
         endpoints.MapPost("/api/robot-arms/{deviceId}/program/run", async (
             string deviceId,
             AuboArmProgramRunRequest request,
             IAuboArmGateway arm,
+            IWorkflowApplicationService workflows,
+            ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
             await ExecuteArmProgramWriteAsync(
-                () => RequireProgramRequest(request.EffectiveProgramName, request.EffectiveOperatorName)
-                    ? arm.RunProgramAsync(
-                    deviceId,
-                    request.EffectiveProgramName,
-                    request.EffectiveOperatorName,
-                    request.OperationId.GetValueOrDefault(Guid.NewGuid()),
-                    cancellationToken)
-                    : throw new ArgumentException("OperatorName is required.")));
+                async () =>
+                {
+                    if (!RequireProgramRequest(request.EffectiveProgramName, request.EffectiveOperatorName))
+                        throw new ArgumentException("OperatorName is required.");
+                    var operationId = request.OperationId.GetValueOrDefault(Guid.NewGuid());
+                    var correlation = await AuboArmWorkflowCorrelationValidator.ValidateAsync(
+                        deviceId,
+                        operationId,
+                        request.WorkflowCorrelation,
+                        workflows,
+                        loggerFactory.CreateLogger("AuboArmWorkflowCorrelation"),
+                        "run",
+                        cancellationToken);
+                    var result = await arm.RunProgramAsync(
+                        deviceId,
+                        request.EffectiveProgramName,
+                        request.EffectiveOperatorName,
+                        operationId,
+                        correlation,
+                        cancellationToken);
+                    return MarkUncorrelated(result, correlation);
+                }));
 
         endpoints.MapPost("/api/robot-arms/{deviceId}/program/stop", async (
             string deviceId,
             AuboArmProgramStopRequest request,
             IAuboArmGateway arm,
+            IWorkflowApplicationService workflows,
+            ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
             await ExecuteArmProgramWriteAsync(
-                () => RequireProgramRequest("ok", request.EffectiveOperatorName)
-                    ? arm.StopProgramAsync(
-                    deviceId,
-                    request.EffectiveOperatorName,
-                    request.OperationId.GetValueOrDefault(Guid.NewGuid()),
-                    cancellationToken)
-                    : throw new ArgumentException("OperatorName is required.")));
+                async () =>
+                {
+                    if (!RequireProgramRequest("ok", request.EffectiveOperatorName))
+                        throw new ArgumentException("OperatorName is required.");
+                    var operationId = request.OperationId.GetValueOrDefault(Guid.NewGuid());
+                    var correlation = await AuboArmWorkflowCorrelationValidator.ValidateAsync(
+                        deviceId,
+                        operationId,
+                        request.WorkflowCorrelation,
+                        workflows,
+                        loggerFactory.CreateLogger("AuboArmWorkflowCorrelation"),
+                        "stop",
+                        cancellationToken);
+                    var result = await arm.StopProgramAsync(
+                        deviceId,
+                        request.EffectiveOperatorName,
+                        operationId,
+                        correlation,
+                        cancellationToken);
+                    return MarkUncorrelated(result, correlation);
+                }));
 
         endpoints.MapPost("/api/agv-aubo-sequences", async (
             AgvAuboSequenceRequest request,
@@ -469,6 +518,15 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
         {
             return Results.StatusCode(StatusCodes.Status501NotImplemented);
         }
+        catch (AuboArmCorrelationException exception)
+        {
+            return Results.Conflict(new
+            {
+                detail = exception.Message,
+                code = exception.Code,
+                correlationRejected = true
+            });
+        }
         catch (InvalidOperationException exception)
         {
             return Results.UnprocessableEntity(new { detail = exception.Message });
@@ -481,6 +539,17 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
 
     private static bool RequireProgramRequest(string? programName, string? operatorName) =>
         !string.IsNullOrWhiteSpace(programName) && !string.IsNullOrWhiteSpace(operatorName);
+
+    private static AuboArmProgramOperationResponse MarkUncorrelated(
+        AuboArmProgramOperationResponse result,
+        AuboArmOperationCorrelation? correlation) =>
+        correlation is null
+            ? result with
+            {
+                CorrelationWarningCode = AuboArmWorkflowCorrelationValidator.MissingCorrelationWarningCode,
+                CorrelationWarning = "AUBO program write was not associated with a workflow device operation; reconcile it manually."
+            }
+            : result;
 
     private static async Task<IResult> ExecuteWorkstationReadAsync<T>(
         Func<Task<T>> operation,

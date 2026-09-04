@@ -321,7 +321,14 @@ function Restart-MesProcess {
     $startInfo.UseShellExecute = $true
     $dllArgument = ([string]$stateMes.Dll).Replace('"', '\"')
     $urlArgument = ([string]$stateMes.Url).Replace('"', '\"')
-    $startInfo.Arguments = '"{0}" --urls "{1}" --environment Development' -f $dllArgument, $urlArgument
+    $restartEnvironment = if ($null -ne $runState.PSObject.Properties['EnvironmentName'] -and
+        -not [string]::IsNullOrWhiteSpace([string]$runState.EnvironmentName)) {
+        [string]$runState.EnvironmentName
+    } else { 'Development' }
+    if ($restartEnvironment -notin @('Development', 'FieldSimulation')) {
+        throw "Unsupported local service environment '$restartEnvironment' in state file."
+    }
+    $startInfo.Arguments = '"{0}" --urls "{1}" --environment {2}' -f $dllArgument, $urlArgument, $restartEnvironment
     if ($null -ne $stateMes.PSObject.Properties['EnvironmentVariables'] -and $null -ne $stateMes.EnvironmentVariables) {
         foreach ($entry in $stateMes.EnvironmentVariables.PSObject.Properties) {
             $startInfo.Environment[$entry.Name] = [string]$entry.Value
@@ -718,7 +725,14 @@ function New-WorkflowDefinition {
         [string]$Description
     )
 
+    # Typed graph fields are required by FieldSimulation publication rules.
+    $controlInput = @{ key = 'in'; displayName = 'Input'; direction = 0; dataType = 'control'; cardinality = 1 }
+    # WorkflowPortCardinality.Many is 0; Single is 1.
+    $successOutput = @{ key = 'success'; displayName = 'Success'; direction = 1; dataType = 'control'; cardinality = 0; edgeKind = 0 }
+    $failureOutput = @{ key = 'failure'; displayName = 'Failure'; direction = 1; dataType = 'control'; cardinality = 0; edgeKind = 1 }
+    $timeoutOutput = @{ key = 'timeout'; displayName = 'Timeout'; direction = 1; dataType = 'control'; cardinality = 0; edgeKind = 2 }
     return @{
+        schemaVersion = 3
         id = $WorkflowId
         name = 'Offline transport rollback workflow'
         description = $Description
@@ -727,6 +741,8 @@ function New-WorkflowDefinition {
             @{
                 id = $StartNodeId
                 type = 0
+                nodeTypeId = 'core.start'
+                schemaVersion = '1.0'
                 name = 'Start'
                 description = 'Start transport'
                 targetStation = $null
@@ -734,11 +750,15 @@ function New-WorkflowDefinition {
                 y = 0
                 order = 1
                 parameters = @()
+                ports = @($successOutput)
+                configuration = @{}
                 nextNodeIds = @($MoveNodeId)
             }
             @{
                 id = $MoveNodeId
                 type = 1
+                nodeTypeId = 'agv.move'
+                schemaVersion = '1.0'
                 name = 'Move'
                 description = $Description
                 targetStation = $TargetStation
@@ -746,11 +766,15 @@ function New-WorkflowDefinition {
                 y = 0
                 order = 2
                 parameters = @()
+                ports = @($controlInput, $successOutput, $failureOutput, $timeoutOutput)
+                configuration = @{ '$targetStation' = $TargetStation; timeoutSeconds = '300'; retryCount = '0' }
                 nextNodeIds = @($EndNodeId)
             }
             @{
                 id = $EndNodeId
                 type = 5
+                nodeTypeId = 'core.end'
+                schemaVersion = '1.0'
                 name = 'End'
                 description = 'End transport'
                 targetStation = $null
@@ -758,8 +782,14 @@ function New-WorkflowDefinition {
                 y = 0
                 order = 3
                 parameters = @()
+                ports = @(@{ key = 'in'; displayName = 'Input'; direction = 0; dataType = 'control'; cardinality = 0 })
+                configuration = @{}
                 nextNodeIds = @()
             }
+        )
+        edges = @(
+            @{ id = [Guid]::NewGuid(); sourceNodeId = $StartNodeId; sourcePort = 'success'; targetNodeId = $MoveNodeId; targetPort = 'in'; kind = 0 }
+            @{ id = [Guid]::NewGuid(); sourceNodeId = $MoveNodeId; sourcePort = 'success'; targetNodeId = $EndNodeId; targetPort = 'in'; kind = 0 }
         )
     }
 }
@@ -797,8 +827,28 @@ function Invoke-WorkflowPublishRollbackScenario {
     $moveNodeId = [Guid]::NewGuid()
     $endNodeId = [Guid]::NewGuid()
     $actor = 'verify-local-workflow'
-    $v1Target = 'SAMPLE_01'
-    $v2Target = 'DROP_01'
+    # The verifier supports both the legacy Development station catalog and
+    # the LM-based FieldSimulation catalog used by the current local stack.
+    # Read the active catalog instead of silently submitting an invalid target.
+    $stationResponse = Invoke-RestMethod -Uri "$mes/api/stations"
+    $stationCatalog = if ($null -ne $stationResponse.PSObject.Properties['value']) {
+        @($stationResponse.value)
+    }
+    else {
+        @($stationResponse)
+    }
+    $stationIds = @($stationCatalog | ForEach-Object { [string]$_.agvStationId })
+    if ($stationIds -contains 'SAMPLE_01' -and $stationIds -contains 'DROP_01') {
+        $v1Target = 'SAMPLE_01'
+        $v2Target = 'DROP_01'
+    }
+    elseif ($stationIds -contains 'LM2' -and $stationIds -contains 'LM4') {
+        $v1Target = 'LM2'
+        $v2Target = 'LM4'
+    }
+    else {
+        throw "Workflow publish/rollback verification requires either SAMPLE_01/DROP_01 or LM2/LM4 stations; found: $($stationIds -join ', ')"
+    }
 
     $definitionV1 = New-WorkflowDefinition `
         -WorkflowId $workflowId `

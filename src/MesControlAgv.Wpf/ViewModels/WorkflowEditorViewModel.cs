@@ -96,6 +96,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
     private WorkflowImportReport? _lastImportReport;
     private string _physicalBatchSafetyObserverName =
         Environment.GetEnvironmentVariable("WORKFLOW_SAFETY_OBSERVER") ?? string.Empty;
+    private string _physicalBatchOperatorName = string.Empty;
     private string _physicalBatchPermitPrefix =
         Environment.GetEnvironmentVariable("WORKFLOW_PERMIT_PREFIX") ?? "material-batch";
     private string _physicalBatchPermitMinutes =
@@ -114,6 +115,10 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _mes = mes;
         _actorProvider = actorProvider ?? (() => "wpf-editor");
+        _physicalBatchOperatorName =
+            Environment.GetEnvironmentVariable("WORKFLOW_OPERATOR")?.Trim() is { Length: > 0 } configuredOperator
+                ? configuredOperator
+                : Actor;
         _catalog = catalog ?? BuiltInWorkflowCatalog.Create();
         _simulatorExecutionEnabled = simulatorExecutionEnabled;
         _physicalBatchExecutionEnabled = physicalBatchExecutionEnabled;
@@ -639,9 +644,12 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
             .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         _robotProgramCatalogs[deviceId] = names;
+        var observation = catalog.IsCached
+            ? $"缓存，观测于 {catalog.ObservedAtUtc.ToLocalTime():HH:mm:ss}"
+            : $"新鲜读取，观测于 {catalog.ObservedAtUtc.ToLocalTime():HH:mm:ss}";
         RobotProgramCatalogStatus = catalog.IsComplete
-            ? $"{deviceId} 已读取 {names.Length} 个可用程序（预加载槽位/允许列表）"
-            : $"{deviceId} 程序目录部分读取；仍有 {catalog.ReadErrors.Count} 个槽位错误";
+            ? $"{deviceId} 已读取 {names.Length} 个可用程序（预加载槽位/允许列表；{observation}）"
+            : $"{deviceId} 程序目录部分读取；仍有 {catalog.ReadErrors.Count} 个槽位错误（{observation}）";
         Message = names.Length == 0
             ? $"{deviceId} 未返回可选程序；流程节点不会写入程序名。"
             : $"已将 {deviceId} 的程序目录加载到流程编辑器，可在机械臂节点中选择。";
@@ -751,6 +759,16 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
         set
         {
             if (SetField(ref _physicalBatchSafetyObserverName, value ?? string.Empty))
+                RefreshCommandStates();
+        }
+    }
+
+    public string PhysicalBatchOperatorName
+    {
+        get => _physicalBatchOperatorName;
+        set
+        {
+            if (SetField(ref _physicalBatchOperatorName, value?.Trim() ?? string.Empty))
                 RefreshCommandStates();
         }
     }
@@ -1073,6 +1091,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
         CanUseRemote() &&
         IsStandardMaterialWorkflow(SelectedWorkflow) &&
         SelectedRemoteVersion is { Status: ContractWorkflowVersionStatus.Published, PublishStatus: ContractWorkflowPublishStatus.Published } &&
+        !string.IsNullOrWhiteSpace(PhysicalBatchOperatorName) &&
         !string.IsNullOrWhiteSpace(PhysicalBatchSafetyObserverName) &&
         !string.IsNullOrWhiteSpace(PhysicalBatchPermitPrefix) &&
         int.TryParse(PhysicalBatchPermitMinutes, out var minutes) && minutes is >= 30 and <= 1440;
@@ -1391,7 +1410,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
             return;
         }
 
-        var operatorName = Actor;
+        var operatorName = PhysicalBatchOperatorName.Trim();
         var observerName = PhysicalBatchSafetyObserverName.Trim();
         var permitPrefix = PhysicalBatchPermitPrefix.Trim();
         var expiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(permitMinutes);

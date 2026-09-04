@@ -1,0 +1,15 @@
+{
+    "schema":  "mes.physical-workflow-monitor-replay-test/1.0",
+    "verifiedAtUtc":  "2026-09-04T09:11:47.4995518+00:00",
+    "topLevelArrayCount":  2,
+    "valueWrapperCount":  2,
+    "itemsWrapperCount":  1,
+    "dataWrapperCount":  2,
+    "scalarObjectPreserved":  true,
+    "scalarCollectionCount":  1,
+    "chineseTextPreserved":  true,
+    "wrappersLeaked":  false,
+    "deviceWritesAttempted":  false,
+    "automaticRetry":  false,
+    "output":  "D:\\Project\\Github\\Mes\\artifacts\\phase3c-monitor-test-final4-20260904"
+}

@@ -1,6 +1,8 @@
 using MesControlAgv.Adapter.Data;
 using MesControlAgv.Adapter.Drivers;
 using MesControlAgv.Adapter.Services;
+using System.Net.Sockets;
+using System.Data;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
 using MesControlAgv.Domain;
@@ -366,6 +368,26 @@ public sealed class AgvAdapterModule : IDeviceAdapterModule
             {
                 return Results.Conflict(new { detail = exception.Message });
             }
+            catch (AgvApiException exception)
+            {
+                return Results.Problem(exception.Message, statusCode: StatusCodes.Status502BadGateway);
+            }
+            catch (AgvProtocolException exception)
+            {
+                return Results.Problem(exception.Message, statusCode: StatusCodes.Status502BadGateway);
+            }
+            catch (SocketException exception)
+            {
+                return Results.Problem(exception.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            catch (IOException exception)
+            {
+                return Results.Problem(exception.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+            }
+            catch (TimeoutException exception)
+            {
+                return Results.Problem(exception.Message, statusCode: StatusCodes.Status504GatewayTimeout);
+            }
             catch (InvalidOperationException exception)
             {
                 return Results.UnprocessableEntity(new { detail = exception.Message });
@@ -502,6 +524,11 @@ public sealed class AgvAdapterModule : IDeviceAdapterModule
     {
         try
         {
+            if (await ColumnExistsAsync(database, "Tasks", columnName, cancellationToken))
+            {
+                return;
+            }
+
             if (columnName == "AgvId")
             {
                 await database.Database.ExecuteSqlRawAsync(
@@ -522,6 +549,40 @@ public sealed class AgvAdapterModule : IDeviceAdapterModule
         catch (SqliteException exception) when (
             exception.Message.Contains("duplicate column name", StringComparison.OrdinalIgnoreCase))
         {
+        }
+    }
+
+    private static async Task<bool> ColumnExistsAsync(
+        AdapterDbContext database,
+        string tableName,
+        string columnName,
+        CancellationToken cancellationToken)
+    {
+        var connection = database.Database.GetDbConnection();
+        var openedHere = connection.State != ConnectionState.Open;
+        if (openedHere)
+        {
+            await connection.OpenAsync(cancellationToken);
+        }
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"PRAGMA table_info([{tableName}])";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                if (string.Equals(reader[1]?.ToString(), columnName, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+        finally
+        {
+            if (openedHere)
+            {
+                await connection.CloseAsync();
+            }
         }
     }
 }

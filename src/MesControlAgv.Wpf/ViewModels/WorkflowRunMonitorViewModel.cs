@@ -409,6 +409,10 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         private set => SetField(ref _statusMessage, value);
     }
 
+    /// <summary>Publishes a host-level binding/read error without exposing a public setter.</summary>
+    public void SetStatusMessage(string message) =>
+        StatusMessage = string.IsNullOrWhiteSpace(message) ? "" : message.Trim();
+
     public IReadOnlyList<FieldNavigationAcceptanceResponse> FieldAcceptances
     {
         get => _fieldAcceptances;
@@ -959,9 +963,9 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
 
         if (Run.IsTerminal)
         {
-            if (Run.RuntimeStatus == WorkflowRuntimeStatus.Completed &&
+            if ((Run.RuntimeStatus is WorkflowRuntimeStatus.Completed or WorkflowRuntimeStatus.Cancelled) &&
                 Run.PhysicalAuthorization is not null)
-                await RefreshCompletedPhysicalCleanupAsync(cancellationToken);
+                await RefreshTerminalPhysicalCleanupAsync(cancellationToken);
             else
                 ClearPhysicalGate();
             return;
@@ -1126,8 +1130,14 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
             $"现场条件未满足，流程保持暂停并在限定窗口内自动复核：{string.Join("；", messages)}。条件恢复后将继续，未恢复则保持暂停，不会绕过安全门槛。");
     }
 
-    private async Task RefreshCompletedPhysicalCleanupAsync(CancellationToken cancellationToken)
+    private async Task RefreshTerminalPhysicalCleanupAsync(CancellationToken cancellationToken)
     {
+        var terminalLabel = Run?.RuntimeStatus == WorkflowRuntimeStatus.Cancelled
+            ? "流程已取消"
+            : "流程已完成";
+        var warningPrefix = Run?.RuntimeStatus == WorkflowRuntimeStatus.Cancelled
+            ? "cancelled"
+            : "completed";
         try
         {
             var assessment = await _mes.GetPhysicalPreflightAsync(cancellationToken);
@@ -1135,23 +1145,23 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
             if (string.Equals(owner, "adapter", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(owner, "MesControlAgv.Adapter", StringComparison.OrdinalIgnoreCase))
             {
-                PhysicalGateStatus = "流程已完成，但 AGV 控制权释放尚未确认";
+                PhysicalGateStatus = $"{terminalLabel}，但 AGV 控制权释放尚未确认";
                 UpdatePhysicalGateWarning(
-                    "completed:control-release-unconfirmed",
-                    "流程节点已全部完成，但 AGV 控制权仍显示由 Adapter 持有。系统不会自动重复发送释放命令，请先读取现场控制权后再开始下一批。",
+                    $"{warningPrefix}:control-release-unconfirmed",
+                    $"{terminalLabel}，但 AGV 控制权仍显示由 Adapter 持有。系统不会自动重复发送释放命令，请先读取现场控制权后再开始下一批。",
                     "AGV 控制权清理告警");
                 return;
             }
 
             PhysicalGateStatus = string.Equals(owner, "none", StringComparison.OrdinalIgnoreCase)
-                ? "流程已完成，AGV 控制权已释放"
-                : $"流程已完成，AGV 当前控制权：{owner ?? "未知"}";
+                ? $"{terminalLabel}，AGV 控制权已释放"
+                : $"{terminalLabel}，AGV 当前控制权：{owner ?? "未知"}";
             PhysicalGateWarning = string.Empty;
             _lastPhysicalGateWarningKey = null;
         }
         catch (NotSupportedException)
         {
-            PhysicalGateStatus = "流程已完成，当前 MES 不支持控制权复核";
+            PhysicalGateStatus = $"{terminalLabel}，当前 MES 不支持控制权复核";
             PhysicalGateWarning = string.Empty;
             _lastPhysicalGateWarningKey = null;
         }
@@ -1161,13 +1171,43 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         }
         catch (Exception exception)
         {
-            PhysicalGateStatus = "流程已完成，AGV 控制权状态未确认";
+            PhysicalGateStatus = $"{terminalLabel}，AGV 控制权状态未确认";
             UpdatePhysicalGateWarning(
-                "completed:control-read-failed",
-                $"流程已完成，但无法读取 AGV 控制权状态：{exception.Message}。请先人工复核，系统不会自动重发释放命令。",
+                $"{warningPrefix}:control-read-failed",
+                $"{terminalLabel}，但无法读取 AGV 控制权状态：{exception.Message}。请先人工复核，系统不会自动重发释放命令。",
                 "AGV 控制权清理告警");
         }
     }
+
+    /// <summary>
+    /// Binds to an explicitly supplied run id without clearing an already
+    /// displayed run when the id is unknown. This is used for startup handoff
+    /// from an external one-shot client; it deliberately never searches for a
+    /// most-recent run.
+    /// </summary>
+    public async Task<bool> LoadExplicitAsync(
+        Guid workflowRunId,
+        CancellationToken cancellationToken = default)
+    {
+        if (workflowRunId == Guid.Empty)
+            throw new ArgumentException("A workflow run id is required.", nameof(workflowRunId));
+
+        var snapshot = await _mes.GetWorkflowExecutionAsync(workflowRunId, cancellationToken);
+        if (snapshot is null)
+        {
+            StatusMessage = $"未找到显式指定的流程运行 {workflowRunId:D}；保留当前已加载运行。";
+            return false;
+        }
+
+        await LoadAsync(workflowRunId, cancellationToken);
+        return Run?.ExecutionId == workflowRunId;
+    }
+
+    /// <summary>Alias used by startup/host integrations for explicit binding.</summary>
+    public Task<bool> BindExplicitAsync(
+        Guid workflowRunId,
+        CancellationToken cancellationToken = default) =>
+        LoadExplicitAsync(workflowRunId, cancellationToken);
 
     private async Task RefreshAuboPhysicalGateAsync(CancellationToken cancellationToken)
     {

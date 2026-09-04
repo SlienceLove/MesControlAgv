@@ -1,0 +1,14 @@
+{
+    "schema":  "mes.field-workflow-tooling-test/1.0",
+    "verifiedAtUtc":  "2026-09-04T06:04:12.4396628+00:00",
+    "templatePath":  "[REDACTED]",
+    "outputDirectory":  "[REDACTED]",
+    "nodes":  9,
+    "edges":  8,
+    "chinesePreserved":  true,
+    "uniqueIds":  true,
+    "legacyDateWrapper":  false,
+    "publicationAttempted":  false,
+    "deviceWritesAttempted":  false,
+    "automaticRetry":  false
+}

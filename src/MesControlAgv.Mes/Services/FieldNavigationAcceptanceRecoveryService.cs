@@ -33,9 +33,19 @@ public sealed class FieldNavigationAcceptanceRecoveryService(
         var repository = scope.ServiceProvider.GetRequiredService<FieldNavigationAcceptanceRepository>();
         var gateway = scope.ServiceProvider.GetRequiredService<IAgvGateway>();
         List<Entities.FieldNavigationAcceptance> records;
-        try { records = await repository.ListInFlightAsync(cancellationToken); }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        { logger.LogWarning(ex, "Unable to read field-navigation acceptances for reconciliation."); return; }
+        try
+        {
+            records = await repository.ListInFlightAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Unable to read field-navigation acceptances for reconciliation.");
+            return;
+        }
 
         foreach (var acceptance in records)
         {
@@ -69,7 +79,11 @@ public sealed class FieldNavigationAcceptanceRecoveryService(
                     lastError
                 }, cancellationToken);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
             {
                 logger.LogWarning(ex, "Unable to reconcile field-navigation acceptance {AcceptanceId}.", acceptance.Id);
                 try
@@ -81,7 +95,11 @@ public sealed class FieldNavigationAcceptanceRecoveryService(
                         "AdapterTaskReadFailed",
                         cancellationToken);
                 }
-                catch (Exception persistenceException) when (persistenceException is not OperationCanceledException)
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception persistenceException)
                 {
                     logger.LogWarning(
                         persistenceException,

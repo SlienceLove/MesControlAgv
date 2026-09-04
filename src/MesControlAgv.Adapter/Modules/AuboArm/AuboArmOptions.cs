@@ -101,7 +101,14 @@ public sealed record AuboArmOptions
     /// 100 slots, so the deadline keeps a stale or slow slot from making the WPF
     /// refresh appear hung while still returning the approved-name evidence.
     /// </summary>
-    public int ProgramCatalogScanTimeoutMs { get; init; } = 5000;
+    public int ProgramCatalogScanTimeoutMs { get; init; } = 15000;
+
+    /// <summary>
+    /// Short-lived cache window for ordinary catalog reads. A value of zero
+    /// disables reuse while retaining in-flight request coalescing. Explicit
+    /// <c>fresh=true</c> requests always bypass this window.
+    /// </summary>
+    public int ProgramCatalogCacheTtlMs { get; init; } = 30000;
 
     /// <summary>
     /// Explicitly approved controller project names. Read-only deployments may
@@ -268,6 +275,26 @@ public sealed record AuboArmOptions
         {
             throw new InvalidOperationException(
                 $"{SectionName}:ProgramCatalogScanTimeoutMs must be between 1000 and 120000.");
+        }
+
+        if (options.ProgramCatalogCacheTtlMs is < 0 or > 600000)
+        {
+            throw new InvalidOperationException(
+                $"{SectionName}:ProgramCatalogCacheTtlMs must be between 0 and 600000 (0 disables caching).");
+        }
+
+        // A scan that is shorter than its configured inter-request pacing is
+        // guaranteed to report a timeout even when every controller read is
+        // instantaneous. Keep at least one second beyond that deterministic
+        // delay for the read-only RPC round trips themselves.
+        var catalogPacingBudgetMs =
+            (long)Math.Max(0, options.ProgramCatalogMaxSlots - 1) *
+            options.ProgramCatalogInterRequestDelayMs;
+        if (options.ProgramCatalogScanTimeoutMs < catalogPacingBudgetMs + 1000L)
+        {
+            throw new InvalidOperationException(
+                $"{SectionName}:ProgramCatalogScanTimeoutMs must allow the configured slot pacing " +
+                $"({catalogPacingBudgetMs} ms) plus at least 1000 ms for controller reads.");
         }
 
         if (options.MaximumMessageBytes is < 1024 or > 16 * 1024 * 1024)

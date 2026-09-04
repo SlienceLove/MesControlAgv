@@ -1,0 +1,96 @@
+{
+    "schema":  "mes.physical-one-click-phase2-field-acceptance/1.0",
+    "verifiedAtUtc":  "2026-09-04T02:30:14.2098290+00:00",
+    "operatorConfirmedNormal":  true,
+    "execution":  {
+                      "executionId":  "937e061e-82c8-434e-ba38-8b9ac320a0c1",
+                      "requestId":  "b572ebf6-a38e-4140-aad3-d1d24a71b529",
+                      "correlationId":  "wpf-physical-batch-16b6ae9899274f46a5ed9ae6ae10262e",
+                      "workflowId":  "65d9bd5e-73e8-49ae-9510-8541842637fb",
+                      "version":  1,
+                      "runtimeStatus":  5,
+                      "runtimeStatusName":  "Completed",
+                      "isTerminal":  true,
+                      "lastError":  null,
+                      "authorization":  {
+                                            "agvId":  "AGV-01",
+                                            "operatorName":  "admin",
+                                            "safetyObserverName":  "admin",
+                                            "permitPrefix":  "一键启动流程-0904",
+                                            "expiresAtUtc":  "2026-09-04T03:07:09.3033613+00:00"
+                                        }
+                  },
+    "workflow":  {
+                     "semanticNodeCount":  9,
+                     "expectedSemanticNodeCount":  9,
+                     "persistedExecutableNodeCount":  7,
+                     "startAndEndRepresentedByBoundaryState":  true,
+                     "nodeStatuses":  [
+                                          6,
+                                          6,
+                                          6,
+                                          6,
+                                          6,
+                                          6,
+                                          6
+                                      ],
+                     "allExecutableNodesSucceeded":  true,
+                     "allAttemptsOne":  true
+                 },
+    "agv":  {
+                "moveCount":  4,
+                "arrivedCount":  4,
+                "acceptanceCount":  4,
+                "allMoveOperationsSucceeded":  true,
+                "finalOnline":  true,
+                "finalStation":  "LM1",
+                "finalTaskId":  null,
+                "finalControlOwner":  "none",
+                "finalConfidence":  0.9247,
+                "finalRelocationStatus":  1,
+                "finalEmergency":  false,
+                "finalBlocked":  false,
+                "finalFaultCount":  0
+            },
+    "aubo":  {
+                 "programNodeCount":  3,
+                 "succeededProgramCount":  3,
+                 "programNames":  [
+                                      "取料盘",
+                                      "放料盘",
+                                      "回收料盘"
+                                  ],
+                 "allProgramAttemptsOne":  true,
+                 "finalMode":  "Running",
+                 "finalSafetyMode":  "Normal",
+                 "finalOperationalMode":  "Automatic",
+                 "finalRuntime":  "Stopped",
+                 "finalProgram":  "回收料盘",
+                 "linkedLoadCount":  3,
+                 "linkedRunCount":  3,
+                 "unlinkedLoadCountObservedBeforeRun":  1,
+                 "totalLoadRequestsObserved":  4,
+                 "totalRunRequestsObserved":  3
+             },
+    "controlRelease":  {
+                           "releaseRequestCountObserved":  1,
+                           "releaseConfirmationLogCount":  1,
+                           "http200ConfirmedByWorkerLog":  true,
+                           "finalOwnerNone":  true
+                       },
+    "timeline":  {
+                     "total":  29,
+                     "executionAccepted":  1,
+                     "nodePrepared":  7,
+                     "stepsClaimed":  7,
+                     "deviceUpdated":  7,
+                     "stepsCompleted":  7
+                 },
+    "noRunErrors":  true,
+    "fieldRunNormalConfirmed":  true,
+    "uiAutoDisplay":  {
+                          "displayedAutomatically":  false,
+                          "reason":  "Execution was submitted through the single UTF-8 endpoint client; WPF did not receive its in-process LastExecution callback.",
+                          "recordedForFollowup":  true
+                      }
+}

@@ -117,6 +117,8 @@ New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
 
 .\scripts\run-local.ps1 `
   -Configuration Release `
+  -EnvironmentName FieldSimulation `
+  -EnableAutomaticDispatch `
   -RunId $runId `
   -SimulatorUrl http://localhost:5361 `
   -AdapterUrl http://localhost:5362 `
@@ -176,6 +178,12 @@ cancel command. The verifier requires `Cancelled` plus `CancelConfirmed`, and
 checks that MES fleet status, Adapter fleet snapshots, and the Simulator snapshot
 all report no active task:
 
+Start that run with the explicit local-only cancellation override:
+
+```powershell
+.\scripts\run-local.ps1 ... -EnableAutomaticDispatch -EnableTaskCancellation
+```
+
 ```powershell
 .\scripts\verify-local.ps1 `
   -RunId $runId `
@@ -198,13 +206,23 @@ published pointer. No transport task or AGV command is sent:
   -RequireIsolatedStores
 ```
 
-To verify fleet contention, use a fresh run with the default three Simulator
-AGVs. `multi-agv` dispatches three concurrent tasks and requires distinct AGV
+To verify fleet contention, use a fresh FieldSimulation run started with
+`-EnableMultiAgv` (and `-EnableAutomaticDispatch`). This loads the dedicated,
+loopback-only three-Simulator-AGV profile; the normal FieldSimulation profile
+remains single-AGV and fail-closed for dispatch. `multi-agv` dispatches three concurrent tasks and requires distinct AGV
 assignments, then proves a fourth task fails closed with `DeviceFailed` while
 the existing tasks remain correlated. It completes the three assigned tasks
 and checks every Simulator, Adapter, and MES fleet entry is idle:
 
 ```powershell
+.\scripts\run-local.ps1 `
+  -Configuration Release `
+  -EnvironmentName FieldSimulation `
+  -EnableMultiAgv `
+  -EnableAutomaticDispatch `
+  -RunId $runId `
+  -RequireIsolatedStores
+
 .\scripts\verify-local.ps1 `
   -RunId $runId `
   -Scenario multi-agv `

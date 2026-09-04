@@ -10,6 +10,23 @@ namespace MesControlAgv.Wpf.Tests;
 public sealed class MesClientHttpContractTests
 {
     [Fact]
+    public async Task Aubo_catalog_fresh_flag_is_forwarded_to_mes_api()
+    {
+        var handler = new RecordingHandler(_ => JsonResponse(new AuboArmProgramCatalogResponse(
+            "ARM-01", true, "取料盘", ["取料盘"], ["取料盘"], true, [], DateTimeOffset.UtcNow)));
+        using var httpClient = CreateClient(handler);
+        var client = new MesClient(httpClient);
+
+        var result = await client.GetAuboArmProgramCatalogAsync(
+            "ARM-01", forceFresh: true, CancellationToken.None);
+
+        Assert.NotNull(result);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("/api/robot-arms/ARM-01/programs", request.Uri.AbsolutePath);
+        Assert.Equal("fresh=true", request.Uri.Query.TrimStart('?'));
+    }
+
+    [Fact]
     public async Task Get_map_snapshot_maps_profile_metadata_stations_and_directed_edges()
     {
         var handler = new RecordingHandler(_ => JsonResponse(new MapSnapshotResponse(

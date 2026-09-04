@@ -171,6 +171,18 @@ if ($null -eq $simulator -or $null -eq $adapter -or $null -eq $mes) {
     throw 'The state file must contain Simulator, Adapter, and MES services.'
 }
 
+$environmentName = if ($null -ne $state.PSObject.Properties['EnvironmentName'] -and
+    -not [string]::IsNullOrWhiteSpace([string]$state.EnvironmentName)) {
+    [string]$state.EnvironmentName
+} else {
+    # State files created before FieldSimulation became the default remain
+    # restartable with their historical Development profile.
+    'Development'
+}
+if ($environmentName -notin @('Development', 'FieldSimulation')) {
+    throw "Unsupported local service environment '$environmentName' in state file."
+}
+
 $dotnet = (Get-Command dotnet.exe).Source
 try {
     # Keep Simulator alive so its in-memory device operation is available to
@@ -186,13 +198,26 @@ try {
         if (([string]::IsNullOrWhiteSpace([string]$service.Dll)) -or ([string]::IsNullOrWhiteSpace([string]$service.ProjectRoot))) {
             throw "The state file does not include restart metadata for $serviceName. Start a fresh run with the current run-local.ps1 first."
         }
-        $arguments = '"{0}" --urls {1} --environment Development' -f [string]$service.Dll, [string]$service.Url
+        $arguments = '"{0}" --urls {1} --environment {2}' -f [string]$service.Dll, [string]$service.Url, $environmentName
         $psi = [System.Diagnostics.ProcessStartInfo]::new()
         $psi.FileName = $dotnet
         $psi.WorkingDirectory = [string]$service.ProjectRoot
         $psi.Arguments = $arguments
         $psi.UseShellExecute = $false
         $psi.CreateNoWindow = $true
+        $psi.Environment['ASPNETCORE_ENVIRONMENT'] = $environmentName
+        $psi.Environment['DOTNET_ENVIRONMENT'] = $environmentName
+
+        # Reapply every run-scoped override captured by run-local.ps1 (for
+        # example the explicit simulator dispatch gate). Reconstructing only
+        # database and endpoint variables would silently change the profile
+        # across a restart and invalidate recovery verification.
+        if ($null -ne $service.PSObject.Properties['EnvironmentVariables'] -and
+            $null -ne $service.EnvironmentVariables) {
+            foreach ($entry in $service.EnvironmentVariables.PSObject.Properties) {
+                $psi.Environment[$entry.Name] = [string]$entry.Value
+            }
+        }
 
         if ($serviceName -eq 'Adapter') {
             if (-not [string]::IsNullOrWhiteSpace([string]$service.DatabasePath)) {
@@ -224,6 +249,7 @@ try {
         $state.StatePath = $resolvedStatePath
     }
     $state | Add-Member -NotePropertyName RestartedAtUtc -NotePropertyValue ([DateTime]::UtcNow.ToString('O')) -Force
+    $state | Add-Member -NotePropertyName EnvironmentName -NotePropertyValue $environmentName -Force
     $state | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resolvedStatePath -Encoding UTF8
     Write-Host "Restarted Adapter and MES for run '$RunId'; Simulator remained running."
     Write-Host "Service state updated at: $resolvedStatePath"

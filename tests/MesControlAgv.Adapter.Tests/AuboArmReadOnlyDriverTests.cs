@@ -294,6 +294,42 @@ public class AuboArmReadOnlyDriverTests
         Assert.False(options.Enabled);
         Assert.False(options.ControlEnabled);
         Assert.Equal("rob1", options.RobotName);
+        Assert.Equal(15000, options.ProgramCatalogScanTimeoutMs);
+        Assert.Equal(30000, options.ProgramCatalogCacheTtlMs);
+    }
+
+    [Fact]
+    public void Options_ShouldRejectNegativeCatalogCacheTtl()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Devices:AuboArm:ProgramCatalogCacheTtlMs"] = "-1"
+            })
+            .Build();
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => AuboArmOptions.BindAndValidate(configuration));
+
+        Assert.Contains("ProgramCatalogCacheTtlMs", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Options_ShouldRejectCatalogTimeoutShorterThanConfiguredPacingBudget()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Devices:AuboArm:ProgramCatalogMaxSlots"] = "100",
+                ["Devices:AuboArm:ProgramCatalogInterRequestDelayMs"] = "100",
+                ["Devices:AuboArm:ProgramCatalogScanTimeoutMs"] = "5000"
+            })
+            .Build();
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => AuboArmOptions.BindAndValidate(configuration));
+
+        Assert.Contains("slot pacing", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

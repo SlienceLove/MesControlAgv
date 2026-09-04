@@ -1,0 +1,6 @@
+{
+  "value": [
+    { "operationId": "10000000-0000-0000-0000-000000000001", "nodeExecutionId": "00000000-0000-0000-0000-000000000001", "status": 3, "capabilityId": "agv.navigate-to-station" },
+    { "operationId": "10000000-0000-0000-0000-000000000002", "nodeExecutionId": "00000000-0000-0000-0000-000000000002", "status": 3, "capabilityId": "robot.execute-program" }
+  ]
+}

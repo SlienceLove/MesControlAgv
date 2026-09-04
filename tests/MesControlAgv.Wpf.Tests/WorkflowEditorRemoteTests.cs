@@ -176,7 +176,7 @@ public sealed class WorkflowEditorRemoteTests
         var editor = new WorkflowEditorViewModel(
             new WorkflowStore(fixture.Path),
             client,
-            () => "admin",
+            () => "33206",
             physicalBatchExecutionEnabled: true,
             confirmation: new AlwaysConfirm());
 
@@ -187,6 +187,7 @@ public sealed class WorkflowEditorRemoteTests
         editor.PublishCommand.Execute(null);
         await WaitUntilAsync(() => !editor.IsRemoteBusy && editor.SelectedRemoteVersion?.PublishStatus == ContractWorkflowPublishStatus.Published);
 
+        editor.PhysicalBatchOperatorName = "admin";
         editor.PhysicalBatchSafetyObserverName = "admin";
         editor.PhysicalBatchPermitPrefix = "material-test";
         editor.PhysicalBatchPermitMinutes = "60";

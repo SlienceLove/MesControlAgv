@@ -78,9 +78,21 @@ public sealed class WorkflowAuboProgramWorkerTests
         Assert.Equal(["测试1", "测试2"], arm.RunPrograms);
         Assert.Equal(2, arm.RunCalls);
         Assert.Equal(1, arm.FailedObservationReads);
+        Assert.Equal(arm.LoadOperationIds, arm.RunOperationIds);
+        Assert.NotEmpty(arm.Correlations);
+        Assert.All(arm.Correlations, correlation =>
+        {
+            Assert.NotEqual(Guid.Empty, correlation.WorkflowRunId);
+            Assert.NotEqual(Guid.Empty, correlation.WorkflowNodeExecutionId);
+            Assert.Equal(correlation.DeviceOperationId, arm.CorrelationOperationIds[correlation.WorkflowNodeExecutionId]);
+        });
         Assert.All(
             await workflows.ListDeviceOperationsAsync(execution.ExecutionId, CancellationToken.None),
             operation => Assert.Equal(WorkflowDeviceOperationStatus.Succeeded, operation.Status));
+        Assert.All(
+            (await workflows.ListDeviceOperationsAsync(execution.ExecutionId, CancellationToken.None))
+                .Where(operation => operation.CapabilityId == WorkflowCapabilityIds.RobotExecuteProgram),
+            operation => Assert.False(string.IsNullOrWhiteSpace(operation.CorrelationId)));
     }
 
     [Fact]
@@ -112,6 +124,71 @@ public sealed class WorkflowAuboProgramWorkerTests
         await dispatcher.ProcessAsync(CancellationToken.None);
 
         Assert.Empty(arm.RunPrograms);
+    }
+
+    [Fact]
+    public async Task Expired_one_click_authorization_leaves_physical_robot_node_ready()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var dbOptions = new DbContextOptionsBuilder<MesDbContext>().UseSqlite(connection).Options;
+        await using var database = new MesDbContext(dbOptions);
+        await database.Database.EnsureCreatedAsync();
+        var profile = CreateProfile() with
+        {
+            Features = new FeatureFlags { UseSimulator = false }
+        };
+        var validator = new WorkflowValidator(
+            BuiltInWorkflowCatalog.Create(),
+            WorkflowPublicationContext.FromProfile(profile));
+        var reader = new MesWorkflowVersionReader(database);
+        var workflows = new WorkflowApplicationService(
+            database,
+            reader,
+            new WorkflowRuntimeExecutor(reader, validator),
+            validator);
+        var draft = await workflows.CreateDraftAsync(
+            CreateRobotOnlyWorkflow(),
+            "test",
+            CancellationToken.None);
+        Assert.True((await workflows.ValidateVersionAsync(
+            draft.WorkflowId,
+            draft.Version,
+            CancellationToken.None)).IsValid);
+        await workflows.PublishAsync(draft.WorkflowId, draft.Version, "test", CancellationToken.None);
+        var expiresAt = DateTimeOffset.UtcNow.AddHours(1);
+        var execution = await workflows.ExecuteAsync(new WorkflowExecutionRequest
+        {
+            WorkflowId = draft.WorkflowId,
+            Version = draft.Version,
+            RequestId = Guid.NewGuid(),
+            RequestedBy = "test",
+            PhysicalAuthorization = new WorkflowPhysicalRunAuthorization
+            {
+                AgvId = "AGV-01",
+                OperatorName = "test",
+                SafetyObserverName = "observer",
+                PermitPrefix = "expired-aubo",
+                ExpiresAtUtc = expiresAt
+            }
+        }, CancellationToken.None);
+        Assert.True(execution.IsAccepted);
+        var arm = new RecordingArmGateway();
+        var dispatcher = new WorkflowAuboProgramDispatcher(
+            workflows,
+            arm,
+            profile,
+            new WorkflowAuboProgramWorkerOptions { Enabled = true },
+            new AdjustableTimeProvider(expiresAt.AddSeconds(1)));
+
+        await dispatcher.ProcessAsync(CancellationToken.None);
+
+        var snapshot = await workflows.GetExecutionAsync(execution.ExecutionId, CancellationToken.None);
+        Assert.Equal(WorkflowRuntimeStatus.Prepared, snapshot!.RuntimeStatus);
+        Assert.Equal(WorkflowNodeType.RobotProgram, snapshot.PendingStepRequest!.NodeType);
+        Assert.Equal(0, arm.RunCalls);
+        var node = Assert.Single(await workflows.ListAuboProgramDispatchableNodesAsync(CancellationToken.None));
+        Assert.Equal(WorkflowNodeExecutionStatus.Ready, node.NodeExecution.Status);
     }
 
     [Fact]
@@ -275,6 +352,31 @@ public sealed class WorkflowAuboProgramWorkerTests
         };
     }
 
+    private static WorkflowDefinition CreateRobotOnlyWorkflow()
+    {
+        var start = Node(WorkflowNodeType.Start, WorkflowGraphNodeTypeIds.Start, "开始", 1);
+        var robot = Node(
+            WorkflowNodeType.RobotProgram,
+            WorkflowGraphNodeTypeIds.RobotExecuteProgram,
+            "测试1",
+            2,
+            configuration: new Dictionary<string, string?>
+            {
+                [WorkflowNodeConfigurationKeys.DeviceId] = "ARM-01",
+                [WorkflowNodeConfigurationKeys.ProgramName] = "测试1"
+            });
+        var end = Node(WorkflowNodeType.End, WorkflowGraphNodeTypeIds.End, "结束", 3);
+        start = start with { NextNodeIds = [robot.Id] };
+        robot = robot with { NextNodeIds = [end.Id] };
+        return new WorkflowDefinition
+        {
+            Name = "physical AUBO authorization test",
+            SchemaVersion = WorkflowGraphDocument.CurrentSchemaVersion,
+            Nodes = [start, robot, end],
+            Edges = CreateEdges(start, robot, end)
+        };
+    }
+
     private static WorkflowNode Node(
         WorkflowNodeType type,
         string typeId,
@@ -340,6 +442,10 @@ public sealed class WorkflowAuboProgramWorkerTests
         public int RunCalls { get; private set; }
         public bool FailOneObservationRead { get; init; }
         public int FailedObservationReads { get; private set; }
+        public List<Guid> LoadOperationIds { get; } = [];
+        public List<Guid> RunOperationIds { get; } = [];
+        public List<AuboArmOperationCorrelation> Correlations { get; } = [];
+        public Dictionary<Guid, Guid> CorrelationOperationIds { get; } = [];
         private string? _loaded;
         public Task<AuboArmStatusResponse> GetStatusAsync(string deviceId, CancellationToken cancellationToken) => Task.FromResult(Status(deviceId));
         public Task<AuboArmReadinessResponse> GetReadinessAsync(string deviceId, CancellationToken cancellationToken) => Task.FromResult(new AuboArmReadinessResponse(deviceId, true, [], Status(deviceId), _loaded, DateTimeOffset.UtcNow));
@@ -368,12 +474,47 @@ public sealed class WorkflowAuboProgramWorkerTests
         public Task<AuboArmProgramOperationResponse> LoadProgramAsync(string deviceId, string programName, string operatorName, Guid operationId, CancellationToken cancellationToken)
         {
             _loaded = programName;
+            LoadOperationIds.Add(operationId);
+            return Task.FromResult(Operation(operationId, deviceId, programName, "load", operatorName, AuboArmProgramOperationState.Loaded));
+        }
+
+        public Task<AuboArmProgramOperationResponse> LoadProgramAsync(
+            string deviceId,
+            string programName,
+            string operatorName,
+            Guid operationId,
+            AuboArmOperationCorrelation? correlation,
+            CancellationToken cancellationToken)
+        {
+            _loaded = programName;
+            LoadOperationIds.Add(operationId);
+            if (correlation is not null)
+            {
+                Correlations.Add(correlation);
+                CorrelationOperationIds[correlation.WorkflowNodeExecutionId] = correlation.DeviceOperationId;
+            }
             return Task.FromResult(Operation(operationId, deviceId, programName, "load", operatorName, AuboArmProgramOperationState.Loaded));
         }
         public Task<AuboArmProgramOperationResponse> RunProgramAsync(string deviceId, string? programName, string operatorName, Guid operationId, CancellationToken cancellationToken)
         {
             RunCalls++;
+            RunOperationIds.Add(operationId);
             RunPrograms.Add(programName ?? _loaded ?? string.Empty);
+            return Task.FromResult(Operation(operationId, deviceId, programName ?? _loaded ?? string.Empty, "run", operatorName, AuboArmProgramOperationState.Running));
+        }
+
+        public Task<AuboArmProgramOperationResponse> RunProgramAsync(
+            string deviceId,
+            string? programName,
+            string operatorName,
+            Guid operationId,
+            AuboArmOperationCorrelation? correlation,
+            CancellationToken cancellationToken)
+        {
+            RunCalls++;
+            RunOperationIds.Add(operationId);
+            RunPrograms.Add(programName ?? _loaded ?? string.Empty);
+            if (correlation is not null) Correlations.Add(correlation);
             return Task.FromResult(Operation(operationId, deviceId, programName ?? _loaded ?? string.Empty, "run", operatorName, AuboArmProgramOperationState.Running));
         }
         public Task<AuboArmProgramOperationResponse> StopProgramAsync(string deviceId, string operatorName, Guid operationId, CancellationToken cancellationToken) =>
