@@ -1168,6 +1168,7 @@ AGV/AUBO 只读预检和明确授权。
 - 本切片未连接 AGV/AUBO；下一步把协调器接入 MES 持久化快照和模拟器子流程生命周期，验证重启恢复与步骤级设备活动关联。
 
 ## 2026-09-05 实验复合运行时阶段 2：模拟器子流程生命周期协调
+- Release 门禁报告为 [`mes-offline-release-gate-20260905-composite-worker.json`](../artifacts/mes-offline-release-gate-20260905-composite-worker.json)：`1033 passed / 5 allowed skipped / 0 failed`，`releaseEligible=true`；新部署包为 [`PhysicalOneClickCompositeRuntimeWorker-final-20260905-145900.zip`](../bin/Verify/PhysicalOneClickCompositeRuntimeWorker-final-20260905-145900.zip)，SHA-256 记录在同名 `.zip.sha256` sidecar，manifest 固定源码 `fccd190`。现场设备保持断开，未申请或执行现场授权。
 
 - 新增显式 `ExperimentCompositeRuntimeWorker`：仅当 `Profile.Features.UseSimulator=true` 且 `ExperimentCompositeRuntimeWorker.Enabled=true` 时轮询外层快照；默认和 `PhysicalAcceptance` 配置均关闭，`FieldSimulation` 单独启用。
 - `ExperimentCompositeRuntimeService.ProcessPendingAsync` 逐个推进 `Prepared/Running` 外层运行：按固定步骤顺序创建并绑定子工作流，只有观察到 `Completed` 才进入下一步；`Failed`、`Cancelled` 和不可证明/缺失/身份不匹配结果分别 fail-closed。
