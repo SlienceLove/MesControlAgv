@@ -1153,3 +1153,10 @@ AGV/AUBO 只读预检和明确授权。
 - 对已排程多流程任务提供“建立复合运行”按钮，要求操作者填写原因并再次确认；该按钮只创建 Prepared 外层快照，不启动子流程或发送设备命令。
 - 新增 MES API 回归 `3/3`、WPF 客户端路由及监控回归；WPF 全量 `398/398`、Domain `43/43`、MES `166/166` 通过。
 - 本切片仅扩展 MES 只读准备边界和 WPF 展示，现场 AGV/AUBO 未连接；下一步实现有子工作流证据约束的逐步骤协调器。
+
+## 2026-09-05 实验复合运行时阶段 2：子流程证据协调边界
+
+- Domain 新增 `ExperimentCompositeChildWorkflowCoordinator`，校验当前步骤与子工作流的 `WorkflowId/WorkflowVersion/WorkflowRunId` 完全匹配后，才允许映射运行证据。
+- 子流程 `Completed` 才推进下一步骤，`Failed`/`Cancelled` 终止外层运行，`Unknown` 进入待核销状态；没有人工理由时禁止把 Unknown 当作成功或取消。
+- 协调器只消费已有 `WorkflowExecutionSnapshot`，不创建子工作流、不自动重试、不发送设备命令；Domain 定向回归 `8/8` 通过。
+- 本切片未连接 AGV/AUBO；下一步把协调器接入 MES 持久化快照和模拟器子流程生命周期，验证重启恢复与步骤级设备活动关联。

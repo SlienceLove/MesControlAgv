@@ -87,6 +87,7 @@
 - 方案校验问题按 `workflowSteps[n]` 定位到具体步骤，并即时提示多步骤方案缺失预计时长或引用不可用版本。
 - Contracts 增加 `ExperimentRun` / `ExperimentStepRun` 外层运行快照；Domain 状态机按稳定 `StepId/StepRunId` 逐步推进，不允许跳步、活动步骤重复启动或在 Unknown 状态静默取消。
 - MES 以 `ExperimentRuns` 持久化外层快照，提供显式 `/api/experiment-runs/prepare` 与只读查询接口；准备阶段不创建子工作流、不写入设备。
+- Domain 子流程协调器严格匹配当前步骤的 `WorkflowId/WorkflowVersion/WorkflowRunId`，只将已观察到的子流程终态映射到外层状态机，不创建或重试子流程。
 - WPF 流程运行监控按实验任务读取复合快照，显示每个方案步骤的状态、子流程关联和时间/异常；运行 ID 继续仅保留在高级入口。
 - 对已排程多步骤任务提供带操作者原因和二次确认的“建立复合运行”入口；该入口只准备外层快照，不触发设备操作。
 - 复合运行时尚未完成时，多步骤任务的运行准入返回明确的 `EXP-COMPOSITE-WORKFLOW-NOT-SUPPORTED`，禁止误执行第一步后结束。
@@ -106,6 +107,7 @@
 - [x] 新增 `ExperimentRun` / `ExperimentStepRun` 运行快照，固定 `PlanId/PlanVersion/StepId/WorkflowVersion`。
 - [x] 完成设备无关的启动、步骤边界、暂停/恢复、取消和 Unknown 人工核销状态机。
 - [x] 持久化 Prepared 外层快照并提供幂等准备/只读查询 API；准备请求不创建子工作流或设备操作。
+- [x] 增加子流程证据协调边界：Completed 才推进下一步骤，Failed/Cancelled/Unknown 分别收口，Unknown 必须人工核销。
 - [x] 监控页按任务展示复合步骤状态；没有子流程上下文时显示明确占位，不伪造节点或设备证据。
 - 每一步创建独立的节点执行上下文，步骤完成后才允许进入下一步。
 - 暂停、取消、未知结果和恢复必须在步骤边界和设备操作边界分别留痕。
