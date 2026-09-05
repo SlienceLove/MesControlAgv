@@ -18,7 +18,8 @@ namespace MesControlAgv.Mes.Services;
 public sealed class ExperimentCompositeRuntimeService(
     MesDbContext database,
     ExperimentSchedulingMutationGate mutationGate,
-    TimeProvider timeProvider) : IExperimentCompositeRuntimeService
+    TimeProvider timeProvider,
+    IWorkflowApplicationService workflows) : IExperimentCompositeRuntimeService
 {
     private const string PreparedEventType = "ExperimentCompositeRunPrepared";
 
@@ -237,6 +238,128 @@ public sealed class ExperimentCompositeRuntimeService(
         return record is null ? null : ExperimentSchedulingPersistence.MapExperimentRun(record);
     }
 
+    public async Task<ExperimentRun> ReconcileChildAsync(
+        Guid experimentRunId,
+        ReconcileExperimentChildRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (experimentRunId == Guid.Empty)
+            throw new ArgumentException("An experiment run id is required.", nameof(experimentRunId));
+        ArgumentNullException.ThrowIfNull(request);
+        var metadata = NormalizeChildMetadata(request);
+        var fingerprint = CreateChildFingerprint(experimentRunId, metadata);
+
+        await mutationGate.EnterAsync(cancellationToken);
+        try
+        {
+            var priorAudit = await database.ExperimentSchedulingAudits.AsNoTracking()
+                .SingleOrDefaultAsync(item => item.RequestId == metadata.RequestId, cancellationToken);
+            if (priorAudit is not null)
+            {
+                if (priorAudit.EventType != ChildReconciledEventType ||
+                    !string.Equals(priorAudit.RequestFingerprint, fingerprint, StringComparison.Ordinal))
+                {
+                    throw new ExperimentSchedulingConflictException(
+                        $"Request id '{metadata.RequestId}' was already used for a different child-reconciliation payload.",
+                        ExperimentSchedulingIssueCodes.AdmissionRequestIdReused);
+                }
+
+                var replay = ExperimentSchedulingPersistence.Deserialize<ExperimentRun?>(
+                    priorAudit.ResultJson,
+                    null);
+                return replay ?? throw new InvalidOperationException(
+                    $"Child-reconciliation audit '{priorAudit.Id}' does not contain a replay snapshot.");
+            }
+
+            var record = await database.ExperimentRuns.SingleOrDefaultAsync(
+                item => item.ExperimentRunId == experimentRunId,
+                cancellationToken) ?? throw new KeyNotFoundException(
+                $"Experiment run '{experimentRunId}' was not found.");
+            var child = await workflows.GetExecutionAsync(
+                metadata.ChildWorkflowRunId,
+                cancellationToken);
+            if (child is null)
+            {
+                throw new KeyNotFoundException(
+                    $"Child workflow run '{metadata.ChildWorkflowRunId}' was not found.");
+            }
+
+            var run = ExperimentSchedulingPersistence.MapExperimentRun(record);
+            var now = timeProvider.GetUtcNow();
+            if (run.Status == ExperimentRunStatus.Prepared)
+                run = ExperimentCompositeRuntimeStateMachine.Start(run, now);
+
+            ExperimentRun updated;
+            try
+            {
+                updated = run.Steps.Any(step => step.WorkflowRunId == child.ExecutionId)
+                    ? ExperimentCompositeChildWorkflowCoordinator.ReconcileChild(
+                        run,
+                        child,
+                        now,
+                        metadata.UnknownResolutionReason)
+                    : ExperimentCompositeChildWorkflowCoordinator.AttachChild(run, child, now);
+            }
+            catch (InvalidExperimentRunTransitionException exception)
+            {
+                throw new ExperimentSchedulingConflictException(
+                    exception.Message,
+                    ExperimentSchedulingIssueCodes.CompositeWorkflowNotSupported);
+            }
+            ExperimentSchedulingPersistence.ApplyExperimentRun(record, updated);
+            database.ExperimentSchedulingAudits.Add(new ExperimentSchedulingAuditRecord
+            {
+                Id = Guid.NewGuid(),
+                EventType = ChildReconciledEventType,
+                Outcome = updated.Status.ToString(),
+                RequestId = metadata.RequestId,
+                RequestFingerprint = fingerprint,
+                Actor = metadata.Actor,
+                Reason = metadata.Reason,
+                PlanId = updated.PlanId,
+                PlanVersion = updated.PlanVersion,
+                ExperimentJobId = updated.ExperimentJobId,
+                DetailsJson = ExperimentSchedulingPersistence.Serialize(new Dictionary<string, string?>
+                {
+                    ["experimentRunId"] = updated.ExperimentRunId.ToString(),
+                    ["childWorkflowRunId"] = child.ExecutionId.ToString(),
+                    ["childRuntimeStatus"] = child.RuntimeStatus.ToString(),
+                    ["deviceWritesAttempted"] = bool.FalseString
+                }),
+                ResultJson = ExperimentSchedulingPersistence.Serialize(updated),
+                OccurredAtUtc = now.UtcDateTime
+            });
+
+            try
+            {
+                await database.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException)
+            {
+                database.ChangeTracker.Clear();
+                var concurrent = await database.ExperimentSchedulingAudits.AsNoTracking()
+                    .SingleOrDefaultAsync(item => item.RequestId == metadata.RequestId, cancellationToken);
+                if (concurrent is not null &&
+                    concurrent.EventType == ChildReconciledEventType &&
+                    string.Equals(concurrent.RequestFingerprint, fingerprint, StringComparison.Ordinal))
+                {
+                    var replay = ExperimentSchedulingPersistence.Deserialize<ExperimentRun?>(
+                        concurrent.ResultJson,
+                        null);
+                    return replay ?? throw new InvalidOperationException(
+                        "Child-reconciliation replay audit is invalid.");
+                }
+                throw;
+            }
+
+            return updated;
+        }
+        finally
+        {
+            mutationGate.Exit();
+        }
+    }
+
     private static bool SameWorkflowSteps(
         IReadOnlyList<ExperimentPlanWorkflowStep> left,
         IReadOnlyList<ExperimentPlanWorkflowStep> right) =>
@@ -278,4 +401,30 @@ public sealed class ExperimentCompositeRuntimeService(
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes($"experiment-run\u001f{requestId:N}\u001f{jobId:N}"));
         return new Guid(hash.AsSpan(0, 16));
     }
+
+    private const string ChildReconciledEventType = "ExperimentCompositeChildReconciled";
+
+    private static (Guid RequestId, Guid ChildWorkflowRunId, string Actor, string Reason, string? UnknownResolutionReason)
+        NormalizeChildMetadata(ReconcileExperimentChildRequest request)
+    {
+        if (request.RequestId == Guid.Empty) throw new ArgumentException("A reconciliation request id is required.", nameof(request));
+        if (request.ChildWorkflowRunId == Guid.Empty) throw new ArgumentException("A child workflow run id is required.", nameof(request));
+        if (string.IsNullOrWhiteSpace(request.Actor)) throw new ArgumentException("A reconciliation actor is required.", nameof(request));
+        if (string.IsNullOrWhiteSpace(request.Reason)) throw new ArgumentException("A reconciliation reason is required.", nameof(request));
+        var actor = request.Actor.Trim();
+        var reason = request.Reason.Trim();
+        var unknownReason = string.IsNullOrWhiteSpace(request.UnknownResolutionReason)
+            ? null
+            : request.UnknownResolutionReason.Trim();
+        if (actor.Length > 256) throw new ArgumentException("The reconciliation actor cannot exceed 256 characters.", nameof(request));
+        if (reason.Length > 2048) throw new ArgumentException("The reconciliation reason cannot exceed 2048 characters.", nameof(request));
+        if (unknownReason?.Length > 2048) throw new ArgumentException("The unknown-resolution reason cannot exceed 2048 characters.", nameof(request));
+        return (request.RequestId, request.ChildWorkflowRunId, actor, reason, unknownReason);
+    }
+
+    private static string CreateChildFingerprint(
+        Guid experimentRunId,
+        (Guid RequestId, Guid ChildWorkflowRunId, string Actor, string Reason, string? UnknownResolutionReason) metadata) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"reconcile-composite-child\u001f{experimentRunId:N}\u001f{metadata.RequestId:N}\u001f{metadata.ChildWorkflowRunId:N}\u001f{metadata.Actor}\u001f{metadata.Reason}\u001f{metadata.UnknownResolutionReason}")));
 }

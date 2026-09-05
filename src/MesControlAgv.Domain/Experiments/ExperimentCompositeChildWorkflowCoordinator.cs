@@ -68,11 +68,11 @@ public static class ExperimentCompositeChildWorkflowCoordinator
         {
             if (string.IsNullOrWhiteSpace(unknownResolutionReason))
                 throw Invalid(run, "An explicit reason is required to resolve an Unknown child workflow.");
+            if (outcome == WorkflowStepCompletionOutcome.Unknown)
+                throw Invalid(run, "An Unknown child result cannot resolve an Unknown outer run without an explicit outcome.");
             return ExperimentCompositeRuntimeStateMachine.ResolveUnknown(
                 run,
-                outcome.Value == WorkflowStepCompletionOutcome.Unknown
-                    ? WorkflowStepCompletionOutcome.Failed
-                    : outcome.Value,
+                outcome.Value,
                 unknownResolutionReason,
                 now);
         }

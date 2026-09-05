@@ -828,6 +828,16 @@ public sealed class MesClient(HttpClient client) : IMesClient
             request,
             cancellationToken);
 
+    public Task<ExperimentRun> ReconcileExperimentChildAsync(
+        Guid experimentRunId,
+        ReconcileExperimentChildRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ExperimentRun>(
+            HttpMethod.Post,
+            $"api/experiment-runs/{experimentRunId}/reconcile-child",
+            request,
+            cancellationToken);
+
     public Task<ExperimentJob> CreateExperimentJobAsync(
         CreateExperimentJobRequest request,
         CancellationToken cancellationToken) =>

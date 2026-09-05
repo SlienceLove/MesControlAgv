@@ -87,3 +87,17 @@ public sealed record PrepareExperimentRunRequest
     public string Actor { get; init; } = string.Empty;
     public string Reason { get; init; } = string.Empty;
 }
+
+/// <summary>
+/// Read-only reconciliation request for an already persisted child workflow.
+/// The server loads the child by id, so callers cannot spoof its runtime status
+/// or workflow identity. Unknown outcomes require a separate human reason.
+/// </summary>
+public sealed record ReconcileExperimentChildRequest
+{
+    public Guid RequestId { get; init; }
+    public Guid ChildWorkflowRunId { get; init; }
+    public string Actor { get; init; } = string.Empty;
+    public string Reason { get; init; } = string.Empty;
+    public string? UnknownResolutionReason { get; init; }
+}

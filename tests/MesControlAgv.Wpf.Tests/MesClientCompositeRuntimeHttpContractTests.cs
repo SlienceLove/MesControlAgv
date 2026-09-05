@@ -43,6 +43,13 @@ public sealed class MesClientCompositeRuntimeHttpContractTests
             Actor = "planner",
             Reason = "Prepare composite run"
         };
+        var reconcileRequest = new ReconcileExperimentChildRequest
+        {
+            RequestId = Guid.NewGuid(),
+            ChildWorkflowRunId = Guid.NewGuid(),
+            Actor = "coordinator",
+            Reason = "Reconcile child"
+        };
         var handler = new RecordingHandler(message =>
         {
             var path = message.RequestUri!.AbsolutePath;
@@ -51,6 +58,8 @@ public sealed class MesClientCompositeRuntimeHttpContractTests
             if (message.Method == HttpMethod.Get && path == $"/api/experiment-runs/{runId}")
                 return JsonResponse(run);
             if (message.Method == HttpMethod.Get && path == $"/api/experiment-jobs/{jobId}/experiment-run")
+                return JsonResponse(run);
+            if (message.Method == HttpMethod.Post && path == $"/api/experiment-runs/{runId}/reconcile-child")
                 return JsonResponse(run);
             return new HttpResponseMessage(HttpStatusCode.NotFound);
         });
@@ -63,12 +72,18 @@ public sealed class MesClientCompositeRuntimeHttpContractTests
         AssertRunIdentity(run, prepared);
         AssertRunIdentity(run, byRun);
         AssertRunIdentity(run, byJob);
+        var reconciled = await client.ReconcileExperimentChildAsync(
+            runId,
+            reconcileRequest,
+            CancellationToken.None);
+        AssertRunIdentity(run, reconciled);
 
         Assert.Equal(
             [
                 "/api/experiment-runs/prepare",
                 $"/api/experiment-runs/{runId}",
-                $"/api/experiment-jobs/{jobId}/experiment-run"
+                $"/api/experiment-jobs/{jobId}/experiment-run",
+                $"/api/experiment-runs/{runId}/reconcile-child"
             ],
             handler.Requests.Select(item => item.Uri.AbsolutePath).ToArray());
     }

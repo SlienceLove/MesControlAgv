@@ -496,6 +496,13 @@ public interface IMesClient
         Task.FromException<ExperimentRun>(
             new NotSupportedException("Composite experiment runtime APIs are not supported by this MES client."));
 
+    Task<ExperimentRun> ReconcileExperimentChildAsync(
+        Guid experimentRunId,
+        ReconcileExperimentChildRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentRun>(
+            new NotSupportedException("Composite child reconciliation APIs are not supported by this MES client."));
+
     Task<ExperimentJob> CreateExperimentJobAsync(
         CreateExperimentJobRequest request,
         CancellationToken cancellationToken) =>

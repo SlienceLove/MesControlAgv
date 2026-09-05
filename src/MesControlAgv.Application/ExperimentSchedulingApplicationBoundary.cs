@@ -127,4 +127,9 @@ public interface IExperimentCompositeRuntimeService
     Task<ExperimentRun?> GetForJobAsync(
         Guid experimentJobId,
         CancellationToken cancellationToken);
+
+    Task<ExperimentRun> ReconcileChildAsync(
+        Guid experimentRunId,
+        ReconcileExperimentChildRequest request,
+        CancellationToken cancellationToken);
 }

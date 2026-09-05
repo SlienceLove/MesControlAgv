@@ -154,6 +154,15 @@ public static class ExperimentSchedulingEndpointRouteBuilderExtensions
             return run is null ? Results.NotFound() : Results.Ok(run);
         });
 
+        endpoints.MapPost("/api/experiment-runs/{runId:guid}/reconcile-child", async (
+            Guid runId,
+            ReconcileExperimentChildRequest request,
+            IExperimentCompositeRuntimeService service,
+            CancellationToken cancellationToken) =>
+            await ExecuteSchedulingCommandAsync(
+                () => service.ReconcileChildAsync(runId, request, cancellationToken),
+                Results.Ok));
+
         endpoints.MapPost("/api/experiment-jobs/{jobId:guid}/unschedule", async (
             Guid jobId,
             ExperimentSchedulingActionRequest request,
