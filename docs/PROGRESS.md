@@ -1154,6 +1154,12 @@ AGV/AUBO 只读预检和明确授权。
 - 新增 MES API 回归 `3/3`、WPF 客户端路由及监控回归；WPF 全量 `398/398`、Domain `43/43`、MES `166/166` 通过。
 - 本切片仅扩展 MES 只读准备边界和 WPF 展示，现场 AGV/AUBO 未连接；下一步实现有子工作流证据约束的逐步骤协调器。
 
+## 2026-09-05 复合运行与时间轴关联补强
+
+- 排程查询现在读取 `ExperimentRun/ExperimentStepRun` 的子流程绑定，将子流程设备活动投影到稳定的 `WorkflowStepId`、流程版本和任务泳道；单流程旧投影保持兼容。
+- 状态机新增子流程准入失败和重启后证据不可读的 fail-closed 转换：失败步骤不会把后续步骤标记成功，Unknown 不会自动重试或创建替代子流程。
+- 新增复合活动时间轴与状态机回归；本切片只读设备证据和持久化状态，不改变实体设备准入门禁。
+
 ## 2026-09-05 实验复合运行时阶段 2：子流程证据协调边界
 
 - Domain 新增 `ExperimentCompositeChildWorkflowCoordinator`，校验当前步骤与子工作流的 `WorkflowId/WorkflowVersion/WorkflowRunId` 完全匹配后，才允许映射运行证据。

@@ -166,9 +166,50 @@ public sealed class ExperimentSchedulingQueryService(
 
         var jobs = await database.ExperimentJobs
             .AsNoTracking()
-            .Where(job => jobIds.Contains(job.JobId) && job.WorkflowRunId != null)
+            .Where(job => jobIds.Contains(job.JobId))
             .ToListAsync(cancellationToken);
-        var runIds = jobs.Select(job => job.WorkflowRunId!.Value).Distinct().ToArray();
+        var jobsById = jobs.ToDictionary(job => job.JobId);
+        var bindings = new Dictionary<Guid, RuntimeActivityBinding>();
+        foreach (var job in jobs)
+        {
+            if (job.WorkflowRunId is not { } workflowRunId || workflowRunId == Guid.Empty)
+                continue;
+
+            var steps = ExperimentSchedulingPersistence.NormalizeWorkflowSteps(
+                ExperimentSchedulingPersistence.Deserialize(
+                    job.WorkflowStepsJson,
+                    Array.Empty<ExperimentPlanWorkflowStep>()),
+                job.WorkflowId,
+                job.WorkflowVersion,
+                job.JobId);
+            var step = steps.Count == 1 ? steps[0] : null;
+            bindings[workflowRunId] = new RuntimeActivityBinding(
+                job,
+                step?.StepId,
+                step?.WorkflowId ?? job.WorkflowId,
+                step?.WorkflowVersion ?? job.WorkflowVersion);
+        }
+
+        var compositeRecords = await database.ExperimentRuns
+            .AsNoTracking()
+            .Where(run => jobIds.Contains(run.ExperimentJobId))
+            .ToListAsync(cancellationToken);
+        foreach (var record in compositeRecords)
+        {
+            if (!jobsById.TryGetValue(record.ExperimentJobId, out var job)) continue;
+            var composite = ExperimentSchedulingPersistence.MapExperimentRun(record);
+            foreach (var step in composite.Steps)
+            {
+                if (step.WorkflowRunId is not { } childRunId || childRunId == Guid.Empty) continue;
+                bindings[childRunId] = new RuntimeActivityBinding(
+                    job,
+                    step.StepId,
+                    step.WorkflowId,
+                    step.WorkflowVersion);
+            }
+        }
+
+        var runIds = bindings.Keys.ToArray();
         if (runIds.Length == 0)
         {
             return Array.Empty<ExperimentScheduleActivity>();
@@ -183,9 +224,6 @@ public sealed class ExperimentSchedulingQueryService(
             .Where(operation => runIds.Contains(operation.WorkflowRunId))
             .ToListAsync(cancellationToken);
 
-        var jobsByRun = jobs
-            .Where(job => job.WorkflowRunId is not null)
-            .ToDictionary(job => job.WorkflowRunId!.Value);
         var entriesByJob = entries
             .GroupBy(entry => entry.ExperimentJobId)
             .ToDictionary(group => group.Key, group => group
@@ -195,20 +233,14 @@ public sealed class ExperimentSchedulingQueryService(
         var nodesById = nodes.ToDictionary(node => node.Id);
 
         return operations
-            .Where(operation => jobsByRun.ContainsKey(operation.WorkflowRunId) &&
-                                entriesByJob.ContainsKey(jobsByRun[operation.WorkflowRunId].JobId))
+            .Where(operation => bindings.ContainsKey(operation.WorkflowRunId) &&
+                                entriesByJob.ContainsKey(bindings[operation.WorkflowRunId].Job.JobId))
             .Select(operation =>
             {
-                var job = jobsByRun[operation.WorkflowRunId];
+                var binding = bindings[operation.WorkflowRunId];
+                var job = binding.Job;
                 var entry = entriesByJob[job.JobId];
                 nodesById.TryGetValue(operation.NodeExecutionId, out var node);
-                var steps = ExperimentSchedulingPersistence.NormalizeWorkflowSteps(
-                    ExperimentSchedulingPersistence.Deserialize(
-                        job.WorkflowStepsJson,
-                        Array.Empty<ExperimentPlanWorkflowStep>()),
-                    job.WorkflowId,
-                    job.WorkflowVersion,
-                    job.JobId);
                 var resource = ResolveActivityResource(operation.DeviceId, entry);
                 return new ExperimentScheduleActivity
                 {
@@ -218,9 +250,9 @@ public sealed class ExperimentSchedulingQueryService(
                     WorkflowRunId = operation.WorkflowRunId,
                     WorkflowNodeExecutionId = node?.Id,
                     DeviceOperationId = operation.OperationId,
-                    WorkflowStepId = steps.Count == 1 ? steps[0].StepId : null,
-                    WorkflowId = job.WorkflowId,
-                    WorkflowVersion = job.WorkflowVersion,
+                    WorkflowStepId = binding.WorkflowStepId,
+                    WorkflowId = binding.WorkflowId,
+                    WorkflowVersion = binding.WorkflowVersion,
                     Resource = resource,
                     ActivityName = string.IsNullOrWhiteSpace(node?.NodeName)
                         ? string.IsNullOrWhiteSpace(operation.CapabilityId)
@@ -392,4 +424,10 @@ public sealed class ExperimentSchedulingQueryService(
 
     private static ResourceReservation MapReservation(ResourceReservationRecord record) =>
         ExperimentSchedulingPersistence.MapReservation(record);
+
+    private sealed record RuntimeActivityBinding(
+        ExperimentJobRecord Job,
+        Guid? WorkflowStepId,
+        Guid WorkflowId,
+        int WorkflowVersion);
 }

@@ -96,6 +96,34 @@ public sealed class ExperimentCompositeRuntimeStateMachineTests
             ExperimentCompositeRuntimeStateMachine.Pause(run, Start.AddMinutes(2)));
     }
 
+    [Fact]
+    public void Child_admission_failure_and_missing_child_evidence_fail_closed()
+    {
+        var run = StartRun();
+        run = ExperimentCompositeRuntimeStateMachine.FailCurrentStepBeforeChild(
+            run,
+            "child workflow admission was rejected",
+            Start.AddMinutes(1));
+        Assert.Equal(ExperimentRunStatus.Failed, run.Status);
+        Assert.Equal(ExperimentStepRunStatus.Failed, run.Steps[0].Status);
+        Assert.Equal(ExperimentStepRunStatus.Pending, run.Steps[1].Status);
+        Assert.Equal("child workflow admission was rejected", run.LastError);
+
+        var unknown = StartRun();
+        unknown = ExperimentCompositeRuntimeStateMachine.StartCurrentStep(
+            unknown,
+            Guid.NewGuid(),
+            Start.AddMinutes(2));
+        unknown = ExperimentCompositeRuntimeStateMachine.MarkCurrentStepUnknown(
+            unknown,
+            "bound child could not be read after restart",
+            Start.AddMinutes(3));
+        Assert.Equal(ExperimentRunStatus.Unknown, unknown.Status);
+        Assert.False(unknown.IsTerminal);
+        Assert.Equal(ExperimentStepRunStatus.Unknown, unknown.Steps[0].Status);
+        Assert.Equal(ExperimentStepRunStatus.Pending, unknown.Steps[1].Status);
+    }
+
     private static ExperimentRun StartRun()
     {
         var prepared = ExperimentCompositeRuntimeStateMachine.Prepare(

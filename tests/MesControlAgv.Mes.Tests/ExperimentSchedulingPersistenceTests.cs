@@ -157,6 +157,175 @@ public sealed class ExperimentSchedulingPersistenceTests
         Assert.Equal(new DateTimeOffset(start.AddMinutes(15)), activity.ActualStart);
     }
 
+    [Fact]
+    public async Task Schedule_query_projects_composite_child_activity_to_its_stable_workflow_step()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<MesDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var database = new MesDbContext(options);
+        await database.Database.EnsureCreatedAsync();
+
+        var start = new DateTime(2026, 9, 5, 3, 0, 0, DateTimeKind.Utc);
+        var end = start.AddHours(2);
+        var jobId = Guid.NewGuid();
+        var outerRunId = Guid.NewGuid();
+        var childRunId = Guid.NewGuid();
+        var entryId = Guid.NewGuid();
+        var nodeId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+        var firstWorkflowId = Guid.NewGuid();
+        var secondWorkflowId = Guid.NewGuid();
+        var steps = new[]
+        {
+            new ExperimentPlanWorkflowStep
+            {
+                StepId = Guid.NewGuid(),
+                Order = 1,
+                WorkflowId = firstWorkflowId,
+                WorkflowVersion = 2,
+                Name = "准备",
+                EstimatedDurationMinutes = 20
+            },
+            new ExperimentPlanWorkflowStep
+            {
+                StepId = Guid.NewGuid(),
+                Order = 2,
+                WorkflowId = secondWorkflowId,
+                WorkflowVersion = 4,
+                Name = "检测",
+                EstimatedDurationMinutes = 40
+            }
+        };
+        var outerSteps = new[]
+        {
+            new ExperimentStepRun
+            {
+                ExperimentRunId = outerRunId,
+                StepRunId = Guid.NewGuid(),
+                StepId = steps[0].StepId,
+                Order = 1,
+                WorkflowId = firstWorkflowId,
+                WorkflowVersion = 2,
+                Name = steps[0].Name,
+                Status = ExperimentStepRunStatus.Running,
+                WorkflowRunId = childRunId,
+                StartedAt = new DateTimeOffset(start.AddMinutes(10))
+            },
+            new ExperimentStepRun
+            {
+                ExperimentRunId = outerRunId,
+                StepRunId = Guid.NewGuid(),
+                StepId = steps[1].StepId,
+                Order = 2,
+                WorkflowId = secondWorkflowId,
+                WorkflowVersion = 4,
+                Name = steps[1].Name,
+                Status = ExperimentStepRunStatus.Pending
+            }
+        };
+
+        database.ExperimentJobs.Add(new ExperimentJobRecord
+        {
+            JobId = jobId,
+            PlanId = Guid.NewGuid(),
+            PlanVersion = 1,
+            WorkflowId = firstWorkflowId,
+            WorkflowVersion = 2,
+            WorkflowStepsJson = JsonSerializer.Serialize(steps),
+            SampleBatchId = "B-COMPOSITE-ACTIVITY",
+            Status = ExperimentJobStatus.Running.ToString(),
+            CreatedBy = "test",
+            CreatedAtUtc = start,
+            UpdatedAtUtc = start
+        });
+        database.ExperimentRuns.Add(new ExperimentRunRecord
+        {
+            ExperimentRunId = outerRunId,
+            ExperimentJobId = jobId,
+            PlanId = Guid.NewGuid(),
+            PlanVersion = 1,
+            AdmissionRequestId = Guid.NewGuid(),
+            Status = ExperimentRunStatus.Running.ToString(),
+            CurrentStepOrder = 1,
+            CurrentStepRunId = outerSteps[0].StepRunId,
+            StepsJson = JsonSerializer.Serialize(outerSteps),
+            CreatedAtUtc = start,
+            UpdatedAtUtc = start.AddMinutes(10)
+        });
+        database.ScheduleEntries.Add(new ScheduleEntryRecord
+        {
+            ScheduleEntryId = entryId,
+            ExperimentJobId = jobId,
+            PlannedStartUtc = start,
+            PlannedEndUtc = end,
+            Priority = 50,
+            Status = ScheduleEntryStatus.Admitted.ToString(),
+            RequestedResourcesJson = JsonSerializer.Serialize(new[]
+            {
+                new ExperimentResourceReference
+                {
+                    ResourceType = ExperimentResourceTypeIds.Instrument,
+                    ResourceId = "D160_01"
+                }
+            }),
+            BlockingReasonsJson = "[]",
+            CreatedBy = "test",
+            CreatedAtUtc = start,
+            UpdatedAtUtc = start
+        });
+        database.WorkflowNodeExecutions.Add(new WorkflowNodeExecutionRecord
+        {
+            Id = nodeId,
+            WorkflowRunId = childRunId,
+            WorkflowId = firstWorkflowId,
+            Version = 2,
+            StepRequestId = Guid.NewGuid(),
+            NodeId = Guid.NewGuid(),
+            NodeTypeId = WorkflowGraphNodeTypeIds.InstrumentReadStatus,
+            NodeName = "读取仪器状态",
+            Attempt = 1,
+            Status = WorkflowNodeExecutionStatus.Running.ToString(),
+            StartedAtUtc = start.AddMinutes(15),
+            CreatedAtUtc = start.AddMinutes(10),
+            UpdatedAtUtc = start.AddMinutes(15)
+        });
+        database.WorkflowDeviceOperations.Add(new WorkflowDeviceOperationRecord
+        {
+            OperationId = operationId,
+            WorkflowRunId = childRunId,
+            NodeExecutionId = nodeId,
+            RequestId = Guid.NewGuid(),
+            Attempt = 1,
+            CapabilityId = WorkflowCapabilityIds.InstrumentReadStatus,
+            DeviceId = "D160_01",
+            IdempotencyKey = operationId.ToString("N"),
+            Status = WorkflowDeviceOperationStatus.Running.ToString(),
+            RequestedAtUtc = start.AddMinutes(15),
+            UpdatedAtUtc = start.AddMinutes(15)
+        });
+        await database.SaveChangesAsync();
+
+        var service = new ExperimentSchedulingQueryService(
+            database,
+            TimeProvider.System,
+            new ExperimentResourceCatalog(ProfileConfiguration.Default));
+        var snapshot = await service.GetScheduleAsync(
+            new DateTimeOffset(start),
+            new DateTimeOffset(end),
+            CancellationToken.None);
+
+        var activity = Assert.Single(snapshot.Activities);
+        Assert.Equal(operationId, activity.ActivityId);
+        Assert.Equal(childRunId, activity.WorkflowRunId);
+        Assert.Equal(steps[0].StepId, activity.WorkflowStepId);
+        Assert.Equal(firstWorkflowId, activity.WorkflowId);
+        Assert.Equal(2, activity.WorkflowVersion);
+        Assert.Equal("D160_01", activity.Resource.ResourceId);
+    }
+
     private static WorkflowResourceLeaseRecord CreateLease(string resourceKey, DateTime now) => new()
     {
         LeaseId = Guid.NewGuid(),

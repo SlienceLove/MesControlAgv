@@ -131,6 +131,68 @@ public static class ExperimentCompositeRuntimeStateMachine
         return ApplyOutcome(run, current, outcome, error, now);
     }
 
+    /// <summary>
+    /// Records a child-admission failure while the current step is still Ready.
+    /// No child workflow id is fabricated and no retry is implied.
+    /// </summary>
+    public static ExperimentRun FailCurrentStepBeforeChild(
+        ExperimentRun run,
+        string error,
+        DateTimeOffset now)
+    {
+        EnsureRun(run);
+        var current = RequireCurrent(run);
+        if (run.Status != ExperimentRunStatus.Running || current.Status != ExperimentStepRunStatus.Ready)
+            throw Invalid(run, current, "只有 Running 复合运行的 Ready 步骤才能记录子流程准入失败。");
+        if (string.IsNullOrWhiteSpace(error))
+            throw new ArgumentException("A child-admission failure reason is required.", nameof(error));
+        var failed = current with
+        {
+            Status = ExperimentStepRunStatus.Failed,
+            CompletedAt = now,
+            LastError = error.Trim()
+        };
+        return run with
+        {
+            Status = ExperimentRunStatus.Failed,
+            Steps = run.Steps.Select(step => step.StepRunId == current.StepRunId ? failed : step).ToArray(),
+            LastError = failed.LastError,
+            UpdatedAt = now
+        };
+    }
+
+    /// <summary>
+    /// Fails closed when a previously bound child execution cannot be read after
+    /// restart. The outer run becomes Unknown and must be manually reconciled;
+    /// the coordinator must never create a replacement child automatically.
+    /// </summary>
+    public static ExperimentRun MarkCurrentStepUnknown(
+        ExperimentRun run,
+        string reason,
+        DateTimeOffset now)
+    {
+        EnsureRun(run);
+        var current = RequireCurrent(run);
+        if (run.Status != ExperimentRunStatus.Running ||
+            current.Status is not (ExperimentStepRunStatus.Ready or ExperimentStepRunStatus.Running))
+            throw Invalid(run, current, "只有 Running 复合运行的 Ready/Running 步骤才能进入 Unknown。");
+        if (string.IsNullOrWhiteSpace(reason))
+            throw new ArgumentException("An Unknown transition reason is required.", nameof(reason));
+        var unknown = current with
+        {
+            Status = ExperimentStepRunStatus.Unknown,
+            CompletedAt = now,
+            LastError = reason.Trim()
+        };
+        return run with
+        {
+            Status = ExperimentRunStatus.Unknown,
+            Steps = run.Steps.Select(step => step.StepRunId == current.StepRunId ? unknown : step).ToArray(),
+            LastError = unknown.LastError,
+            UpdatedAt = now
+        };
+    }
+
     public static ExperimentRun Pause(ExperimentRun run, DateTimeOffset now)
     {
         EnsureRun(run);
