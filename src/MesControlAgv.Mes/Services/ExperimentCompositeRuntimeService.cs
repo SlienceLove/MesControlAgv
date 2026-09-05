@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts.Experiments;
+using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Experiments;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Entities;
@@ -10,16 +11,16 @@ using Microsoft.EntityFrameworkCore;
 namespace MesControlAgv.Mes.Services;
 
 /// <summary>
-/// Persists the outer snapshot for a composed experiment run. This first slice
-/// deliberately stops at Prepared: it creates no child workflow and no device
-/// operation. A later coordinator may advance the snapshot only after it has
-/// durable child-workflow evidence.
+/// Persists the outer snapshot for a composed experiment run. Preparation stays
+/// device-free; the explicit simulator coordinator below advances one pinned
+/// child workflow at a time only after durable admission/evidence is available.
 /// </summary>
 public sealed class ExperimentCompositeRuntimeService(
     MesDbContext database,
     ExperimentSchedulingMutationGate mutationGate,
     TimeProvider timeProvider,
-    IWorkflowApplicationService workflows) : IExperimentCompositeRuntimeService
+    IWorkflowApplicationService workflows,
+    IHostEnvironment environment) : IExperimentCompositeRuntimeService
 {
     private const string PreparedEventType = "ExperimentCompositeRunPrepared";
 
@@ -360,6 +361,345 @@ public sealed class ExperimentCompositeRuntimeService(
         }
     }
 
+    /// <summary>
+    /// Advances simulator-only composite runs using existing child workflow
+    /// evidence. Child admission uses a deterministic request id, so a restart
+    /// after the child was accepted but before the outer snapshot was saved
+    /// replays the admission instead of creating a second child. Unknown or
+    /// unreadable outcomes are persisted as Unknown and are never retried.
+    /// </summary>
+    public async Task<ExperimentCompositeRuntimeProcessSummary> ProcessPendingAsync(
+        CancellationToken cancellationToken)
+    {
+        // This coordinator creates child workflow executions without the full
+        // runtime lease/admission boundary. Keep it fail-closed until the
+        // simulator-only path is explicitly selected; production environments
+        // must continue using the normal single-workflow admission gate.
+        if (!environment.IsEnvironment("Testing") && !environment.IsEnvironment("FieldSimulation"))
+            return new ExperimentCompositeRuntimeProcessSummary(0, 0, 0);
+
+        var runIds = await database.ExperimentRuns.AsNoTracking()
+            .Where(item => item.Status == ExperimentRunStatus.Prepared.ToString() ||
+                           item.Status == ExperimentRunStatus.Running.ToString())
+            .OrderBy(item => item.UpdatedAtUtc)
+            .ThenBy(item => item.ExperimentRunId)
+            .Select(item => item.ExperimentRunId)
+            .ToListAsync(cancellationToken);
+
+        var changed = 0;
+        var unknown = 0;
+        foreach (var runId in runIds)
+        {
+            var outcome = await ProcessOneAsync(runId, cancellationToken);
+            if (outcome.Changed) changed++;
+            if (outcome.Unknown) unknown++;
+        }
+
+        return new ExperimentCompositeRuntimeProcessSummary(
+            runIds.Count,
+            changed,
+            unknown);
+    }
+
+    private async Task<ExperimentCompositeRuntimeProcessOutcome> ProcessOneAsync(
+        Guid experimentRunId,
+        CancellationToken cancellationToken)
+    {
+        await mutationGate.EnterAsync(cancellationToken);
+        try
+        {
+            var record = await database.ExperimentRuns.SingleOrDefaultAsync(
+                item => item.ExperimentRunId == experimentRunId,
+                cancellationToken);
+            if (record is null) return ExperimentCompositeRuntimeProcessOutcome.None;
+
+            var run = ExperimentSchedulingPersistence.MapExperimentRun(record);
+            if (run.IsTerminal || run.Status == ExperimentRunStatus.Unknown)
+                return ExperimentCompositeRuntimeProcessOutcome.None;
+
+            var now = timeProvider.GetUtcNow();
+            if (run.Status == ExperimentRunStatus.Prepared)
+            {
+                try
+                {
+                    run = ExperimentCompositeRuntimeStateMachine.Start(run, now);
+                }
+                catch (InvalidExperimentRunTransitionException exception)
+                {
+                    throw new ExperimentSchedulingConflictException(
+                        exception.Message,
+                        ExperimentSchedulingIssueCodes.CompositeWorkflowNotSupported);
+                }
+                await PersistTransitionAsync(
+                    record,
+                    run,
+                    "ExperimentCompositeRunStarted",
+                    childWorkflowRunId: null,
+                    "Start the next simulator composite step",
+                    cancellationToken);
+            }
+
+            var current = run.Steps.SingleOrDefault(step => step.StepRunId == run.CurrentStepRunId);
+            if (current is null) return ExperimentCompositeRuntimeProcessOutcome.None;
+
+            if (current.Status == ExperimentStepRunStatus.Ready)
+            {
+                var job = await database.ExperimentJobs.AsNoTracking()
+                    .SingleOrDefaultAsync(item => item.JobId == run.ExperimentJobId, cancellationToken);
+                if (job is null)
+                {
+                    var failed = ExperimentCompositeRuntimeStateMachine.FailCurrentStepBeforeChild(
+                        run,
+                        "The experiment job for the composite run was not found.",
+                        now);
+                    await PersistTransitionAsync(
+                        record,
+                        failed,
+                        "ExperimentCompositeChildAdmissionFailed",
+                        null,
+                        failed.LastError!,
+                        cancellationToken);
+                    return new ExperimentCompositeRuntimeProcessOutcome(true, false);
+                }
+
+                WorkflowExecutionResult childResult;
+                try
+                {
+                    var parameters = new Dictionary<string, string?>(
+                        ExperimentSchedulingPersistence.Deserialize(
+                            job.ParametersJson,
+                            new Dictionary<string, string?>()),
+                        StringComparer.OrdinalIgnoreCase);
+                    foreach (var parameter in current.Parameters ??
+                             new Dictionary<string, string?>())
+                    {
+                        parameters[parameter.Key] = parameter.Value;
+                    }
+
+                    var childRequest = new WorkflowExecutionRequest
+                    {
+                        WorkflowId = current.WorkflowId,
+                        Version = current.WorkflowVersion,
+                        Parameters = parameters,
+                        RequestedBy = "experiment-composite-worker",
+                        CorrelationId = $"experiment-run:{run.ExperimentRunId:N}:step:{current.StepId:N}",
+                        RequestId = CreateStableChildRequestId(run.ExperimentRunId, current.StepId),
+                        RequestedAt = now,
+                        DryRun = false
+                    };
+                    childResult = await workflows.ExecuteAsync(childRequest, cancellationToken);
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    var unknown = ExperimentCompositeRuntimeStateMachine.MarkCurrentStepUnknown(
+                        run,
+                        $"Child workflow admission outcome could not be proven: {exception.Message}",
+                        now);
+                    await PersistTransitionAsync(
+                        record,
+                        unknown,
+                        "ExperimentCompositeChildAdmissionUnknown",
+                        null,
+                        unknown.LastError!,
+                        cancellationToken);
+                    return new ExperimentCompositeRuntimeProcessOutcome(true, true);
+                }
+
+                if (childResult.IsRejected)
+                {
+                    var failed = ExperimentCompositeRuntimeStateMachine.FailCurrentStepBeforeChild(
+                        run,
+                        childResult.RejectionReason ?? "Child workflow admission was rejected.",
+                        now);
+                    await PersistTransitionAsync(
+                        record,
+                        failed,
+                        "ExperimentCompositeChildAdmissionFailed",
+                        childResult.ExecutionId == Guid.Empty ? null : childResult.ExecutionId,
+                        failed.LastError!,
+                        cancellationToken);
+                    return new ExperimentCompositeRuntimeProcessOutcome(true, false);
+                }
+
+                var child = await workflows.GetExecutionAsync(childResult.ExecutionId, cancellationToken);
+                if (child is null)
+                {
+                    var unknown = ExperimentCompositeRuntimeStateMachine.MarkCurrentStepUnknown(
+                        run,
+                        "Child workflow was accepted but its durable snapshot could not be read.",
+                        now);
+                    await PersistTransitionAsync(
+                        record,
+                        unknown,
+                        "ExperimentCompositeChildAdmissionUnknown",
+                        childResult.ExecutionId,
+                        unknown.LastError!,
+                        cancellationToken);
+                    return new ExperimentCompositeRuntimeProcessOutcome(true, true);
+                }
+
+                ExperimentRun attached;
+                try
+                {
+                    attached = ExperimentCompositeChildWorkflowCoordinator.AttachChild(run, child, now);
+                }
+                catch (InvalidExperimentRunTransitionException exception)
+                {
+                    var unknown = ExperimentCompositeRuntimeStateMachine.MarkCurrentStepUnknown(
+                        run,
+                        $"Child workflow identity could not be reconciled: {exception.Message}",
+                        now);
+                    await PersistTransitionAsync(
+                        record,
+                        unknown,
+                        "ExperimentCompositeChildReconciliationUnknown",
+                        child.ExecutionId,
+                        unknown.LastError!,
+                        cancellationToken);
+                    return new ExperimentCompositeRuntimeProcessOutcome(true, true);
+                }
+
+                await PersistTransitionAsync(
+                    record,
+                    attached,
+                    "ExperimentCompositeChildAttached",
+                    child.ExecutionId,
+                    "Bind the deterministic child workflow execution to the current step",
+                    cancellationToken);
+                return new ExperimentCompositeRuntimeProcessOutcome(true, false);
+            }
+
+            if (current.Status != ExperimentStepRunStatus.Running || current.WorkflowRunId is null)
+                return ExperimentCompositeRuntimeProcessOutcome.None;
+
+            WorkflowExecutionSnapshot? childSnapshot;
+            try
+            {
+                childSnapshot = await workflows.GetExecutionAsync(
+                    current.WorkflowRunId.Value,
+                    cancellationToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                childSnapshot = null;
+                var unknown = ExperimentCompositeRuntimeStateMachine.MarkCurrentStepUnknown(
+                    run,
+                    $"Bound child workflow snapshot could not be read: {exception.Message}",
+                    now);
+                await PersistTransitionAsync(
+                    record,
+                    unknown,
+                    "ExperimentCompositeChildSnapshotUnknown",
+                    current.WorkflowRunId,
+                    unknown.LastError!,
+                    cancellationToken);
+                return new ExperimentCompositeRuntimeProcessOutcome(true, true);
+            }
+
+            if (childSnapshot is null)
+            {
+                var unknown = ExperimentCompositeRuntimeStateMachine.MarkCurrentStepUnknown(
+                    run,
+                    "Bound child workflow snapshot was not found after restart.",
+                    now);
+                await PersistTransitionAsync(
+                    record,
+                    unknown,
+                    "ExperimentCompositeChildSnapshotUnknown",
+                    current.WorkflowRunId,
+                    unknown.LastError!,
+                    cancellationToken);
+                return new ExperimentCompositeRuntimeProcessOutcome(true, true);
+            }
+
+            if (childSnapshot.RuntimeStatus is WorkflowRuntimeStatus.Prepared or
+                WorkflowRuntimeStatus.Running or
+                WorkflowRuntimeStatus.Paused)
+                return ExperimentCompositeRuntimeProcessOutcome.None;
+
+            try
+            {
+                var reconciled = ExperimentCompositeChildWorkflowCoordinator.ReconcileChild(
+                    run,
+                    childSnapshot,
+                    now);
+                await PersistTransitionAsync(
+                    record,
+                    reconciled,
+                    "ExperimentCompositeChildReconciled",
+                    childSnapshot.ExecutionId,
+                    "Persist observed child workflow runtime evidence",
+                    cancellationToken);
+                return new ExperimentCompositeRuntimeProcessOutcome(
+                    true,
+                    reconciled.Status == ExperimentRunStatus.Unknown);
+            }
+            catch (InvalidExperimentRunTransitionException exception)
+            {
+                var unknown = ExperimentCompositeRuntimeStateMachine.MarkCurrentStepUnknown(
+                    run,
+                    $"Child workflow evidence could not be reconciled: {exception.Message}",
+                    now);
+                await PersistTransitionAsync(
+                    record,
+                    unknown,
+                    "ExperimentCompositeChildReconciliationUnknown",
+                    childSnapshot.ExecutionId,
+                    unknown.LastError!,
+                    cancellationToken);
+                return new ExperimentCompositeRuntimeProcessOutcome(true, true);
+            }
+        }
+        finally
+        {
+            mutationGate.Exit();
+        }
+    }
+
+    private async Task PersistTransitionAsync(
+        ExperimentRunRecord record,
+        ExperimentRun updated,
+        string eventType,
+        Guid? childWorkflowRunId,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        ExperimentSchedulingPersistence.ApplyExperimentRun(record, updated);
+        var requestId = CreateStableTransitionRequestId(
+            eventType,
+            updated.ExperimentRunId,
+            updated.CurrentStepRunId ?? Guid.Empty,
+            childWorkflowRunId ?? Guid.Empty);
+        if (!await database.ExperimentSchedulingAudits.AsNoTracking()
+                .AnyAsync(item => item.RequestId == requestId, cancellationToken))
+        {
+            database.ExperimentSchedulingAudits.Add(new ExperimentSchedulingAuditRecord
+            {
+                Id = Guid.NewGuid(),
+                EventType = eventType,
+                Outcome = updated.Status.ToString(),
+                RequestId = requestId,
+                RequestFingerprint = requestId.ToString("N"),
+                Actor = "experiment-composite-worker",
+                Reason = reason,
+                PlanId = updated.PlanId,
+                PlanVersion = updated.PlanVersion,
+                ExperimentJobId = updated.ExperimentJobId,
+                DetailsJson = ExperimentSchedulingPersistence.Serialize(new Dictionary<string, string?>
+                {
+                    ["experimentRunId"] = updated.ExperimentRunId.ToString(),
+                    ["currentStepRunId"] = updated.CurrentStepRunId?.ToString(),
+                    ["childWorkflowRunId"] = childWorkflowRunId?.ToString(),
+                    ["deviceWritesAttempted"] = bool.FalseString,
+                    ["automaticRetry"] = bool.FalseString
+                }),
+                ResultJson = ExperimentSchedulingPersistence.Serialize(updated),
+                OccurredAtUtc = timeProvider.GetUtcNow().UtcDateTime
+            });
+        }
+        await database.SaveChangesAsync(cancellationToken);
+    }
+
     private static bool SameWorkflowSteps(
         IReadOnlyList<ExperimentPlanWorkflowStep> left,
         IReadOnlyList<ExperimentPlanWorkflowStep> right) =>
@@ -402,7 +742,30 @@ public sealed class ExperimentCompositeRuntimeService(
         return new Guid(hash.AsSpan(0, 16));
     }
 
+    private static Guid CreateStableChildRequestId(Guid experimentRunId, Guid stepId)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"experiment-child-request\u001f{experimentRunId:N}\u001f{stepId:N}"));
+        return new Guid(hash.AsSpan(0, 16));
+    }
+
+    private static Guid CreateStableTransitionRequestId(
+        string eventType,
+        Guid experimentRunId,
+        Guid stepRunId,
+        Guid childWorkflowRunId)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"experiment-transition\u001f{eventType}\u001f{experimentRunId:N}\u001f{stepRunId:N}\u001f{childWorkflowRunId:N}"));
+        return new Guid(hash.AsSpan(0, 16));
+    }
+
     private const string ChildReconciledEventType = "ExperimentCompositeChildReconciled";
+
+    private sealed record ExperimentCompositeRuntimeProcessOutcome(bool Changed, bool Unknown)
+    {
+        public static ExperimentCompositeRuntimeProcessOutcome None { get; } = new(false, false);
+    }
 
     private static (Guid RequestId, Guid ChildWorkflowRunId, string Actor, string Reason, string? UnknownResolutionReason)
         NormalizeChildMetadata(ReconcileExperimentChildRequest request)

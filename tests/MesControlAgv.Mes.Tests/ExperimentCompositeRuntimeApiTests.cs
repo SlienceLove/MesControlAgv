@@ -3,8 +3,10 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using MesControlAgv.Contracts.Experiments;
 using MesControlAgv.Contracts.Workflows;
+using MesControlAgv.Domain.Workflows;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Entities;
+using MesControlAgv.Mes.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -250,6 +252,65 @@ public sealed class ExperimentCompositeRuntimeApiTests
         Assert.Equal(HttpStatusCode.Conflict, mismatch.StatusCode);
     }
 
+    [Fact]
+    public async Task Simulator_processor_starts_one_child_at_a_time_and_waits_for_completion()
+    {
+        using var factory = new MesWebApplicationFactory();
+        using var client = factory.CreateClient();
+        var fixture = await SeedScheduledCompositeJobAsync(factory);
+        var prepared = await PrepareAsync(client, fixture.JobId, "Prepare simulator coordinator");
+
+        ExperimentCompositeRuntimeProcessSummary firstSummary;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var coordinator = scope.ServiceProvider.GetRequiredService<ExperimentCompositeRuntimeService>();
+            firstSummary = await coordinator.ProcessPendingAsync(CancellationToken.None);
+        }
+
+        Assert.Equal(1, firstSummary.Scanned);
+        Assert.Equal(1, firstSummary.Changed);
+        var first = await client.GetFromJsonAsync<ExperimentRun>(
+            $"/api/experiment-runs/{prepared.ExperimentRunId}");
+        Assert.True(first!.Status == ExperimentRunStatus.Running, first.LastError);
+        Assert.Equal(ExperimentStepRunStatus.Running, first.Steps[0].Status);
+        Assert.NotNull(first.Steps[0].WorkflowRunId);
+        Assert.Null(first.Steps[1].WorkflowRunId);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            Assert.Single(await database.WorkflowExecutions.AsNoTracking().ToListAsync());
+            Assert.Empty(await database.WorkflowDeviceOperations.AsNoTracking().ToListAsync());
+        }
+
+        await SetChildRuntimeStatusAsync(factory, first.Steps[0].WorkflowRunId!.Value, WorkflowRuntimeStatus.Completed);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var coordinator = scope.ServiceProvider.GetRequiredService<ExperimentCompositeRuntimeService>();
+            var completionSummary = await coordinator.ProcessPendingAsync(CancellationToken.None);
+            Assert.Equal(1, completionSummary.Changed);
+        }
+
+        var advanced = await client.GetFromJsonAsync<ExperimentRun>(
+            $"/api/experiment-runs/{prepared.ExperimentRunId}");
+        Assert.Equal(ExperimentStepRunStatus.Succeeded, advanced!.Steps[0].Status);
+        Assert.Equal(ExperimentStepRunStatus.Ready, advanced.Steps[1].Status);
+        Assert.Equal(2, advanced.CurrentStepOrder);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var coordinator = scope.ServiceProvider.GetRequiredService<ExperimentCompositeRuntimeService>();
+            var nextSummary = await coordinator.ProcessPendingAsync(CancellationToken.None);
+            Assert.Equal(1, nextSummary.Changed);
+        }
+
+        var next = await client.GetFromJsonAsync<ExperimentRun>(
+            $"/api/experiment-runs/{prepared.ExperimentRunId}");
+        Assert.Equal(ExperimentStepRunStatus.Running, next!.Steps[1].Status);
+        Assert.NotNull(next.Steps[1].WorkflowRunId);
+        Assert.NotEqual(next.Steps[0].WorkflowRunId, next.Steps[1].WorkflowRunId);
+    }
+
     private static async Task<ExperimentRun> PrepareAsync(HttpClient client, Guid jobId, string reason)
     {
         var response = await client.PostAsJsonAsync(
@@ -350,6 +411,7 @@ public sealed class ExperimentCompositeRuntimeApiTests
         foreach (var step in steps)
         {
             var definition = WorkflowTestDefinitions.CreateMoveWorkflow(step.WorkflowId, "SAMPLE_01");
+            var validation = new WorkflowValidator().Validate(definition);
             database.WorkflowVersions.Add(new WorkflowVersionRecord
             {
                 WorkflowId = step.WorkflowId,
@@ -357,6 +419,7 @@ public sealed class ExperimentCompositeRuntimeApiTests
                 DefinitionJson = JsonSerializer.Serialize(definition),
                 Status = WorkflowVersionStatus.Published.ToString(),
                 PublishStatus = WorkflowPublishStatus.Published.ToString(),
+                ValidationJson = JsonSerializer.Serialize(validation),
                 CreatedBy = "composite-test",
                 CreatedAtUtc = now,
                 PublishedAtUtc = now,

@@ -29,6 +29,12 @@ public enum ExperimentStepRunStatus
     Cancelled
 }
 
+/// <summary>Result of one simulator composite-runtime reconciliation pass.</summary>
+public sealed record ExperimentCompositeRuntimeProcessSummary(
+    int Scanned,
+    int Changed,
+    int Unknown);
+
 /// <summary>
 /// Snapshot of one plan step. WorkflowRunId is the child workflow execution
 /// created only when this step is started; it remains null while pending.
@@ -42,6 +48,13 @@ public sealed record ExperimentStepRun
     public Guid WorkflowId { get; init; }
     public int WorkflowVersion { get; init; }
     public string Name { get; init; } = string.Empty;
+    /// <summary>
+    /// Parameters pinned for this step when the outer run is prepared. Keeping
+    /// them in the run snapshot prevents a later plan/job edit from changing a
+    /// child workflow request after restart.
+    /// </summary>
+    public IReadOnlyDictionary<string, string?> Parameters { get; init; } =
+        new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
     public ExperimentStepRunStatus Status { get; init; } = ExperimentStepRunStatus.Pending;
     public int Attempt { get; init; } = 1;
     public Guid? WorkflowRunId { get; init; }

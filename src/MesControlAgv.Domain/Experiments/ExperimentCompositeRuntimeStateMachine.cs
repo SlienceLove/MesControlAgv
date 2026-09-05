@@ -63,6 +63,9 @@ public static class ExperimentCompositeRuntimeStateMachine
                 WorkflowId = step.WorkflowId,
                 WorkflowVersion = step.WorkflowVersion,
                 Name = string.IsNullOrWhiteSpace(step.Name) ? $"步骤 {step.Order}" : step.Name.Trim(),
+                Parameters = new Dictionary<string, string?>(
+                    step.Parameters ?? new Dictionary<string, string?>(),
+                    StringComparer.OrdinalIgnoreCase),
                 Status = ExperimentStepRunStatus.Pending,
                 Attempt = 1
             });

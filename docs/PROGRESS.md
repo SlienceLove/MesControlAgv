@@ -1166,3 +1166,10 @@ AGV/AUBO 只读预检和明确授权。
 - 子流程 `Completed` 才推进下一步骤，`Failed`/`Cancelled` 终止外层运行，`Unknown` 进入待核销状态；没有人工理由时禁止把 Unknown 当作成功或取消。
 - 协调器只消费已有 `WorkflowExecutionSnapshot`，不创建子工作流、不自动重试、不发送设备命令；Domain 定向回归 `8/8` 通过。
 - 本切片未连接 AGV/AUBO；下一步把协调器接入 MES 持久化快照和模拟器子流程生命周期，验证重启恢复与步骤级设备活动关联。
+
+## 2026-09-05 实验复合运行时阶段 2：模拟器子流程生命周期协调
+
+- 新增显式 `ExperimentCompositeRuntimeWorker`：仅当 `Profile.Features.UseSimulator=true` 且 `ExperimentCompositeRuntimeWorker.Enabled=true` 时轮询外层快照；默认和 `PhysicalAcceptance` 配置均关闭，`FieldSimulation` 单独启用。
+- `ExperimentCompositeRuntimeService.ProcessPendingAsync` 逐个推进 `Prepared/Running` 外层运行：按固定步骤顺序创建并绑定子工作流，只有观察到 `Completed` 才进入下一步；`Failed`、`Cancelled` 和不可证明/缺失/身份不匹配结果分别 fail-closed。
+- 每个步骤快照现在保留固定参数；子流程请求合并任务参数与步骤覆盖，使用外层运行 ID/步骤 ID 推导确定性 `RequestId`，重启重放只复用已有准入记录，不创建替代子流程，也不自动重试 `Unknown`。
+- 新增 MES 回归覆盖两步骤串行、参数固定、子流程拒绝、Unknown、子流程缺失和重启幂等恢复；协调审计明确记录 `deviceWritesAttempted=false`、`automaticRetry=false`，本切片未连接或操作 AGV/AUBO。

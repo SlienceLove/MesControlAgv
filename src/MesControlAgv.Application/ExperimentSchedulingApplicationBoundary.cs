@@ -132,4 +132,11 @@ public interface IExperimentCompositeRuntimeService
         Guid experimentRunId,
         ReconcileExperimentChildRequest request,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Advances simulator-only composite runs from durable child workflow
+    /// evidence. The worker must be explicitly enabled by the active profile.
+    /// </summary>
+    Task<ExperimentCompositeRuntimeProcessSummary> ProcessPendingAsync(
+        CancellationToken cancellationToken);
 }

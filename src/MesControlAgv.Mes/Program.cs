@@ -91,6 +91,10 @@ builder.Services.AddSingleton(new ExperimentResourceCatalog(profile));
 builder.Services.AddSingleton<ExperimentSchedulingMutationGate>();
 builder.Services.AddSingleton(new PathPlanner(map));
 builder.Services.AddSingleton(TimeProvider.System);
+var experimentCompositeRuntimeWorkerOptions = builder.Configuration
+    .GetSection("ExperimentCompositeRuntimeWorker")
+    .Get<ExperimentCompositeRuntimeWorkerOptions>() ?? new ExperimentCompositeRuntimeWorkerOptions();
+builder.Services.AddSingleton(experimentCompositeRuntimeWorkerOptions);
 builder.Services.AddSingleton(builder.Configuration
     .GetSection("WorkflowSimulatorWorker")
     .Get<WorkflowSimulatorWorkerOptions>() ?? new WorkflowSimulatorWorkerOptions());
@@ -111,7 +115,9 @@ builder.Services.AddScoped<ExperimentRuntimeLeaseLifecycle>();
 builder.Services.AddScoped<ExperimentRuntimeAdmissionService>();
 builder.Services.AddScoped<IExperimentRuntimeAdmissionService>(services =>
     services.GetRequiredService<ExperimentRuntimeAdmissionService>());
-builder.Services.AddScoped<IExperimentCompositeRuntimeService, ExperimentCompositeRuntimeService>();
+builder.Services.AddScoped<ExperimentCompositeRuntimeService>();
+builder.Services.AddScoped<IExperimentCompositeRuntimeService>(services =>
+    services.GetRequiredService<ExperimentCompositeRuntimeService>());
 builder.Services.AddScoped<ExperimentRuntimeRecoveryCoordinator>();
 builder.Services.AddScoped<FieldNavigationAcceptanceRepository>();
 builder.Services.AddScoped<IFieldNavigationAcceptanceApplicationService, FieldNavigationAcceptanceService>();
@@ -123,6 +129,7 @@ builder.Services.AddHostedService<RecoveryService>();
 builder.Services.AddHostedService<FieldNavigationAcceptanceRecoveryService>();
 builder.Services.AddHostedService<ExperimentRuntimeRecoveryService>();
 builder.Services.AddHostedService<WorkflowRecoveryService>();
+builder.Services.AddHostedService<ExperimentCompositeRuntimeWorker>();
 builder.Services.AddHostedService<WorkflowSimulatorWorker>();
 builder.Services.AddHostedService<WorkflowAdvancedRuntimeWorker>();
 builder.Services.AddHostedService<WorkflowAuboProgramWorker>();
