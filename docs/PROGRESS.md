@@ -1,11 +1,18 @@
 # AGV MES MVP Progress
 
-Last updated: 2026-09-05
+Last updated: 2026-09-07
 
 This is the concise active record. Detailed history remains in Git and the
 linked acceptance documents.
 
 ## Current focus
+
+### 2026-09-07 无线网络调试验证交接
+
+- 当前代码、Release 门禁和复合模拟器部署包已收口；远端分支同步到 `fb743fa`，既有现场证据、删除项和未跟踪文件保持不变。
+- 下一会话目标切换为 AGV/AUBO 无线通信只读验证：先采集控制电脑无线接口、SSID/BSSID、IP/掩码/路由、无线 Bridge/AP/NAT 模式及现场确认的设备地址，不沿用历史 IP 或 WLAN 结论。
+- 无线预检只允许 AGV 状态端口与 AUBO WebSocket JSON-RPC `9012` 的只读访问，核对设备身份、运行/安全模式、当前工程、AGV 活动任务和控制权；禁止 AGV 命令/控制权端口、AUBO `load/run/stop`、Modbus/DI/DO 写入。
+- 新增交接文件 [`FIELD-ONE-CLICK-WIRELESS-DEBUG-HANDOFF-2026-09-07.md`](FIELD-ONE-CLICK-WIRELESS-DEBUG-HANDOFF-2026-09-07.md)，规定新鲜只读预检、证据目录、NO-GO 停止条件和取得新授权后仅执行一次完整流程的顺序。本轮未连接或操作现场设备。
 
 ### 2026-08-31 AUBO 首次现场网络/RPC 只读实测
 
