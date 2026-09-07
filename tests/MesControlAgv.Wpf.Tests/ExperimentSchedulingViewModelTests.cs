@@ -218,6 +218,84 @@ public sealed class ExperimentSchedulingViewModelTests
     }
 
     [Fact]
+    public void Timeline_marks_plan_lease_and_actual_current_layers_without_merging_them()
+    {
+        var start = DateTimeOffset.Parse("2026-08-24T08:00:00+08:00");
+        var end = start.AddHours(4);
+        var observed = start.AddHours(2);
+        var resource = ResourceRef("instrument", "D160_01");
+        var job = Job("B-CURRENT", ExperimentJobStatus.Running);
+        var entry = Schedule(
+            job.JobId,
+            resource,
+            start,
+            end,
+            ScheduleEntryStatus.Admitted);
+        var activityId = Guid.NewGuid();
+        var snapshot = new ExperimentScheduleSnapshot
+        {
+            GeneratedAt = observed,
+            Entries = [entry],
+            ActiveLeases =
+            [
+                new ResourceLease
+                {
+                    LeaseId = Guid.NewGuid(),
+                    WorkflowRunId = Guid.NewGuid(),
+                    Resource = resource,
+                    Status = ResourceLeaseStatus.Active,
+                    AcquiredAt = start.AddMinutes(30),
+                    ExpiresAt = end
+                }
+            ],
+            Activities =
+            [
+                new ExperimentScheduleActivity
+                {
+                    ActivityId = activityId,
+                    ExperimentJobId = job.JobId,
+                    ScheduleEntryId = entry.ScheduleEntryId,
+                    WorkflowRunId = Guid.NewGuid(),
+                    Resource = resource,
+                    ActivityName = "读取仪器状态",
+                    Status = "Running",
+                    PlannedStart = start,
+                    PlannedEnd = end,
+                    ActualStart = observed.AddMinutes(-15)
+                }
+            ]
+        };
+        var availability = new ExperimentResourceAvailability
+        {
+            Resource = resource,
+            DisplayName = "D160 #1",
+            Enabled = true,
+            Capacity = 1,
+            AvailableCapacity = 0,
+            HasActiveLease = true
+        };
+
+        var lane = Assert.Single(ExperimentScheduleTimelineProjector.CreateLanes(
+            start,
+            end,
+            [availability],
+            snapshot,
+            new Dictionary<Guid, ExperimentJob> { [job.JobId] = job }));
+
+        var plan = Assert.Single(lane.Blocks.Where(block => !block.IsRuntimeLease && !block.IsRuntimeActivity));
+        var lease = Assert.Single(lane.Blocks.Where(block => block.IsRuntimeLease));
+        var activity = Assert.Single(lane.Blocks.Where(block => block.IsRuntimeActivity));
+        Assert.True(plan.IsCurrent);
+        Assert.Equal("当前计划", plan.LayerDisplay);
+        Assert.Equal(2, plan.BorderThickness);
+        Assert.True(lease.IsCurrent);
+        Assert.Equal("当前租约", lease.LayerDisplay);
+        Assert.True(activity.IsCurrent);
+        Assert.Equal("当前实际", activity.LayerDisplay);
+        Assert.Equal(2, activity.BorderThickness);
+    }
+
+    [Fact]
     public void Timeline_routes_activity_without_resource_evidence_to_unassigned_lane()
     {
         var start = DateTimeOffset.Parse("2026-08-24T08:00:00+08:00");

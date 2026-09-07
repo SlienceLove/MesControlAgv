@@ -138,6 +138,8 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
             OnPropertyChanged(nameof(SelectedActivityResource));
             OnPropertyChanged(nameof(SelectedActivityWindow));
             OnPropertyChanged(nameof(SelectedActivityError));
+            OnPropertyChanged(nameof(SelectedActivityWorkflowStep));
+            OnPropertyChanged(nameof(SelectedActivityAuditSummary));
             OnPropertyChanged(nameof(HasSelectedActivity));
         }
     }
@@ -333,6 +335,33 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
     public string SelectedActivityError => string.IsNullOrWhiteSpace(SelectedActivity?.LastError)
         ? "-"
         : SelectedActivity!.LastError!;
+    public string SelectedActivityWorkflowStep
+    {
+        get
+        {
+            if (SelectedActivity?.WorkflowStepId is not { } stepId)
+                return "未关联方案步骤";
+            var step = SelectedJob?.Job.WorkflowSteps.FirstOrDefault(item => item.StepId == stepId);
+            return step is null
+                ? $"步骤 ID {stepId:N}"
+                : $"步骤 {step.Order} · {GetWorkflowStepName(step)}";
+        }
+    }
+
+    public string SelectedActivityAuditSummary
+    {
+        get
+        {
+            if (SelectedActivity is null) return "暂无活动审计";
+            var audits = _allAudits
+                .Where(audit => audit.ExperimentJobId == SelectedActivity.ExperimentJobId)
+                .OrderByDescending(audit => audit.OccurredAt)
+                .ToArray();
+            return audits.Length == 0
+                ? "暂无活动审计"
+                : $"最近审计：{audits[0].EventType} / {audits[0].Outcome}（共 {audits.Length} 条）";
+        }
+    }
     public string SelectedParameters => SelectedJob is null || SelectedJob.Job.Parameters.Count == 0
         ? "无"
         : string.Join("；", SelectedJob.Job.Parameters.OrderBy(item => item.Key).Select(item => $"{item.Key}={item.Value ?? "<null>"}"));
@@ -655,6 +684,8 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
         OnPropertyChanged(nameof(SelectedPlan));
         OnPropertyChanged(nameof(SelectedWorkflow));
         OnPropertyChanged(nameof(SelectedParameters));
+        OnPropertyChanged(nameof(SelectedActivityWorkflowStep));
+        OnPropertyChanged(nameof(SelectedActivityAuditSummary));
         OnPropertyChanged(nameof(HasSelectedJob));
         OnPropertyChanged(nameof(HasBlockingReasons));
         RaiseCommandStates();
@@ -789,6 +820,9 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
 
     private static string? NormalizeOptional(string value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string GetWorkflowStepName(ExperimentPlanWorkflowStep step) =>
+        string.IsNullOrWhiteSpace(step.Name) ? $"流程 v{step.WorkflowVersion}" : step.Name;
 
     private static string FormatActivityTime(DateTimeOffset value) =>
         value.ToLocalTime().ToString("MM-dd HH:mm:ss");

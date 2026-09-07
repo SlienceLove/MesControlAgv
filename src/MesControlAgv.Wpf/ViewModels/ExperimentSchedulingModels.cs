@@ -118,6 +118,13 @@ public sealed class ExperimentScheduleBlockViewModel
     public string WorkflowStepName { get; init; } = string.Empty;
     public Guid? ActivityId { get; init; }
     public bool IsRuntimeActivity { get; init; }
+    public bool IsCurrent { get; init; }
+    public double BorderThickness => IsCurrent ? 2 : 1;
+    public string LayerDisplay => IsRuntimeActivity
+        ? IsCurrent ? "当前实际" : "实际设备活动"
+        : IsRuntimeLease
+            ? IsCurrent ? "当前租约" : "运行租约"
+            : IsCurrent ? "当前计划" : "计划预留";
 }
 
 public sealed class ExperimentResourceLaneViewModel
@@ -247,8 +254,9 @@ public static class ExperimentScheduleTimelineProjector
                      scheduleEntryId: entry.ScheduleEntryId,
                      workflowStepId: segment.StepId,
                      workflowStepOrder: segment.StepOrder,
-                    workflowStepCount: segment.StepCount,
-                    workflowStepName: segment.StepName));
+                     workflowStepCount: segment.StepCount,
+                     workflowStepName: segment.StepName,
+                     isCurrent: IsCurrentPlanBlock(entry, job, segment, snapshot.GeneratedAt)));
             }
         }
 
@@ -269,9 +277,10 @@ public static class ExperimentScheduleTimelineProjector
                 $"运行 {lease.WorkflowRunId:N} / 获取 {lease.AcquiredAt.ToLocalTime():HH:mm}",
                 "#FEF0C7",
                 "#B54708",
-                jobId: linkedEntry?.ExperimentJobId,
-                workflowRunId: lease.WorkflowRunId,
-                isRuntimeLease: true));
+                 jobId: linkedEntry?.ExperimentJobId,
+                 workflowRunId: lease.WorkflowRunId,
+                 isRuntimeLease: true,
+                 isCurrent: IsCurrentLease(lease, snapshot.GeneratedAt)));
         }
 
         foreach (var activity in snapshot.Activities.Where(activity =>
@@ -293,10 +302,11 @@ public static class ExperimentScheduleTimelineProjector
                 style.Border,
                  jobId: activity.ExperimentJobId,
                  scheduleEntryId: activity.ScheduleEntryId,
-                 workflowRunId: activity.WorkflowRunId,
-                 workflowStepId: activity.WorkflowStepId,
-                 activityId: activity.ActivityId,
-                isRuntimeActivity: true));
+                  workflowRunId: activity.WorkflowRunId,
+                  workflowStepId: activity.WorkflowStepId,
+                  activityId: activity.ActivityId,
+                 isRuntimeActivity: true,
+                 isCurrent: IsCurrentActivity(activity, snapshot.GeneratedAt)));
         }
 
         var trackCount = AssignTracks(blocks);
@@ -334,13 +344,19 @@ public static class ExperimentScheduleTimelineProjector
         int workflowStepCount = 0,
         string? workflowStepName = null,
         Guid? activityId = null,
-        bool isRuntimeActivity = false)
+        bool isRuntimeActivity = false,
+        bool isCurrent = false)
     {
         var clippedStart = startsAt < windowStart ? windowStart : startsAt;
         var clippedEnd = endsAt > windowEnd ? windowEnd : endsAt;
         var range = (windowEnd - windowStart).TotalMinutes;
         var left = (clippedStart - windowStart).TotalMinutes / range * TimelineWidth;
         var width = Math.Max(12, (clippedEnd - clippedStart).TotalMinutes / range * TimelineWidth);
+        var layerDisplay = isRuntimeActivity
+            ? isCurrent ? "当前实际" : "实际设备活动"
+            : isRuntimeLease
+                ? isCurrent ? "当前租约" : "运行租约"
+                : isCurrent ? "当前计划" : "计划预留";
         return new ExperimentScheduleBlockViewModel
         {
             JobId = jobId,
@@ -348,7 +364,7 @@ public static class ExperimentScheduleTimelineProjector
             WorkflowRunId = workflowRunId,
             WorkflowStepId = workflowStepId,
             Label = label,
-            Detail = detail,
+            Detail = $"{layerDisplay} / {detail}",
             Fill = fill,
             Border = border,
             Left = Math.Clamp(left, 0, TimelineWidth),
@@ -358,8 +374,39 @@ public static class ExperimentScheduleTimelineProjector
             WorkflowStepName = workflowStepName ?? string.Empty,
             ActivityId = activityId,
             IsRuntimeActivity = isRuntimeActivity,
-            IsRuntimeLease = isRuntimeLease
+            IsRuntimeLease = isRuntimeLease,
+            IsCurrent = isCurrent
         };
+    }
+
+    private static bool IsCurrentPlanBlock(
+        ScheduleEntry entry,
+        ExperimentJob? job,
+        WorkflowTimelineSegment segment,
+        DateTimeOffset generatedAt)
+    {
+        if (entry.Status != ScheduleEntryStatus.Admitted &&
+            job?.Status is not (ExperimentJobStatus.Admitted or ExperimentJobStatus.Running))
+            return false;
+        var observedAt = generatedAt == default ? DateTimeOffset.UtcNow : generatedAt;
+        return segment.StartsAt <= observedAt && segment.EndsAt > observedAt;
+    }
+
+    private static bool IsCurrentLease(ResourceLease lease, DateTimeOffset generatedAt)
+    {
+        if (lease.Status != ResourceLeaseStatus.Active) return false;
+        var observedAt = generatedAt == default ? DateTimeOffset.UtcNow : generatedAt;
+        return lease.AcquiredAt <= observedAt && lease.ExpiresAt > observedAt;
+    }
+
+    private static bool IsCurrentActivity(ExperimentScheduleActivity activity, DateTimeOffset generatedAt)
+    {
+        var status = activity.Status?.Trim().ToLowerInvariant();
+        if (status is not ("prepared" or "accepted" or "running")) return false;
+        var observedAt = generatedAt == default ? DateTimeOffset.UtcNow : generatedAt;
+        var startsAt = activity.ActualStart ?? activity.PlannedStart;
+        var endsAt = activity.ActualEnd ?? observedAt;
+        return startsAt <= observedAt && endsAt >= observedAt;
     }
 
     private static IReadOnlyList<WorkflowTimelineSegment> CreateWorkflowSegments(

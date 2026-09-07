@@ -1181,3 +1181,9 @@ AGV/AUBO 只读预检和明确授权。
 - `ExperimentCompositeRuntimeService.ProcessPendingAsync` 逐个推进 `Prepared/Running` 外层运行：按固定步骤顺序创建并绑定子工作流，只有观察到 `Completed` 才进入下一步；`Failed`、`Cancelled` 和不可证明/缺失/身份不匹配结果分别 fail-closed。
 - 每个步骤快照现在保留固定参数；子流程请求合并任务参数与步骤覆盖，使用外层运行 ID/步骤 ID 推导确定性 `RequestId`，重启重放只复用已有准入记录，不创建替代子流程，也不自动重试 `Unknown`。
 - 新增 MES 回归覆盖两步骤串行、参数固定、子流程拒绝、Unknown、子流程缺失和重启幂等恢复；协调审计明确记录 `deviceWritesAttempted=false`、`automaticRetry=false`，本切片未连接或操作 AGV/AUBO。
+
+## 2026-09-07 排程时间轴阶段 3：计划/实际/当前三层展示
+
+- 资源泳道块增加“计划预留 / 实际设备活动 / 当前”语义；当前计划、当前租约和当前实际活动使用粗边框突出，悬停详情也带有层级标签。
+- 选中活动块后，任务详情同步显示关联方案步骤和最近审计事件；复合子流程活动沿用稳定 `WorkflowStepId`。
+- 新增时间轴投影回归，验证三层不合并、资源租约和实际活动仍独立呈现；本切片只改只读 WPF 展示。

@@ -167,7 +167,9 @@
                         <Border Width="12" Height="12" Margin="0,0,4,0" Background="#FEF0C7" BorderBrush="#B54708" BorderThickness="1" />
                         <TextBlock Margin="0,0,12,0" Foreground="#667085" Text="活动运行租约" />
                         <Border Width="12" Height="12" Margin="0,0,4,0" Background="#E0F2FE" BorderBrush="#0369A1" BorderThickness="1" />
-                        <TextBlock Foreground="#667085" Text="实际设备活动" />
+                        <TextBlock Margin="0,0,12,0" Foreground="#667085" Text="实际设备活动" />
+                        <Border Width="12" Height="12" Margin="0,0,4,0" Background="#ECFDF3" BorderBrush="#027A48" BorderThickness="2" />
+                        <TextBlock Foreground="#667085" Text="当前（粗边框）" />
                     </StackPanel>
                 </DockPanel>
 
@@ -258,9 +260,10 @@
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate>
                                                         <Button AutomationProperties.Name="{Binding Detail}"
-                                                                Width="{Binding Width}" Height="{Binding Height}" Padding="4,1"
-                                                                HorizontalContentAlignment="Left" Background="{Binding Fill}" BorderBrush="{Binding Border}"
-                                                                Command="{Binding DataContext.SelectScheduleBlockCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                                 Width="{Binding Width}" Height="{Binding Height}" Padding="4,1"
+                                                                 HorizontalContentAlignment="Left" Background="{Binding Fill}" BorderBrush="{Binding Border}"
+                                                                 BorderThickness="{Binding BorderThickness}"
+                                                                 Command="{Binding DataContext.SelectScheduleBlockCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
                                                                 CommandParameter="{Binding}" ToolTip="{Binding Detail}">
                                                             <TextBlock FontSize="11" Text="{Binding Label}" TextTrimming="CharacterEllipsis" />
                                                         </Button>
@@ -309,6 +312,8 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <TextBlock Foreground="#667085" Text="方案" />
                     <TextBlock Grid.Column="1" Text="{Binding SelectedPlan}" TextTrimming="CharacterEllipsis" />
@@ -330,6 +335,12 @@
                     <TextBlock Grid.Row="8" Grid.Column="1" Text="{Binding SelectedActivityWindow}" />
                     <TextBlock Grid.Row="9" Foreground="#667085" Text="活动异常" />
                     <TextBlock Grid.Row="9" Grid.Column="1" Foreground="#B42318" Text="{Binding SelectedActivityError}"
+                               TextWrapping="Wrap" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Grid.Row="10" Margin="0,4,0,0" Foreground="#667085" Text="方案步骤" />
+                    <TextBlock Grid.Row="10" Grid.Column="1" Margin="0,4,0,0" Text="{Binding SelectedActivityWorkflowStep}"
+                               TextWrapping="Wrap" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Grid.Row="11" Margin="0,4,0,0" Foreground="#667085" Text="审计" />
+                    <TextBlock Grid.Row="11" Grid.Column="1" Margin="0,4,0,0" Text="{Binding SelectedActivityAuditSummary}"
                                TextWrapping="Wrap" TextTrimming="CharacterEllipsis" />
                 </Grid>
                 <DataGrid x:Name="BlockingReasonGrid" AutomationProperties.AutomationId="ExperimentBlockingReasonGrid"
