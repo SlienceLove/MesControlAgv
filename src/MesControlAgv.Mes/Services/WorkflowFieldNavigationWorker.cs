@@ -519,11 +519,66 @@ public sealed class WorkflowFieldNavigationDispatcher(
                 continue;
             }
 
+            if (!await HasCurrentSupervisorEpochForRecoveryAsync(
+                    workItem,
+                    acceptance,
+                    cancellationToken))
+            {
+                continue;
+            }
+
             await ApplyAcceptanceAsync(
                 workItem,
                 ToResponse(acceptance),
                 cancellationToken);
         }
+    }
+
+    private async Task<bool> HasCurrentSupervisorEpochForRecoveryAsync(
+        WorkflowNodeExecutionWorkItem workItem,
+        FieldNavigationAcceptance acceptance,
+        CancellationToken cancellationToken)
+    {
+        if (_physicalReadiness is not { Enabled: true } readiness)
+            return true;
+
+        var request = await workflows.GetExecutionRequestAsync(
+            workItem.NodeExecution.WorkflowRunId,
+            cancellationToken);
+        var authorization = request?.PhysicalAuthorization;
+        var agvId = authorization?.AgvId?.Trim();
+        var epoch = string.IsNullOrWhiteSpace(agvId)
+            ? null
+            : authorization!.GetDeviceEpoch(agvId);
+        var supervisorInstanceId = authorization?.ReadinessSupervisorInstanceId;
+        string? reason = null;
+
+        if (!string.IsNullOrWhiteSpace(agvId) &&
+            readiness.IsCurrentAndReady(
+                agvId,
+                epoch,
+                supervisorInstanceId,
+                out reason))
+        {
+            return true;
+        }
+
+        var reconciliationReason = string.IsNullOrWhiteSpace(reason)
+            ? PhysicalReadinessReasonCodes.EpochRequired
+            : reason;
+        var error =
+            $"Manual reconciliation required: persisted physical Move recovery was blocked because the readiness supervisor instance/AGV epoch is not current ({reconciliationReason}).";
+        _logger?.LogWarning(
+            "Workflow Move {NodeExecutionId} recovery was blocked by physical readiness binding: {Reason}.",
+            workItem.NodeExecution.Id,
+            error);
+        await CompleteWithEntityAsync(
+            workItem,
+            WorkflowStepCompletionOutcome.Unknown,
+            error,
+            acceptance,
+            cancellationToken);
+        return false;
     }
 
     private bool CanRun() =>

@@ -306,6 +306,110 @@ public sealed class WorkflowFieldNavigationWorkerTests
     }
 
     [Fact]
+    public async Task Recovery_after_readiness_supervisor_restart_marks_stale_arrival_unknown_without_writes()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var dbOptions = new DbContextOptionsBuilder<MesDbContext>().UseSqlite(connection).Options;
+        await using var database = new MesDbContext(dbOptions);
+        await database.Database.EnsureCreatedAsync();
+        var profile = CreateProfile();
+        var validator = new WorkflowValidator(
+            BuiltInWorkflowCatalog.Create(),
+            WorkflowPublicationContext.FromProfile(profile));
+        var reader = new MesWorkflowVersionReader(database);
+        var workflows = new WorkflowApplicationService(
+            database,
+            reader,
+            new WorkflowRuntimeExecutor(reader, validator),
+            validator);
+        var draft = await workflows.CreateDraftAsync(CreateSingleMoveWorkflow(), "test", CancellationToken.None);
+        Assert.True((await workflows.ValidateVersionAsync(draft.WorkflowId, draft.Version, CancellationToken.None)).IsValid);
+        await workflows.PublishAsync(draft.WorkflowId, draft.Version, "test", CancellationToken.None);
+        var execution = await workflows.ExecuteAsync(new WorkflowExecutionRequest
+        {
+            WorkflowId = draft.WorkflowId,
+            Version = draft.Version,
+            RequestId = Guid.NewGuid(),
+            RequestedBy = "operator",
+            PhysicalAuthorization = new WorkflowPhysicalRunAuthorization
+            {
+                AgvId = "AGV-01",
+                OperatorName = "operator",
+                SafetyObserverName = "observer",
+                PermitPrefix = "restart-recovery",
+                ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(1),
+                ReadinessSupervisorInstanceId = "supervisor-before-restart",
+                DeviceEpochs = new Dictionary<string, long> { ["AGV-01"] = 7 }
+            }
+        }, CancellationToken.None);
+        var move = Assert.Single(await workflows.ListFieldNavigationDispatchableNodesAsync(CancellationToken.None));
+        var adapter = new FieldAcceptanceAdapter();
+        var repository = new FieldNavigationAcceptanceRepository(database);
+        var acceptanceService = new FieldNavigationAcceptanceService(
+            repository,
+            adapter,
+            profile,
+            new PathPlanner(AgvMap.FromProfile(profile.Map)),
+            workflows: workflows);
+        var acceptance = await acceptanceService.CreateAsync(
+            new CreateFieldNavigationAcceptanceRequest("AGV-01", "LM1", "LM4")
+            {
+                WorkflowRunId = execution.ExecutionId,
+                WorkflowNodeExecutionId = move.NodeExecution.Id
+            },
+            CancellationToken.None);
+        await acceptanceService.AuthorizeAsync(
+            acceptance.Id,
+            new AuthorizeFieldNavigationAcceptanceRequest(
+                "operator", "observer", "permit-restart-recovery", DateTimeOffset.UtcNow.AddHours(1)),
+            CancellationToken.None);
+        var dispatcher = new WorkflowFieldNavigationDispatcher(
+            workflows,
+            acceptanceService,
+            repository,
+            profile,
+            new WorkflowFieldNavigationWorkerOptions { Enabled = true },
+            agv: adapter);
+        await dispatcher.ProcessAsync(CancellationToken.None);
+
+        var arrived = await repository.GetAsync(acceptance.Id, CancellationToken.None);
+        arrived!.Status = FieldNavigationAcceptanceStatuses.Arrived;
+        arrived.DeviceTaskId = "field-device-task-1";
+        await repository.SaveWithAuditAsync(
+            arrived,
+            "AdapterStateReconciled",
+            new { state = "arrived" },
+            CancellationToken.None);
+        var releaseCallsBeforeRecovery = adapter.ReleaseControlCalls;
+        var dispatchCallsBeforeRecovery = adapter.DispatchCalls;
+        var restartedReadiness = new TestPhysicalReadinessState(
+            enabled: true,
+            supervisorInstanceId: "supervisor-after-restart",
+            deviceEpoch: 8,
+            reason: PhysicalReadinessReasonCodes.SupervisorInstanceMismatch);
+        var recovery = new WorkflowFieldNavigationDispatcher(
+            workflows,
+            acceptanceService,
+            repository,
+            profile,
+            new WorkflowFieldNavigationWorkerOptions { Enabled = true },
+            agv: adapter,
+            physicalReadiness: restartedReadiness);
+
+        await recovery.ProcessAsync(CancellationToken.None);
+
+        var run = await workflows.GetExecutionAsync(execution.ExecutionId, CancellationToken.None);
+        var node = Assert.Single(await workflows.ListNodeExecutionsAsync(execution.ExecutionId, CancellationToken.None));
+        Assert.Equal(WorkflowRuntimeStatus.Unknown, run!.RuntimeStatus);
+        Assert.Equal(WorkflowNodeExecutionStatus.Unknown, node.Status);
+        Assert.Contains("Manual reconciliation required", node.LastError, StringComparison.Ordinal);
+        Assert.Equal(releaseCallsBeforeRecovery, adapter.ReleaseControlCalls);
+        Assert.Equal(dispatchCallsBeforeRecovery, adapter.DispatchCalls);
+        Assert.Equal(1, restartedReadiness.ValidationCalls);
+    }
+
+    [Fact]
     public async Task Cancelled_one_click_move_attempts_control_release_once_even_when_unconfirmed()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
@@ -643,6 +747,54 @@ public sealed class WorkflowFieldNavigationWorkerTests
                 return Task.FromException<bool>(ReleaseControlException);
             return Task.FromResult(true);
         }
+    }
+
+    private sealed class TestPhysicalReadinessState(
+        bool enabled,
+        string supervisorInstanceId,
+        long deviceEpoch,
+        string reason) : IPhysicalReadinessState
+    {
+        public bool Enabled { get; } = enabled;
+        public int ValidationCalls { get; private set; }
+
+        public PhysicalReadinessResponse GetSnapshot() => new()
+        {
+            Enabled = this.Enabled,
+            SupervisorInstanceId = supervisorInstanceId,
+            Devices =
+            [
+                new PhysicalDeviceReadinessSnapshot
+                {
+                    DeviceId = "AGV-01",
+                    DeviceEpoch = deviceEpoch,
+                    State = PhysicalDeviceReadinessState.Ready,
+                    RequiresReauthorization = false
+                }
+            ]
+        };
+
+        public bool TryGetDevice(string deviceId, out PhysicalDeviceReadinessSnapshot snapshot)
+        {
+            snapshot = GetSnapshot().Devices.Single();
+            return string.Equals(deviceId, snapshot.DeviceId, StringComparison.Ordinal);
+        }
+
+        public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, out string? validationReason) =>
+            IsCurrentAndReady(deviceId, expectedEpoch, null, out validationReason);
+
+        public bool IsCurrentAndReady(
+            string deviceId,
+            long? expectedEpoch,
+            string? expectedSupervisorInstanceId,
+            out string? validationReason)
+        {
+            ValidationCalls++;
+            validationReason = reason;
+            return false;
+        }
+
+        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
     }
 
     private sealed class CompletingArmGateway : IAuboArmGateway
