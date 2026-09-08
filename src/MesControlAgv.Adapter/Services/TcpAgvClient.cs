@@ -222,7 +222,7 @@ internal sealed class TcpApiChannel : IDisposable
 
                     throw;
                 }
-                catch (Exception exception) when (exception is IOException or SocketException)
+                catch (Exception exception) when (exception is IOException or SocketException && exception is not AgvProtocolException)
                 {
                     ResetConnection();
                     var canRetry = readOnly

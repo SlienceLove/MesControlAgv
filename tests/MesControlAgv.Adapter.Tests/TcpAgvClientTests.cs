@@ -132,6 +132,43 @@ public sealed class TcpAgvClientTests
     }
 
     [Fact]
+    public async Task Read_only_request_does_not_retry_an_invalid_response_api()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var logger = new RecordingLogger<TcpAgvClient>();
+        await using var statusServer = new TcpApiTestServer(
+            1,
+            packet =>
+            {
+                Assert.Equal((ushort)1013, packet.ApiId);
+                return Task.FromResult(Encoding.UTF8.GetBytes("{\"ret_code\":0}"));
+            },
+            responseApiId: (_, _) => 9999);
+        using var client = new TcpAgvClient(
+            Options.Create(new TcpAgvOptions
+            {
+                Host = "127.0.0.1",
+                StatusPort = statusServer.Port,
+                CommandPort = statusServer.Port,
+                ControlPort = statusServer.Port,
+                OtherPort = statusServer.Port,
+                EnablePush = false,
+                RequestTimeoutMs = 1000,
+                ConnectTimeoutMs = 1000
+            }),
+            logger);
+
+        await Assert.ThrowsAsync<AgvProtocolException>(
+            () => client.GetIoAsync(cancellation.Token));
+
+        Assert.Equal([1013], statusServer.ApiIds);
+        Assert.DoesNotContain(
+            logger.Messages,
+            message => message.Contains("AGV read-only transport audit", StringComparison.Ordinal));
+        await statusServer.Completion;
+    }
+
+    [Fact]
     public async Task Read_only_request_timeout_does_not_start_a_second_attempt()
     {
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -1788,6 +1825,7 @@ internal sealed class TcpApiTestServer : IAsyncDisposable
     private readonly int _expectedRequests;
     private readonly Func<AgvTcpPacket, Task<byte[]>> _handler;
     private readonly Func<AgvTcpPacket, int, bool> _closeWithoutResponse;
+    private readonly Func<AgvTcpPacket, int, ushort> _responseApiId;
     private readonly List<RouteRequest> _requests = [];
     private readonly List<IReadOnlyList<RouteRequest>> _batches = [];
     private readonly List<ushort> _apiIds = [];
@@ -1795,11 +1833,13 @@ internal sealed class TcpApiTestServer : IAsyncDisposable
     public TcpApiTestServer(
         int expectedRequests,
         Func<AgvTcpPacket, Task<byte[]>> handler,
-        Func<AgvTcpPacket, int, bool>? closeWithoutResponse = null)
+        Func<AgvTcpPacket, int, bool>? closeWithoutResponse = null,
+        Func<AgvTcpPacket, int, ushort>? responseApiId = null)
     {
         _expectedRequests = expectedRequests;
         _handler = handler;
         _closeWithoutResponse = closeWithoutResponse ?? ((_, _) => false);
+        _responseApiId = responseApiId ?? ((packet, _) => (ushort)(packet.ApiId + 10000));
         _listener = new TcpListener(IPAddress.Loopback, 0);
         _listener.Start();
         Completion = expectedRequests == 0 ? Task.CompletedTask : RunAsync();
@@ -1831,7 +1871,7 @@ internal sealed class TcpApiTestServer : IAsyncDisposable
                     var response = await _handler(packet);
                     if (_closeWithoutResponse(packet, currentRequestIndex)) break;
 
-                    var responsePacket = AgvTcpProtocol.CreatePacket((ushort)(packet.ApiId + 10000), response);
+                    var responsePacket = AgvTcpProtocol.CreatePacket(_responseApiId(packet, currentRequestIndex), response);
                     await stream.WriteAsync(responsePacket);
                     await stream.FlushAsync();
                 }
