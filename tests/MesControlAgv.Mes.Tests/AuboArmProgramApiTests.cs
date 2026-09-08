@@ -82,6 +82,28 @@ public sealed class AuboArmProgramApiTests
         Assert.Equal(0, gateway.LoadCalls);
     }
 
+    [Fact]
+    public async Task Enabled_physical_supervisor_blocks_uncorrelated_program_writes()
+    {
+        var gateway = new FakeAuboGateway();
+        using var factory = new MesWebApplicationFactory().WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IAuboArmGateway>();
+                services.RemoveAll<IPhysicalReadinessState>();
+                services.AddSingleton<IAuboArmGateway>(gateway);
+                services.AddSingleton<IPhysicalReadinessState>(new BlockingPhysicalReadinessState());
+            }));
+        using var client = factory.CreateClient();
+
+        var response = await client.PostAsJsonAsync(
+            "/api/robot-arms/ARM-01/program/load",
+            new { program = "测试.pro", @operator = "alice" });
+
+        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(0, gateway.LoadCalls);
+    }
+
     private sealed class FakeAuboGateway : IAuboArmGateway
     {
         public int LoadCalls { get; private set; }
@@ -156,5 +178,47 @@ public sealed class AuboArmProgramApiTests
 
         private static AuboArmProgramOperationResponse Result(Guid id, string device, string program, string operation, AuboArmProgramOperationState state, string operatorName) =>
             new(id, device, program, operation, operatorName, state, AuboArmRuntimeState.Stopped, "Stopped", program, 0, null, true, DateTimeOffset.UtcNow);
+    }
+
+    private sealed class BlockingPhysicalReadinessState : IPhysicalReadinessState
+    {
+        public bool Enabled => true;
+
+        public PhysicalReadinessResponse GetSnapshot() => new()
+        {
+            Enabled = true,
+            SupervisorInstanceId = "blocking-test",
+            SchedulingPermitted = false,
+            BlockingReasons = [PhysicalReadinessReasonCodes.EpochRequired]
+        };
+
+        public bool TryGetDevice(
+            string deviceId,
+            out PhysicalDeviceReadinessSnapshot snapshot)
+        {
+            snapshot = new PhysicalDeviceReadinessSnapshot();
+            return false;
+        }
+
+        public bool IsCurrentAndReady(
+            string deviceId,
+            long? expectedEpoch,
+            out string? reason)
+        {
+            reason = PhysicalReadinessReasonCodes.EpochRequired;
+            return false;
+        }
+
+        public bool IsCurrentAndReady(
+            string deviceId,
+            long? expectedEpoch,
+            string? expectedSupervisorInstanceId,
+            out string? reason)
+        {
+            reason = PhysicalReadinessReasonCodes.EpochRequired;
+            return false;
+        }
+
+        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
     }
 }

@@ -2,7 +2,7 @@ using MesControlAgv.Contracts;
 using MesControlAgv.Contracts.Experiments;
 using MesControlAgv.Contracts.Workflows;
 
-﻿namespace MesControlAgv.Wpf.Services;
+namespace MesControlAgv.Wpf.Services;
 
 public sealed record DashboardTask(
     Guid Id,
@@ -145,6 +145,12 @@ public interface IMesClient
         Task.FromException<DashboardMapSnapshot>(new NotSupportedException("Map snapshots are not supported by this MES client."));
     Task<PhysicalAgvPreflightResponse?> GetPhysicalPreflightAsync(CancellationToken cancellationToken) =>
         Task.FromException<PhysicalAgvPreflightResponse?>(new NotSupportedException("Physical preflight is not supported by this MES client."));
+    Task<PhysicalReadinessResponse?> GetPhysicalReadinessAsync(CancellationToken cancellationToken) =>
+        Task.FromResult<PhysicalReadinessResponse?>(null);
+    Task<PhysicalReadinessResponse?> RefreshPhysicalReadinessAsync(
+        bool forceFull,
+        CancellationToken cancellationToken) =>
+        GetPhysicalReadinessAsync(cancellationToken);
     Task<AgvDashboardSnapshot> GetAgvSnapshotAsync(CancellationToken cancellationToken);
     async Task<IReadOnlyList<AgvDashboardSnapshot>> GetAgvFleetAsync(CancellationToken cancellationToken) => [await GetAgvSnapshotAsync(cancellationToken)];
     async Task<IReadOnlyList<AgvFleetDashboardStatus>> GetAgvFleetStatusAsync(CancellationToken cancellationToken) =>

@@ -61,6 +61,7 @@ public sealed class LocalPortContractTests
         var physicalLauncher = File.ReadAllText(Path.Combine(root, "scripts", "start-physical-acceptance-adapter.ps1"));
         var stopper = File.ReadAllText(Path.Combine(root, "scripts", "stop-local.ps1"));
         var verifier = File.ReadAllText(Path.Combine(root, "scripts", "verify-local.ps1"));
+        var desktopLauncher = File.ReadAllText(Path.Combine(root, "src", "MesControlAgv.Launcher", "App.xaml.cs"));
         var wpfStartup = File.ReadAllText(Path.Combine(root, "src", "MesControlAgv.Wpf", "App.xaml.cs"));
         var wpfProject = File.ReadAllText(Path.Combine(root, "src", "MesControlAgv.Wpf", "MesControlAgv.Wpf.csproj"));
         var restarter = File.ReadAllText(Path.Combine(root, "scripts", "restart-local.ps1"));
@@ -153,6 +154,15 @@ public sealed class LocalPortContractTests
         Assert.Contains("ASPNETCORE_ENVIRONMENT", restarter);
         Assert.Contains("EnvironmentVariables", restarter);
         Assert.Contains("run-scoped override", restarter);
+        Assert.Contains("DefaultPhysicalAdapterBaseUrl", desktopLauncher);
+        Assert.Contains("DefaultPhysicalMesBaseUrl", desktopLauncher);
+        Assert.Contains("WPF_RUNTIME_MODE", desktopLauncher);
+        Assert.Contains("? \"physical\"", desktopLauncher);
+        Assert.Contains("WPF_MANAGE_LOCAL_SERVICES", desktopLauncher);
+        Assert.Contains("WPF_ENABLE_PHYSICAL_BATCH", desktopLauncher);
+        Assert.Contains("http://127.0.0.1:5141/", desktopLauncher);
+        Assert.Contains("http://127.0.0.1:5145/", desktopLauncher);
+        Assert.DoesNotContain("Environment[\"WPF_RUNTIME_MODE\"] = \"simulator\"", desktopLauncher);
         Assert.Contains("Local Simulator transport verification", verifier);
         Assert.DoesNotContain("Live AGV transport verification", verifier);
     }

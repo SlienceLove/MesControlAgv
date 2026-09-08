@@ -18,7 +18,13 @@ public sealed record AuthorizeFieldNavigationAcceptanceRequest(
     string OperatorName,
     string SafetyObserverName,
     string PermitId,
-    DateTimeOffset ExpiresAtUtc);
+    DateTimeOffset ExpiresAtUtc)
+{
+    /// <summary>Optional current physical-device session epoch.</summary>
+    public long? DeviceEpoch { get; init; }
+
+    public string? ReadinessSupervisorInstanceId { get; init; }
+}
 
 public sealed record FieldNavigationDispatchCommand(
     string AgvId,
@@ -50,6 +56,8 @@ public sealed record FieldNavigationAcceptanceResponse(
     public Guid? WorkflowRunId { get; init; }
     public Guid? WorkflowNodeExecutionId { get; init; }
     public Guid? WorkflowDeviceOperationId { get; init; }
+    public long? DeviceEpoch { get; init; }
+    public string? ReadinessSupervisorInstanceId { get; init; }
     public bool IsWorkflowLinked => WorkflowRunId.HasValue && WorkflowNodeExecutionId.HasValue;
 }
 

@@ -222,6 +222,28 @@ public sealed class MesClient(HttpClient client) : IMesClient
         return await response.Content.ReadFromJsonAsync<PhysicalAgvPreflightResponse>(cancellationToken);
     }
 
+    public async Task<PhysicalReadinessResponse?> GetPhysicalReadinessAsync(
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync("api/physical/readiness", cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<PhysicalReadinessResponse>(cancellationToken);
+    }
+
+    public async Task<PhysicalReadinessResponse?> RefreshPhysicalReadinessAsync(
+        bool forceFull,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.PostAsync(
+            $"api/physical/readiness/refresh?forceFull={forceFull.ToString().ToLowerInvariant()}",
+            content: null,
+            cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<PhysicalReadinessResponse>(cancellationToken);
+    }
+
     public async Task<AgvDashboardSnapshot> GetAgvSnapshotAsync(CancellationToken cancellationToken)
     {
         var snapshot = await client.GetFromJsonAsync<ContractAgvSnapshot>("api/agv", cancellationToken)

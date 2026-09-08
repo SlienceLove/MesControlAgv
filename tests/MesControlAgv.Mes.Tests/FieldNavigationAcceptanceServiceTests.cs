@@ -159,6 +159,68 @@ public sealed class FieldNavigationAcceptanceServiceTests
         Assert.Contains(persisted!.Audits, audit => audit.EventType == "CancelUnknown");
     }
 
+    [Fact]
+    public async Task Authorized_permit_from_an_old_device_epoch_cannot_dispatch_after_power_cycle()
+    {
+        var adapter = new FieldAcceptanceAdapter();
+        var state = new PhysicalReadinessStateStore(instanceId: "field-acceptance-test");
+        var descriptor = new PhysicalDeviceDescriptor("AGV-01", "agv", true);
+        var now = DateTimeOffset.UtcNow;
+        state.Configure(true, [descriptor], now);
+        state.Apply(
+            descriptor,
+            new PhysicalDeviceReadinessObservation
+            {
+                DeviceId = "AGV-01",
+                DeviceFamily = "agv",
+                ProbeSucceeded = true,
+                Online = true,
+                MapName = "acceptance-map",
+                MapVersion = "1",
+                MapMd5 = "0123456789abcdef0123456789abcdef",
+                VehicleModel = "test",
+                IsFullPreflight = true,
+                FullPreflightPassed = true,
+                ObservedAtUtc = now
+            },
+            TimeSpan.Zero,
+            requireFullPreflight: true,
+            now);
+        var first = Assert.Single(state.GetSnapshot().Devices);
+        Assert.True(state.AcknowledgeAuthorization("AGV-01", first.DeviceEpoch));
+
+        var service = CreateService(adapter, physicalReadiness: state);
+        var authorized = await CreateAuthorizedAsync(service, "permit-old-epoch");
+        Assert.Equal(first.DeviceEpoch, authorized.DeviceEpoch);
+        Assert.Equal(
+            state.GetSnapshot().SupervisorInstanceId,
+            authorized.ReadinessSupervisorInstanceId);
+
+        state.Apply(
+            descriptor,
+            new PhysicalDeviceReadinessObservation
+            {
+                DeviceId = "AGV-01",
+                DeviceFamily = "agv",
+                ProbeSucceeded = true,
+                Online = false,
+                IsFullPreflight = true,
+                FullPreflightPassed = false,
+                BlockingReasons = [PhysicalReadinessReasonCodes.DeviceOffline],
+                FullPreflightBlockingReasons = [PhysicalReadinessReasonCodes.DeviceOffline],
+                ObservedAtUtc = now.AddSeconds(1)
+            },
+            TimeSpan.Zero,
+            requireFullPreflight: true,
+            now.AddSeconds(1));
+
+        var blocked = await service.DispatchAsync(authorized.Id, CancellationToken.None);
+
+        Assert.Equal(FieldNavigationAcceptanceStatuses.Rejected, blocked.Status);
+        Assert.Contains("epoch_invalid", blocked.LastError, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, adapter.DispatchCalls);
+    }
+
     private static async Task<FieldNavigationAcceptanceResponse> CreateAuthorizedAsync(
         FieldNavigationAcceptanceService service,
         string permitId)
@@ -175,7 +237,8 @@ public sealed class FieldNavigationAcceptanceServiceTests
 
     private static FieldNavigationAcceptanceService CreateService(
         FieldAcceptanceAdapter adapter,
-        bool includeApprovedEdge = true)
+        bool includeApprovedEdge = true,
+        IPhysicalReadinessState? physicalReadiness = null)
     {
         var options = new DbContextOptionsBuilder<MesDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
@@ -242,7 +305,8 @@ public sealed class FieldNavigationAcceptanceServiceTests
             new FieldNavigationAcceptanceRepository(database),
             adapter,
             profile,
-            new PathPlanner(AgvMap.FromProfile(profile.Map)));
+            new PathPlanner(AgvMap.FromProfile(profile.Map)),
+            physicalReadiness: physicalReadiness);
     }
 
     private sealed class FieldAcceptanceAdapter : IAgvGateway, IFieldNavigationAcceptanceGateway

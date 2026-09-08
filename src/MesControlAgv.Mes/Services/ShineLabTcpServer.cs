@@ -82,6 +82,8 @@ public sealed class ShineLabTcpServer(
     {
         string? equipmentCode = null;
         var connectionId = Guid.NewGuid().ToString("N");
+        using var clientTimeout = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        clientTimeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _options.StaleAfterSeconds)));
         try
         {
             await using var stream = client.GetStream();
@@ -94,8 +96,9 @@ public sealed class ShineLabTcpServer(
 
             while (!stoppingToken.IsCancellationRequested)
             {
-                var line = await reader.ReadLineAsync(stoppingToken);
+                var line = await reader.ReadLineAsync(clientTimeout.Token);
                 if (line is null) break;
+                clientTimeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _options.StaleAfterSeconds)));
                 if (string.IsNullOrWhiteSpace(line)) continue;
 
                 if (!TryParse(line, out var message, out var error))
@@ -142,6 +145,12 @@ public sealed class ShineLabTcpServer(
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
+        }
+        catch (OperationCanceledException)
+        {
+            logger.LogInformation(
+                "ShineLab client connection timed out after {TimeoutSeconds}s without a message.",
+                _options.StaleAfterSeconds);
         }
         catch (IOException exception)
         {
@@ -211,7 +220,7 @@ public sealed class ShineLabTcpServer(
                 : throw new InvalidOperationException($"Invalid ShineLabTcp:ListenAddress '{value}'.");
 
     private static bool IsTaskEventMethod(string method) => method is
-        "UpdateInfo" or "AlarmInfo" or "SampleFinish" or "TaskFinish" or "TaskError" or "Result";
+        "Device" or "UpdateInfo" or "AlarmInfo" or "SampleFinish" or "TaskFinish" or "TaskError" or "Result" or "EndMission";
 
     private readonly record struct ShineLabMessage(
         string StrId,

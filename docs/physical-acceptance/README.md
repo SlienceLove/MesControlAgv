@@ -108,6 +108,14 @@ repository:
   -AdapterUrl 'http://127.0.0.1:5141'
 ```
 
+For a one-shot read-only evidence session, prefer
+`scripts/Invoke-PhysicalReadOnlyPreflight.ps1`. It creates an isolated RunId and
+database, starts the Adapter in `read-only-preflight`, captures health, device
+catalog and authoritative AGV preflight (plus optional AUBO reads), and always
+attempts to stop only the PID recorded by that run before writing
+`physical-readonly-evidence.json`. Its AGV command, Other and Push ports are
+configured for driver completeness but are not probed or called.
+
 For a separately authorized supervised movement session, restart with
 `-ExpectedRunMode standard -EnableFieldNavigationAcceptance`. Keep normal
 automatic dispatch, push status, and task cancellation disabled. Stop only the

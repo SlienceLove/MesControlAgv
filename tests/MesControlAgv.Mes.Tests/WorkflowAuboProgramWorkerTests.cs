@@ -192,6 +192,180 @@ public sealed class WorkflowAuboProgramWorkerTests
     }
 
     [Fact]
+    public async Task Device_reconnect_epoch_change_blocks_aubo_before_load_or_run()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var dbOptions = new DbContextOptionsBuilder<MesDbContext>().UseSqlite(connection).Options;
+        await using var database = new MesDbContext(dbOptions);
+        await database.Database.EnsureCreatedAsync();
+        var profile = CreateProfile() with
+        {
+            Features = new FeatureFlags { UseSimulator = false }
+        };
+        var validator = new WorkflowValidator(
+            BuiltInWorkflowCatalog.Create(),
+            WorkflowPublicationContext.FromProfile(profile));
+        var reader = new MesWorkflowVersionReader(database);
+        var workflows = new WorkflowApplicationService(
+            database,
+            reader,
+            new WorkflowRuntimeExecutor(reader, validator),
+            validator);
+        var draft = await workflows.CreateDraftAsync(
+            CreateRobotOnlyWorkflow(),
+            "test",
+            CancellationToken.None);
+        Assert.True((await workflows.ValidateVersionAsync(
+            draft.WorkflowId,
+            draft.Version,
+            CancellationToken.None)).IsValid);
+        await workflows.PublishAsync(draft.WorkflowId, draft.Version, "test", CancellationToken.None);
+
+        var state = new PhysicalReadinessStateStore(instanceId: "aubo-epoch-test");
+        var descriptor = new PhysicalDeviceDescriptor("ARM-01", WorkflowDeviceFamilyIds.RobotArm, true, ControlEnabled: true);
+        var now = DateTimeOffset.UtcNow;
+        state.Configure(true, [descriptor], now);
+        state.Apply(
+            descriptor,
+            ReadyArmObservation(now),
+            TimeSpan.Zero,
+            requireFullPreflight: true,
+            now);
+        var oldEpoch = Assert.Single(state.GetSnapshot().Devices).DeviceEpoch;
+        Assert.True(state.AcknowledgeAuthorization("ARM-01", oldEpoch));
+
+        var execution = await workflows.ExecuteAsync(new WorkflowExecutionRequest
+        {
+            WorkflowId = draft.WorkflowId,
+            Version = draft.Version,
+            RequestId = Guid.NewGuid(),
+            RequestedBy = "test",
+            PhysicalAuthorization = new WorkflowPhysicalRunAuthorization
+            {
+                AgvId = "AGV-01",
+                OperatorName = "test",
+                SafetyObserverName = "observer",
+                PermitPrefix = "aubo-old-epoch",
+                ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(1),
+                DeviceEpochs = new Dictionary<string, long> { ["ARM-01"] = oldEpoch },
+                ReadinessSupervisorInstanceId = state.GetSnapshot().SupervisorInstanceId
+            }
+        }, CancellationToken.None);
+        Assert.True(execution.IsAccepted);
+
+        now = now.AddSeconds(1);
+        state.Apply(
+            descriptor,
+            ReadyArmObservation(now) with
+            {
+                Online = false,
+                FullPreflightPassed = false,
+                BlockingReasons = [PhysicalReadinessReasonCodes.DeviceOffline],
+                FullPreflightBlockingReasons = [PhysicalReadinessReasonCodes.DeviceOffline]
+            },
+            TimeSpan.Zero,
+            requireFullPreflight: true,
+            now);
+        now = now.AddSeconds(1);
+        state.Apply(
+            descriptor,
+            ReadyArmObservation(now),
+            TimeSpan.Zero,
+            requireFullPreflight: true,
+            now);
+        Assert.NotEqual(oldEpoch, Assert.Single(state.GetSnapshot().Devices).DeviceEpoch);
+
+        var arm = new RecordingArmGateway();
+        var dispatcher = new WorkflowAuboProgramDispatcher(
+            workflows,
+            arm,
+            profile,
+            new WorkflowAuboProgramWorkerOptions { Enabled = true },
+            physicalReadiness: state);
+
+        await dispatcher.ProcessAsync(CancellationToken.None);
+
+        Assert.Equal(0, arm.RunCalls);
+        Assert.Empty(arm.LoadOperationIds);
+        var node = Assert.Single(await workflows.ListAuboProgramDispatchableNodesAsync(CancellationToken.None));
+        Assert.Equal(WorkflowNodeExecutionStatus.Ready, node.NodeExecution.Status);
+    }
+
+    [Fact]
+    public async Task Readiness_change_after_claim_is_rechecked_at_the_aubo_write_boundary()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var dbOptions = new DbContextOptionsBuilder<MesDbContext>().UseSqlite(connection).Options;
+        await using var database = new MesDbContext(dbOptions);
+        await database.Database.EnsureCreatedAsync();
+        var profile = CreateProfile() with
+        {
+            Features = new FeatureFlags { UseSimulator = false }
+        };
+        var validator = new WorkflowValidator(
+            BuiltInWorkflowCatalog.Create(),
+            WorkflowPublicationContext.FromProfile(profile));
+        var reader = new MesWorkflowVersionReader(database);
+        var workflows = new WorkflowApplicationService(
+            database,
+            reader,
+            new WorkflowRuntimeExecutor(reader, validator),
+            validator);
+        var draft = await workflows.CreateDraftAsync(
+            CreateRobotOnlyWorkflow(),
+            "test",
+            CancellationToken.None);
+        Assert.True((await workflows.ValidateVersionAsync(
+            draft.WorkflowId,
+            draft.Version,
+            CancellationToken.None)).IsValid);
+        await workflows.PublishAsync(draft.WorkflowId, draft.Version, "test", CancellationToken.None);
+
+        var execution = await workflows.ExecuteAsync(new WorkflowExecutionRequest
+        {
+            WorkflowId = draft.WorkflowId,
+            Version = draft.Version,
+            RequestId = Guid.NewGuid(),
+            RequestedBy = "test",
+            PhysicalAuthorization = new WorkflowPhysicalRunAuthorization
+            {
+                AgvId = "AGV-01",
+                OperatorName = "test",
+                SafetyObserverName = "observer",
+                PermitPrefix = "write-boundary",
+                ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(1),
+                DeviceEpochs = new Dictionary<string, long> { ["ARM-01"] = 1 },
+                ReadinessSupervisorInstanceId = "write-boundary-test"
+            }
+        }, CancellationToken.None);
+        Assert.True(execution.IsAccepted);
+
+        var readiness = new ChangesAfterFirstCheckReadinessState();
+        var arm = new RecordingArmGateway();
+        var dispatcher = new WorkflowAuboProgramDispatcher(
+            workflows,
+            arm,
+            profile,
+            new WorkflowAuboProgramWorkerOptions
+            {
+                Enabled = true,
+                ReadinessRetryWindowMs = 0
+            },
+            physicalReadiness: readiness);
+
+        await dispatcher.ProcessAsync(CancellationToken.None);
+
+        Assert.Equal(2, readiness.CheckCount);
+        Assert.Empty(arm.LoadOperationIds);
+        Assert.Equal(0, arm.RunCalls);
+        var snapshot = await workflows.GetExecutionAsync(execution.ExecutionId, CancellationToken.None);
+        Assert.Equal(WorkflowRuntimeStatus.Unknown, snapshot!.RuntimeStatus);
+        Assert.Contains("no AUBO write was attempted", snapshot.LastError);
+    }
+
+    [Fact]
     public async Task Restarted_stopped_robot_program_is_unknown_until_operator_reconciles()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
@@ -318,6 +492,22 @@ public sealed class WorkflowAuboProgramWorkerTests
         },
         Features = new FeatureFlags { UseSimulator = true },
         Timeouts = new TimeoutOptions()
+    };
+
+    private static PhysicalDeviceReadinessObservation ReadyArmObservation(DateTimeOffset observedAt) => new()
+    {
+        DeviceId = "ARM-01",
+        DeviceFamily = WorkflowDeviceFamilyIds.RobotArm,
+        ProbeSucceeded = true,
+        Online = true,
+        RobotMode = AuboArmMode.Running.ToString(),
+        SafetyMode = AuboArmSafetyMode.Normal.ToString(),
+        OperationalMode = AuboArmOperationalMode.Automatic.ToString(),
+        RuntimeState = AuboArmRuntimeState.Stopped.ToString(),
+        IsFullPreflight = true,
+        FullPreflightPassed = true,
+        ObservedAtUtc = observedAt,
+        FullPreflightObservedAtUtc = observedAt
     };
 
     private static WorkflowDefinition CreateWorkflow()
@@ -521,5 +711,47 @@ public sealed class WorkflowAuboProgramWorkerTests
             Task.FromResult(Operation(operationId, deviceId, _loaded ?? string.Empty, "stop", operatorName, AuboArmProgramOperationState.Stopped));
         private static AuboArmStatusResponse Status(string id) => new(id, "rob1", true, AuboArmMode.Running, 8, AuboArmSafetyMode.Normal, 1, AuboArmRuntimeState.Stopped, 6, AuboArmOperationalMode.Automatic, 1, DateTimeOffset.UtcNow);
         private static AuboArmProgramOperationResponse Operation(Guid id, string device, string program, string operation, string actor, AuboArmProgramOperationState state) => new(id, device, program, operation, actor, state, AuboArmRuntimeState.Stopped, "Stopped", program, 0, null, true, DateTimeOffset.UtcNow);
+    }
+
+    private sealed class ChangesAfterFirstCheckReadinessState : IPhysicalReadinessState
+    {
+        public bool Enabled => true;
+        public int CheckCount { get; private set; }
+
+        public PhysicalReadinessResponse GetSnapshot() => new()
+        {
+            Enabled = true,
+            SupervisorInstanceId = "write-boundary-test"
+        };
+
+        public bool TryGetDevice(string deviceId, out PhysicalDeviceReadinessSnapshot snapshot)
+        {
+            snapshot = new PhysicalDeviceReadinessSnapshot();
+            return false;
+        }
+
+        public bool IsCurrentAndReady(
+            string deviceId,
+            long? expectedEpoch,
+            out string? reason) =>
+            IsCurrentAndReady(
+                deviceId,
+                expectedEpoch,
+                "write-boundary-test",
+                out reason);
+
+        public bool IsCurrentAndReady(
+            string deviceId,
+            long? expectedEpoch,
+            string? expectedSupervisorInstanceId,
+            out string? reason)
+        {
+            CheckCount++;
+            var ready = CheckCount == 1;
+            reason = ready ? null : PhysicalReadinessReasonCodes.EpochMismatch;
+            return ready;
+        }
+
+        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
     }
 }

@@ -6,6 +6,11 @@ namespace MesControlAgv.Launcher;
 
 public partial class App : Application
 {
+    private const string DefaultPhysicalAdapterBaseUrl = "http://127.0.0.1:5141/";
+    private const string DefaultPhysicalMesBaseUrl = "http://127.0.0.1:5145/";
+    private const string DefaultSimulatorBaseUrl = "http://localhost:5183/";
+    private const string DefaultSimulatorAdapterBaseUrl = "http://localhost:5041/";
+    private const string DefaultSimulatorMesBaseUrl = "http://localhost:5045/";
     private Process? _wpfProcess;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -29,11 +34,43 @@ public partial class App : Application
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
-            startInfo.Environment["WPF_RUNTIME_MODE"] = "simulator";
-            startInfo.Environment["WPF_MANAGE_LOCAL_SERVICES"] = "true";
-            startInfo.Environment["SIMULATOR_BASE_URL"] = "http://localhost:5183/";
-            startInfo.Environment["ADAPTER_BASE_URL"] = "http://localhost:5041/";
-            startInfo.Environment["MES_BASE_URL"] = "http://localhost:5045/";
+            // The desktop launcher is a physical-session entry point by default.
+            // Physical services are owned by the separately supervised session;
+            // the launcher must never start the in-process Simulator implicitly.
+            // An explicit WPF_RUNTIME_MODE=simulator remains available for
+            // offline regression and keeps the old loopback service contract.
+            var configuredRuntimeMode = Environment.GetEnvironmentVariable("WPF_RUNTIME_MODE");
+            var hasExplicitRuntimeMode = !string.IsNullOrWhiteSpace(configuredRuntimeMode);
+            var runtimeMode = string.IsNullOrWhiteSpace(configuredRuntimeMode)
+                ? "physical"
+                : configuredRuntimeMode.Trim();
+            var simulatorMode = runtimeMode.Equals("simulator", StringComparison.OrdinalIgnoreCase);
+            SetEnvironment(startInfo, "WPF_RUNTIME_MODE", runtimeMode);
+            SetDefaultEnvironment(
+                startInfo,
+                "WPF_MANAGE_LOCAL_SERVICES",
+                simulatorMode ? "true" : "false",
+                force: !hasExplicitRuntimeMode);
+            SetDefaultEnvironment(
+                startInfo,
+                "WPF_ENABLE_PHYSICAL_BATCH",
+                "false",
+                force: !hasExplicitRuntimeMode);
+            SetDefaultEnvironment(
+                startInfo,
+                "SIMULATOR_BASE_URL",
+                DefaultSimulatorBaseUrl,
+                force: !hasExplicitRuntimeMode);
+            SetDefaultEnvironment(
+                startInfo,
+                "ADAPTER_BASE_URL",
+                simulatorMode ? DefaultSimulatorAdapterBaseUrl : DefaultPhysicalAdapterBaseUrl,
+                force: !hasExplicitRuntimeMode);
+            SetDefaultEnvironment(
+                startInfo,
+                "MES_BASE_URL",
+                simulatorMode ? DefaultSimulatorMesBaseUrl : DefaultPhysicalMesBaseUrl,
+                force: !hasExplicitRuntimeMode);
             _wpfProcess = Process.Start(startInfo);
             if (_wpfProcess is null)
             {
@@ -94,5 +131,22 @@ public partial class App : Application
             MessageBoxButton.OK,
             MessageBoxImage.Error);
         Current?.Shutdown(-1);
+    }
+
+    private static void SetEnvironment(ProcessStartInfo startInfo, string name, string value)
+    {
+        startInfo.Environment[name] = value;
+    }
+
+    private static void SetDefaultEnvironment(
+        ProcessStartInfo startInfo,
+        string name,
+        string value,
+        bool force)
+    {
+        if (force || string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(name)))
+        {
+            startInfo.Environment[name] = value;
+        }
     }
 }

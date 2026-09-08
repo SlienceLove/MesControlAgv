@@ -15,7 +15,7 @@ public sealed class StartupConfigurationInspectorTests : IDisposable
     public StartupConfigurationInspectorTests() => Directory.CreateDirectory(_directory);
 
     [Fact]
-    public void Simulator_defaults_are_startable_and_never_report_real_writes()
+    public void Physical_defaults_are_startable_without_managing_local_simulator_services()
     {
         var report = StartupConfigurationInspector.Inspect(new StartupConfigurationInput
         {
@@ -23,11 +23,33 @@ public sealed class StartupConfigurationInspectorTests : IDisposable
         });
 
         Assert.True(report.CanStart);
+        Assert.Equal("physical", report.RuntimeMode);
+        Assert.False(report.ManageLocalServices);
+        Assert.True(report.ManageLocalMes);
+        Assert.Equal(new Uri("http://127.0.0.1:5141/"), report.AdapterBaseUrl);
+        Assert.Equal(new Uri("http://127.0.0.1:5145/"), report.MesBaseUrl);
+        Assert.Equal(new Uri("http://localhost:5183/"), report.SimulatorBaseUrl);
+        Assert.StartsWith("未知", report.RealWriteAccess, StringComparison.Ordinal);
+        Assert.DoesNotContain(report.Items, item => item.Severity == StartupDiagnosticSeverity.Error);
+    }
+
+    [Fact]
+    public void Explicit_simulator_mode_keeps_the_offline_loopback_defaults()
+    {
+        var report = StartupConfigurationInspector.Inspect(new StartupConfigurationInput
+        {
+            BaseDirectory = _directory,
+            RuntimeMode = "simulator"
+        });
+
+        Assert.True(report.CanStart);
         Assert.Equal("simulator", report.RuntimeMode);
         Assert.True(report.ManageLocalServices);
+        Assert.Equal(new Uri("http://localhost:5041/"), report.AdapterBaseUrl);
+        Assert.Equal(new Uri("http://localhost:5045/"), report.MesBaseUrl);
+        Assert.Equal(new Uri("http://localhost:5183/"), report.SimulatorBaseUrl);
         Assert.Contains("simulator", report.AdapterDriver, StringComparison.OrdinalIgnoreCase);
         Assert.StartsWith("禁用", report.RealWriteAccess, StringComparison.Ordinal);
-        Assert.DoesNotContain(report.Items, item => item.Severity == StartupDiagnosticSeverity.Error);
     }
 
     [Fact]

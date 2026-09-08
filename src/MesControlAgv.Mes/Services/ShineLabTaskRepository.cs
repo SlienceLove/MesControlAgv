@@ -206,6 +206,7 @@ public sealed class ShineLabTaskRepository(MesDbContext database)
         var error = ReadString(body, "errorMsg", "errorMessage", "msg");
         switch (strMethod)
         {
+            case "Device":
             case "UpdateInfo":
                 var status = ReadInt(body, "status");
                 if (status == 1)
@@ -236,6 +237,7 @@ public sealed class ShineLabTaskRepository(MesDbContext database)
                 if (task.Status != "Completed") task.CurrentStage = "ResultAvailable";
                 break;
 
+            case "EndMission":
             case "TaskFinish":
                 task.Status = "Completed";
                 task.CurrentStage = "Completed";

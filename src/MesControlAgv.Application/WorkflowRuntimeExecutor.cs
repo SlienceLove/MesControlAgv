@@ -23,6 +23,8 @@ public static class WorkflowExecutionRejectionCodes
     public const string PhysicalAgvBusy = "WORKFLOW_PHYSICAL_AGV_BUSY";
     public const string PhysicalExecutionDisabled = "WORKFLOW_PHYSICAL_EXECUTION_DISABLED";
     public const string PhysicalTemplateRequired = "WORKFLOW_PHYSICAL_TEMPLATE_REQUIRED";
+    public const string PhysicalDeviceNotReady = "WORKFLOW_PHYSICAL_DEVICE_NOT_READY";
+    public const string PhysicalDeviceEpochMismatch = "WORKFLOW_PHYSICAL_DEVICE_EPOCH_MISMATCH";
 }
 
 /// <summary>
@@ -127,6 +129,17 @@ public sealed class WorkflowRuntimeExecutor : IWorkflowRuntimeExecutor
             return "Physical batch authorization has already expired.";
         if (remaining < TimeSpan.FromMinutes(30))
             return "Physical batch authorization must remain valid for at least 30 minutes.";
+
+        if (authorization.DeviceEpochs is not null && authorization.DeviceEpochs.Any(pair =>
+                string.IsNullOrWhiteSpace(pair.Key) || pair.Value <= 0))
+        {
+            return "Physical batch authorization contains an invalid device epoch.";
+        }
+        if (authorization.DeviceEpochs is { Count: > 0 } &&
+            string.IsNullOrWhiteSpace(authorization.ReadinessSupervisorInstanceId))
+        {
+            return "Physical batch authorization device epochs require a readiness supervisor instance id.";
+        }
 
         return null;
     }
@@ -483,7 +496,9 @@ public sealed class WorkflowRuntimeExecutor : IWorkflowRuntimeExecutor
                 FingerprintValue(authorization.OperatorName),
                 FingerprintValue(authorization.SafetyObserverName),
                 FingerprintValue(authorization.PermitPrefix),
-                authorization.ExpiresAtUtc.ToUniversalTime().Ticks);
+                authorization.ExpiresAtUtc.ToUniversalTime().Ticks,
+                FingerprintValue(authorization.ReadinessSupervisorInstanceId),
+                FingerprintEpochs(authorization.DeviceEpochs));
         var baseFingerprint = string.Join(
             '\u001f',
             request.WorkflowId,
@@ -499,6 +514,17 @@ public sealed class WorkflowRuntimeExecutor : IWorkflowRuntimeExecutor
 
     private static string FingerprintValue(string? value) =>
         $"{value?.Length ?? -1}:{value}";
+
+    private static string FingerprintEpochs(IReadOnlyDictionary<string, long>? epochs)
+    {
+        if (epochs is null || epochs.Count == 0) return string.Empty;
+        return string.Join(
+            '\u001e',
+            epochs
+                .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(pair => pair.Key, StringComparer.Ordinal)
+                .Select(pair => $"{FingerprintValue(pair.Key)}={pair.Value}"));
+    }
 
     private static IReadOnlyDictionary<string, string?> ReadOnlyDetails(
         params (string Key, string? Value)[] values)

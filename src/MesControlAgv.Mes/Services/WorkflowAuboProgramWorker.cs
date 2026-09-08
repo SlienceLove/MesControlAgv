@@ -53,10 +53,12 @@ public sealed class WorkflowAuboProgramDispatcher(
     ProfileConfiguration profile,
     WorkflowAuboProgramWorkerOptions options,
     TimeProvider? timeProvider = null,
-    ILogger? logger = null)
+    ILogger? logger = null,
+    IPhysicalReadinessState? physicalReadiness = null)
 {
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private readonly ILogger? _logger = logger;
+    private readonly IPhysicalReadinessState? _physicalReadiness = physicalReadiness;
 
     public async Task ProcessAsync(CancellationToken cancellationToken)
     {
@@ -98,19 +100,30 @@ public sealed class WorkflowAuboProgramDispatcher(
         var request = await workflows.GetExecutionRequestAsync(
             workItem.NodeExecution.WorkflowRunId,
             cancellationToken);
-        // Legacy/manual physical runs use their existing per-node controls.
-        // When a run-level one-click authorization exists, however, it must
-        // remain valid at every robot-program boundary.
-        if (request?.PhysicalAuthorization is not { } authorization) return true;
+        // Legacy/manual physical runs retain their existing per-node controls
+        // only while the new supervisor is disabled. Once it is enabled, every
+        // physical write must carry a current device-session epoch.
+        if (request?.PhysicalAuthorization is not { } authorization)
+        {
+            return _physicalReadiness is not { Enabled: true };
+        }
 
         var now = _timeProvider.GetUtcNow();
-        if (authorization.ExpiresAtUtc > now) return true;
+        if (authorization.ExpiresAtUtc <= now)
+        {
+            _logger?.LogWarning(
+                "Workflow AUBO node {NodeExecutionId} remains Ready because physical batch authorization expired at {ExpiresAtUtc}.",
+                workItem.NodeExecution.Id,
+                authorization.ExpiresAtUtc);
+            return false;
+        }
 
-        _logger?.LogWarning(
-            "Workflow AUBO node {NodeExecutionId} remains Ready because physical batch authorization expired at {ExpiresAtUtc}.",
-            workItem.NodeExecution.Id,
-            authorization.ExpiresAtUtc);
-        return false;
+        var armId = ResolveArmId(workItem.NodeExecution.Inputs);
+        return string.IsNullOrWhiteSpace(armId) ||
+               await HasCurrentSupervisorEpochAsync(
+                   workItem,
+                   armId,
+                   cancellationToken);
     }
 
     private bool CanUseProfile() =>
@@ -142,6 +155,9 @@ public sealed class WorkflowAuboProgramDispatcher(
 
         while (true)
         {
+            if (!await HasCurrentSupervisorEpochAsync(workItem, armId, cancellationToken))
+                return false;
+
             IReadOnlyList<string> blockers;
             try
             {
@@ -275,6 +291,16 @@ public sealed class WorkflowAuboProgramDispatcher(
 
             if (!string.Equals(NormalizeLoadedProgram(before.LoadedProgram), normalizedProgram, StringComparison.Ordinal))
             {
+                if (!await HasActiveBatchAuthorizationAsync(workItem, cancellationToken))
+                {
+                    await CompleteAsync(
+                        workItem,
+                        WorkflowStepCompletionOutcome.Unknown,
+                        "Physical readiness or authorization changed immediately before AUBO load; no AUBO write was attempted.",
+                        cancellationToken);
+                    return;
+                }
+
                 // Once the call is entered, a lost response is ambiguous.  Do
                 // not retry or issue a second load automatically.
                 mutationMayHaveStarted = true;
@@ -305,6 +331,18 @@ public sealed class WorkflowAuboProgramDispatcher(
                         cancellationToken);
                     return;
                 }
+            }
+
+            if (!await HasActiveBatchAuthorizationAsync(workItem, cancellationToken))
+            {
+                await CompleteAsync(
+                    workItem,
+                    WorkflowStepCompletionOutcome.Unknown,
+                    mutationMayHaveStarted
+                        ? "Physical readiness or authorization changed after AUBO load; run was not attempted and manual reconciliation is required."
+                        : "Physical readiness or authorization changed immediately before AUBO run; no AUBO write was attempted.",
+                    cancellationToken);
+                return;
             }
 
             mutationMayHaveStarted = true;
@@ -391,6 +429,16 @@ public sealed class WorkflowAuboProgramDispatcher(
 
         while (_timeProvider.GetUtcNow() < deadline)
         {
+            if (!await HasCurrentSupervisorEpochAsync(workItem, armId, cancellationToken))
+            {
+                await CompleteAsync(
+                    workItem,
+                    WorkflowStepCompletionOutcome.Unknown,
+                    "The AUBO physical-session epoch changed after run was confirmed; no command was replayed and manual reconciliation is required.",
+                    cancellationToken);
+                return;
+            }
+
             AuboArmProgramStatusResponse status;
             try
             {
@@ -541,6 +589,16 @@ public sealed class WorkflowAuboProgramDispatcher(
 
             try
             {
+                if (!await HasCurrentSupervisorEpochAsync(workItem, armId, cancellationToken))
+                {
+                    await CompleteAsync(
+                        workItem,
+                        WorkflowStepCompletionOutcome.Unknown,
+                        "The AUBO physical-session epoch changed before restart reconciliation; no command was replayed.",
+                        cancellationToken);
+                    continue;
+                }
+
                 var status = await arm.GetProgramAsync(armId, cancellationToken);
                 if (status.RuntimeState == AuboArmRuntimeState.Stopped)
                 {
@@ -632,6 +690,32 @@ public sealed class WorkflowAuboProgramDispatcher(
                     cancellationToken);
             }
         }
+    }
+
+    private async Task<bool> HasCurrentSupervisorEpochAsync(
+        WorkflowNodeExecutionWorkItem workItem,
+        string deviceId,
+        CancellationToken cancellationToken)
+    {
+        if (_physicalReadiness is not { Enabled: true } readiness) return true;
+
+        var request = await workflows.GetExecutionRequestAsync(
+            workItem.NodeExecution.WorkflowRunId,
+            cancellationToken);
+        var expectedEpoch = request?.PhysicalAuthorization?.GetDeviceEpoch(deviceId);
+        if (readiness.IsCurrentAndReady(
+                deviceId,
+                expectedEpoch,
+                request?.PhysicalAuthorization?.ReadinessSupervisorInstanceId,
+                out var reason))
+            return true;
+
+        _logger?.LogWarning(
+            "Workflow AUBO node {NodeExecutionId} is blocked by physical readiness for {DeviceId}: {Reason}.",
+            workItem.NodeExecution.Id,
+            deviceId,
+            reason ?? PhysicalReadinessReasonCodes.EpochRequired);
+        return false;
     }
 
     private Task CompleteAsync(
@@ -828,7 +912,8 @@ public sealed class WorkflowAuboProgramWorker(
                     profile,
                     options,
                     timeProvider,
-                    logger);
+                    logger,
+                    scope.ServiceProvider.GetService<IPhysicalReadinessState>());
                 await dispatcher.ProcessAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

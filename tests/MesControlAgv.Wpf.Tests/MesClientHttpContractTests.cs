@@ -111,6 +111,46 @@ public sealed class MesClientHttpContractTests
     }
 
     [Fact]
+    public async Task Physical_readiness_refresh_uses_the_read_only_supervisor_route()
+    {
+        var payload = new PhysicalReadinessResponse
+        {
+            Enabled = true,
+            SupervisorInstanceId = "supervisor-1",
+            SchedulingPermitted = false,
+            Devices =
+            [
+                new PhysicalDeviceReadinessSnapshot
+                {
+                    DeviceId = "AGV-01",
+                    DeviceFamily = "agv",
+                    State = PhysicalDeviceReadinessState.Stabilizing,
+                    DeviceEpoch = 4,
+                    Online = true,
+                    ProbeSucceeded = true,
+                    RequiresReauthorization = true,
+                    BlockingReasons = [PhysicalReadinessReasonCodes.FullPreflightPending]
+                }
+            ],
+            BlockingReasons = ["AGV-01:device_not_ready"]
+        };
+        var handler = new RecordingHandler(_ => JsonResponse(payload));
+        using var httpClient = CreateClient(handler);
+        var client = new MesClient(httpClient);
+
+        var actual = await client.RefreshPhysicalReadinessAsync(
+            forceFull: true,
+            CancellationToken.None);
+
+        Assert.NotNull(actual);
+        Assert.Equal(4, Assert.Single(actual!.Devices).DeviceEpoch);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal("/api/physical/readiness/refresh", request.Uri.AbsolutePath);
+        Assert.Equal("forceFull=true", request.Uri.Query.TrimStart('?'));
+    }
+
+    [Fact]
     public async Task Get_stations_maps_collection_and_preserves_enabled_flag()
     {
         var handler = new RecordingHandler(_ => JsonResponse(new StationResponse[] {

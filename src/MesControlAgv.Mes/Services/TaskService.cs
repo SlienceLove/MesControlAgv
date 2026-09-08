@@ -14,6 +14,7 @@ public sealed class TaskService : ITaskApplicationService
     private readonly IAgvGateway _adapter;
     private readonly PathPlanner _planner;
     private readonly IReadOnlyDictionary<int, Station> _stations;
+    private readonly IPhysicalReadinessState? _physicalReadiness;
 
     public TaskService(TaskRepository repository, IAgvGateway adapter)
         : this(repository, adapter, ProfileConfiguration.Default, new PathPlanner(AgvMap.Default))
@@ -24,12 +25,14 @@ public sealed class TaskService : ITaskApplicationService
         TaskRepository repository,
         IAgvGateway adapter,
         ProfileConfiguration profile,
-        PathPlanner planner)
+        PathPlanner planner,
+        IPhysicalReadinessState? physicalReadiness = null)
     {
         _repository = repository;
         _adapter = adapter;
         _planner = planner;
         _stations = Stations.FromProfile(profile).ToDictionary(station => station.Code);
+        _physicalReadiness = physicalReadiness;
     }
 
     public async Task<TaskResponse> CreateAsync(CreateTaskRequest request, CancellationToken cancellationToken)
@@ -487,6 +490,12 @@ public sealed class TaskService : ITaskApplicationService
 
     private async Task DispatchLegAsync(Guid taskId, TaskEvent started, string targetStationId, CancellationToken cancellationToken)
     {
+        if (_physicalReadiness is { Enabled: true })
+        {
+            throw new InvalidOperationException(
+                "General transport dispatch has no epoch-bound physical authorization. Use the supervised field-navigation/workflow path.");
+        }
+
         var task = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
         var operationId = started == TaskEvent.PickupMoveStarted ? TransportOperationIds.Pickup(taskId) : TransportOperationIds.Dropoff(taskId);
         try

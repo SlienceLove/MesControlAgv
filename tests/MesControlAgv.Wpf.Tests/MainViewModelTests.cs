@@ -405,6 +405,7 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
     public IReadOnlyList<AgvFleetDashboardStatus>? FleetStatus { get; set; }
     public DashboardMapSnapshot? MapSnapshot { get; set; }
     public PhysicalAgvPreflightResponse? PhysicalPreflight { get; set; }
+    public PhysicalReadinessResponse? PhysicalReadiness { get; set; }
     public Exception? ReadinessException { get; set; }
     public AgvCommandResult? CommandResult { get; set; }
     public int AgvCommandCallCount { get; private set; }
@@ -536,6 +537,10 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
         ReadinessException is { } exception
             ? Task.FromException<PhysicalAgvPreflightResponse?>(exception)
             : Task.FromResult(PhysicalPreflight);
+    public Task<PhysicalReadinessResponse?> GetPhysicalReadinessAsync(CancellationToken cancellationToken) =>
+        ReadinessException is { } exception
+            ? Task.FromException<PhysicalReadinessResponse?>(exception)
+            : Task.FromResult(PhysicalReadiness);
     public Task<DashboardPlannedPath> PlanPathAsync(
         string fromStationId,
         string toStationId,

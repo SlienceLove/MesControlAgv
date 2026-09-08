@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Serialization;
 using MesControlAgv.Application;
+using MesControlAgv.Contracts;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Workflows;
 using MesControlAgv.Mes.Data;
@@ -64,6 +65,7 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
     private readonly IWorkflowRunControlAuthorizer _controlAuthorizer;
     private readonly ExperimentRuntimeLeaseLifecycle _experimentRuntimeLeaseLifecycle;
     private readonly WorkflowPhysicalBatchAdmissionGate? _physicalBatchAdmissionGate;
+    private readonly IPhysicalReadinessState? _physicalReadiness;
 
     public WorkflowApplicationService(
         MesDbContext database,
@@ -73,7 +75,8 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
         TimeProvider? timeProvider = null,
         IWorkflowRunControlAuthorizer? controlAuthorizer = null,
         ExperimentRuntimeLeaseLifecycle? experimentRuntimeLeaseLifecycle = null,
-        WorkflowPhysicalBatchAdmissionGate? physicalBatchAdmissionGate = null)
+        WorkflowPhysicalBatchAdmissionGate? physicalBatchAdmissionGate = null,
+        IPhysicalReadinessState? physicalReadiness = null)
     {
         _database = database;
         _versionReader = versionReader;
@@ -86,6 +89,7 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
         _experimentRuntimeLeaseLifecycle = experimentRuntimeLeaseLifecycle ??
             new ExperimentRuntimeLeaseLifecycle(database, _timeProvider);
         _physicalBatchAdmissionGate = physicalBatchAdmissionGate;
+        _physicalReadiness = physicalReadiness;
     }
 
     public async Task<IReadOnlyList<WorkflowDefinition>> ListAsync(CancellationToken cancellationToken)
@@ -625,6 +629,8 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
         WorkflowExecutionRequest request,
         CancellationToken cancellationToken)
     {
+        var readinessBinding = await BindPhysicalReadinessAsync(request, cancellationToken);
+        request = readinessBinding.Request;
 
         if (request.RequestId != Guid.Empty)
         {
@@ -650,38 +656,59 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
             }
 
             WorkflowExecutionResult result;
-            var activePhysicalRun = request.PhysicalAuthorization is null
-                ? null
-                : await FindActivePhysicalRunAsync(
-                    request.PhysicalAuthorization.AgvId,
-                    cancellationToken);
-            if (request.PhysicalAuthorization is not null &&
-                _physicalBatchAdmissionGate is { Enabled: false } batchGate)
+            if (readinessBinding.RejectionReason is not null)
             {
                 result = CreateRejection(
                     request,
-                    WorkflowExecutionRejectionCodes.PhysicalExecutionDisabled,
-                    batchGate.Reason);
-            }
-            else if (activePhysicalRun is not null)
-            {
-                result = CreateRejection(
-                    request,
-                    WorkflowExecutionRejectionCodes.PhysicalAgvBusy,
-                    $"AGV '{request.PhysicalAuthorization!.AgvId}' already has active physical workflow run '{activePhysicalRun.ExecutionId}'. Resolve or complete it before starting another batch.");
+                    readinessBinding.RejectionCode ??
+                        WorkflowExecutionRejectionCodes.PhysicalDeviceNotReady,
+                    readinessBinding.RejectionReason);
             }
             else
             {
-                result = await _runtimeExecutor.ExecuteAsync(request, cancellationToken);
-                if (result.IsAccepted &&
-                    request.PhysicalAuthorization is not null &&
-                    _physicalBatchAdmissionGate is { Enabled: true } &&
-                    !await IsApprovedStandardMaterialWorkflowAsync(request, cancellationToken))
+                var activePhysicalRun = request.PhysicalAuthorization is null
+                    ? null
+                    : await FindActivePhysicalRunAsync(
+                        request.PhysicalAuthorization.AgvId,
+                        cancellationToken);
+                if (request.PhysicalAuthorization is not null &&
+                    _physicalBatchAdmissionGate is { Enabled: false } batchGate)
                 {
                     result = CreateRejection(
                         request,
-                        WorkflowExecutionRejectionCodes.PhysicalTemplateRequired,
-                        "One-click physical execution only accepts the approved LM1→LM7→LM2→LM7→LM1 material workflow with 取料盘/放料盘/回收料盘 programs.");
+                        WorkflowExecutionRejectionCodes.PhysicalExecutionDisabled,
+                        batchGate.Reason);
+                }
+                else if (activePhysicalRun is not null)
+                {
+                    result = CreateRejection(
+                        request,
+                        WorkflowExecutionRejectionCodes.PhysicalAgvBusy,
+                        $"AGV '{request.PhysicalAuthorization!.AgvId}' already has active physical workflow run '{activePhysicalRun.ExecutionId}'. Resolve or complete it before starting another batch.");
+                }
+                else
+                {
+                    result = await _runtimeExecutor.ExecuteAsync(request, cancellationToken);
+                    if (result.IsAccepted &&
+                        request.PhysicalAuthorization is not null &&
+                        _physicalBatchAdmissionGate is { Enabled: true } &&
+                        !await IsApprovedStandardMaterialWorkflowAsync(request, cancellationToken))
+                    {
+                        result = CreateRejection(
+                            request,
+                            WorkflowExecutionRejectionCodes.PhysicalTemplateRequired,
+                            "One-click physical execution only accepts the approved LM1→LM7→LM2→LM7→LM1 material workflow with 取料盘/放料盘/回收料盘 programs.");
+                    }
+                }
+
+                if (result.IsAccepted && readinessBinding.DeviceEpochs is { Count: > 0 } epochs &&
+                    !TryAcknowledgePhysicalAuthorization(epochs, out var acknowledgementError))
+                {
+                    result = CreateRejection(
+                        request,
+                        WorkflowExecutionRejectionCodes.PhysicalDeviceNotReady,
+                        acknowledgementError ??
+                        "Physical readiness changed while the workflow was being admitted; submit a new authorization.");
                 }
             }
             var executionRecord = await CreateExecutionRecordAsync(
@@ -745,6 +772,186 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
         await _database.SaveChangesAsync(cancellationToken);
         return invalidRequest;
     }
+
+    /// <summary>
+    /// Captures the currently observed physical session epoch into a new run
+    /// authorization.  This is deliberately done at MES admission, so the WPF
+    /// client does not have to race a reconnect between displaying readiness and
+    /// submitting the request.  A supplied stale epoch is rejected.
+    /// </summary>
+    private async Task<PhysicalReadinessBinding> BindPhysicalReadinessAsync(
+        WorkflowExecutionRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.DryRun || request.PhysicalAuthorization is null ||
+            _physicalReadiness is not { Enabled: true } readiness)
+        {
+            return new PhysicalReadinessBinding(request, null, null, null);
+        }
+
+        var authorization = request.PhysicalAuthorization;
+        var snapshot = readiness.GetSnapshot();
+        var agv = snapshot.Devices.FirstOrDefault(device =>
+            string.Equals(device.DeviceFamily, "agv", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(
+                device.DeviceId,
+                authorization.AgvId?.Trim(),
+                StringComparison.OrdinalIgnoreCase));
+        if (agv is null || agv.State != PhysicalDeviceReadinessState.Ready)
+        {
+            return new PhysicalReadinessBinding(
+                request,
+                WorkflowExecutionRejectionCodes.PhysicalDeviceNotReady,
+                $"Physical AGV '{authorization.AgvId}' is not Ready in the current supervisor snapshot.",
+                null);
+        }
+        if (!string.IsNullOrWhiteSpace(authorization.ReadinessSupervisorInstanceId) &&
+            !string.Equals(
+                authorization.ReadinessSupervisorInstanceId.Trim(),
+                snapshot.SupervisorInstanceId,
+                StringComparison.Ordinal))
+        {
+            return new PhysicalReadinessBinding(
+                request,
+                WorkflowExecutionRejectionCodes.PhysicalDeviceEpochMismatch,
+                "Physical authorization belongs to a previous readiness supervisor instance.",
+                null);
+        }
+
+        var epochs = new Dictionary<string, long>(
+            authorization.DeviceEpochs ?? new Dictionary<string, long>(),
+            StringComparer.OrdinalIgnoreCase);
+        var agvEpoch = authorization.GetDeviceEpoch(agv.DeviceId);
+        if (agvEpoch.HasValue && agvEpoch.Value != agv.DeviceEpoch)
+        {
+            return new PhysicalReadinessBinding(
+                request,
+                WorkflowExecutionRejectionCodes.PhysicalDeviceEpochMismatch,
+                $"Physical AGV '{agv.DeviceId}' authorization epoch {agvEpoch.Value} does not match current epoch {agv.DeviceEpoch}.",
+                null);
+        }
+        epochs[agv.DeviceId] = agv.DeviceEpoch;
+
+        // Bind any explicitly supplied device epochs, and reject stale or
+        // unknown identities rather than silently dropping an operator's data.
+        foreach (var supplied in authorization.DeviceEpochs ??
+                 new Dictionary<string, long>())
+        {
+            if (!readiness.TryGetDevice(supplied.Key, out var device))
+            {
+                return new PhysicalReadinessBinding(
+                    request,
+                    WorkflowExecutionRejectionCodes.PhysicalDeviceEpochMismatch,
+                    $"Physical authorization names unknown device '{supplied.Key}'.",
+                    null);
+            }
+            if (supplied.Value != device.DeviceEpoch)
+            {
+                return new PhysicalReadinessBinding(
+                    request,
+                    WorkflowExecutionRejectionCodes.PhysicalDeviceEpochMismatch,
+                    $"Physical device '{supplied.Key}' authorization epoch {supplied.Value} does not match current epoch {device.DeviceEpoch}.",
+                    null);
+            }
+            if (device.State != PhysicalDeviceReadinessState.Ready)
+            {
+                return new PhysicalReadinessBinding(
+                    request,
+                    WorkflowExecutionRejectionCodes.PhysicalDeviceNotReady,
+                    $"Physical device '{supplied.Key}' is not Ready in the current supervisor snapshot.",
+                    null);
+            }
+            epochs[device.DeviceId] = device.DeviceEpoch;
+        }
+
+        // Resolve device ids referenced by the pinned workflow.  Robot-arm and
+        // other future device nodes are bound when they are already observed;
+        // a missing/not-ready referenced device rejects admission so a run
+        // cannot become executable merely because it was accepted earlier.
+        if (request.WorkflowId != Guid.Empty && request.Version > 0)
+        {
+            var version = await _versionReader.GetVersionAsync(
+                request.WorkflowId,
+                request.Version,
+                cancellationToken);
+            var referencedDeviceIds = (version?.Definition.Nodes ?? [])
+                .Select(node => node.Configuration.TryGetValue(
+                    WorkflowNodeConfigurationKeys.DeviceId,
+                    out var value) ? value : null)
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            foreach (var deviceId in referencedDeviceIds)
+            {
+                if (string.Equals(deviceId, agv.DeviceId, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!readiness.TryGetDevice(deviceId, out var device))
+                {
+                    return new PhysicalReadinessBinding(
+                        request,
+                        WorkflowExecutionRejectionCodes.PhysicalDeviceNotReady,
+                        $"Workflow references physical device '{deviceId}', which is not registered with the readiness supervisor.",
+                        null);
+                }
+                if (device.State != PhysicalDeviceReadinessState.Ready)
+                {
+                    return new PhysicalReadinessBinding(
+                        request,
+                        WorkflowExecutionRejectionCodes.PhysicalDeviceNotReady,
+                        $"Workflow device '{deviceId}' is not Ready in the current supervisor snapshot.",
+                        null);
+                }
+                if (epochs.TryGetValue(device.DeviceId, out var suppliedEpoch) &&
+                    suppliedEpoch != device.DeviceEpoch)
+                {
+                    return new PhysicalReadinessBinding(
+                        request,
+                        WorkflowExecutionRejectionCodes.PhysicalDeviceEpochMismatch,
+                        $"Workflow device '{deviceId}' authorization epoch does not match the current epoch.",
+                        null);
+                }
+                epochs[device.DeviceId] = device.DeviceEpoch;
+            }
+        }
+
+        var bound = request with
+        {
+            PhysicalAuthorization = authorization with
+            {
+                DeviceEpochs = epochs,
+                ReadinessSupervisorInstanceId = snapshot.SupervisorInstanceId
+            }
+        };
+        return new PhysicalReadinessBinding(bound, null, null, epochs);
+    }
+
+    private bool TryAcknowledgePhysicalAuthorization(
+        IReadOnlyDictionary<string, long> epochs,
+        out string? error)
+    {
+        if (_physicalReadiness is not { Enabled: true } readiness)
+        {
+            error = null;
+            return true;
+        }
+
+        foreach (var pair in epochs)
+        {
+            if (readiness.AcknowledgeAuthorization(pair.Key, pair.Value)) continue;
+            error = $"Physical device '{pair.Key}' changed readiness while the run was being admitted; submit a new authorization.";
+            return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private sealed record PhysicalReadinessBinding(
+        WorkflowExecutionRequest Request,
+        string? RejectionCode,
+        string? RejectionReason,
+        IReadOnlyDictionary<string, long>? DeviceEpochs);
 
     private async Task<WorkflowExecutionRecord?> FindActivePhysicalRunAsync(
         string agvId,
@@ -834,11 +1041,11 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
         var expectedPrograms = new[] { "取料盘.pro", "放料盘.pro", "回收料盘.pro" };
         var programNodes = nodes.Where(node => node.Type == WorkflowNodeType.RobotProgram).ToArray();
         return programNodes.Select((node, index) => new
-            {
-                DeviceId = ReadNodeValue(node, WorkflowNodeConfigurationKeys.DeviceId),
-                Program = ReadNodeValue(node, WorkflowNodeConfigurationKeys.ProgramName),
-                Expected = expectedPrograms[index]
-            })
+        {
+            DeviceId = ReadNodeValue(node, WorkflowNodeConfigurationKeys.DeviceId),
+            Program = ReadNodeValue(node, WorkflowNodeConfigurationKeys.ProgramName),
+            Expected = expectedPrograms[index]
+        })
             .All(item =>
                 string.Equals(item.DeviceId, "ARM-01", StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(item.Program, item.Expected, StringComparison.OrdinalIgnoreCase));
@@ -986,15 +1193,15 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
 
     private static IReadOnlyDictionary<string, string?> ValidationAuditDetails(
         WorkflowValidationResult validation) => new Dictionary<string, string?>
-    {
-        ["issueCount"] = validation.Issues.Count.ToString(),
-        ["warningCount"] = validation.Issues.Count(issue =>
-            issue.Severity == WorkflowValidationSeverity.Warning).ToString(),
-        ["validatorVersion"] = validation.ValidatorVersion,
-        ["catalogVersion"] = validation.CatalogVersion,
-        ["profileProductId"] = validation.ProfileProductId,
-        ["profileVersion"] = validation.ProfileVersion
-    };
+        {
+            ["issueCount"] = validation.Issues.Count.ToString(),
+            ["warningCount"] = validation.Issues.Count(issue =>
+                issue.Severity == WorkflowValidationSeverity.Warning).ToString(),
+            ["validatorVersion"] = validation.ValidatorVersion,
+            ["catalogVersion"] = validation.CatalogVersion,
+            ["profileProductId"] = validation.ProfileProductId,
+            ["profileVersion"] = validation.ProfileVersion
+        };
 
     private WorkflowExecutionResult CreateRejection(
         WorkflowExecutionRequest request,
@@ -1057,7 +1264,9 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
                 FingerprintValue(authorization.OperatorName),
                 FingerprintValue(authorization.SafetyObserverName),
                 FingerprintValue(authorization.PermitPrefix),
-                authorization.ExpiresAtUtc.ToUniversalTime().Ticks);
+                authorization.ExpiresAtUtc.ToUniversalTime().Ticks,
+                FingerprintValue(authorization.ReadinessSupervisorInstanceId),
+                FingerprintEpochs(authorization.DeviceEpochs));
         var baseFingerprint = string.Join(
             '\u001f',
             request.WorkflowId,
@@ -1074,6 +1283,17 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
     private static string FingerprintValue(string? value) =>
         $"{value?.Length ?? -1}:{value}";
 
+    private static string FingerprintEpochs(IReadOnlyDictionary<string, long>? epochs)
+    {
+        if (epochs is null || epochs.Count == 0) return string.Empty;
+        return string.Join(
+            '\u001e',
+            epochs
+                .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(pair => pair.Key, StringComparer.Ordinal)
+                .Select(pair => $"{FingerprintValue(pair.Key)}={pair.Value}"));
+    }
+
     private static bool IsLegacyPhysicalFingerprintMatch(
         WorkflowExecutionRecord persisted,
         WorkflowExecutionRequest request)
@@ -1087,12 +1307,41 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
         try
         {
             var persistedRequest = WorkflowPersistence.DeserializeRequest(persisted.RequestJson);
-            return persistedRequest.PhysicalAuthorization == request.PhysicalAuthorization;
+            return ArePhysicalAuthorizationsEqual(
+                persistedRequest.PhysicalAuthorization,
+                request.PhysicalAuthorization);
         }
         catch (Exception exception) when (exception is InvalidOperationException or JsonException)
         {
             return false;
         }
+    }
+
+    private static bool ArePhysicalAuthorizationsEqual(
+        WorkflowPhysicalRunAuthorization? left,
+        WorkflowPhysicalRunAuthorization? right)
+    {
+        if (ReferenceEquals(left, right)) return true;
+        if (left is null || right is null) return false;
+        if (!StringComparer.Ordinal.Equals(left.AgvId, right.AgvId) ||
+            !StringComparer.Ordinal.Equals(left.OperatorName, right.OperatorName) ||
+            !StringComparer.Ordinal.Equals(left.SafetyObserverName, right.SafetyObserverName) ||
+            !StringComparer.Ordinal.Equals(left.PermitPrefix, right.PermitPrefix) ||
+            !StringComparer.Ordinal.Equals(
+                left.ReadinessSupervisorInstanceId,
+                right.ReadinessSupervisorInstanceId) ||
+            left.ExpiresAtUtc.ToUniversalTime() != right.ExpiresAtUtc.ToUniversalTime())
+            return false;
+
+        var leftEpochs = new Dictionary<string, long>(
+            left.DeviceEpochs ?? new Dictionary<string, long>(),
+            StringComparer.OrdinalIgnoreCase);
+        var rightEpochs = new Dictionary<string, long>(
+            right.DeviceEpochs ?? new Dictionary<string, long>(),
+            StringComparer.OrdinalIgnoreCase);
+        return leftEpochs.Count == rightEpochs.Count &&
+               leftEpochs.All(pair =>
+                   rightEpochs.TryGetValue(pair.Key, out var value) && value == pair.Value);
     }
 }
 

@@ -67,6 +67,50 @@ public sealed class ReadinessViewModelTests
     }
 
     [Fact]
+    public async Task Supervisor_epoch_and_reauthorization_are_visible_and_block_dispatch()
+    {
+        var client = new FakeMesClient([])
+        {
+            MapSnapshot = new DashboardMapSnapshot([], [], null, null, null, null, null),
+            PhysicalPreflight = new PhysicalAgvPreflightResponse(
+                new AgvSnapshotResponse(true, "adapter", "LM1", null, "AGV-01"),
+                null,
+                true,
+                []),
+            PhysicalReadiness = new PhysicalReadinessResponse
+            {
+                Enabled = true,
+                SupervisorInstanceId = "supervisor-1",
+                SchedulingPermitted = false,
+                ObservedAtUtc = DateTimeOffset.UtcNow,
+                Devices =
+                [
+                    new PhysicalDeviceReadinessSnapshot
+                    {
+                        DeviceId = "AGV-01",
+                        DeviceFamily = "agv",
+                        State = PhysicalDeviceReadinessState.Ready,
+                        DeviceEpoch = 7,
+                        Online = true,
+                        ProbeSucceeded = true,
+                        RequiresReauthorization = true
+                    }
+                ],
+                BlockingReasons = ["AGV-01:device_reauthorization_required"]
+            }
+        };
+        var readiness = new ReadinessViewModel(client);
+
+        await readiness.RefreshAsync();
+
+        Assert.False(readiness.DispatchPermitted);
+        Assert.False(readiness.PhysicalSchedulingPermitted);
+        Assert.Equal(7, Assert.Single(readiness.DeviceReadiness).DeviceEpoch);
+        Assert.Contains("device_reauthorization_required", readiness.SupervisorBlockingReasons);
+        Assert.Contains("不可调度", readiness.SupervisorStatus);
+    }
+
+    [Fact]
     public async Task Mes_failure_keeps_local_map_available_for_offline_workflow_editing()
     {
         var client = new FakeMesClient([]) { ReadinessException = new HttpRequestException("MES offline") };

@@ -112,61 +112,142 @@ internal sealed class TcpApiChannel : IDisposable
     private readonly string _host;
     private readonly int _port;
     private readonly TcpAgvOptions _options;
+    private readonly ILogger<TcpAgvClient> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private TcpClient? _client;
     private NetworkStream? _stream;
 
-    public TcpApiChannel(string host, int port, TcpAgvOptions options)
+    public TcpApiChannel(
+        string host,
+        int port,
+        TcpAgvOptions options,
+        ILogger<TcpAgvClient> logger)
     {
         _host = host;
         _port = port;
         _options = options;
+        _logger = logger;
     }
 
-    public async Task<JsonDocument> RequestAsync(
+    public Task<JsonDocument> RequestAsync(
         ushort apiId,
         object? payload,
         CancellationToken cancellationToken,
-        Action? onBeforeWrite = null)
+        Action? onBeforeWrite = null) =>
+        RequestCoreAsync(
+            apiId,
+            payload,
+            cancellationToken,
+            onBeforeWrite,
+            readOnly: false);
+
+    /// <summary>
+    /// Sends an explicitly identified idempotent read request.  A stale or
+    /// controller-closed connection may be recreated once and the query may
+    /// be repeated.  Callers must opt in at the API boundary; mutation
+    /// requests continue to use <see cref="RequestAsync"/> and are never
+    /// replayed automatically.
+    /// </summary>
+    public Task<JsonDocument> RequestReadOnlyAsync(
+        ushort apiId,
+        object? payload,
+        CancellationToken cancellationToken) =>
+        RequestCoreAsync(
+            apiId,
+            payload,
+            cancellationToken,
+            onBeforeWrite: null,
+            readOnly: true);
+
+    private async Task<JsonDocument> RequestCoreAsync(
+        ushort apiId,
+        object? payload,
+        CancellationToken cancellationToken,
+        Action? onBeforeWrite,
+        bool readOnly)
     {
         await _gate.WaitAsync(cancellationToken);
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(_options.RequestTimeoutMs);
+            timeout.CancelAfter(Math.Max(1, _options.RequestTimeoutMs));
             var bytes = payload is null ? [] : JsonSerializer.SerializeToUtf8Bytes(payload, JsonOptions);
-            try
+            Exception? initialReadOnlyTransportFailure = null;
+            var attempt = 0;
+            while (true)
             {
-                await EnsureConnectedAsync(timeout.Token);
-                var packet = AgvTcpProtocol.CreatePacket(apiId, bytes);
-                onBeforeWrite?.Invoke();
-                await _stream!.WriteAsync(packet, timeout.Token);
-                await _stream.FlushAsync(timeout.Token);
-                var response = await AgvTcpProtocol.ReadPacketAsync(_stream, _options.MaxPayloadBytes, timeout.Token);
-                var expectedApiId = apiId + 10000;
-                if (response.ApiId != expectedApiId)
+                attempt++;
+                try
                 {
-                    throw new AgvProtocolException($"Expected AGV response API {expectedApiId}, received {response.ApiId}.");
-                }
+                    var document = await RequestOnceAsync(
+                        apiId,
+                        bytes,
+                        timeout.Token,
+                        onBeforeWrite);
+                    if (initialReadOnlyTransportFailure is not null)
+                    {
+                        LogReadOnlyRetryCompleted(
+                            apiId,
+                            attempt,
+                            initialReadOnlyTransportFailure);
+                    }
 
-                return response.Payload.Length == 0
-                    ? JsonDocument.Parse("{}")
-                    : JsonDocument.Parse(response.Payload);
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                ResetConnection();
-                throw new TimeoutException($"AGV API {apiId} timed out on port {_port}.");
-            }
-            catch (OperationCanceledException)
-            {
-                ResetConnection();
-                throw;
-            }
-            catch (Exception exception) when (exception is IOException or SocketException)
-            {
-                ResetConnection();
-                throw;
+                    return document;
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    ResetConnection();
+                    if (readOnly)
+                    {
+                        LogReadOnlyRetryFailed(
+                            apiId,
+                            attempt,
+                            "timeout",
+                            initialReadOnlyTransportFailure);
+                    }
+
+                    throw new TimeoutException($"AGV API {apiId} timed out on port {_port}.");
+                }
+                catch (OperationCanceledException)
+                {
+                    ResetConnection();
+                    if (readOnly)
+                    {
+                        LogReadOnlyRetryFailed(
+                            apiId,
+                            attempt,
+                            "cancelled",
+                            initialReadOnlyTransportFailure);
+                    }
+
+                    throw;
+                }
+                catch (Exception exception) when (exception is IOException or SocketException)
+                {
+                    ResetConnection();
+                    var canRetry = readOnly
+                        && initialReadOnlyTransportFailure is null
+                        && attempt == 1
+                        && !timeout.IsCancellationRequested
+                        && !cancellationToken.IsCancellationRequested;
+                    if (!canRetry)
+                    {
+                        if (readOnly)
+                        {
+                            LogReadOnlyRetryFailed(
+                                apiId,
+                                attempt,
+                                "transport_failure",
+                                initialReadOnlyTransportFailure,
+                                exception);
+                        }
+
+                        throw;
+                    }
+
+                    initialReadOnlyTransportFailure = exception;
+                    LogReadOnlyRetryScheduled(apiId, attempt, exception);
+                }
             }
         }
         finally
@@ -174,6 +255,90 @@ internal sealed class TcpApiChannel : IDisposable
             _gate.Release();
         }
     }
+
+    private async Task<JsonDocument> RequestOnceAsync(
+        ushort apiId,
+        byte[] bytes,
+        CancellationToken cancellationToken,
+        Action? onBeforeWrite)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        var packet = AgvTcpProtocol.CreatePacket(apiId, bytes);
+        onBeforeWrite?.Invoke();
+        await _stream!.WriteAsync(packet, cancellationToken);
+        await _stream.FlushAsync(cancellationToken);
+        var response = await AgvTcpProtocol.ReadPacketAsync(
+            _stream,
+            _options.MaxPayloadBytes,
+            cancellationToken);
+        var expectedApiId = apiId + 10000;
+        if (response.ApiId != expectedApiId)
+        {
+            throw new AgvProtocolException(
+                $"Expected AGV response API {expectedApiId}, received {response.ApiId}.");
+        }
+
+        return response.Payload.Length == 0
+            ? JsonDocument.Parse("{}")
+            : JsonDocument.Parse(response.Payload);
+    }
+
+    private void LogReadOnlyRetryScheduled(
+        ushort apiId,
+        int attempt,
+        Exception exception) =>
+        _logger.LogWarning(
+            exception,
+            "AGV read-only transport audit: {ReadOnlyTransportAudit}",
+            JsonSerializer.Serialize(new
+            {
+                api_id = apiId,
+                port = _port,
+                attempt,
+                retry_attempt = attempt + 1,
+                retry_scheduled = true,
+                final_result = "pending",
+                exception_type = exception.GetType().Name,
+                exception_message = exception.Message
+            }));
+
+    private void LogReadOnlyRetryCompleted(
+        ushort apiId,
+        int attempts,
+        Exception initialFailure) =>
+        _logger.LogInformation(
+            "AGV read-only transport audit: {ReadOnlyTransportAudit}",
+            JsonSerializer.Serialize(new
+            {
+                api_id = apiId,
+                port = _port,
+                attempts,
+                retry_scheduled = true,
+                final_result = "success",
+                initial_exception_type = initialFailure.GetType().Name,
+                initial_exception_message = initialFailure.Message
+            }));
+
+    private void LogReadOnlyRetryFailed(
+        ushort apiId,
+        int attempts,
+        string finalResult,
+        Exception? initialFailure,
+        Exception? finalFailure = null) =>
+        _logger.LogWarning(
+            finalFailure,
+            "AGV read-only transport audit: {ReadOnlyTransportAudit}",
+            JsonSerializer.Serialize(new
+            {
+                api_id = apiId,
+                port = _port,
+                attempts,
+                retry_scheduled = initialFailure is not null,
+                final_result = finalResult,
+                retry_exhausted = initialFailure is not null,
+                initial_exception_type = initialFailure?.GetType().Name,
+                final_exception_type = finalFailure?.GetType().Name
+            }));
 
     private async Task EnsureConnectedAsync(CancellationToken cancellationToken)
     {
@@ -279,10 +444,10 @@ public sealed class TcpAgvClient :
         _options = options.Value;
         _runMode = runMode ?? AdapterRunMode.Standard;
         _logger = logger;
-        _statusChannel = new TcpApiChannel(_options.Host, _options.StatusPort, _options);
-        _commandChannel = new TcpApiChannel(_options.Host, _options.CommandPort, _options);
-        _controlChannel = new TcpApiChannel(_options.Host, _options.ControlPort, _options);
-        _otherChannel = new TcpApiChannel(_options.Host, _options.OtherPort, _options);
+        _statusChannel = new TcpApiChannel(_options.Host, _options.StatusPort, _options, logger);
+        _commandChannel = new TcpApiChannel(_options.Host, _options.CommandPort, _options, logger);
+        _controlChannel = new TcpApiChannel(_options.Host, _options.ControlPort, _options, logger);
+        _otherChannel = new TcpApiChannel(_options.Host, _options.OtherPort, _options, logger);
     }
 
     public async Task EnsureControlAsync(CancellationToken cancellationToken) =>
@@ -423,7 +588,7 @@ public sealed class TcpAgvClient :
     /// </summary>
     public async Task<AgvIoSnapshotResponse> GetIoAsync(CancellationToken cancellationToken)
     {
-        using var response = await _statusChannel.RequestAsync(
+        using var response = await _statusChannel.RequestReadOnlyAsync(
             QueryIoApi,
             null,
             cancellationToken);
@@ -471,14 +636,14 @@ public sealed class TcpAgvClient :
 
     public async Task<AgvSafetyReadinessResponse> GetSafetyReadinessAsync(CancellationToken cancellationToken)
     {
-        using var response = await _statusChannel.RequestAsync(
+        using var response = await _statusChannel.RequestReadOnlyAsync(
             RealtimeStatusApi,
             new { return_laser = false },
             cancellationToken);
         EnsureSuccess(response, RealtimeStatusApi);
         var readiness = ReadReadiness(response.RootElement);
 
-        using var localizationResponse = await _statusChannel.RequestAsync(
+        using var localizationResponse = await _statusChannel.RequestReadOnlyAsync(
             QueryLocalizationApi,
             null,
             cancellationToken);
@@ -488,7 +653,7 @@ public sealed class TcpAgvClient :
             RelocStatus = ReadInt(localizationResponse.RootElement, "reloc_status")
         };
 
-        using var deviceInfoResponse = await _statusChannel.RequestAsync(
+        using var deviceInfoResponse = await _statusChannel.RequestReadOnlyAsync(
             QueryDeviceInfoApi,
             null,
             cancellationToken);
@@ -518,7 +683,7 @@ public sealed class TcpAgvClient :
     private async Task<ControllerMapEvidenceResponse?> ReadControllerMapEvidenceAsync(
         CancellationToken cancellationToken)
     {
-        using var mapCatalogResponse = await _statusChannel.RequestAsync(
+        using var mapCatalogResponse = await _statusChannel.RequestReadOnlyAsync(
             QueryMapCatalogApi,
             null,
             cancellationToken);
@@ -527,7 +692,7 @@ public sealed class TcpAgvClient :
         if (string.IsNullOrWhiteSpace(currentMap)) return null;
         var storedMapNames = ReadStringArray(mapCatalogResponse.RootElement, "maps");
 
-        using var stationCatalogResponse = await _statusChannel.RequestAsync(
+        using var stationCatalogResponse = await _statusChannel.RequestReadOnlyAsync(
             QueryStationCatalogApi,
             null,
             cancellationToken);
@@ -536,7 +701,7 @@ public sealed class TcpAgvClient :
 
         var mapMd5 = await QueryMapMd5Async(currentMap, storedMapNames, cancellationToken);
 
-        using var mapResponse = await _controlChannel.RequestAsync(
+        using var mapResponse = await _controlChannel.RequestReadOnlyAsync(
             DownloadMapApi,
             new { map_name = currentMap },
             cancellationToken);
@@ -582,7 +747,7 @@ public sealed class TcpAgvClient :
         {
             try
             {
-                using var response = await _statusChannel.RequestAsync(
+                using var response = await _statusChannel.RequestReadOnlyAsync(
                     QueryMapMd5Api,
                     new { map_names = new[] { candidate } },
                     cancellationToken);
@@ -808,7 +973,7 @@ public sealed class TcpAgvClient :
     private async Task<JsonDocument> QueryTaskStatusAsync(string[]? taskIds, CancellationToken cancellationToken)
     {
         object? request = taskIds is null ? null : new { task_ids = taskIds };
-        return await _statusChannel.RequestAsync(QueryTaskApi, request, cancellationToken);
+        return await _statusChannel.RequestReadOnlyAsync(QueryTaskApi, request, cancellationToken);
     }
 
     private async Task EnsureReadyAsync(CancellationToken cancellationToken)
@@ -818,7 +983,7 @@ public sealed class TcpAgvClient :
             : GetFreshReadiness();
         if (readiness is null)
         {
-            using var response = await _statusChannel.RequestAsync(
+            using var response = await _statusChannel.RequestReadOnlyAsync(
                 RealtimeStatusApi,
                 new { return_laser = false },
                 cancellationToken);
@@ -827,7 +992,7 @@ public sealed class TcpAgvClient :
 
             if (_options.RequireCompleteSafetyStatus)
             {
-                using var localizationResponse = await _statusChannel.RequestAsync(
+                using var localizationResponse = await _statusChannel.RequestReadOnlyAsync(
                     QueryLocalizationApi,
                     null,
                     cancellationToken);
@@ -924,7 +1089,7 @@ public sealed class TcpAgvClient :
 
     private async Task<ControlInfo> QueryControlAsync(CancellationToken cancellationToken)
     {
-        using var response = await _statusChannel.RequestAsync(QueryControlApi, null, cancellationToken);
+        using var response = await _statusChannel.RequestReadOnlyAsync(QueryControlApi, null, cancellationToken);
         EnsureSuccess(response, QueryControlApi);
         var root = response.RootElement;
         var locked = ReadNullableBool(root, "locked")

@@ -68,13 +68,13 @@ try {
             })
 
             if ($request.strMethod -eq 'Command' -and [int]$request.body.action -eq 0) {
-                Send-Push -Writer $writer -Method 'UpdateInfo' -Body ([ordered]@{
+                Send-Push -Writer $writer -Method 'Device' -Body ([ordered]@{
                     status = 1
                     task_uuid = $taskUuid
                     sampleID = $request.body.sampleID
                     sampleName = $request.body.sampleName
-                    channel = $request.body.channel
-                    position = 11
+                    chan = $request.body.chan
+                    pos = 11
                     stage = 'Detecting'
                     progress = 50
                 })
@@ -90,7 +90,7 @@ try {
                     testDate = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
                     data = @([ordered]@{ testItem = 'Li'; value = 3.2; unit = 'mg/L'; quality = 'OK' })
                 })
-                Send-Push -Writer $writer -Method 'TaskFinish' -Body ([ordered]@{
+                Send-Push -Writer $writer -Method 'EndMission' -Body ([ordered]@{
                     task_uuid = $taskUuid
                     finishDate = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
                     result = 'Success'
@@ -99,7 +99,7 @@ try {
         }
 
         if ((Get-Date) -ge $nextHeartbeat) {
-            Send-Push -Writer $writer -Method 'UpdateInfo' -Body ([ordered]@{
+            Send-Push -Writer $writer -Method 'Device' -Body ([ordered]@{
                 status = 0
                 stage = 'Idle'
                 progress = 0

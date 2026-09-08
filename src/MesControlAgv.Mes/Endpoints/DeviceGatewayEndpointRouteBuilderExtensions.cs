@@ -173,8 +173,17 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
             AgvCommandRequest request,
             IAgvGateway adapter,
             ITaskApplicationService tasks,
+            IPhysicalReadinessState physicalReadiness,
             CancellationToken cancellationToken) =>
         {
+            if (physicalReadiness.Enabled)
+            {
+                return Results.Conflict(new
+                {
+                    detail = "Direct AGV commands do not carry an epoch-bound physical authorization."
+                });
+            }
+
             try
             {
                 var result = await adapter.ExecuteAgvCommandAsync(
@@ -221,8 +230,17 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
             int id,
             AgvDoWriteRequest request,
             IAgvIoGateway io,
+            IPhysicalReadinessState physicalReadiness,
             CancellationToken cancellationToken) =>
         {
+            if (physicalReadiness.Enabled)
+            {
+                return Results.Conflict(new
+                {
+                    detail = "Direct AGV I/O writes do not carry an epoch-bound physical authorization."
+                });
+            }
+
             try
             {
                 return Results.Ok(await io.SetDoAsync(agvId, id, request.Status, cancellationToken));
@@ -264,8 +282,17 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
             string deviceId,
             AuboArmHandshakeDispatchRequest request,
             IAuboArmGateway arm,
+            IPhysicalReadinessState physicalReadiness,
             CancellationToken cancellationToken) =>
         {
+            if (physicalReadiness.Enabled)
+            {
+                return Results.Conflict(new
+                {
+                    detail = "Direct AUBO handshake dispatch does not carry an epoch-bound physical authorization."
+                });
+            }
+
             try
             {
                 var operationId = request.OperationId.GetValueOrDefault(Guid.NewGuid());
@@ -307,6 +334,7 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
             AuboArmProgramRequest request,
             IAuboArmGateway arm,
             IWorkflowApplicationService workflows,
+            IPhysicalReadinessState physicalReadiness,
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
             await ExecuteArmProgramWriteAsync(
@@ -323,6 +351,12 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
                         loggerFactory.CreateLogger("AuboArmWorkflowCorrelation"),
                         "load",
                         cancellationToken);
+                    await EnsureCurrentPhysicalReadinessAsync(
+                        deviceId,
+                        correlation,
+                        workflows,
+                        physicalReadiness,
+                        cancellationToken);
                     var result = await arm.LoadProgramAsync(
                         deviceId,
                         request.EffectiveProgramName,
@@ -338,6 +372,7 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
             AuboArmProgramRunRequest request,
             IAuboArmGateway arm,
             IWorkflowApplicationService workflows,
+            IPhysicalReadinessState physicalReadiness,
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
             await ExecuteArmProgramWriteAsync(
@@ -354,6 +389,12 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
                         loggerFactory.CreateLogger("AuboArmWorkflowCorrelation"),
                         "run",
                         cancellationToken);
+                    await EnsureCurrentPhysicalReadinessAsync(
+                        deviceId,
+                        correlation,
+                        workflows,
+                        physicalReadiness,
+                        cancellationToken);
                     var result = await arm.RunProgramAsync(
                         deviceId,
                         request.EffectiveProgramName,
@@ -369,6 +410,7 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
             AuboArmProgramStopRequest request,
             IAuboArmGateway arm,
             IWorkflowApplicationService workflows,
+            IPhysicalReadinessState physicalReadiness,
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
             await ExecuteArmProgramWriteAsync(
@@ -384,6 +426,12 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
                         workflows,
                         loggerFactory.CreateLogger("AuboArmWorkflowCorrelation"),
                         "stop",
+                        cancellationToken);
+                    await EnsureCurrentPhysicalReadinessAsync(
+                        deviceId,
+                        correlation,
+                        workflows,
+                        physicalReadiness,
                         cancellationToken);
                     var result = await arm.StopProgramAsync(
                         deviceId,
@@ -539,6 +587,37 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
 
     private static bool RequireProgramRequest(string? programName, string? operatorName) =>
         !string.IsNullOrWhiteSpace(programName) && !string.IsNullOrWhiteSpace(operatorName);
+
+    private static async Task EnsureCurrentPhysicalReadinessAsync(
+        string deviceId,
+        AuboArmOperationCorrelation? correlation,
+        IWorkflowApplicationService workflows,
+        IPhysicalReadinessState physicalReadiness,
+        CancellationToken cancellationToken)
+    {
+        if (!physicalReadiness.Enabled) return;
+        if (correlation is null)
+        {
+            throw new InvalidOperationException(
+                "AUBO writes require workflow correlation and an epoch-bound physical authorization while the readiness supervisor is enabled.");
+        }
+
+        var request = await workflows.GetExecutionRequestAsync(
+            correlation.WorkflowRunId,
+            cancellationToken);
+        var authorization = request?.PhysicalAuthorization;
+        string? reason = null;
+        if (authorization is null ||
+            !physicalReadiness.IsCurrentAndReady(
+                deviceId,
+                authorization.GetDeviceEpoch(deviceId),
+                authorization.ReadinessSupervisorInstanceId,
+                out reason))
+        {
+            throw new InvalidOperationException(
+                $"AUBO physical readiness is not current for '{deviceId}': {reason ?? PhysicalReadinessReasonCodes.EpochRequired}.");
+        }
+    }
 
     private static AuboArmProgramOperationResponse MarkUncorrelated(
         AuboArmProgramOperationResponse result,

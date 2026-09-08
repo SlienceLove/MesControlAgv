@@ -484,6 +484,43 @@
 
                             <Border Margin="0,12,0,0" Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
                                 <StackPanel>
+                                    <TextBlock FontSize="16" FontWeight="SemiBold" Text="物理设备监督" />
+                                    <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Text="{Binding Readiness.SupervisorStatus}" />
+                                    <TextBlock Margin="0,8,0,0" TextWrapping="Wrap" Text="{Binding Readiness.SupervisorReadiness.SchemaVersion}" />
+                                    <TextBlock Margin="0,3,0,0" TextWrapping="Wrap" Text="{Binding Readiness.SupervisorReadiness.SupervisorInstanceId, StringFormat=监督器实例：{0}}" />
+                                    <TextBlock Margin="0,3,0,0" TextWrapping="Wrap" Text="{Binding Readiness.SupervisorBlockingReasons}" />
+                                    <TextBlock Margin="0,3,0,0" FontWeight="SemiBold" Text="{Binding Readiness.PhysicalSchedulingPermitted, StringFormat=可调度：{0}}" />
+                                    <ItemsControl Margin="0,8,0,0" ItemsSource="{Binding Readiness.DeviceReadiness}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border Margin="0,3,0,0" Padding="6" BorderBrush="#E5E7EB" BorderThickness="1">
+                                                    <StackPanel>
+                                                        <TextBlock FontWeight="SemiBold" Text="{Binding DeviceId}" />
+                                                        <TextBlock Text="{Binding State, StringFormat=状态：{0}}" />
+                                                        <TextBlock Text="{Binding DeviceEpoch, StringFormat=Epoch：{0}}" />
+                                                        <TextBlock Text="{Binding CurrentStationId, StringFormat=位置：{0}}" />
+                                                        <TextBlock Text="{Binding ActiveTaskId, StringFormat=活动任务：{0}}" />
+                                                        <TextBlock Text="{Binding ActiveTaskState, StringFormat=任务状态：{0}}" />
+                                                        <TextBlock Text="{Binding ControlOwner, StringFormat=控制权：{0}}" />
+                                                        <TextBlock Text="{Binding MapName, StringFormat=地图：{0}}" />
+                                                        <TextBlock Text="{Binding MapVersion, StringFormat=地图版本：{0}}" />
+                                                        <TextBlock Text="{Binding MapMd5, StringFormat=地图 MD5：{0}}" />
+                                                        <TextBlock Text="{Binding LocalizationConfidence, StringFormat=定位置信度：{0}}" />
+                                                        <TextBlock Text="{Binding SafetyMode, StringFormat=安全模式：{0}}" />
+                                                        <TextBlock Text="{Binding RuntimeState, StringFormat=运行状态：{0}}" />
+                                                        <TextBlock Text="{Binding LastFullPreflightAtUtc, StringFormat=完整预检：{0}}" />
+                                                        <TextBlock Text="{Binding RequiresReauthorization, StringFormat=需重新授权：{0}}" />
+                                                        <TextBlock Foreground="#B42318" TextWrapping="Wrap" Text="{Binding BlockingReasons, StringFormat=阻断：{0}}" />
+                                                    </StackPanel>
+                                                </Border>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </Border>
+
+                            <Border Margin="0,12,0,0" Padding="12" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
+                                <StackPanel>
                                     <TextBlock FontSize="16" FontWeight="SemiBold" Text="已配置站点" />
                                     <ItemsControl Margin="0,8,0,0" ItemsSource="{Binding Readiness.MapSnapshot.Stations}">
                                         <ItemsControl.ItemTemplate>

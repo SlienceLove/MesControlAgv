@@ -31,6 +31,7 @@ public sealed record StartupConfigurationInput
     public string BaseDirectory { get; init; } = AppContext.BaseDirectory;
     public string? RuntimeMode { get; init; }
     public string? ManageLocalServices { get; init; }
+    public string? ManageLocalMes { get; init; }
     public string? MesBaseUrl { get; init; }
     public string? SimulatorBaseUrl { get; init; }
     public string? AdapterBaseUrl { get; init; }
@@ -46,6 +47,7 @@ public sealed record StartupConfigurationReport
     public required string DiagnosticRuleVersion { get; init; }
     public required string RuntimeMode { get; init; }
     public required bool ManageLocalServices { get; init; }
+    public required bool ManageLocalMes { get; init; }
     public required Uri MesBaseUrl { get; init; }
     public required Uri SimulatorBaseUrl { get; init; }
     public required Uri AdapterBaseUrl { get; init; }
@@ -68,9 +70,10 @@ public sealed record StartupConfigurationReport
         DiagnosticRuleVersion = OfflineDiagnosticVersions.RuleSchema,
         RuntimeMode = "unknown",
         ManageLocalServices = false,
-        MesBaseUrl = new Uri("http://localhost:5045/"),
+        ManageLocalMes = false,
+        MesBaseUrl = new Uri("http://127.0.0.1:5145/"),
         SimulatorBaseUrl = new Uri("http://localhost:5183/"),
-        AdapterBaseUrl = new Uri("http://localhost:5041/"),
+        AdapterBaseUrl = new Uri("http://127.0.0.1:5141/"),
         AdapterDriver = "未检查",
         AdapterRunMode = "未检查",
         RealWriteAccess = "未检查",
@@ -89,6 +92,12 @@ public sealed record StartupConfigurationReport
 /// <summary>Inspects local startup configuration without opening a socket or device port.</summary>
 public static class StartupConfigurationInspector
 {
+    private const string DefaultPhysicalMesBaseUrl = "http://127.0.0.1:5145/";
+    private const string DefaultPhysicalAdapterBaseUrl = "http://127.0.0.1:5141/";
+    private const string DefaultSimulatorMesBaseUrl = "http://localhost:5045/";
+    private const string DefaultSimulatorAdapterBaseUrl = "http://localhost:5041/";
+    private const string DefaultSimulatorBaseUrl = "http://localhost:5183/";
+
     public static StartupConfigurationReport InspectEnvironment(
         string baseDirectory,
         Func<string, string?>? readEnvironment = null)
@@ -99,6 +108,7 @@ public static class StartupConfigurationInspector
             BaseDirectory = baseDirectory,
             RuntimeMode = readEnvironment("WPF_RUNTIME_MODE"),
             ManageLocalServices = readEnvironment("WPF_MANAGE_LOCAL_SERVICES"),
+            ManageLocalMes = readEnvironment("WPF_MANAGE_LOCAL_MES"),
             MesBaseUrl = readEnvironment("MES_BASE_URL"),
             SimulatorBaseUrl = readEnvironment("SIMULATOR_BASE_URL"),
             AdapterBaseUrl = readEnvironment("ADAPTER_BASE_URL"),
@@ -115,14 +125,25 @@ public static class StartupConfigurationInspector
         ArgumentNullException.ThrowIfNull(input);
         var items = new List<StartupDiagnosticItem>();
         var runtimeMode = NormalizeRuntimeMode(input.RuntimeMode, items);
-        var mesUrl = ParseUrl("MES_BASE_URL", input.MesBaseUrl, "http://localhost:5045/", items);
-        var simulatorUrl = ParseUrl("SIMULATOR_BASE_URL", input.SimulatorBaseUrl, "http://localhost:5183/", items);
-        var adapterUrl = ParseUrl("ADAPTER_BASE_URL", input.AdapterBaseUrl, "http://localhost:5041/", items);
+        var mesFallback = runtimeMode.Equals("simulator", StringComparison.OrdinalIgnoreCase)
+            ? DefaultSimulatorMesBaseUrl
+            : DefaultPhysicalMesBaseUrl;
+        var adapterFallback = runtimeMode.Equals("simulator", StringComparison.OrdinalIgnoreCase)
+            ? DefaultSimulatorAdapterBaseUrl
+            : DefaultPhysicalAdapterBaseUrl;
+        var mesUrl = ParseUrl("MES_BASE_URL", input.MesBaseUrl, mesFallback, items);
+        var simulatorUrl = ParseUrl("SIMULATOR_BASE_URL", input.SimulatorBaseUrl, DefaultSimulatorBaseUrl, items);
+        var adapterUrl = ParseUrl("ADAPTER_BASE_URL", input.AdapterBaseUrl, adapterFallback, items);
         var manageLocalServices = ResolveLocalServiceManagement(
             runtimeMode,
             input.ManageLocalServices,
             simulatorUrl,
             adapterUrl,
+            mesUrl,
+            items);
+        var manageLocalMes = ResolveLocalMesManagement(
+            runtimeMode,
+            input.ManageLocalMes,
             mesUrl,
             items);
 
@@ -166,6 +187,7 @@ public static class StartupConfigurationInspector
             DiagnosticRuleVersion = OfflineDiagnosticVersions.RuleSchema,
             RuntimeMode = runtimeMode,
             ManageLocalServices = manageLocalServices,
+            ManageLocalMes = manageLocalMes,
             MesBaseUrl = mesUrl,
             SimulatorBaseUrl = simulatorUrl,
             AdapterBaseUrl = adapterUrl,
@@ -178,7 +200,7 @@ public static class StartupConfigurationInspector
 
     private static string NormalizeRuntimeMode(string? configured, ICollection<StartupDiagnosticItem> items)
     {
-        var value = string.IsNullOrWhiteSpace(configured) ? "simulator" : configured.Trim().ToLowerInvariant();
+        var value = string.IsNullOrWhiteSpace(configured) ? "physical" : configured.Trim().ToLowerInvariant();
         if (value is not ("simulator" or "physical"))
         {
             items.Add(Error(
@@ -186,7 +208,7 @@ public static class StartupConfigurationInspector
                 "运行模式",
                 configured ?? string.Empty,
                 "WPF_RUNTIME_MODE 只能设置为 simulator 或 physical。"));
-            return "simulator";
+            return "physical";
         }
 
         items.Add(Info("WPF_RUNTIME_MODE", "运行模式", value, value == "simulator"
@@ -228,24 +250,38 @@ public static class StartupConfigurationInspector
         Uri mesUrl,
         ICollection<StartupDiagnosticItem> items)
     {
+        var hasConfiguredValue = !string.IsNullOrWhiteSpace(configured);
         var explicitlyEnabled = bool.TryParse(configured, out var parsed) && parsed;
         bool manage;
-        try
+        if (hasConfiguredValue && !bool.TryParse(configured, out _))
         {
-            manage = LocalSimulatorRuntime.ShouldManageLocalServices(
-                runtimeMode,
-                simulatorUrl,
-                adapterUrl,
-                mesUrl,
-                configured);
-        }
-        catch (InvalidOperationException exception)
-        {
-            var code = configured is not null && !bool.TryParse(configured, out _)
-                ? "WPF_MANAGE_LOCAL_SERVICES_INVALID"
-                : "LOCAL_SERVICES_REQUIRE_LOOPBACK";
-            items.Add(Error(code, "本地服务托管", configured ?? "自动", exception.Message));
+            items.Add(Error(
+                "WPF_MANAGE_LOCAL_SERVICES_INVALID",
+                "本地服务托管",
+                configured!,
+                "WPF_MANAGE_LOCAL_SERVICES 必须是 true 或 false。"));
             manage = false;
+        }
+        else
+        {
+            try
+            {
+                manage = LocalSimulatorRuntime.ShouldManageLocalServices(
+                    runtimeMode,
+                    simulatorUrl,
+                    adapterUrl,
+                    mesUrl,
+                    configured);
+            }
+            catch (InvalidOperationException exception)
+            {
+                items.Add(Error(
+                    "LOCAL_SERVICES_REQUIRE_LOOPBACK",
+                    "本地服务托管",
+                    configured ?? "自动",
+                    exception.Message));
+                manage = false;
+            }
         }
 
         if (runtimeMode != "simulator" && explicitlyEnabled)
@@ -262,6 +298,44 @@ public static class StartupConfigurationInspector
             "本地服务托管",
             manage ? "启用" : "禁用",
             manage ? "启动后将管理本机模拟服务进程。" : "启动后只连接已存在的服务。"));
+        return manage;
+    }
+
+    private static bool ResolveLocalMesManagement(
+        string runtimeMode,
+        string? configured,
+        Uri mesUrl,
+        ICollection<StartupDiagnosticItem> items)
+    {
+        if (!string.IsNullOrWhiteSpace(configured) && !bool.TryParse(configured, out _))
+        {
+            items.Add(Error(
+                "WPF_MANAGE_LOCAL_MES_INVALID",
+                "本机 MES 托管",
+                configured!,
+                "WPF_MANAGE_LOCAL_MES 必须是 true 或 false。"));
+            return false;
+        }
+
+        var manage = string.IsNullOrWhiteSpace(configured)
+            ? runtimeMode.Equals("physical", StringComparison.OrdinalIgnoreCase) && mesUrl.IsLoopback
+            : bool.Parse(configured!);
+
+        if (manage && !mesUrl.IsLoopback)
+        {
+            items.Add(Error(
+                "LOCAL_MES_REQUIRE_LOOPBACK",
+                "本机 MES 托管",
+                mesUrl.AbsoluteUri,
+                "WPF 只能托管本机回环地址上的 MES；远程 MES 地址必须关闭 WPF_MANAGE_LOCAL_MES。"));
+            manage = false;
+        }
+
+        items.Add(Info(
+            "WPF_MANAGE_LOCAL_MES",
+            "本机 MES 托管",
+            manage ? "启用" : "禁用",
+            manage ? "启动后检查并按需启动本机 MES。" : "启动后只连接配置的 MES 服务。"));
         return manage;
     }
 

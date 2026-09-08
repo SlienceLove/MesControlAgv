@@ -60,7 +60,7 @@ try {
     }
     Write-Host "RX Certification: $certificationResponse"
 
-    Send-ShineLabMessage -Writer $writer -Method 'UpdateInfo' -Body ([ordered]@{
+    Send-ShineLabMessage -Writer $writer -Method 'Device' -Body ([ordered]@{
         status = 0
         stage = 'Idle'
         progress = 0
@@ -69,13 +69,13 @@ try {
 
     for ($second = 1; $second -le $RunningSeconds; $second++) {
         $progress = [Math]::Min(95, [int](($second / [double]$RunningSeconds) * 90))
-        Send-ShineLabMessage -Writer $writer -Method 'UpdateInfo' -Body ([ordered]@{
+        Send-ShineLabMessage -Writer $writer -Method 'Device' -Body ([ordered]@{
             status = 1
             task_uuid = $TaskUuid
             sampleID = 'SAMPLE-001'
             sampleName = 'Integration Standard'
-            channel = 'A'
-            position = 11
+            chan = 'A'
+            pos = 11
             stage = 'Detecting'
             progress = $progress
             startDate = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
@@ -103,8 +103,8 @@ try {
             task_uuid = $TaskUuid
             sampleID = 'SAMPLE-001'
             sampleName = 'Integration Standard'
-            channel = 'A'
-            position = 11
+            chan = 'A'
+            pos = 11
             finishDate = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
         })
         Send-ShineLabMessage -Writer $writer -Method 'Result' -Body ([ordered]@{
@@ -115,7 +115,7 @@ try {
                 [ordered]@{ testItem = 'Li'; value = 3.2; unit = 'mg/L'; quality = 'OK' }
             )
         })
-        Send-ShineLabMessage -Writer $writer -Method 'TaskFinish' -Body ([ordered]@{
+        Send-ShineLabMessage -Writer $writer -Method 'EndMission' -Body ([ordered]@{
             task_uuid = $TaskUuid
             finishDate = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
             result = 'Success'
@@ -123,7 +123,7 @@ try {
     }
 
     for ($second = 1; $second -le $HoldSeconds; $second++) {
-        Send-ShineLabMessage -Writer $writer -Method 'UpdateInfo' -Body ([ordered]@{
+        Send-ShineLabMessage -Writer $writer -Method 'Device' -Body ([ordered]@{
             status = 0
             task_uuid = $TaskUuid
             sampleID = 'SAMPLE-001'

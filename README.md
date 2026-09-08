@@ -12,13 +12,13 @@
 
 ![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4?logo=dotnet&logoColor=white)
 ![WPF](https://img.shields.io/badge/UI-WPF-0078D4)
-![Runtime](https://img.shields.io/badge/runtime-Simulator--first-2E8B57)
+![Runtime](https://img.shields.io/badge/runtime-Physical--session--first-2E8B57)
 ![Tests](https://img.shields.io/badge/tests-338%2F338%20passed-2E8B57)
 
 </div>
 
 > [!IMPORTANT]
-> 当前版本以 Simulator 离线验证为主。真实 AGV 仍处于物理验收 `NO-GO` 状态；在取得现场隔离、明确授权和只读预检证据前，不连接、不控制、不下发实体任务。
+> 桌面启动默认连接受监督的 physical 外部服务，不再默认启动 Simulator。真实 AGV 仍处于物理验收 `NO-GO` 状态；在取得现场隔离、明确授权和新鲜只读预检证据前，不连接、不控制、不下发实体任务。离线回归必须显式选择 `FieldSimulation`/`simulator`。
 
 ## 项目定位
 
@@ -34,7 +34,7 @@
 | 可靠性 | `task_id` 幂等、超时状态对账、`Unknown` 恢复、MES/Adapter 重启恢复 |
 | 调度 | 多 AGV 车队状态、最短路径、活动路段冲突过滤、资源不足时闭环失败 |
 | 操作界面 | WPF MVVM 看板、任务详情与审计时间线、AGV 通讯、批量 CSV/XLSX 导入、KPI、只读 `.smap` 地图 |
-| 设备边界 | Simulator 默认驱动；可配置厂商 TCP Adapter；真实模式隐藏 Simulator 控制 |
+| 设备边界 | physical 为桌面默认模式；可配置厂商 TCP Adapter；Simulator 仅用于显式离线回归 |
 | 可追溯性 | MES SQLite 任务库、Adapter 操作库、任务和工作流生命周期审计 |
 
 ## 架构
@@ -43,9 +43,9 @@
 flowchart LR
     WPF[WPF 中控看板] -->|HTTP JSON| MES[MES 服务]
     MES -->|任务与状态| ADP[AGV Adapter]
-    ADP -->|默认| SIM[AGV Simulator]
-    ADP -.->|配置切换| TCP[厂商 TCP 驱动]
+    ADP -->|physical 默认| TCP[厂商 TCP 驱动]
     TCP -.-> AGV[真实 AGV]
+    ADP -.->|显式离线回归| SIM[AGV Simulator]
     MES --> MESDB[(SQLite: mes.db)]
     ADP --> ADPDB[(SQLite: adapter.db)]
 ```
@@ -84,25 +84,33 @@ dotnet test MesControlAgv.sln --no-build -p:UseSharedCompilation=false -m:1
 
 最近一次 Release 基线（2026-08-11）为 0 个警告、0 个错误，自动化测试 `338/338` 通过。
 
-### 直接启动 WPF
+### 直接启动 WPF（默认 physical）
 
-服务按 `Simulator -> Adapter -> MES` 的顺序启动。默认本地端点为：
+WPF 默认不托管本地服务，而是连接已经由现场会话启动的 physical 外部服务。默认本机端点为：
 
-| 服务 | 地址 | 作用 |
-| --- | --- | --- |
-| Simulator | `http://localhost:5183` | 仿真车队和开发故障控制 |
-| Adapter | `http://localhost:5041` | 设备协议、调度和幂等边界 |
-| MES | `http://localhost:5045` | 任务、审计和业务 API |
+| 运行模式 | Adapter | MES | 说明 |
+| --- | --- | --- | --- |
+| physical（默认） | `http://127.0.0.1:5141` | `http://127.0.0.1:5145` | 连接外部受监督现场服务，不启动 Simulator |
+| simulator（显式） | `http://localhost:5041` | `http://localhost:5045` | 配合 Simulator `5183` 做离线回归 |
 
 ```powershell
 dotnet run --project src/MesControlAgv.Wpf -c Debug
 ```
 
-无需先运行 PowerShell 启动脚本。WPF 会显示启动状态，按 `Simulator -> Adapter -> MES` 的顺序拉起本机服务，并等待每个 `/health` 就绪后再进行首次刷新；这比固定等待几秒更可靠。关闭 WPF 时，它只会停止由自己启动的服务，已存在且健康的本地服务会被复用且不会被停止。
+启动前请确保受监督的 physical Adapter/MES 已在 `5141/5145` 就绪；WPF 会显示连接状态并在首次刷新时读取外部服务。physical 模式不会启动或连接 Simulator，关闭 WPF 也不会停止外部服务。若要显式进行离线 Simulator 回归，请先设置：
+
+```powershell
+$env:WPF_RUNTIME_MODE = 'simulator'
+$env:WPF_MANAGE_LOCAL_SERVICES = 'true'
+$env:ADAPTER_BASE_URL = 'http://localhost:5041/'
+$env:MES_BASE_URL = 'http://localhost:5045/'
+$env:SIMULATOR_BASE_URL = 'http://localhost:5183/'
+dotnet run --project src/MesControlAgv.Wpf -c Debug
+```
 
 如需加载本地 RoboshopPro 地图，可在启动前设置 `MAP_SMAP_PATH`；可选的 `MAP_STATION_MAPPING_PATH` 用于把 LM 标记映射到 MES 站点。地图身份与 MES Profile 不一致或无法验证时，界面仍显示静态 `.smap` 几何，但会关闭画布上的 AGV 与活动路径叠加。地图页可独立开关特征墙线、路线、站点标签、运行叠加和默认显示的障碍扫描；障碍扫描把 `normalPosList` 渲染为单一、有界、透明底的 Indexed8 深色位图，而非逐点 WPF 元素。工具栏提供“导出当前 PNG”和“导出完整 PNG”：前者保留当前缩放、平移及图层状态，后者从未变换画布导出完整地图；输出尺寸受 `8192` 单边和 `32,000,000` 总像素上限约束。点击站点只显示 `.smap` 标记、MES 映射、坐标、启用状态和关联路线，不提供控制操作。远程桌面截图环境可设置 `WPF_SOFTWARE_RENDERING=true` 使用软件渲染。
 
-从 Visual Studio 启动 WPF 项目，或首次构建后直接打开 WPF 输出目录中的 `MesControlAgv.Wpf.exe`，行为相同。WPF 自行管理的 Simulator 数据库存放在 `%LOCALAPPDATA%\MesControlAgv\local-simulator`。
+从 Visual Studio 启动 WPF 项目，或首次构建后直接打开 WPF 输出目录中的 `MesControlAgv.Wpf.exe`，行为相同。Simulator 数据库仅在显式 simulator 且启用本地托管时存放于 `%LOCALAPPDATA%\MesControlAgv\local-simulator`。
 
 ### 一键启动桌面程序
 
@@ -112,11 +120,11 @@ dotnet run --project src/MesControlAgv.Wpf -c Debug
 dotnet publish src/MesControlAgv.Launcher -c Release --no-restore
 ```
 
-然后双击 `src/MesControlAgv.Launcher/bin/Release/net8.0-windows/publish/MesControlAgv.Launcher.exe`。启动器会打开一个服务启动状态窗口，自动按 `Simulator -> Adapter -> MES` 顺序启动并验证 `/health`；验证通过后显示默认最大化的 WPF 主界面。关闭主界面会自动停止本次启动的本地服务。
+然后双击 `src/MesControlAgv.Launcher/bin/Release/net8.0-windows/publish/MesControlAgv.Launcher.exe`。启动器默认以 physical 模式打开 WPF，并连接 `127.0.0.1:5141/5145` 的外部服务；它不会隐式启动 Simulator，也不会默认打开现场批量执行入口。若需离线回归，可在启动器的父进程环境中显式设置 `WPF_RUNTIME_MODE=simulator`。
 
 ### 仅启动服务或执行隔离验证
 
-`run-local.ps1` 继续保留给服务单独启动和进程级验收；它不会启动 WPF，也不应作为日常桌面使用的前置步骤：
+`run-local.ps1` 继续保留给显式 `FieldSimulation` 服务单独启动和进程级验收；它不会启动 WPF，也不应作为 physical 桌面使用的前置步骤：
 
 ```powershell
 .\scripts\run-local.ps1
@@ -168,7 +176,7 @@ New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
 | `restart-resume` | 保持 Simulator 运行，重启 Adapter/MES 后恢复持久化任务 |
 | `workflow-publish-rollback` | 工作流草稿、校验、发布、不可变版本和回滚审计 |
 
-Simulator 故障控制示例：
+Simulator 故障控制示例（仅在显式 FieldSimulation 回归中使用）：
 
 ```powershell
 Invoke-RestMethod -Method Post http://localhost:5183/controls/fail
@@ -192,7 +200,7 @@ Invoke-RestMethod -Method Post http://localhost:5183/controls/fail
 
 ## 真实 AGV 边界
 
-Adapter 已提供配置选择的厂商 TCP 驱动，覆盖帧格式、控制权、导航、状态查询、暂停/恢复、取消和安全门禁映射。Simulator 仍是默认驱动。
+Adapter 已提供配置选择的厂商 TCP 驱动，覆盖帧格式、控制权、导航、状态查询、暂停/恢复、取消和安全门禁映射。桌面默认运行模式为 physical；Simulator 驱动只在显式 FieldSimulation 回归配置中使用。
 
 启用物理 Profile 前，先使用启动配置 `Adapter:RunMode=read-only-preflight`；该模式只能在 Adapter 重启时切换，WPF 和 HTTP 不能动态修改。离线调试的 1-5 步只使用 fake controller 和临时数据库，不通电、不连接、不发送实体命令：
 
@@ -206,6 +214,8 @@ Adapter 已提供配置选择的厂商 TCP 驱动，覆盖帧格式、控制权�
 
 只读模式下 `GET /health` 应报告 `runMode=read-only-preflight`，随后只调用 `GET /physical/preflight`；所有写请求都会被 Adapter 拒绝。厂商驱动已通过只读 API `1000/1021/1300/1301/1302/4011` 实现设备、定位和地图证据读取，任何超时、协议错误、地图解析失败或不一致仍会按 fail-closed 阻断派单。真实控制器的 `19207/4011` 读取必须单独获得现场授权。详见 [物理验收配置](docs/physical-acceptance/README.md)。
 
+MES 还提供默认关闭的常驻物理设备就绪监督器。显式启用后，它在启动和设备重新上线时执行只读验证，为每台设备维护 `DeviceEpoch`，并使掉电前的旧 Ready/旧授权失效；WPF 通过 `/api/physical/readiness` 显示位置、活动任务、控制权、地图和安全阻断。启用方式、状态机和恢复边界见 [物理设备就绪监督模块](docs/PHYSICAL-DEVICE-READINESS-SUPERVISOR.md)。
+
 一次受监督的 `LM1 -> LM2` 单段尝试没有让车辆移动：两阶段预检通过、控制权申请成功，但按任务 ID 查询 `1110` 返回 `404`，全局任务列表为空。离线定位到派发前的 `404` 被误判为已有任务，导致在写入 `3066` 之前返回 `unknown`。修复后派发前全为 `404` 只允许一次首发，写入尝试之后的空/`404` 状态一律返回 `unknown` 并标记 `dispatch_not_confirmed_by_1110`，相同任务 ID 不再自动重发。控制权由现场操作员手动释放，随后只读 `1060` 确认 `locked=false`。实车结论仍为 **NO-GO**，下一次尝试需要新的授权只读预检和新的唯一验收/任务 ID。
 
 相关资料：[真实 AGV TCP Adapter](docs/AGV-TCP-ADAPTER.md)、[现场验收清单](docs/physical-acceptance/README.md)。
@@ -215,6 +225,7 @@ Adapter 已提供配置选择的厂商 TCP 驱动，覆盖帧格式、控制权�
 - [本地隔离进程验证](docs/LOCAL-VERIFICATION.md)
 - [真实 AGV TCP Adapter](docs/AGV-TCP-ADAPTER.md)
 - [物理验收边界](docs/physical-acceptance/README.md)
+- [物理设备就绪监督模块](docs/PHYSICAL-DEVICE-READINESS-SUPERVISOR.md)
 - [项目进度与交接记录](docs/PROGRESS.md)
 - [MVP 设计说明](docs/superpowers/specs/2026-07-29-agv-mes-mvp-design.md)
 

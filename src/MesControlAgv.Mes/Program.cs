@@ -42,6 +42,12 @@ builder.Services.AddHttpClient<IAgvIoGateway, AdapterIoClient>(client =>
 builder.Services.AddHttpClient<IAuboArmGateway, AdapterAuboArmClient>(client =>
     client.BaseAddress = new Uri(
         builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5041/"));
+var physicalReadinessOptions = builder.Configuration
+    .GetSection(PhysicalReadinessSupervisorOptions.SectionName)
+    .Get<PhysicalReadinessSupervisorOptions>() ?? new PhysicalReadinessSupervisorOptions();
+builder.Services.AddSingleton(physicalReadinessOptions);
+builder.Services.AddScoped<IPhysicalDeviceReadinessProbe, PhysicalAgvReadinessProbe>();
+builder.Services.AddScoped<IPhysicalDeviceReadinessProbe, PhysicalAuboReadinessProbe>();
 builder.Services.AddSingleton(builder.Configuration
     .GetSection("AgvAuboSequence")
     .Get<AgvAuboSequenceOptions>() ?? new AgvAuboSequenceOptions());
@@ -125,6 +131,14 @@ builder.Services.AddScoped<TaskRepository>();
 builder.Services.AddScoped<ITaskApplicationService, TaskService>();
 builder.Services.AddScoped<IKpiDashboardApplicationService, KpiDashboardService>();
 builder.Services.AddScoped<IAgvAuboSequenceService, AgvAuboSequenceService>();
+builder.Services.AddSingleton<PhysicalReadinessStateStore>();
+builder.Services.AddSingleton<PhysicalReadinessSupervisor>();
+builder.Services.AddSingleton<IPhysicalReadinessState>(services =>
+    services.GetRequiredService<PhysicalReadinessSupervisor>());
+builder.Services.AddSingleton<IPhysicalReadinessSupervisor>(services =>
+    services.GetRequiredService<PhysicalReadinessSupervisor>());
+builder.Services.AddHostedService(services =>
+    services.GetRequiredService<PhysicalReadinessSupervisor>());
 builder.Services.AddHostedService<RecoveryService>();
 builder.Services.AddHostedService<FieldNavigationAcceptanceRecoveryService>();
 builder.Services.AddHostedService<ExperimentRuntimeRecoveryService>();
@@ -151,6 +165,7 @@ using (var scope = app.Services.CreateScope())
 app.MapGet("/health", () => Results.Ok(new { service = "mes", status = "ok" }));
 
 app.MapMesDeviceGatewayEndpoints();
+app.MapPhysicalReadinessEndpoints();
 app.MapShineLabStatusEndpoints();
 
 app.MapMesWorkflowEndpoints();
@@ -785,6 +800,8 @@ static async Task EnsureFieldNavigationAcceptanceTablesAsync(MesDbContext databa
             ExpiresAtUtc TEXT NULL,
             PermitConsumedAtUtc TEXT NULL,
             DeviceTaskId TEXT NULL,
+            DeviceEpoch INTEGER NULL,
+            ReadinessSupervisorInstanceId TEXT NULL,
             WorkflowRunId TEXT NULL,
             WorkflowNodeExecutionId TEXT NULL,
             WorkflowDeviceOperationId TEXT NULL,
@@ -820,7 +837,9 @@ static async Task EnsureFieldNavigationAcceptanceTablesAsync(MesDbContext databa
         [
             (Name: "WorkflowRunId", Sql: "TEXT NULL"),
             (Name: "WorkflowNodeExecutionId", Sql: "TEXT NULL"),
-            (Name: "WorkflowDeviceOperationId", Sql: "TEXT NULL")
+            (Name: "WorkflowDeviceOperationId", Sql: "TEXT NULL"),
+            (Name: "DeviceEpoch", Sql: "INTEGER NULL"),
+            (Name: "ReadinessSupervisorInstanceId", Sql: "TEXT NULL")
         ]);
 
     foreach (var statement in new[]

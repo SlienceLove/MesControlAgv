@@ -528,6 +528,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             await LoadStationsAsync();
             var tasks = await _mes.GetTasksAsync(CurrentTaskDate, _shutdown.Token);
             var fleetStatus = await _mes.GetAgvFleetStatusAsync(_shutdown.Token);
+            await Readiness.RefreshSupervisorAsync(_shutdown.Token);
             await Kpi.RefreshAsync(_mes, CurrentTaskDate, _shutdown.Token);
             await ShineLabDeviceStatus.RefreshAsync(_shutdown.Token);
             var selectedId = preferredTaskId ?? SelectedTask?.Id;
@@ -603,6 +604,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             var fleetStatus = await _mes.GetAgvFleetStatusAsync(_shutdown.Token);
             UpdateAgvs(fleetStatus);
             Readiness.UpdateFleet(fleetStatus);
+            await Readiness.RefreshSupervisorAsync(_shutdown.Token);
             BatchStatus = $"AGV \u72B6\u6001\u5DF2\u5237\u65B0\uFF1A{fleetStatus.Count} \u53F0";
             LastRefreshAt = DateTimeOffset.UtcNow;
             IsDataStale = false;

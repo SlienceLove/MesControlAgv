@@ -57,6 +57,18 @@ public interface IPhysicalPreflightAgvGateway
 }
 
 /// <summary>
+/// Optional per-device extension for a multi-AGV Adapter.  The legacy
+/// no-argument preflight remains source compatible; a driver that cannot
+/// prove a requested identity must fail rather than return another AGV's data.
+/// </summary>
+public interface IPhysicalPreflightAgvDeviceGateway : IPhysicalPreflightAgvGateway
+{
+    Task<PhysicalAgvPreflightResponse> GetPhysicalPreflightAsync(
+        string agvId,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
 /// Optional physical-session cleanup capability. Implementations release only
 /// control currently owned by the Adapter and must never acquire control as a
 /// side effect of cleanup.

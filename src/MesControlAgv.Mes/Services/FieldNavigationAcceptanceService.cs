@@ -22,6 +22,7 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
     private readonly PathPlanner _planner;
     private readonly TimeProvider _timeProvider;
     private readonly IWorkflowApplicationService? _workflows;
+    private readonly IPhysicalReadinessState? _physicalReadiness;
 
     public FieldNavigationAcceptanceService(
         FieldNavigationAcceptanceRepository repository,
@@ -29,7 +30,8 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
         ProfileConfiguration profile,
         PathPlanner planner,
         TimeProvider? timeProvider = null,
-        IWorkflowApplicationService? workflows = null)
+        IWorkflowApplicationService? workflows = null,
+        IPhysicalReadinessState? physicalReadiness = null)
     {
         _repository = repository;
         _gateway = gateway;
@@ -37,6 +39,7 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
         _planner = planner;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _workflows = workflows;
+        _physicalReadiness = physicalReadiness;
     }
 
     public async Task<FieldNavigationAcceptanceResponse> CreateAsync(
@@ -141,19 +144,70 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
             throw new InvalidOperationException("The field-navigation permit id is already in use.");
         }
 
+        long? deviceEpoch = request.DeviceEpoch;
+        string? supervisorInstanceId = request.ReadinessSupervisorInstanceId;
+        if (_physicalReadiness is { Enabled: true } readiness)
+        {
+            var supervisorSnapshot = readiness.GetSnapshot();
+            if (!readiness.TryGetDevice(acceptance.AgvId, out var device) ||
+                device.State != PhysicalDeviceReadinessState.Ready)
+            {
+                throw new InvalidOperationException(
+                    $"Physical AGV '{acceptance.AgvId}' is not Ready in the current supervisor snapshot.");
+            }
+
+            var workflowAuthorization = acceptance.WorkflowRunId is { } workflowRunId &&
+                                        _workflows is not null
+                ? (await _workflows.GetExecutionRequestAsync(
+                    workflowRunId,
+                    cancellationToken))?.PhysicalAuthorization
+                : null;
+            var workflowEpoch = workflowAuthorization?.GetDeviceEpoch(acceptance.AgvId);
+            var expectedSupervisorInstanceId = supervisorInstanceId ??
+                                               workflowAuthorization?.ReadinessSupervisorInstanceId;
+            if (!string.IsNullOrWhiteSpace(expectedSupervisorInstanceId) &&
+                !string.Equals(
+                    expectedSupervisorInstanceId.Trim(),
+                    supervisorSnapshot.SupervisorInstanceId,
+                    StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "The field-navigation authorization belongs to a previous physical-readiness supervisor instance.");
+            }
+
+            var expectedEpoch = deviceEpoch ?? workflowEpoch;
+            if (expectedEpoch.HasValue && expectedEpoch.Value != device.DeviceEpoch)
+            {
+                throw new InvalidOperationException(
+                    $"Physical AGV '{acceptance.AgvId}' authorization epoch {expectedEpoch.Value} does not match current epoch {device.DeviceEpoch}.");
+            }
+
+            deviceEpoch = device.DeviceEpoch;
+            supervisorInstanceId = supervisorSnapshot.SupervisorInstanceId;
+            if (!readiness.AcknowledgeAuthorization(acceptance.AgvId, deviceEpoch.Value))
+            {
+                throw new InvalidOperationException(
+                    "Physical readiness changed while the field-navigation permit was being authorized; submit a new permit.");
+            }
+        }
+
         acceptance.Status = FieldNavigationAcceptanceStatuses.Authorized;
         acceptance.OperatorName = operatorName;
         acceptance.SafetyObserverName = safetyObserverName;
         acceptance.PermitId = permitId;
         acceptance.AuthorizedAtUtc = now;
         acceptance.ExpiresAtUtc = request.ExpiresAtUtc;
+        acceptance.DeviceEpoch = deviceEpoch;
+        acceptance.ReadinessSupervisorInstanceId = supervisorInstanceId;
         acceptance.LastError = null;
         await _repository.SaveWithAuditAsync(acceptance, "Authorized", new
         {
             operatorName,
             safetyObserverName,
             permitId,
-            expiresAtUtc = request.ExpiresAtUtc
+            expiresAtUtc = request.ExpiresAtUtc,
+            deviceEpoch,
+            supervisorInstanceId
         }, cancellationToken);
         return ToResponse(acceptance);
     }
@@ -209,6 +263,29 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
             acceptance.Status = FieldNavigationAcceptanceStatuses.Expired;
             acceptance.LastError = "field_navigation_permit_expired";
             await _repository.SaveWithAuditAsync(acceptance, "PermitExpired", new { acceptance.PermitId }, cancellationToken);
+            return ToResponse(acceptance);
+        }
+
+        if (_physicalReadiness is { Enabled: true } readiness &&
+            !readiness.IsCurrentAndReady(
+                acceptance.AgvId,
+                acceptance.DeviceEpoch,
+                acceptance.ReadinessSupervisorInstanceId,
+                out var readinessReason))
+        {
+            acceptance.Status = FieldNavigationAcceptanceStatuses.Rejected;
+            acceptance.LastError =
+                $"physical_readiness_epoch_invalid:{readinessReason ?? PhysicalReadinessReasonCodes.DeviceNotReady}";
+            await _repository.SaveWithAuditAsync(
+                acceptance,
+                "DispatchBlockedByPhysicalReadiness",
+                new
+                {
+                    acceptance.DeviceEpoch,
+                    acceptance.ReadinessSupervisorInstanceId,
+                    reason = readinessReason ?? PhysicalReadinessReasonCodes.DeviceNotReady
+                },
+                cancellationToken);
             return ToResponse(acceptance);
         }
 
@@ -496,7 +573,9 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
     {
         WorkflowRunId = acceptance.WorkflowRunId,
         WorkflowNodeExecutionId = acceptance.WorkflowNodeExecutionId,
-        WorkflowDeviceOperationId = acceptance.WorkflowDeviceOperationId
+        WorkflowDeviceOperationId = acceptance.WorkflowDeviceOperationId,
+        DeviceEpoch = acceptance.DeviceEpoch,
+        ReadinessSupervisorInstanceId = acceptance.ReadinessSupervisorInstanceId
     };
 
     private static IReadOnlyList<string> DeserializePath(string value) =>

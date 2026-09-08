@@ -56,6 +56,7 @@ public sealed class ShineLabStatusHub(IOptions<ShineLabTcpOptions> configuredOpt
                     state.TaskFinishedAtUtc = null;
                     break;
 
+                case "Device":
                 case "UpdateInfo":
                     ApplyUpdate(state, body);
                     break;
@@ -75,6 +76,7 @@ public sealed class ShineLabStatusHub(IOptions<ShineLabTcpOptions> configuredOpt
                     state.TaskFinishedAtUtc = ParseDate(body, "finishDate") ?? DateTimeOffset.UtcNow;
                     break;
 
+                case "EndMission":
                 case "TaskFinish":
                     ApplyCommonTaskFields(state, body);
                     state.Status = 0;
@@ -178,8 +180,8 @@ public sealed class ShineLabStatusHub(IOptions<ShineLabTcpOptions> configuredOpt
         state.TaskUuid = taskUuid ?? state.TaskUuid;
         state.SampleId = ReadString(body, "sampleID", "sampleId") ?? state.SampleId;
         state.SampleName = ReadString(body, "sampleName") ?? state.SampleName;
-        state.Channel = ReadString(body, "channel", "Channel") ?? state.Channel;
-        state.Position = ReadInt(body, "position", "Position") ?? state.Position;
+        state.Channel = ReadString(body, "channel", "Channel", "chan") ?? state.Channel;
+        state.Position = ReadInt(body, "position", "Position", "pos") ?? state.Position;
         state.Stage = ReadString(body, "stage", "currentStage", "lastKnownStage") ?? state.Stage;
         state.Progress = ReadInt(body, "progress", "percent") ?? state.Progress;
         state.TaskStartedAtUtc ??= ParseDate(body, "startDate", "startTime", "taskStartDate");

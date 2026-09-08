@@ -51,15 +51,15 @@ public sealed class ShineLabTcpServerTests
             await writer.WriteLineAsync(JsonSerializer.Serialize(new
             {
                 strID = "status-001",
-                strMethod = "UpdateInfo",
+                strMethod = "Device",
                 equipmentCode = "SHA18I",
                 body = new
                 {
                     status = 1,
                     task_uuid = "task-001",
                     sampleID = "S-01",
-                    channel = "A",
-                    position = 11,
+                    chan = "A",
+                    pos = 11,
                     stage = "Injecting"
                 }
             }));
@@ -102,6 +102,69 @@ public sealed class ShineLabTcpServerTests
             var commandResult = await commandTask;
             Assert.True(commandResult.IsSuccess);
             Assert.Equal("accepted", commandResult.Message);
+
+            await writer.WriteLineAsync(JsonSerializer.Serialize(new
+            {
+                strID = "end-001",
+                strMethod = "EndMission",
+                equipmentCode = "SHA18I",
+                body = new { chan = "A", sampleID = "S-01" }
+            }));
+            await Task.Delay(50);
+            var completed = hub.GetStatus("SHA18I");
+            Assert.NotNull(completed);
+            Assert.Equal("Completed", completed.State);
+            Assert.False(completed.HasActiveTask);
+        }
+        finally
+        {
+            await server.StopAsync(CancellationToken.None);
+            server.Dispose();
+            connectionManager.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task Idle_client_is_disconnected_after_stale_timeout()
+    {
+        var port = ReservePort();
+        var options = Options.Create(new ShineLabTcpOptions
+        {
+            Enabled = true,
+            ListenAddress = "127.0.0.1",
+            Port = port,
+            StaleAfterSeconds = 1
+        });
+        var hub = new ShineLabStatusHub(options);
+        var connectionManager = new ShineLabConnectionManager();
+        var server = new ShineLabTcpServer(options, hub, connectionManager, NullLogger<ShineLabTcpServer>.Instance);
+        await server.StartAsync(CancellationToken.None);
+
+        try
+        {
+            using var client = await ConnectWithRetryAsync(port);
+            await using var stream = client.GetStream();
+            using var reader = new StreamReader(stream, Encoding.UTF8, false, 4096, leaveOpen: true);
+            using var writer = new StreamWriter(stream, new UTF8Encoding(false), 4096, leaveOpen: true)
+            {
+                NewLine = "\n",
+                AutoFlush = true
+            };
+            await writer.WriteLineAsync(JsonSerializer.Serialize(new
+            {
+                strID = "cert-timeout",
+                strMethod = "Certification",
+                equipmentCode = "SHA18I",
+                body = new { }
+            }));
+            Assert.Contains("Success", await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(2)));
+
+            var deadline = DateTime.UtcNow.AddSeconds(3);
+            while (connectionManager.GetSnapshot().Connected && DateTime.UtcNow < deadline)
+                await Task.Delay(50);
+
+            Assert.False(connectionManager.GetSnapshot().Connected);
+            Assert.False(hub.GetStatus("SHA18I")?.Online ?? true);
         }
         finally
         {

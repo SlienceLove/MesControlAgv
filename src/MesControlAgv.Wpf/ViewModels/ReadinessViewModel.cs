@@ -16,6 +16,7 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
     private readonly IMapLayoutSource _mapLayoutSource;
     private DashboardMapSnapshot? _mapSnapshot;
     private PhysicalAgvPreflightResponse? _preflight;
+    private PhysicalReadinessResponse? _supervisorReadiness;
     private IReadOnlyList<AgvFleetDashboardStatus> _fleetStatus = [];
     private string _status = "尚未刷新";
     private bool _isRefreshing;
@@ -120,6 +121,48 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
         }
     }
 
+    /// <summary>
+    /// Unified multi-device supervisor projection. It is separate from the
+    /// legacy single-AGV preflight so an unavailable optional endpoint cannot
+    /// erase the detailed map/safety evidence already shown below.
+    /// </summary>
+    public PhysicalReadinessResponse? SupervisorReadiness
+    {
+        get => _supervisorReadiness;
+        private set
+        {
+            if (ReferenceEquals(_supervisorReadiness, value)) return;
+            _supervisorReadiness = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(DeviceReadiness));
+            OnPropertyChanged(nameof(PhysicalSchedulingPermitted));
+            OnPropertyChanged(nameof(SupervisorBlockingReasons));
+            OnPropertyChanged(nameof(SupervisorStatus));
+            OnPropertyChanged(nameof(DispatchPermitted));
+        }
+    }
+
+    public IReadOnlyList<PhysicalDeviceReadinessSnapshot> DeviceReadiness =>
+        SupervisorReadiness?.Devices ?? Array.Empty<PhysicalDeviceReadinessSnapshot>();
+
+    public bool PhysicalSchedulingPermitted =>
+        SupervisorReadiness is null ||
+        !SupervisorReadiness.Enabled ||
+        SupervisorReadiness.SchedulingPermitted;
+
+    public string SupervisorBlockingReasons => SupervisorReadiness is null
+        ? "物理设备监督器尚未返回数据。"
+        : SupervisorReadiness.BlockingReasons.Count == 0
+            ? "当前无监督器阻断原因。"
+            : string.Join("；", SupervisorReadiness.BlockingReasons);
+
+    public string SupervisorStatus => SupervisorReadiness is null
+        ? "未连接监督器"
+        : !SupervisorReadiness.Enabled
+            ? "监督器未启用（不访问物理设备）"
+            : $"{(SupervisorReadiness.SchedulingPermitted ? "可调度" : "不可调度")} / " +
+              $"最近观测 {SupervisorReadiness.ObservedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}";
+
     public IReadOnlyList<AgvFleetDashboardStatus> FleetStatus
     {
         get => _fleetStatus;
@@ -183,13 +226,21 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
     public bool IsMapLayoutVerified =>
         _mapIdentityVerification?.Status == MapIdentityVerificationStatus.Match;
 
-    public bool DispatchPermitted => Preflight?.DispatchPermitted == true;
+    public bool DispatchPermitted =>
+        Preflight?.DispatchPermitted == true && PhysicalSchedulingPermitted;
 
     public string BlockingReasons => Preflight is null
-        ? "物理预检尚未加载。"
+        ? SupervisorReadiness is { Enabled: true } && SupervisorReadiness.BlockingReasons.Count > 0
+            ? SupervisorBlockingReasons
+            : "物理预检尚未加载。"
         : Preflight.BlockingReasons.Count == 0
-            ? "当前驱动未报告阻断原因。"
-            : string.Join("；", Preflight.BlockingReasons);
+            ? SupervisorReadiness is { Enabled: true } && SupervisorReadiness.BlockingReasons.Count > 0
+                ? SupervisorBlockingReasons
+                : "当前驱动未报告阻断原因。"
+            : string.Join("；", Preflight.BlockingReasons) +
+              (SupervisorReadiness is { Enabled: true } && SupervisorReadiness.BlockingReasons.Count > 0
+                  ? $"；监督器：{SupervisorBlockingReasons}"
+                  : string.Empty);
 
     public string OperatingMode => Preflight?.Readiness?.VehicleOperatingMode?.ToLowerInvariant() switch
     {
@@ -258,17 +309,24 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
             var preflightTask = ReadOptionalAsync(
                 () => _mes.GetPhysicalPreflightAsync(cancellationToken),
                 cancellationToken);
+            var supervisorTask = ReadOptionalAsync(
+                () => _mes.RefreshPhysicalReadinessAsync(forceFull: true, cancellationToken),
+                cancellationToken);
             var layoutTask = LoadMapLayoutOnceAsync(cancellationToken);
-            await Task.WhenAll(mapTask, preflightTask, layoutTask);
+            await Task.WhenAll(mapTask, preflightTask, supervisorTask, layoutTask);
 
             var mapRead = await mapTask;
             var preflightRead = await preflightTask;
+            var supervisorRead = await supervisorTask;
             if (mapRead.Value is not null) MapSnapshot = mapRead.Value;
             if (preflightRead.Value is not null) Preflight = preflightRead.Value;
+            if (supervisorRead.Value is not null) SupervisorReadiness = supervisorRead.Value;
 
-            var hasRemoteData = mapRead.Value is not null || preflightRead.Value is not null;
+            var hasRemoteData = mapRead.Value is not null ||
+                                preflightRead.Value is not null ||
+                                supervisorRead.Value is not null;
             var hasLocalLayout = _mapLayoutResult is { Loaded: true };
-            var diagnostics = new[] { mapRead.Error, preflightRead.Error }
+            var diagnostics = new[] { mapRead.Error, preflightRead.Error, supervisorRead.Error }
                 .Where(error => !string.IsNullOrWhiteSpace(error))
                 .ToArray();
             if (!hasRemoteData && !hasLocalLayout)
@@ -286,7 +344,7 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
                     : $"MES 不可用，已加载本地地图布局：{string.Join("；", diagnostics)}";
             OfflineState.MarkReady(
                 MapSnapshot is not null || Preflight is not null || hasLocalLayout,
-                hasRemoteData ? "只读就绪数据已更新。" : "已加载本地地图，可离线编辑流程。" );
+                hasRemoteData ? "只读就绪数据已更新。" : "已加载本地地图，可离线编辑流程。");
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -305,6 +363,30 @@ public sealed class ReadinessViewModel : INotifyPropertyChanged
     }
 
     public void UpdateFleet(IReadOnlyList<AgvFleetDashboardStatus> statuses) => FleetStatus = statuses ?? [];
+
+    /// <summary>
+    /// Lightweight WPF refresh used by the normal dashboard timer. The MES
+    /// supervisor performs the actual device polling; this call only reads its
+    /// aggregate state and never contacts a controller directly.
+    /// </summary>
+    public async Task RefreshSupervisorAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var response = await _mes.GetPhysicalReadinessAsync(cancellationToken);
+            if (response is not null) SupervisorReadiness = response;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            // The existing detailed preflight/error surface remains the source
+            // of the visible message; a stale supervisor projection must not
+            // overwrite a newer successful snapshot.
+        }
+    }
 
     public async Task LoadMapFromFileAsync(string smapFilePath, string? mappingFilePath = null, CancellationToken cancellationToken = default)
     {

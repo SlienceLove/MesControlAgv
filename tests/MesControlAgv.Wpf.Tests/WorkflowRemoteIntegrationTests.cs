@@ -33,6 +33,7 @@ public sealed class WorkflowRemoteIntegrationTests
             DiagnosticRuleVersion = "test",
             RuntimeMode = "simulator",
             ManageLocalServices = false,
+            ManageLocalMes = false,
             MesBaseUrl = new Uri("http://127.0.0.1:5045/"),
             SimulatorBaseUrl = new Uri("http://127.0.0.1:5183/"),
             AdapterBaseUrl = new Uri("http://127.0.0.1:5041/"),

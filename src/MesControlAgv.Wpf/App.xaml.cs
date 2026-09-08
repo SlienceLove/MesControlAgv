@@ -14,6 +14,7 @@ public partial class App : Application
 {
     private readonly CancellationTokenSource _startupCancellation = new();
     private LocalSimulatorRuntime? _localRuntime;
+    private LocalMesRuntime? _localMesRuntime;
     private MainViewModel? _viewModel;
     private bool _startupCompleted;
 
@@ -82,6 +83,14 @@ public partial class App : Application
                     progress,
                     _startupCancellation.Token);
             }
+            else if (startupConfiguration.ManageLocalMes)
+            {
+                var progress = new Progress<string>(startupWindow.SetStatus);
+                _localMesRuntime = await LocalMesRuntime.StartAsync(
+                    mesUrl,
+                    progress,
+                    _startupCancellation.Token);
+            }
             else
             {
                 startupWindow.SetStatus(isSimulator ? "正在连接现有本地服务..." : "正在连接 MES...");
@@ -144,6 +153,8 @@ public partial class App : Application
         {
             _localRuntime?.Dispose();
             _localRuntime = null;
+            _localMesRuntime?.Dispose();
+            _localMesRuntime = null;
             _startupCompleted = true;
             startupWindow.Close();
             Shutdown();
@@ -152,6 +163,8 @@ public partial class App : Application
         {
             _localRuntime?.Dispose();
             _localRuntime = null;
+            _localMesRuntime?.Dispose();
+            _localMesRuntime = null;
             _startupCompleted = true;
             startupWindow.Close();
             MessageBox.Show(
@@ -197,6 +210,8 @@ public partial class App : Application
         _viewModel = null;
         _localRuntime?.Dispose();
         _localRuntime = null;
+        _localMesRuntime?.Dispose();
+        _localMesRuntime = null;
         _startupCancellation.Dispose();
         base.OnExit(e);
     }

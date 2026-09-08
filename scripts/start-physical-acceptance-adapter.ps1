@@ -20,6 +20,16 @@ param(
     [ValidateRange(1, 65535)]
     [int]$AuboPort = 9012,
     [string]$AuboRobotName = 'rob1',
+    [ValidateRange(1, 65535)]
+    [int]$AgvStatusPort = 19204,
+    [ValidateRange(1, 65535)]
+    [int]$AgvCommandPort = 19206,
+    [ValidateRange(1, 65535)]
+    [int]$AgvControlPort = 19207,
+    [ValidateRange(1, 65535)]
+    [int]$AgvOtherPort = 19210,
+    [ValidateRange(1, 65535)]
+    [int]$AgvPushPort = 19301,
     [switch]$EnableFieldNavigationAcceptance,
     [switch]$AllowExistingDatabase
 )
@@ -319,6 +329,11 @@ $environmentVariables = @{
     'ASPNETCORE_ENVIRONMENT' = 'PhysicalAcceptance'
     'Adapter__RunMode' = $ExpectedRunMode
     'Agv__Tcp__Host' = $ControllerHost.Trim()
+    'Agv__Tcp__StatusPort' = [string]$AgvStatusPort
+    'Agv__Tcp__CommandPort' = [string]$AgvCommandPort
+    'Agv__Tcp__ControlPort' = [string]$AgvControlPort
+    'Agv__Tcp__OtherPort' = [string]$AgvOtherPort
+    'Agv__Tcp__PushPort' = [string]$AgvPushPort
     'Agv__Tcp__AcquireControl' = if ($ExpectedRunMode -eq 'standard') { 'true' } else { 'false' }
     'Agv__Tcp__EnablePush' = 'false'
     'Profile__features__enableAutomaticDispatch' = 'false'
@@ -388,6 +403,12 @@ try {
         DatabasePath = $AdapterDatabasePath
         StartedAtUtc = [DateTime]::UtcNow.ToString('O')
         ExpectedRunMode = $ExpectedRunMode
+        AgvHost = $ControllerHost.Trim()
+        AgvStatusPort = $AgvStatusPort
+        AgvCommandPort = $AgvCommandPort
+        AgvControlPort = $AgvControlPort
+        AgvOtherPort = $AgvOtherPort
+        AgvPushPort = $AgvPushPort
         AuboReadOnly = [bool]$EnableAuboReadOnly
         AuboControl = [bool]$EnableAuboControl
         AuboAllowedProgramNames = @($AuboAllowedProgramNames)

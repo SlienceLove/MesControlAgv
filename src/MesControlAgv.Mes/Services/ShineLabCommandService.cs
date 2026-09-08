@@ -26,10 +26,25 @@ public sealed class ShineLabCommandService(
         if (request.SampleData is null || request.SampleData.Count == 0)
             throw new ArgumentException("At least one sampleData row is required.", nameof(request));
 
+        var firstChannel = request.SampleData.FirstOrDefault()?.Channel;
         var body = JsonSerializer.SerializeToElement(new
         {
             task_uuid = request.TaskUuid,
-            sampleData = request.SampleData,
+            chan = firstChannel,
+            sampleData = request.SampleData.Select(sample => new
+            {
+                sampleID = sample.SampleId,
+                sampleName = sample.SampleName,
+                type = int.TryParse(sample.Type, out var sampleType) ? sampleType : 0,
+                position = sample.Position,
+                mPos = sample.MPos,
+                Channel = sample.Channel,
+                instrumentMethod = sample.InstrumentMethod,
+                processingMethod = sample.ProcessingMethod,
+                detectionMethod = sample.DetectionMethod,
+                injectionVolume = sample.InjectionVolume,
+                injectionVolumeUnit = sample.InjectionVolumeUnit
+            }),
             instrumentMethod = request.InstrumentMethod,
             processingMethod = request.ProcessingMethod,
             detectionMethod = request.DetectionMethod
@@ -56,10 +71,10 @@ public sealed class ShineLabCommandService(
         var body = JsonSerializer.SerializeToElement(new
         {
             task_uuid = request.TaskUuid,
+            chan = request.Channel,
             action = request.Action,
             sampleID = request.SampleId,
             sampleName = request.SampleName,
-            channel = request.Channel,
             detectionMethod = request.DetectionMethod,
             cleanTime = request.CleanTime
         });

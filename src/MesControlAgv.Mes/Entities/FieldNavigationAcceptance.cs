@@ -18,6 +18,8 @@ public sealed class FieldNavigationAcceptance
     public DateTimeOffset? ExpiresAtUtc { get; set; }
     public DateTimeOffset? PermitConsumedAtUtc { get; set; }
     public string? DeviceTaskId { get; set; }
+    public long? DeviceEpoch { get; set; }
+    public string? ReadinessSupervisorInstanceId { get; set; }
     public Guid? WorkflowRunId { get; init; }
     public Guid? WorkflowNodeExecutionId { get; init; }
     public Guid? WorkflowDeviceOperationId { get; set; }

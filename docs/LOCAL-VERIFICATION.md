@@ -2,17 +2,44 @@
 
 ## Interactive WPF development
 
-For normal local Simulator development, start WPF directly:
+The default WPF/Launcher runtime is `physical`. It connects to externally
+managed services at Adapter `http://127.0.0.1:5141/` and MES
+`http://127.0.0.1:5145/`; it does not start the Simulator or manage local
+service processes. The physical mode is only a connection default, not a field
+authorization or GO decision.
+
+The MES physical-readiness supervisor is also disabled by default. Its API can
+be verified locally without opening a controller connection:
 
 ```powershell
+Invoke-RestMethod http://127.0.0.1:5145/api/physical/readiness
+Invoke-RestMethod -Method Post `
+  'http://127.0.0.1:5145/api/physical/readiness/refresh?forceFull=true'
+```
+
+The disabled response must report `enabled=false`, `readOnly=true`, and
+`schedulingPermitted=false`. Do not set
+`PhysicalReadinessSupervisor__Enabled=true` during Simulator or wireless-only
+capture. The explicit physical-session procedure is documented in
+[PHYSICAL-DEVICE-READINESS-SUPERVISOR.md](PHYSICAL-DEVICE-READINESS-SUPERVISOR.md).
+
+For an explicit local Simulator session, set the mode and loopback endpoints
+before starting WPF:
+
+```powershell
+$env:WPF_RUNTIME_MODE = 'simulator'
+$env:WPF_MANAGE_LOCAL_SERVICES = 'true'
+$env:SIMULATOR_BASE_URL = 'http://localhost:5183/'
+$env:ADAPTER_BASE_URL = 'http://localhost:5041/'
+$env:MES_BASE_URL = 'http://localhost:5045/'
 dotnet run --project src/MesControlAgv.Wpf -c Debug
 ```
 
-WPF starts `Simulator -> Adapter -> MES` itself, waits for every `/health`
-endpoint, and begins its first refresh only after the local stack is ready. It
-does not use a fixed startup delay. Closing WPF automatically stops only the
-service processes that it created; an already healthy local service is reused
-and is not stopped.
+In this explicit Simulator mode WPF starts `Simulator -> Adapter -> MES`
+itself, waits for every `/health` endpoint, and begins its first refresh only
+after the local stack is ready. It does not use a fixed startup delay. Closing
+WPF automatically stops only the service processes that it created; an already
+healthy local service is reused and is not stopped.
 
 WPF-managed Simulator databases are stored under
 `%LOCALAPPDATA%\MesControlAgv\local-simulator`. Set

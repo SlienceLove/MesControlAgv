@@ -77,12 +77,14 @@ public sealed class WorkflowFieldNavigationDispatcher(
     TimeProvider? timeProvider = null,
     IAgvGateway? agv = null,
     ILogger? logger = null,
-    WorkflowFieldNavigationRetryState? retryState = null)
+    WorkflowFieldNavigationRetryState? retryState = null,
+    IPhysicalReadinessState? physicalReadiness = null)
 {
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private readonly IAgvGateway? _agv = agv;
     private readonly ILogger? _logger = logger;
     private readonly WorkflowFieldNavigationRetryState? _retryState = retryState;
+    private readonly IPhysicalReadinessState? _physicalReadiness = physicalReadiness;
 
     public async Task ProcessAsync(CancellationToken cancellationToken)
     {
@@ -250,6 +252,9 @@ public sealed class WorkflowFieldNavigationDispatcher(
         WorkflowNodeExecutionWorkItem workItem,
         CancellationToken cancellationToken)
     {
+        if (!await HasCurrentSupervisorEpochAsync(workItem, cancellationToken))
+            return false;
+
         if (_agv is not IPhysicalPreflightAgvGateway physical)
         {
             // The run-level batch path must have a physical read-only
@@ -281,6 +286,9 @@ public sealed class WorkflowFieldNavigationDispatcher(
 
         while (true)
         {
+            if (!await HasCurrentSupervisorEpochAsync(workItem, cancellationToken))
+                return false;
+
             PhysicalAgvPreflightResponse? assessment = null;
             IReadOnlyList<string> blockers;
             try
@@ -310,10 +318,10 @@ public sealed class WorkflowFieldNavigationDispatcher(
 
                 var stableRemaining = options.ReadyStabilityWindow -
                                       (_timeProvider.GetUtcNow() - readySince.Value);
-            await Task.Delay(
-                    stableRemaining < retryInterval ? stableRemaining : retryInterval,
-                    _timeProvider,
-                    cancellationToken);
+                await Task.Delay(
+                        stableRemaining < retryInterval ? stableRemaining : retryInterval,
+                        _timeProvider,
+                        cancellationToken);
                 continue;
             }
 
@@ -348,11 +356,44 @@ public sealed class WorkflowFieldNavigationDispatcher(
                 return false;
             }
 
-                await Task.Delay(
-                remaining < retryInterval ? remaining : retryInterval,
-                _timeProvider,
-                cancellationToken);
+            await Task.Delay(
+            remaining < retryInterval ? remaining : retryInterval,
+            _timeProvider,
+            cancellationToken);
         }
+    }
+
+    private async Task<bool> HasCurrentSupervisorEpochAsync(
+        WorkflowNodeExecutionWorkItem workItem,
+        CancellationToken cancellationToken)
+    {
+        if (_physicalReadiness is not { Enabled: true } readiness) return true;
+
+        var request = await workflows.GetExecutionRequestAsync(
+            workItem.NodeExecution.WorkflowRunId,
+            cancellationToken);
+        var authorization = request?.PhysicalAuthorization;
+        var agvId = authorization?.AgvId?.Trim();
+        var epoch = string.IsNullOrWhiteSpace(agvId)
+            ? null
+            : authorization!.GetDeviceEpoch(agvId);
+        string? reason = null;
+        if (!string.IsNullOrWhiteSpace(agvId) &&
+            readiness.IsCurrentAndReady(
+                agvId,
+                epoch,
+                authorization?.ReadinessSupervisorInstanceId,
+                out reason))
+        {
+            return true;
+        }
+
+        _logger?.LogWarning(
+            "Workflow Move {NodeExecutionId} remains Ready because physical readiness epoch validation failed for {AgvId}: {Reason}.",
+            workItem.NodeExecution.Id,
+            agvId ?? "unknown",
+            reason ?? PhysicalReadinessReasonCodes.EpochRequired);
+        return false;
     }
 
     private static IReadOnlyList<string> GetTransientBlockers(
@@ -728,7 +769,9 @@ public sealed class WorkflowFieldNavigationDispatcher(
     {
         WorkflowRunId = acceptance.WorkflowRunId,
         WorkflowNodeExecutionId = acceptance.WorkflowNodeExecutionId,
-        WorkflowDeviceOperationId = acceptance.WorkflowDeviceOperationId
+        WorkflowDeviceOperationId = acceptance.WorkflowDeviceOperationId,
+        DeviceEpoch = acceptance.DeviceEpoch,
+        ReadinessSupervisorInstanceId = acceptance.ReadinessSupervisorInstanceId
     };
 }
 
@@ -762,7 +805,8 @@ public sealed class WorkflowFieldNavigationWorker(
                     timeProvider,
                     scope.ServiceProvider.GetRequiredService<IAgvGateway>(),
                     logger,
-                    retryState);
+                    retryState,
+                    scope.ServiceProvider.GetService<IPhysicalReadinessState>());
                 await dispatcher.ProcessAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

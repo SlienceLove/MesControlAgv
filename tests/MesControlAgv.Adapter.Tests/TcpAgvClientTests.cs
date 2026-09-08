@@ -54,6 +54,210 @@ public sealed class TcpAgvClientTests
     }
 
     [Fact]
+    public async Task Read_only_request_reconnects_once_after_controller_closes_the_first_connection()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var logger = new RecordingLogger<TcpAgvClient>();
+        await using var statusServer = new TcpApiTestServer(
+            2,
+            packet =>
+            {
+                Assert.Equal((ushort)1013, packet.ApiId);
+                return Task.FromResult(Encoding.UTF8.GetBytes(
+                    "{\"ret_code\":0,\"DI\":[],\"DO\":[]}"));
+            },
+            closeWithoutResponse: (_, requestIndex) => requestIndex == 0);
+        using var client = new TcpAgvClient(
+            Options.Create(new TcpAgvOptions
+            {
+                Host = "127.0.0.1",
+                StatusPort = statusServer.Port,
+                CommandPort = statusServer.Port,
+                ControlPort = statusServer.Port,
+                OtherPort = statusServer.Port,
+                EnablePush = false,
+                RequestTimeoutMs = 1000,
+                ConnectTimeoutMs = 1000
+            }),
+            logger);
+
+        var snapshot = await client.GetIoAsync(cancellation.Token);
+
+        Assert.Empty(snapshot.DigitalInputs);
+        Assert.Empty(snapshot.DigitalOutputs);
+        Assert.Equal([1013, 1013], statusServer.ApiIds);
+        Assert.Contains(
+            logger.Messages,
+            message => message.Contains("\"retry_scheduled\":true", StringComparison.Ordinal) &&
+                       message.Contains("\"final_result\":\"success\"", StringComparison.Ordinal));
+        await statusServer.Completion;
+    }
+
+    [Fact]
+    public async Task Read_only_request_reports_failure_after_one_reconnect_attempt()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var logger = new RecordingLogger<TcpAgvClient>();
+        await using var statusServer = new TcpApiTestServer(
+            2,
+            packet =>
+            {
+                Assert.Equal((ushort)1013, packet.ApiId);
+                return Task.FromResult(Array.Empty<byte>());
+            },
+            closeWithoutResponse: (_, _) => true);
+        using var client = new TcpAgvClient(
+            Options.Create(new TcpAgvOptions
+            {
+                Host = "127.0.0.1",
+                StatusPort = statusServer.Port,
+                CommandPort = statusServer.Port,
+                ControlPort = statusServer.Port,
+                OtherPort = statusServer.Port,
+                EnablePush = false,
+                RequestTimeoutMs = 1000,
+                ConnectTimeoutMs = 1000
+            }),
+            logger);
+
+        await Assert.ThrowsAsync<EndOfStreamException>(
+            () => client.GetIoAsync(cancellation.Token));
+
+        Assert.Equal([1013, 1013], statusServer.ApiIds);
+        Assert.Contains(
+            logger.Messages,
+            message => message.Contains("\"retry_exhausted\":true", StringComparison.Ordinal) &&
+                       message.Contains("\"final_result\":\"transport_failure\"", StringComparison.Ordinal));
+        await statusServer.Completion;
+    }
+
+    [Fact]
+    public async Task Read_only_request_timeout_does_not_start_a_second_attempt()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var requestObserved = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseServer = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var statusServer = new TcpApiTestServer(1, async packet =>
+        {
+            Assert.Equal((ushort)1013, packet.ApiId);
+            requestObserved.TrySetResult(true);
+            await releaseServer.Task;
+            return Encoding.UTF8.GetBytes("{\"ret_code\":0,\"DI\":[],\"DO\":[]}");
+        }, closeWithoutResponse: (_, _) => true);
+        using var client = new TcpAgvClient(
+            Options.Create(new TcpAgvOptions
+            {
+                Host = "127.0.0.1",
+                StatusPort = statusServer.Port,
+                CommandPort = statusServer.Port,
+                ControlPort = statusServer.Port,
+                OtherPort = statusServer.Port,
+                EnablePush = false,
+                RequestTimeoutMs = 100,
+                ConnectTimeoutMs = 1000
+            }),
+            NullLogger<TcpAgvClient>.Instance);
+
+        try
+        {
+            var request = client.GetIoAsync(cancellation.Token);
+            await requestObserved.Task.WaitAsync(cancellation.Token);
+            await Assert.ThrowsAsync<TimeoutException>(() => request);
+        }
+        finally
+        {
+            releaseServer.TrySetResult(true);
+        }
+
+        Assert.Equal([1013], statusServer.ApiIds);
+        await statusServer.Completion;
+    }
+
+    [Fact]
+    public async Task Read_only_request_cancellation_does_not_start_a_second_attempt()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var requestObserved = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseServer = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var statusServer = new TcpApiTestServer(1, async packet =>
+        {
+            Assert.Equal((ushort)1013, packet.ApiId);
+            requestObserved.TrySetResult(true);
+            await releaseServer.Task;
+            return Encoding.UTF8.GetBytes("{\"ret_code\":0,\"DI\":[],\"DO\":[]}");
+        }, closeWithoutResponse: (_, _) => true);
+        using var client = new TcpAgvClient(
+            Options.Create(new TcpAgvOptions
+            {
+                Host = "127.0.0.1",
+                StatusPort = statusServer.Port,
+                CommandPort = statusServer.Port,
+                ControlPort = statusServer.Port,
+                OtherPort = statusServer.Port,
+                EnablePush = false,
+                RequestTimeoutMs = 1000,
+                ConnectTimeoutMs = 1000
+            }),
+            NullLogger<TcpAgvClient>.Instance);
+
+        try
+        {
+            var request = client.GetIoAsync(cancellation.Token);
+            await requestObserved.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
+        }
+        finally
+        {
+            releaseServer.TrySetResult(true);
+        }
+
+        Assert.Equal([1013], statusServer.ApiIds);
+        await statusServer.Completion;
+    }
+
+    [Fact]
+    public async Task Mutating_do_write_is_not_retried_after_controller_closes_the_response_connection()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var statusServer = new TcpApiTestServer(1, packet =>
+        {
+            Assert.Equal((ushort)1060, packet.ApiId);
+            return Task.FromResult(Encoding.UTF8.GetBytes(
+                "{\"ret_code\":0,\"locked\":true,\"nick_name\":\"MesControlAgv.Adapter\"}"));
+        });
+        await using var otherServer = new TcpApiTestServer(
+            1,
+            packet =>
+            {
+                Assert.Equal((ushort)6001, packet.ApiId);
+                return Task.FromResult(Encoding.UTF8.GetBytes("{\"ret_code\":0}"));
+            },
+            closeWithoutResponse: (_, _) => true);
+        using var client = new TcpAgvClient(
+            Options.Create(new TcpAgvOptions
+            {
+                Host = "127.0.0.1",
+                StatusPort = statusServer.Port,
+                CommandPort = statusServer.Port,
+                ControlPort = statusServer.Port,
+                OtherPort = otherServer.Port,
+                EnablePush = false,
+                AcquireControl = false,
+                RequestTimeoutMs = 1000,
+                ConnectTimeoutMs = 1000
+            }),
+            NullLogger<TcpAgvClient>.Instance);
+
+        await Assert.ThrowsAsync<EndOfStreamException>(
+            () => client.SetDoAsync(6, true, cancellation.Token));
+
+        Assert.Equal([1060], statusServer.ApiIds);
+        Assert.Equal([6001], otherServer.ApiIds);
+        await Task.WhenAll(statusServer.Completion, otherServer.Completion);
+    }
+
+    [Fact]
     public async Task Set_do_sends_exact_vendor_6001_payload_on_other_channel_after_ownership_check()
     {
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -236,7 +440,7 @@ public sealed class TcpAgvClientTests
     {
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await using var statusServer = new TcpApiTestServer(
-            1,
+            2,
             _ => Task.FromResult(Array.Empty<byte>()),
             (_, _) => true);
         await using var controlServer = new TcpApiTestServer(0, _ =>
@@ -258,7 +462,7 @@ public sealed class TcpAgvClientTests
         await Assert.ThrowsAsync<EndOfStreamException>(
             () => client.ReleaseControlAsync(cancellation.Token));
 
-        Assert.Equal([1060], statusServer.ApiIds);
+        Assert.Equal([1060, 1060], statusServer.ApiIds);
         Assert.Empty(controlServer.ApiIds);
         Assert.Contains(
             logger.Messages,

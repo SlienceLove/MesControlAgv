@@ -200,6 +200,36 @@ public sealed record WorkflowPhysicalRunAuthorization
 
     /// <summary>One expiry shared by the batch; every generated permit must remain valid.</summary>
     public DateTimeOffset ExpiresAtUtc { get; init; }
+
+    /// <summary>
+    /// Device-session epochs captured by the physical-readiness supervisor.
+    /// A workflow may only cross a device write boundary while the current
+    /// observed epoch still matches this map. Older records may omit it and
+    /// remain compatible when the supervisor is disabled.
+    /// </summary>
+    public IReadOnlyDictionary<string, long> DeviceEpochs { get; init; } =
+        new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Supervisor process identity captured with DeviceEpochs. This prevents a
+    /// numeric epoch from a restarted MES process from matching an old run by
+    /// coincidence.
+    /// </summary>
+    public string? ReadinessSupervisorInstanceId { get; init; }
+
+    public long? GetDeviceEpoch(string deviceId)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId)) return null;
+        if (DeviceEpochs is null) return null;
+        var normalized = deviceId.Trim();
+        if (DeviceEpochs.TryGetValue(normalized, out var direct) && direct > 0)
+            return direct;
+        var match = DeviceEpochs.FirstOrDefault(pair =>
+            string.Equals(pair.Key, normalized, StringComparison.OrdinalIgnoreCase));
+        return !string.IsNullOrWhiteSpace(match.Key) && match.Value > 0
+            ? match.Value
+            : null;
+    }
 }
 
 public sealed record WorkflowExecutionRequest

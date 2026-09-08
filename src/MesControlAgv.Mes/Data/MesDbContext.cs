@@ -304,6 +304,8 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.Property(acceptance => acceptance.SafetyObserverName).HasMaxLength(256);
             entity.Property(acceptance => acceptance.PermitId).HasMaxLength(256);
             entity.Property(acceptance => acceptance.DeviceTaskId).HasMaxLength(256);
+            entity.Property(acceptance => acceptance.DeviceEpoch);
+            entity.Property(acceptance => acceptance.ReadinessSupervisorInstanceId).HasMaxLength(128);
             entity.Property(acceptance => acceptance.LastError).HasMaxLength(2048);
             entity.HasIndex(acceptance => acceptance.PermitId).IsUnique();
             entity.HasIndex(acceptance => acceptance.WorkflowNodeExecutionId).IsUnique();
