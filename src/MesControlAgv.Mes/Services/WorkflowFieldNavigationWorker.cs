@@ -521,7 +521,6 @@ public sealed class WorkflowFieldNavigationDispatcher(
 
             if (!await HasCurrentSupervisorEpochForRecoveryAsync(
                     workItem,
-                    acceptance,
                     cancellationToken))
             {
                 continue;
@@ -536,7 +535,6 @@ public sealed class WorkflowFieldNavigationDispatcher(
 
     private async Task<bool> HasCurrentSupervisorEpochForRecoveryAsync(
         WorkflowNodeExecutionWorkItem workItem,
-        FieldNavigationAcceptance acceptance,
         CancellationToken cancellationToken)
     {
         if (_physicalReadiness is not { Enabled: true } readiness)
@@ -576,7 +574,7 @@ public sealed class WorkflowFieldNavigationDispatcher(
             workItem,
             WorkflowStepCompletionOutcome.Unknown,
             error,
-            acceptance,
+            null,
             cancellationToken);
         return false;
     }

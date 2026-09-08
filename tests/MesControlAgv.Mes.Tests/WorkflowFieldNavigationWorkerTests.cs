@@ -407,6 +407,9 @@ public sealed class WorkflowFieldNavigationWorkerTests
         Assert.Equal(releaseCallsBeforeRecovery, adapter.ReleaseControlCalls);
         Assert.Equal(dispatchCallsBeforeRecovery, adapter.DispatchCalls);
         Assert.Equal(1, restartedReadiness.ValidationCalls);
+        Assert.Equal("AGV-01", restartedReadiness.LastDeviceId);
+        Assert.Equal(7, restartedReadiness.LastExpectedEpoch);
+        Assert.Equal("supervisor-before-restart", restartedReadiness.LastExpectedSupervisorInstanceId);
     }
 
     [Fact]
@@ -757,6 +760,9 @@ public sealed class WorkflowFieldNavigationWorkerTests
     {
         public bool Enabled { get; } = enabled;
         public int ValidationCalls { get; private set; }
+        public string? LastDeviceId { get; private set; }
+        public long? LastExpectedEpoch { get; private set; }
+        public string? LastExpectedSupervisorInstanceId { get; private set; }
 
         public PhysicalReadinessResponse GetSnapshot() => new()
         {
@@ -790,8 +796,21 @@ public sealed class WorkflowFieldNavigationWorkerTests
             out string? validationReason)
         {
             ValidationCalls++;
-            validationReason = reason;
-            return false;
+            LastDeviceId = deviceId;
+            LastExpectedEpoch = expectedEpoch;
+            LastExpectedSupervisorInstanceId = expectedSupervisorInstanceId;
+
+            var current = GetSnapshot();
+            var currentDevice = current.Devices.SingleOrDefault(
+                item => string.Equals(item.DeviceId, deviceId, StringComparison.Ordinal));
+            var isCurrent = currentDevice is not null &&
+                expectedEpoch == currentDevice.DeviceEpoch &&
+                string.Equals(
+                    expectedSupervisorInstanceId,
+                    current.SupervisorInstanceId,
+                    StringComparison.Ordinal);
+            validationReason = isCurrent ? null : reason;
+            return isCurrent;
         }
 
         public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
