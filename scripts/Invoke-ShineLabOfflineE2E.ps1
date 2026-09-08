@@ -34,8 +34,13 @@ $sim = $null
 
 function Stop-Child([Diagnostics.Process]$process) {
     if ($null -ne $process -and -not $process.HasExited) {
-        $process.Kill()
-        $process.WaitForExit(5000) | Out-Null
+        try { $process.Kill() } catch { }
+        try { $process.WaitForExit(5000) | Out-Null } catch { }
+        if (-not $process.HasExited) {
+            try {
+                Start-Process taskkill.exe -ArgumentList "/PID $($process.Id) /T /F" -WindowStyle Hidden -Wait | Out-Null
+            } catch { }
+        }
     }
 }
 
@@ -49,22 +54,23 @@ try {
         ShineLabTcp__Port = [string]$TcpPort
         ShineLabTcp__StaleAfterSeconds = '10'
         ShineLabTcp__CommandTimeoutMs = '10000'
+        Logging__LogLevel__Default = 'Warning'
+        'Logging__LogLevel__Microsoft.EntityFrameworkCore.Database.Command' = 'Warning'
     }
     $startInfo = [Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = 'dotnet'
     $startInfo.Arguments = ('"{0}"' -f $mesDll)
     $startInfo.WorkingDirectory = $repoRoot
     $startInfo.UseShellExecute = $false
-    $startInfo.RedirectStandardOutput = $true
-    $startInfo.RedirectStandardError = $true
+    # Do not use asynchronous redirected streams here. Windows PowerShell can
+    # terminate the host while those callbacks are still draining during
+    # cleanup, leaving the temporary MES process behind.
+    $startInfo.RedirectStandardOutput = $false
+    $startInfo.RedirectStandardError = $false
     foreach ($pair in $env.GetEnumerator()) { $startInfo.Environment[$pair.Key] = $pair.Value }
     $mes = [Diagnostics.Process]::new()
     $mes.StartInfo = $startInfo
-    $mes.add_OutputDataReceived({ param($sender, $event) if ($event.Data) { Add-Content -LiteralPath $mesLog -Value $event.Data } })
-    $mes.add_ErrorDataReceived({ param($sender, $event) if ($event.Data) { Add-Content -LiteralPath $mesLog -Value $event.Data } })
     $mes.Start() | Out-Null
-    $mes.BeginOutputReadLine()
-    $mes.BeginErrorReadLine()
 
     $health = "http://127.0.0.1:$HttpPort/health"
     $deadline = (Get-Date).AddSeconds($StartupTimeoutSeconds)
