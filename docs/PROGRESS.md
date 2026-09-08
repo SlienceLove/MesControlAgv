@@ -14,7 +14,7 @@ Last updated: 2026-09-08
   `127.0.0.1:5141`（Adapter）和 `127.0.0.1:5145`（MES），不托管或启动
   Simulator。显式 `WPF_RUNTIME_MODE=simulator` 仍保留离线回归路径
   `5041/5045/5183`。
-- 最新离线门禁：`1066 passed / 5 allowed skipped / 0 failed`；Release 构建
+- 最新离线门禁：`1069 passed / 5 allowed skipped / 0 failed`；Release 构建
   `0` 警告、`0` 错误。
 - 现场实体设备仍按 **NO-GO** 管理：无线可达、Ping、TCP 或 WebSocket 成功
   均不等于可以派发或运行。
@@ -47,6 +47,8 @@ Last updated: 2026-09-08
   [`offline-hardening-checkpoint.md`](../artifacts/physical-acceptance/wireless-full-flow-20260908-continue-1615/offline-hardening-checkpoint.md)。
 - 该 P0 已离线修复：只有完整预检更新权威身份/地图指纹，普通轮询不再造成 epoch
   抖动；真实完整预检差异仍只推进一次 epoch 并要求重新授权。
+- 断电/MES 重启恢复也已加固：旧物理 Move 的监督器实例或 AGV epoch 缺失/不匹配时，
+  节点和运行标记为 `Unknown` 并要求人工核销，不释放控制权、不重新派发。
 - 入口脚本：先用 [`Invoke-FieldWirelessReadOnlyCapture.ps1`](../scripts/Invoke-FieldWirelessReadOnlyCapture.ps1)
   核验无线直读，再用 [`Invoke-PhysicalReadOnlyPreflight.ps1`](../scripts/Invoke-PhysicalReadOnlyPreflight.ps1)
   完成权威预检和自动收尾。两者都不授权派发。
@@ -99,7 +101,7 @@ Last updated: 2026-09-08
 | 09-04 | 现场标准流程与工具链 | 历史新授权流程完成；随后补齐 AUBO 目录缓存、UTF-8 导入工具、监控回放和写入 correlation，服务已收尾停止。 |
 | 09-05 | 复合运行时离线推进 | 完成外层状态、持久化、子流程证据关联和 Simulator-only worker；未连接现场设备。 |
 | 09-07 | 无线只读 + 默认启动调整 | AMR 无线接口、路由、AGV `19204`、AUBO `9012` 只读通信通过；完整 AGV 快照仍缺失。WPF/Launcher 默认切为 physical。 |
-| 09-08 | 就绪监督门禁、现场预检与离线加固 | 双无线网卡完整只读通过；修复 epoch 抖动、只读 TCP 单次恢复和预检进程收尾，`1066` 测试通过，现场全程零写入。 |
+| 09-08 | 就绪监督门禁、现场预检与离线加固 | 双无线网卡完整只读通过；修复 epoch 抖动、只读 TCP 单次恢复、重启恢复门禁和预检进程收尾，`1069` 测试通过，现场全程零写入。 |
 
 ## 下一步
 
@@ -138,6 +140,8 @@ Last updated: 2026-09-08
 - AUBO 在 `load`、`run` 两个写入边界前分别重查授权和设备代次，避免等待期间断电或模式变化后继续下发。
 - 离线加固后，普通轮询不再覆盖完整预检指纹；AGV 幂等只读断线最多自动重读一次，
   写请求仍不重发；新增权威只读预检脚本保证成功和失败路径都停止本次 Adapter。
+- 现场导航 worker 在进程重启恢复旧记录前重新校验 `SupervisorInstanceId` 与
+  `DeviceEpoch`；不匹配时只落 `Unknown`/人工核销，不触发 release 或导航写入。
 - 当前仍保持 `PhysicalReadinessSupervisor.Enabled=false`、物理批量执行关闭；9 月 8 日仅完成
   Adapter 只读现场连接，未启动标准会话或执行物理流程。详见
   [`PHYSICAL-DEVICE-READINESS-SUPERVISOR.md`](PHYSICAL-DEVICE-READINESS-SUPERVISOR.md)。
