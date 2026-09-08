@@ -9,6 +9,53 @@ namespace MesControlAgv.Wpf.Tests;
 public sealed class MainWindowNavigationTests
 {
     [Fact]
+    public void First_tab_is_selected_and_rendered_on_initial_show()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                var window = new MainWindow
+                {
+                    WindowState = WindowState.Normal,
+                    Width = 1200,
+                    Height = 760
+                };
+                window.Show();
+                window.UpdateLayout();
+
+                var tabs = Assert.IsType<TabControl>(window.FindName("MainTabs"));
+                var firstTab = Assert.IsType<TabItem>(window.FindName("TaskMonitorTab"));
+                var taskView = Assert.IsType<Views.TaskMonitorView>(window.FindName("TaskMonitorView"));
+
+                Assert.Equal(0, tabs.SelectedIndex);
+                Assert.Same(firstTab, tabs.SelectedItem);
+                Assert.Same(taskView, tabs.SelectedContent);
+                Assert.Equal(Visibility.Visible, taskView.Visibility);
+                Assert.True(taskView.ActualWidth > 0);
+                Assert.True(taskView.ActualHeight > 0);
+
+                window.Close();
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                Dispatcher.CurrentDispatcher.InvokeShutdown();
+            }
+        });
+
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+
+        Assert.True(thread.Join(TimeSpan.FromSeconds(10)), "WPF initial-tab rendering test did not complete.");
+        Assert.Null(failure);
+    }
+
+    [Fact]
     public void Grouped_navigation_switches_existing_tab_content()
     {
         Exception? failure = null;

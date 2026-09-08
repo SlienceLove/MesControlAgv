@@ -12,6 +12,33 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        Loaded += MainWindow_Loaded;
+
+        // The grouped sidebar's checked state is only a visual affordance and
+        // does not raise a Click event during startup. Keep the content host
+        // deterministic even when WPF has not selected an item yet.
+        EnsureInitialTabSelection();
+    }
+
+    private void MainWindow_Loaded(object sender, RoutedEventArgs e) =>
+        EnsureInitialTabSelection();
+
+    private void EnsureInitialTabSelection()
+    {
+        if (MainTabs.Items.Count == 0)
+        {
+            return;
+        }
+
+        if (MainTabs.SelectedItem is null)
+        {
+            MainTabs.SelectedIndex = 0;
+        }
+
+        if (MainTabs.SelectedItem is TabItem selectedTab)
+        {
+            SynchronizeNavigationSelection(selectedTab);
+        }
     }
 
     private void NavigationButton_Click(object sender, RoutedEventArgs e)
@@ -39,6 +66,11 @@ public partial class MainWindow : Window
             return;
         }
 
+        SynchronizeNavigationSelection(selectedTab);
+    }
+
+    private void SynchronizeNavigationSelection(TabItem selectedTab)
+    {
         foreach (var button in FindVisualChildren<RadioButton>(NavigationSidebar))
         {
             if (button.Tag is string tabName && string.Equals(tabName, selectedTab.Name, StringComparison.Ordinal))

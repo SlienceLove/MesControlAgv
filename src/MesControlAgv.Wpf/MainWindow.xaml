@@ -266,6 +266,7 @@
                     TextElement.Foreground="{StaticResource TextPrimaryBrush}"
                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="9">
                 <TabControl x:Name="MainTabs" Style="{StaticResource ContentOnlyTabControlStyle}"
+                            SelectedIndex="0"
                             SelectionChanged="MainTabs_SelectionChanged"
                             HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <TabItem x:Name="TaskMonitorTab" Header="任务监控" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
