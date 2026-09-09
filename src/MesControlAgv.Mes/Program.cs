@@ -164,6 +164,7 @@ using (var scope = app.Services.CreateScope())
     await EnsureExperimentSchedulingTablesAsync(database);
     await EnsureFieldNavigationAcceptanceTablesAsync(database);
     await EnsureShineLabTablesAsync(database);
+    await EnsureMaterialManagementTablesAsync(database);
 }
 
 app.MapGet("/health", () => Results.Ok(new { service = "mes", status = "ok" }));
@@ -791,6 +792,203 @@ static async Task EnsureColumnsAsync(
         alter.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {definition.Name} {definition.Sql};";
         await alter.ExecuteNonQueryAsync();
     }
+}
+
+static async Task EnsureMaterialManagementTablesAsync(MesDbContext database)
+{
+    var connection = database.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open)
+    {
+        await connection.OpenAsync();
+    }
+
+    var tableStatements = new[]
+    {
+        """
+        CREATE TABLE IF NOT EXISTS MaterialCatalog (
+            MaterialId TEXT NOT NULL PRIMARY KEY,
+            MaterialCode TEXT NOT NULL,
+            Name TEXT NOT NULL,
+            Kind TEXT NOT NULL,
+            Specification TEXT NULL,
+            Unit TEXT NULL,
+            IsEnabled INTEGER NOT NULL DEFAULT 1,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS WarehouseLocations (
+            LocationId TEXT NOT NULL PRIMARY KEY,
+            WarehouseCode TEXT NOT NULL,
+            WarehouseName TEXT NOT NULL,
+            LocationCode TEXT NOT NULL,
+            IsEnabled INTEGER NOT NULL DEFAULT 1,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS SampleMaterials (
+            SampleId TEXT NOT NULL PRIMARY KEY,
+            Barcode TEXT NOT NULL,
+            SampleBatchId TEXT NOT NULL,
+            MaterialCode TEXT NULL,
+            SampleType TEXT NULL,
+            Status TEXT NOT NULL,
+            LocationId TEXT NULL,
+            BoundExperimentJobId TEXT NULL,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL,
+            FOREIGN KEY (LocationId) REFERENCES WarehouseLocations(LocationId) ON DELETE NO ACTION
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS MaterialLots (
+            LotId TEXT NOT NULL PRIMARY KEY,
+            MaterialId TEXT NOT NULL,
+            MaterialCode TEXT NOT NULL,
+            LotCode TEXT NOT NULL,
+            Barcode TEXT NULL,
+            Specification TEXT NULL,
+            Unit TEXT NULL,
+            ManufactureDateUtc TEXT NULL,
+            ExpiryDateUtc TEXT NULL,
+            IsQuarantined INTEGER NOT NULL DEFAULT 0,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL,
+            FOREIGN KEY (MaterialId) REFERENCES MaterialCatalog(MaterialId) ON DELETE NO ACTION
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS InventoryBalances (
+            BalanceId TEXT NOT NULL PRIMARY KEY,
+            LotId TEXT NOT NULL,
+            LocationId TEXT NOT NULL,
+            OnHand NUMERIC NOT NULL DEFAULT 0,
+            Reserved NUMERIC NOT NULL DEFAULT 0,
+            UpdatedAtUtc TEXT NOT NULL,
+            FOREIGN KEY (LotId) REFERENCES MaterialLots(LotId) ON DELETE CASCADE,
+            FOREIGN KEY (LocationId) REFERENCES WarehouseLocations(LocationId) ON DELETE NO ACTION
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS InventoryTransactions (
+            Id TEXT NOT NULL PRIMARY KEY,
+            RequestId TEXT NOT NULL,
+            LineKey TEXT NOT NULL,
+            TransactionKind TEXT NOT NULL,
+            LotId TEXT NULL,
+            SampleId TEXT NULL,
+            FromLocationId TEXT NULL,
+            ToLocationId TEXT NULL,
+            MaterialCode TEXT NULL,
+            LotCode TEXT NULL,
+            Barcode TEXT NULL,
+            Quantity NUMERIC NULL,
+            Unit TEXT NULL,
+            ExperimentJobId TEXT NULL,
+            Actor TEXT NOT NULL,
+            Reason TEXT NULL,
+            CorrelationId TEXT NULL,
+            DetailsJson TEXT NOT NULL,
+            OccurredAtUtc TEXT NOT NULL,
+            FOREIGN KEY (LotId) REFERENCES MaterialLots(LotId) ON DELETE NO ACTION,
+            FOREIGN KEY (SampleId) REFERENCES SampleMaterials(SampleId) ON DELETE NO ACTION
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS BarcodeScanEvents (
+            Id TEXT NOT NULL PRIMARY KEY,
+            RequestId TEXT NOT NULL,
+            RawCode TEXT NOT NULL,
+            NormalizedCode TEXT NOT NULL,
+            ScanKind TEXT NOT NULL,
+            Source TEXT NOT NULL,
+            Outcome TEXT NOT NULL,
+            IssueCode TEXT NULL,
+            SampleId TEXT NULL,
+            LotId TEXT NULL,
+            Actor TEXT NOT NULL,
+            DetailsJson TEXT NOT NULL,
+            OccurredAtUtc TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ExperimentJobMaterialBindings (
+            BindingId TEXT NOT NULL PRIMARY KEY,
+            RequestId TEXT NOT NULL,
+            LineKey TEXT NOT NULL,
+            ExperimentJobId TEXT NOT NULL,
+            SampleId TEXT NULL,
+            LotId TEXT NULL,
+            Quantity NUMERIC NOT NULL,
+            Unit TEXT NULL,
+            Status TEXT NOT NULL,
+            InjectionPosition TEXT NULL,
+            Actor TEXT NOT NULL,
+            Reason TEXT NULL,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL,
+            FOREIGN KEY (ExperimentJobId) REFERENCES ExperimentJobs(JobId) ON DELETE CASCADE,
+            FOREIGN KEY (SampleId) REFERENCES SampleMaterials(SampleId) ON DELETE NO ACTION,
+            FOREIGN KEY (LotId) REFERENCES MaterialLots(LotId) ON DELETE NO ACTION
+        );
+        """
+    };
+
+    foreach (var statement in tableStatements)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = statement;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    var indexStatements = new[]
+    {
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_MaterialCatalog_MaterialCode ON MaterialCatalog (MaterialCode);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_WarehouseLocations_WarehouseCode_LocationCode ON WarehouseLocations (WarehouseCode, LocationCode);",
+        "CREATE INDEX IF NOT EXISTS IX_WarehouseLocations_WarehouseCode_IsEnabled ON WarehouseLocations (WarehouseCode, IsEnabled);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_SampleMaterials_Barcode ON SampleMaterials (Barcode);",
+        "CREATE INDEX IF NOT EXISTS IX_SampleMaterials_Status_UpdatedAtUtc ON SampleMaterials (Status, UpdatedAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_SampleMaterials_BoundExperimentJobId ON SampleMaterials (BoundExperimentJobId);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_MaterialLots_MaterialCode_LotCode ON MaterialLots (MaterialCode, LotCode);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_MaterialLots_Barcode ON MaterialLots (Barcode);",
+        "CREATE INDEX IF NOT EXISTS IX_MaterialLots_Quarantine_Expiry ON MaterialLots (IsQuarantined, ExpiryDateUtc);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_InventoryBalances_LotId_LocationId ON InventoryBalances (LotId, LocationId);",
+        "CREATE INDEX IF NOT EXISTS IX_InventoryBalances_LocationId ON InventoryBalances (LocationId);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_InventoryTransactions_RequestId_LineKey ON InventoryTransactions (RequestId, LineKey);",
+        "CREATE INDEX IF NOT EXISTS IX_InventoryTransactions_LotId_OccurredAtUtc ON InventoryTransactions (LotId, OccurredAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_InventoryTransactions_SampleId_OccurredAtUtc ON InventoryTransactions (SampleId, OccurredAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_InventoryTransactions_ExperimentJobId_OccurredAtUtc ON InventoryTransactions (ExperimentJobId, OccurredAtUtc);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_BarcodeScanEvents_RequestId ON BarcodeScanEvents (RequestId);",
+        "CREATE INDEX IF NOT EXISTS IX_BarcodeScanEvents_NormalizedCode_OccurredAtUtc ON BarcodeScanEvents (NormalizedCode, OccurredAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_BarcodeScanEvents_SampleId_OccurredAtUtc ON BarcodeScanEvents (SampleId, OccurredAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_BarcodeScanEvents_LotId_OccurredAtUtc ON BarcodeScanEvents (LotId, OccurredAtUtc);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentJobMaterialBindings_RequestId_LineKey ON ExperimentJobMaterialBindings (RequestId, LineKey);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentJobMaterialBindings_JobId_Status ON ExperimentJobMaterialBindings (ExperimentJobId, Status);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentJobMaterialBindings_SampleId ON ExperimentJobMaterialBindings (SampleId);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentJobMaterialBindings_LotId ON ExperimentJobMaterialBindings (LotId);"
+    };
+
+    foreach (var statement in indexStatements)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = statement;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    const string defaultLocationId = "00000000-0000-0000-0000-000000000001";
+    await using var seed = connection.CreateCommand();
+    seed.CommandText =
+        """
+        INSERT OR IGNORE INTO WarehouseLocations
+            (LocationId, WarehouseCode, WarehouseName, LocationCode, IsEnabled, CreatedAtUtc, UpdatedAtUtc)
+        VALUES ($id, 'MAIN', '默认仓库', 'DEFAULT', 1, $now, $now);
+        """;
+    seed.Parameters.Add(new Microsoft.Data.Sqlite.SqliteParameter("$id", defaultLocationId));
+    seed.Parameters.Add(new Microsoft.Data.Sqlite.SqliteParameter("$now", DateTime.UtcNow.ToString("O")));
+    await seed.ExecuteNonQueryAsync();
 }
 
 static async Task EnsureFieldNavigationAcceptanceTablesAsync(MesDbContext database)

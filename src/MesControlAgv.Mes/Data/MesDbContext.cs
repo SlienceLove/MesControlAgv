@@ -48,6 +48,23 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
 
     public DbSet<ShineLabTaskEventRecord> ShineLabTaskEvents => Set<ShineLabTaskEventRecord>();
 
+    public DbSet<MaterialCatalogRecord> MaterialCatalog => Set<MaterialCatalogRecord>();
+
+    public DbSet<WarehouseLocationRecord> WarehouseLocations => Set<WarehouseLocationRecord>();
+
+    public DbSet<SampleMaterialRecord> SampleMaterials => Set<SampleMaterialRecord>();
+
+    public DbSet<MaterialLotRecord> MaterialLots => Set<MaterialLotRecord>();
+
+    public DbSet<InventoryBalanceRecord> InventoryBalances => Set<InventoryBalanceRecord>();
+
+    public DbSet<InventoryTransactionRecord> InventoryTransactions => Set<InventoryTransactionRecord>();
+
+    public DbSet<BarcodeScanEventRecord> BarcodeScanEvents => Set<BarcodeScanEventRecord>();
+
+    public DbSet<ExperimentJobMaterialBindingRecord> ExperimentJobMaterialBindings =>
+        Set<ExperimentJobMaterialBindingRecord>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<TransportTask>(entity =>
@@ -347,6 +364,160 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.Property(taskEvent => taskEvent.EventType).HasMaxLength(128);
             entity.Property(taskEvent => taskEvent.PayloadJson).HasMaxLength(65535);
             entity.HasIndex(taskEvent => new { taskEvent.TaskUuid, taskEvent.OccurredAtUtc });
+        });
+
+        modelBuilder.Entity<MaterialCatalogRecord>(entity =>
+        {
+            entity.ToTable("MaterialCatalog");
+            entity.HasKey(material => material.MaterialId);
+            entity.Property(material => material.MaterialCode).HasMaxLength(128).IsRequired();
+            entity.Property(material => material.Name).HasMaxLength(256).IsRequired();
+            entity.Property(material => material.Kind).HasMaxLength(32).IsRequired();
+            entity.Property(material => material.Specification).HasMaxLength(512);
+            entity.Property(material => material.Unit).HasMaxLength(64);
+            entity.HasIndex(material => material.MaterialCode).IsUnique();
+            entity.HasIndex(material => new { material.Kind, material.IsEnabled });
+        });
+
+        modelBuilder.Entity<WarehouseLocationRecord>(entity =>
+        {
+            entity.ToTable("WarehouseLocations");
+            entity.HasKey(location => location.LocationId);
+            entity.Property(location => location.WarehouseCode).HasMaxLength(64).IsRequired();
+            entity.Property(location => location.WarehouseName).HasMaxLength(128).IsRequired();
+            entity.Property(location => location.LocationCode).HasMaxLength(128).IsRequired();
+            entity.HasIndex(location => new { location.WarehouseCode, location.LocationCode }).IsUnique();
+            entity.HasIndex(location => new { location.WarehouseCode, location.IsEnabled });
+        });
+
+        modelBuilder.Entity<SampleMaterialRecord>(entity =>
+        {
+            entity.ToTable("SampleMaterials");
+            entity.HasKey(sample => sample.SampleId);
+            entity.Property(sample => sample.Barcode).HasMaxLength(256).IsRequired();
+            entity.Property(sample => sample.SampleBatchId).HasMaxLength(256).IsRequired();
+            entity.Property(sample => sample.MaterialCode).HasMaxLength(128);
+            entity.Property(sample => sample.SampleType).HasMaxLength(128);
+            entity.Property(sample => sample.Status).HasMaxLength(32).IsRequired();
+            entity.HasIndex(sample => sample.Barcode).IsUnique();
+            entity.HasIndex(sample => new { sample.Status, sample.UpdatedAtUtc });
+            entity.HasIndex(sample => sample.BoundExperimentJobId);
+            entity.HasOne<WarehouseLocationRecord>()
+                .WithMany()
+                .HasForeignKey(sample => sample.LocationId)
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<MaterialLotRecord>(entity =>
+        {
+            entity.ToTable("MaterialLots");
+            entity.HasKey(lot => lot.LotId);
+            entity.Property(lot => lot.MaterialCode).HasMaxLength(128).IsRequired();
+            entity.Property(lot => lot.LotCode).HasMaxLength(128).IsRequired();
+            entity.Property(lot => lot.Barcode).HasMaxLength(256);
+            entity.Property(lot => lot.Specification).HasMaxLength(512);
+            entity.Property(lot => lot.Unit).HasMaxLength(64);
+            entity.HasIndex(lot => new { lot.MaterialCode, lot.LotCode }).IsUnique();
+            entity.HasIndex(lot => lot.Barcode).IsUnique();
+            entity.HasIndex(lot => new { lot.IsQuarantined, lot.ExpiryDateUtc });
+            entity.HasOne<MaterialCatalogRecord>()
+                .WithMany()
+                .HasForeignKey(lot => lot.MaterialId)
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<InventoryBalanceRecord>(entity =>
+        {
+            entity.ToTable("InventoryBalances");
+            entity.HasKey(balance => balance.BalanceId);
+            entity.Property(balance => balance.OnHand).HasPrecision(18, 6);
+            entity.Property(balance => balance.Reserved).HasPrecision(18, 6);
+            entity.HasIndex(balance => new { balance.LotId, balance.LocationId }).IsUnique();
+            entity.HasIndex(balance => balance.LocationId);
+            entity.HasOne<MaterialLotRecord>()
+                .WithMany()
+                .HasForeignKey(balance => balance.LotId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<WarehouseLocationRecord>()
+                .WithMany()
+                .HasForeignKey(balance => balance.LocationId)
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<InventoryTransactionRecord>(entity =>
+        {
+            entity.ToTable("InventoryTransactions");
+            entity.HasKey(transaction => transaction.Id);
+            entity.Property(transaction => transaction.LineKey).HasMaxLength(256).IsRequired();
+            entity.Property(transaction => transaction.TransactionKind).HasMaxLength(32).IsRequired();
+            entity.Property(transaction => transaction.MaterialCode).HasMaxLength(128);
+            entity.Property(transaction => transaction.LotCode).HasMaxLength(128);
+            entity.Property(transaction => transaction.Barcode).HasMaxLength(256);
+            entity.Property(transaction => transaction.Quantity).HasPrecision(18, 6);
+            entity.Property(transaction => transaction.Unit).HasMaxLength(64);
+            entity.Property(transaction => transaction.Actor).HasMaxLength(256).IsRequired();
+            entity.Property(transaction => transaction.Reason).HasMaxLength(2048);
+            entity.Property(transaction => transaction.CorrelationId).HasMaxLength(256);
+            entity.Property(transaction => transaction.DetailsJson).HasMaxLength(8192);
+            entity.HasIndex(transaction => new { transaction.RequestId, transaction.LineKey }).IsUnique();
+            entity.HasIndex(transaction => new { transaction.LotId, transaction.OccurredAtUtc });
+            entity.HasIndex(transaction => new { transaction.SampleId, transaction.OccurredAtUtc });
+            entity.HasIndex(transaction => new { transaction.ExperimentJobId, transaction.OccurredAtUtc });
+            entity.HasOne<MaterialLotRecord>()
+                .WithMany()
+                .HasForeignKey(transaction => transaction.LotId)
+                .OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne<SampleMaterialRecord>()
+                .WithMany()
+                .HasForeignKey(transaction => transaction.SampleId)
+                .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<BarcodeScanEventRecord>(entity =>
+        {
+            entity.ToTable("BarcodeScanEvents");
+            entity.HasKey(scan => scan.Id);
+            entity.Property(scan => scan.RawCode).HasMaxLength(512).IsRequired();
+            entity.Property(scan => scan.NormalizedCode).HasMaxLength(512).IsRequired();
+            entity.Property(scan => scan.ScanKind).HasMaxLength(32).IsRequired();
+            entity.Property(scan => scan.Source).HasMaxLength(64).IsRequired();
+            entity.Property(scan => scan.Outcome).HasMaxLength(32).IsRequired();
+            entity.Property(scan => scan.IssueCode).HasMaxLength(128);
+            entity.Property(scan => scan.Actor).HasMaxLength(256).IsRequired();
+            entity.Property(scan => scan.DetailsJson).HasMaxLength(8192);
+            entity.HasIndex(scan => scan.RequestId).IsUnique();
+            entity.HasIndex(scan => new { scan.NormalizedCode, scan.OccurredAtUtc });
+            entity.HasIndex(scan => new { scan.SampleId, scan.OccurredAtUtc });
+            entity.HasIndex(scan => new { scan.LotId, scan.OccurredAtUtc });
+        });
+
+        modelBuilder.Entity<ExperimentJobMaterialBindingRecord>(entity =>
+        {
+            entity.ToTable("ExperimentJobMaterialBindings");
+            entity.HasKey(binding => binding.BindingId);
+            entity.Property(binding => binding.LineKey).HasMaxLength(256).IsRequired();
+            entity.Property(binding => binding.Quantity).HasPrecision(18, 6);
+            entity.Property(binding => binding.Unit).HasMaxLength(64);
+            entity.Property(binding => binding.Status).HasMaxLength(32).IsRequired();
+            entity.Property(binding => binding.InjectionPosition).HasMaxLength(128);
+            entity.Property(binding => binding.Actor).HasMaxLength(256).IsRequired();
+            entity.Property(binding => binding.Reason).HasMaxLength(2048);
+            entity.HasIndex(binding => new { binding.RequestId, binding.LineKey }).IsUnique();
+            entity.HasIndex(binding => new { binding.ExperimentJobId, binding.Status });
+            entity.HasIndex(binding => binding.SampleId);
+            entity.HasIndex(binding => binding.LotId);
+            entity.HasOne<ExperimentJobRecord>()
+                .WithMany()
+                .HasForeignKey(binding => binding.ExperimentJobId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<SampleMaterialRecord>()
+                .WithMany()
+                .HasForeignKey(binding => binding.SampleId)
+                .OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne<MaterialLotRecord>()
+                .WithMany()
+                .HasForeignKey(binding => binding.LotId)
+                .OnDelete(DeleteBehavior.NoAction);
         });
     }
 }
