@@ -5,7 +5,7 @@
 > 范围：设备保持断电，仅修改和验证本地代码、测试与文档；不访问现场 IP，不启动
 > PhysicalAcceptance 服务，不连接 AGV 命令端口，不执行 AUBO/Modbus/DI/DO 写入。
 
-## 1. 统一准入策略与启动组合
+## Task 1: 统一准入策略与启动组合
 
 - [ ] 新增 `PhysicalExecutionAdmissionPolicy`、固定异常类型和
   `physical_epoch_authorization_required` 原因码；Simulator 保持现有行为。
@@ -14,7 +14,7 @@
 - [ ] 增加配置矩阵和异常映射测试，确认监督器关闭优先返回
   `physical_readiness_supervisor_disabled`，且不会访问 Adapter。
 
-## 2. 启动、继续与直接写入口
+## Task 2: 启动、继续与直接写入口
 
 - [ ] 在 `WorkflowApplicationService` 的新物理 Execute、run resume、成功核销 Unknown、
   可推进设备节点的 signal/manual-confirmation 前接入策略；完全一致的只读幂等重放保持可用。
@@ -26,7 +26,7 @@
   physical 写；AUBO load/run 继续只接受当前 workflow correlation/epoch。
 - [ ] 为所有准入异常统一返回 `409 { code, detail }`，工作流 Execute 保留现有顶层拒绝码。
 
-## 3. Worker 与重启恢复
+## Task 3: Worker 与重启恢复
 
 - [ ] `WorkflowFieldNavigationWorker` 和 `WorkflowAuboProgramWorker` 在 physical supervisor
   关闭时不再视为通过；新节点不 claim、不 dispatch/load/run。
@@ -34,7 +34,7 @@
   cancel/release/stop；现有只读状态重试不扩大为写重试。
 - [ ] 覆盖当前实例正向执行、旧实例恢复、设备 epoch 变化和 supervisor off 的调用计数测试。
 
-## 4. 一次性安全收尾
+## Task 4: 一次性安全收尾
 
 - [ ] 新增 `PhysicalSafetyActionRecord`、唯一 fingerprint/request ID、状态机和启动时
   `Prepared -> Unknown` 核销。
@@ -45,7 +45,7 @@
   correlation；写调用后异常记 Unknown，永不自动重发。
 - [ ] 保持 AGV Task/acceptance cancel 的既有配置和审计，补齐 operator 校验与零重试测试。
 
-## 5. 离线验证与交接
+## Task 5: 离线验证与交接
 
 - [ ] 运行新增及受影响的 MES/WPF/Adapter 定向测试。
 - [ ] 运行 `dotnet test MesControlAgv.sln -m:1`，确认无失败。
