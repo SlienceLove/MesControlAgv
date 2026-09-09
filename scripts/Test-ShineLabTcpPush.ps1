@@ -13,13 +13,51 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-function New-MessageId {
-    return [Guid]::NewGuid().ToString('N')
+function New-MessageId { [Guid]::NewGuid().ToString('N') }
+
+function ConvertTo-ShineLabFrame {
+    param([Parameter(Mandatory)] [string]$Json)
+
+    $encoding = [System.Text.UTF8Encoding]::new($false)
+    $jsonBytes = $encoding.GetBytes($Json)
+    if ($jsonBytes.Length -gt 65534) { throw 'ShineLab JSON payload exceeds the native 16-bit frame limit.' }
+    $length = $jsonBytes.Length + 1
+    $frame = [byte[]]::new($jsonBytes.Length + 5)
+    $frame[0] = 0x55
+    $frame[1] = 0xAA
+    $frame[2] = [byte](($length -shr 8) -band 0xff)
+    $frame[3] = [byte]($length -band 0xff)
+    [Buffer]::BlockCopy($jsonBytes, 0, $frame, 4, $jsonBytes.Length)
+    $frame[$frame.Length - 1] = 0
+    Write-Output -NoEnumerate $frame
+}
+
+function Read-ExactBytes {
+    param([Parameter(Mandatory)] [System.IO.Stream]$Stream, [Parameter(Mandatory)] [int]$Count)
+    $bytes = [byte[]]::new($Count)
+    $offset = 0
+    while ($offset -lt $Count) {
+        $read = $Stream.Read($bytes, $offset, $Count - $offset)
+        if ($read -le 0) { throw 'ShineLab peer closed before a complete frame was received.' }
+        $offset += $read
+    }
+    Write-Output -NoEnumerate $bytes
+}
+
+function Read-ShineLabFrame {
+    param([Parameter(Mandatory)] [System.IO.Stream]$Stream)
+    $header = Read-ExactBytes -Stream $Stream -Count 4
+    if ($header[0] -ne 0x55 -or $header[1] -ne 0xAA) { throw 'Invalid ShineLab native frame header.' }
+    $length = ($header[2] * 256) + $header[3]
+    if ($length -lt 1) { throw 'Invalid ShineLab native frame length.' }
+    $payload = Read-ExactBytes -Stream $Stream -Count $length
+    if ($payload[$length - 1] -ne 0) { throw 'ShineLab native frame is missing its NUL terminator.' }
+    return [System.Text.UTF8Encoding]::new($false, $true).GetString($payload, 0, $length - 1)
 }
 
 function Send-ShineLabMessage {
     param(
-        [Parameter(Mandatory)] [System.IO.StreamWriter]$Writer,
+        [Parameter(Mandatory)] [System.IO.Stream]$Stream,
         [Parameter(Mandatory)] [string]$Method,
         [Parameter(Mandatory)] [object]$Body
     )
@@ -31,8 +69,9 @@ function Send-ShineLabMessage {
         body = $Body
     }
     $json = $message | ConvertTo-Json -Depth 10 -Compress
-    $Writer.WriteLine($json)
-    $Writer.Flush()
+    $frame = ConvertTo-ShineLabFrame -Json $json
+    $Stream.Write($frame, 0, $frame.Length)
+    $Stream.Flush()
     Write-Host ("TX {0}: {1}" -f $Method, $json)
 }
 
@@ -41,26 +80,21 @@ $client.ReceiveTimeout = 5000
 $client.SendTimeout = 5000
 
 try {
-    Write-Host "Connecting ShineLab simulator to $ServerAddress`:$Port ..."
+    Write-Host "Connecting native ShineLab simulator to $ServerAddress`:$Port ..."
     $client.Connect($ServerAddress, $Port)
     $stream = $client.GetStream()
-    $encoding = [System.Text.UTF8Encoding]::new($false)
-    $reader = [System.IO.StreamReader]::new($stream, $encoding, $false, 4096, $true)
-    $writer = [System.IO.StreamWriter]::new($stream, $encoding, 4096, $true)
-    $writer.NewLine = "`n"
-    $writer.AutoFlush = $true
 
-    Send-ShineLabMessage -Writer $writer -Method 'Certification' -Body ([ordered]@{
+    Send-ShineLabMessage -Stream $stream -Method 'Certification' -Body ([ordered]@{
         clientName = 'ShineLab-TCP-Simulator'
         protocolVersion = 'draft-1'
     })
-    $certificationResponse = $reader.ReadLine()
+    $certificationResponse = Read-ShineLabFrame -Stream $stream
     if ([string]::IsNullOrWhiteSpace($certificationResponse)) {
-        throw 'The central server did not return a Certification response.'
+        throw 'The central server did not return a framed Certification response.'
     }
     Write-Host "RX Certification: $certificationResponse"
 
-    Send-ShineLabMessage -Writer $writer -Method 'Device' -Body ([ordered]@{
+    Send-ShineLabMessage -Stream $stream -Method 'Device' -Body ([ordered]@{
         status = 0
         stage = 'Idle'
         progress = 0
@@ -69,7 +103,7 @@ try {
 
     for ($second = 1; $second -le $RunningSeconds; $second++) {
         $progress = [Math]::Min(95, [int](($second / [double]$RunningSeconds) * 90))
-        Send-ShineLabMessage -Writer $writer -Method 'Device' -Body ([ordered]@{
+        Send-ShineLabMessage -Stream $stream -Method 'Device' -Body ([ordered]@{
             status = 1
             task_uuid = $TaskUuid
             sampleID = 'SAMPLE-001'
@@ -84,12 +118,12 @@ try {
     }
 
     if ($SendAlarm) {
-        Send-ShineLabMessage -Writer $writer -Method 'AlarmInfo' -Body ([ordered]@{
+        Send-ShineLabMessage -Stream $stream -Method 'AlarmInfo' -Body ([ordered]@{
             task_uuid = $TaskUuid
             errorCode = 'SIM-ALARM-001'
             errorMsg = 'Simulated integration alarm'
         })
-        Send-ShineLabMessage -Writer $writer -Method 'TaskError' -Body ([ordered]@{
+        Send-ShineLabMessage -Stream $stream -Method 'TaskError' -Body ([ordered]@{
             task_uuid = $TaskUuid
             sampleID = 'SAMPLE-001'
             lastKnownStage = 'Detecting'
@@ -99,7 +133,7 @@ try {
         })
     }
     else {
-        Send-ShineLabMessage -Writer $writer -Method 'SampleFinish' -Body ([ordered]@{
+        Send-ShineLabMessage -Stream $stream -Method 'SampleFinish' -Body ([ordered]@{
             task_uuid = $TaskUuid
             sampleID = 'SAMPLE-001'
             sampleName = 'Integration Standard'
@@ -107,7 +141,7 @@ try {
             pos = 11
             finishDate = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
         })
-        Send-ShineLabMessage -Writer $writer -Method 'Result' -Body ([ordered]@{
+        Send-ShineLabMessage -Stream $stream -Method 'Result' -Body ([ordered]@{
             task_uuid = $TaskUuid
             sampleID = 'SAMPLE-001'
             testDate = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
@@ -115,7 +149,7 @@ try {
                 [ordered]@{ testItem = 'Li'; value = 3.2; unit = 'mg/L'; quality = 'OK' }
             )
         })
-        Send-ShineLabMessage -Writer $writer -Method 'EndMission' -Body ([ordered]@{
+        Send-ShineLabMessage -Stream $stream -Method 'EndMission' -Body ([ordered]@{
             task_uuid = $TaskUuid
             finishDate = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
             result = 'Success'
@@ -123,7 +157,7 @@ try {
     }
 
     for ($second = 1; $second -le $HoldSeconds; $second++) {
-        Send-ShineLabMessage -Writer $writer -Method 'Device' -Body ([ordered]@{
+        Send-ShineLabMessage -Stream $stream -Method 'Device' -Body ([ordered]@{
             status = 0
             task_uuid = $TaskUuid
             sampleID = 'SAMPLE-001'
@@ -132,11 +166,9 @@ try {
         })
         Start-Sleep -Seconds 1
     }
-    Write-Host "ShineLab TCP push simulation completed. task_uuid=$TaskUuid"
+    Write-Host "Native ShineLab TCP push simulation completed. task_uuid=$TaskUuid"
 }
 finally {
-    if ($writer) { $writer.Dispose() }
-    if ($reader) { $reader.Dispose() }
     if ($stream) { $stream.Dispose() }
     $client.Dispose()
 }

@@ -86,6 +86,7 @@ builder.Services.AddOptions<ShineLabTcpOptions>()
     .Validate(options => options.Port is >= 1 and <= 65535, "ShineLabTcp:Port must be between 1 and 65535.")
     .Validate(options => options.StaleAfterSeconds > 0, "ShineLabTcp:StaleAfterSeconds must be positive.")
     .Validate(options => options.CommandTimeoutMs > 0, "ShineLabTcp:CommandTimeoutMs must be positive.")
+    .Validate(options => options.ReadBufferBytes is >= 1024 and <= 1_048_576, "ShineLabTcp:ReadBufferBytes must be between 1024 and 1048576.")
     .ValidateOnStart();
 builder.Services.AddSingleton<ShineLabStatusHub>();
 builder.Services.AddSingleton<ShineLabConnectionManager>();

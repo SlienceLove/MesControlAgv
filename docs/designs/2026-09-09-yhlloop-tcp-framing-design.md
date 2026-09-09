@@ -19,7 +19,8 @@
 ```
 
 其中 `length` 为 JSON 字节数加 1（结尾 NUL），按大端序写入；完整帧总长度为
-`length + 4`。接收端先去掉 4 字节帧头和结尾 NUL，再把 JSON 交给 YhLoop
+`length + 4`。长度字段为 16 位，因此 JSON 最大 65534 字节、完整帧最大
+65539 字节。接收端先去掉 4 字节帧头和结尾 NUL，再把 JSON 交给 YhLoop
 解码器。
 
 `BindModule` 是此前 IRAY-C 路径中发现的符号/方法名，不能据此推断当前
@@ -78,7 +79,7 @@ MES 保持换行协议，代理负责 55AA 转换。
 - `Encode(JsonElement/message)`：UTF-8 序列化、写入 55AA、大端长度和结尾 NUL；
 - `TryReadFrame(...)`：从增量 byte buffer 中提取完整帧；
 - `DecodePayload(...)`：严格 UTF-8、去除唯一结尾 NUL、返回 JSON 文本；
-- 固定最大 payload/frame 长度（不超过 16 位长度字段，默认 64 KiB）；
+- 固定最大 payload/frame 长度（JSON 不超过 65534 字节，完整帧不超过 65539 字节）；
 - 明确的 `NeedMoreData`、`FrameReady`、`InvalidFrame` 结果，不抛出可恢复的
   半包异常。
 
@@ -97,6 +98,10 @@ MES Server 和 dispatcher 使用同一实现，避免一边修复而另一边继
 
 空闲超时仍为配置项，默认 10 秒；收到任何完整合法帧后重置。停止服务或
 连接替换时取消读取并完成挂起请求。
+
+ShPipe 还暴露了通用 keep-alive API，但当前静态证据未确定 keep-alive 的线
+上帧值、周期和响应规则；实现不伪造心跳，先以真实 YhLoop 报文确认后再单独
+设计。
 
 ### 4.3 写入与认证
 
@@ -154,4 +159,3 @@ MES Server 和 dispatcher 使用同一实现，避免一边修复而另一边继
 真实首帧。首次现场联调只做：连接、被动接收、记录原始摘要、认证响应；不
 点击自动进样、不发送 Config/Command，不修改仪器方法。只有拿到真实首帧和
 厂商确认的响应字段后，才另行设计业务下发阶段。
-

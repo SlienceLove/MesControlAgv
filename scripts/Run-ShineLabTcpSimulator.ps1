@@ -11,39 +11,72 @@ $ErrorActionPreference = 'Stop'
 
 function New-MessageId { [Guid]::NewGuid().ToString('N') }
 
-function Send-JsonLine {
-    param([System.IO.StreamWriter]$Writer, [object]$Message)
+function ConvertTo-ShineLabFrame {
+    param([Parameter(Mandatory)] [string]$Json)
+    $jsonBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($Json)
+    if ($jsonBytes.Length -gt 65534) { throw 'ShineLab JSON payload exceeds the native 16-bit frame limit.' }
+    $length = $jsonBytes.Length + 1
+    $frame = [byte[]]::new($jsonBytes.Length + 5)
+    $frame[0] = 0x55; $frame[1] = 0xAA
+    $frame[2] = [byte](($length -shr 8) -band 0xff)
+    $frame[3] = [byte]($length -band 0xff)
+    [Buffer]::BlockCopy($jsonBytes, 0, $frame, 4, $jsonBytes.Length)
+    $frame[$frame.Length - 1] = 0
+    Write-Output -NoEnumerate $frame
+}
+
+function Read-ExactBytes {
+    param([Parameter(Mandatory)] [System.IO.Stream]$Stream, [Parameter(Mandatory)] [int]$Count)
+    $bytes = [byte[]]::new($Count)
+    $offset = 0
+    while ($offset -lt $Count) {
+        $read = $Stream.Read($bytes, $offset, $Count - $offset)
+        if ($read -le 0) { throw 'ShineLab peer closed before a complete frame was received.' }
+        $offset += $read
+    }
+    Write-Output -NoEnumerate $bytes
+}
+
+function Read-ShineLabFrame {
+    param([Parameter(Mandatory)] [System.IO.Stream]$Stream)
+    $header = Read-ExactBytes -Stream $Stream -Count 4
+    if ($header[0] -ne 0x55 -or $header[1] -ne 0xAA) { throw 'Invalid ShineLab native frame header.' }
+    $length = ($header[2] * 256) + $header[3]
+    if ($length -lt 1) { throw 'Invalid ShineLab native frame length.' }
+    $payload = Read-ExactBytes -Stream $Stream -Count $length
+    if ($payload[$length - 1] -ne 0) { throw 'ShineLab native frame is missing its NUL terminator.' }
+    return [System.Text.UTF8Encoding]::new($false, $true).GetString($payload, 0, $length - 1)
+}
+
+function Send-ShineLabJson {
+    param([Parameter(Mandatory)] [System.IO.Stream]$Stream, [Parameter(Mandatory)] [object]$Message)
     $json = $Message | ConvertTo-Json -Depth 12 -Compress
-    $Writer.WriteLine($json)
-    $Writer.Flush()
+    $frame = ConvertTo-ShineLabFrame -Json $json
+    $Stream.Write($frame, 0, $frame.Length)
+    $Stream.Flush()
     Write-Host "TX $json"
 }
 
-function Send-Push {
-    param([System.IO.StreamWriter]$Writer, [string]$Method, [object]$Body)
-    Send-JsonLine -Writer $Writer -Message ([ordered]@{
+function New-Push {
+    param([Parameter(Mandatory)] [string]$Method, [Parameter(Mandatory)] [object]$Body)
+    return [ordered]@{
         strID = New-MessageId
         strMethod = $Method
         equipmentCode = $EquipmentCode
         body = $Body
-    })
+    }
 }
 
 $client = [System.Net.Sockets.TcpClient]::new()
 try {
     $client.Connect($ServerAddress, $Port)
     $stream = $client.GetStream()
-    $encoding = [System.Text.UTF8Encoding]::new($false)
-    $reader = [System.IO.StreamReader]::new($stream, $encoding, $false, 4096, $true)
-    $writer = [System.IO.StreamWriter]::new($stream, $encoding, 4096, $true)
-    $writer.NewLine = "`n"
-    $writer.AutoFlush = $true
 
-    Send-Push -Writer $writer -Method 'Certification' -Body ([ordered]@{
+    Send-ShineLabJson -Stream $stream -Message (New-Push -Method 'Certification' -Body ([ordered]@{
         clientName = 'ShineLab-Command-Simulator'
         protocolVersion = 'draft-1'
-    })
-    $certification = $reader.ReadLine()
+    }))
+    $certification = Read-ShineLabFrame -Stream $stream
     if ([string]::IsNullOrWhiteSpace($certification)) { throw 'Certification response was not received.' }
     Write-Host "RX $certification"
 
@@ -51,12 +84,12 @@ try {
     $nextHeartbeat = Get-Date
     while ((Get-Date) -lt $deadline) {
         if ($stream.DataAvailable) {
-            $line = $reader.ReadLine()
-            if ([string]::IsNullOrWhiteSpace($line)) { break }
-            Write-Host "RX $line"
-            $request = $line | ConvertFrom-Json
+            $requestJson = Read-ShineLabFrame -Stream $stream
+            if ([string]::IsNullOrWhiteSpace($requestJson)) { break }
+            Write-Host "RX $requestJson"
+            $request = $requestJson | ConvertFrom-Json
             $taskUuid = $request.body.task_uuid
-            Send-JsonLine -Writer $writer -Message ([ordered]@{
+            Send-ShineLabJson -Stream $stream -Message ([ordered]@{
                 strID = $request.strID
                 strMethod = $request.strMethod
                 equipmentCode = $EquipmentCode
@@ -68,50 +101,37 @@ try {
             })
 
             if ($request.strMethod -eq 'Command' -and [int]$request.body.action -eq 0) {
-                Send-Push -Writer $writer -Method 'Device' -Body ([ordered]@{
-                    status = 1
-                    task_uuid = $taskUuid
-                    sampleID = $request.body.sampleID
-                    sampleName = $request.body.sampleName
-                    chan = $request.body.chan
-                    pos = 11
-                    stage = 'Detecting'
-                    progress = 50
-                })
+                Send-ShineLabJson -Stream $stream -Message (New-Push -Method 'Device' -Body ([ordered]@{
+                    status = 1; task_uuid = $taskUuid; sampleID = $request.body.sampleID
+                    sampleName = $request.body.sampleName; chan = $request.body.chan
+                    pos = 11; stage = 'Detecting'; progress = 50
+                }))
                 Start-Sleep -Seconds 1
-                Send-Push -Writer $writer -Method 'SampleFinish' -Body ([ordered]@{
-                    task_uuid = $taskUuid
-                    sampleID = $request.body.sampleID
+                Send-ShineLabJson -Stream $stream -Message (New-Push -Method 'SampleFinish' -Body ([ordered]@{
+                    task_uuid = $taskUuid; sampleID = $request.body.sampleID
                     finishDate = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
-                })
-                Send-Push -Writer $writer -Method 'Result' -Body ([ordered]@{
-                    task_uuid = $taskUuid
-                    sampleID = $request.body.sampleID
+                }))
+                Send-ShineLabJson -Stream $stream -Message (New-Push -Method 'Result' -Body ([ordered]@{
+                    task_uuid = $taskUuid; sampleID = $request.body.sampleID
                     testDate = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
                     data = @([ordered]@{ testItem = 'Li'; value = 3.2; unit = 'mg/L'; quality = 'OK' })
-                })
-                Send-Push -Writer $writer -Method 'EndMission' -Body ([ordered]@{
-                    task_uuid = $taskUuid
-                    finishDate = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
-                    result = 'Success'
-                })
+                }))
+                Send-ShineLabJson -Stream $stream -Message (New-Push -Method 'EndMission' -Body ([ordered]@{
+                    task_uuid = $taskUuid; finishDate = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'); result = 'Success'
+                }))
             }
         }
 
         if ((Get-Date) -ge $nextHeartbeat) {
-            Send-Push -Writer $writer -Method 'Device' -Body ([ordered]@{
-                status = 0
-                stage = 'Idle'
-                progress = 0
-            })
+            Send-ShineLabJson -Stream $stream -Message (New-Push -Method 'Device' -Body ([ordered]@{
+                status = 0; stage = 'Idle'; progress = 0
+            }))
             $nextHeartbeat = (Get-Date).AddSeconds(1)
         }
         Start-Sleep -Milliseconds 100
     }
 }
 finally {
-    if ($writer) { $writer.Dispose() }
-    if ($reader) { $reader.Dispose() }
     if ($stream) { $stream.Dispose() }
     $client.Dispose()
 }

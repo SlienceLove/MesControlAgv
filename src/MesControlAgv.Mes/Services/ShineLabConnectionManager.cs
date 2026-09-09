@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Net.Sockets;
 using System.Text.Json;
+using MesControlAgv.Contracts;
 
 namespace MesControlAgv.Mes.Services;
 
@@ -39,11 +40,11 @@ public sealed class ShineLabConnectionManager : IDisposable
     public void Register(
         string equipmentCode,
         string connectionId,
-        StreamWriter writer)
+        Stream stream)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(equipmentCode);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionId);
-        ArgumentNullException.ThrowIfNull(writer);
+        ArgumentNullException.ThrowIfNull(stream);
 
         Connection? previous;
         lock (_sync)
@@ -51,8 +52,8 @@ public sealed class ShineLabConnectionManager : IDisposable
             ObjectDisposedException.ThrowIf(_disposed, this);
             previous = _connection;
             _connection = previous is not null && previous.ConnectionId == connectionId
-                ? previous with { EquipmentCode = equipmentCode, Writer = writer }
-                : new Connection(equipmentCode, connectionId, DateTimeOffset.UtcNow, writer, new SemaphoreSlim(1, 1));
+                ? previous with { EquipmentCode = equipmentCode, Stream = stream }
+                : new Connection(equipmentCode, connectionId, DateTimeOffset.UtcNow, stream, new SemaphoreSlim(1, 1));
         }
 
         if (previous is not null && previous.ConnectionId != connectionId)
@@ -155,8 +156,9 @@ public sealed class ShineLabConnectionManager : IDisposable
                     equipmentCode = connection.EquipmentCode,
                     body
                 };
-                await connection.Writer.WriteLineAsync(JsonSerializer.Serialize(message));
-                await connection.Writer.FlushAsync(cancellationToken);
+                var frame = ShineLabTcpFrameCodec.Encode(message);
+                await connection.Stream.WriteAsync(frame, cancellationToken);
+                await connection.Stream.FlushAsync(cancellationToken);
             }
             finally
             {
@@ -210,6 +212,6 @@ public sealed class ShineLabConnectionManager : IDisposable
         string EquipmentCode,
         string ConnectionId,
         DateTimeOffset ConnectedAtUtc,
-        StreamWriter Writer,
+        Stream Stream,
         SemaphoreSlim WriteGate);
 }
