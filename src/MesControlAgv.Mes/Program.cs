@@ -60,6 +60,7 @@ var workflowFieldNavigationWorkerOptions = builder.Configuration
 builder.Services.AddSingleton(workflowAuboWorkerOptions);
 builder.Services.AddSingleton(workflowFieldNavigationWorkerOptions);
 var physicalBatchEnabled = !profile.Features.UseSimulator &&
+                           physicalReadinessOptions.Enabled &&
                            profile.Features.EnableFieldNavigationAcceptance &&
                            workflowFieldNavigationWorkerOptions.Enabled &&
                            workflowFieldNavigationWorkerOptions.AutoAuthorizeFromRunRequest &&
@@ -68,6 +69,8 @@ builder.Services.AddSingleton(new WorkflowPhysicalBatchAdmissionGate(
     physicalBatchEnabled,
     physicalBatchEnabled
         ? "现场批量 worker 已启用。"
+        : !physicalReadinessOptions.Enabled
+        ? "MES 启动时未启用物理就绪监督器，因此拒绝一键现场执行。"
         : "MES 启动时未同时启用现场导航、自动许可和 AUBO worker，因此拒绝一键现场执行。"));
 builder.Services.AddSingleton<WorkflowFieldNavigationRetryState>();
 builder.Services.AddHttpClient<ISampleWorkstationReader, SampleWorkstationAdapterClient>(client =>
@@ -90,6 +93,7 @@ builder.Services.AddScoped<ShineLabTaskService>();
 builder.Services.AddHostedService<ShineLabTcpServer>();
 builder.Services.AddHostedService<ShineLabTaskRecoveryService>();
 builder.Services.AddSingleton(profile);
+builder.Services.AddSingleton<PhysicalExecutionAdmissionPolicy>();
 builder.Services.AddSingleton(map);
 builder.Services.AddSingleton(workflowCatalogs);
 builder.Services.AddSingleton(workflowPublicationContext);

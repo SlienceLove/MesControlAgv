@@ -23,6 +23,7 @@ public enum PhysicalDeviceReadinessState
 public static class PhysicalReadinessReasonCodes
 {
     public const string SupervisorDisabled = "physical_readiness_supervisor_disabled";
+    public const string EpochAuthorizationRequired = "physical_epoch_authorization_required";
     public const string SimulatorProfile = "physical_readiness_disabled_for_simulator";
     public const string SupervisorInstanceRequired = "readiness_supervisor_instance_required";
     public const string SupervisorInstanceMismatch = "readiness_supervisor_instance_mismatch";
