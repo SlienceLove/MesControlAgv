@@ -1,21 +1,23 @@
 # AGV MES MVP Progress
 
-Last updated: 2026-09-08
+Last updated: 2026-09-09
 
 > 本文件只保留当前交接、关键分支和最近一周主线。更早的阶段记录、逐次会话
 > 日志和完整验收细节保留在 Git 历史及下方链接的文档/证据中。
 
 ## 当前结论
 
-- 当前分支 `feature/wpf-ui-layout-optimization`；本轮离线加固起始提交为
-  `119722e`，远端仍为 `f6625d4`。早期交接中的 `794127f`/`fb743fa` 不作为当前基线。
+- 当前分支 `feature/wpf-ui-layout-optimization`；Task 5 离线验证基线为
+  `e29289c`。早期交接中的 `794127f`/`fb743fa` 不作为当前基线。
 - 既有现场证据、用户删除项和无关工作树修改均保留，未被清理或覆盖。
 - 默认桌面启动已改为 `physical`：WPF/Launcher 默认连接外部
   `127.0.0.1:5141`（Adapter）和 `127.0.0.1:5145`（MES），不托管或启动
   Simulator。显式 `WPF_RUNTIME_MODE=simulator` 仍保留离线回归路径
   `5041/5045/5183`。
-- 最新离线门禁：`1069 passed / 5 allowed skipped / 0 failed`；Release 构建
-  `0` 警告、`0` 错误。
+- Task 5 最新离线验证：MES `224/224`、WPF（`--no-build`）`411/411`、
+  WorkflowContract `71/71`、Simulator `5/5`；解决方案全量测试实际为
+  `690 passed / 5 existing skipped / 0 failed`，但因并发 WPF Host 锁定 DLL
+  退出 `1`，详见 Task 5 报告。Release 构建 `0` 警告、`0` 错误。
 - 现场实体设备仍按 **NO-GO** 管理：无线可达、Ping、TCP 或 WebSocket 成功
   均不等于可以派发或运行。
 
@@ -102,6 +104,7 @@ Last updated: 2026-09-08
 | 09-05 | 复合运行时离线推进 | 完成外层状态、持久化、子流程证据关联和 Simulator-only worker；未连接现场设备。 |
 | 09-07 | 无线只读 + 默认启动调整 | AMR 无线接口、路由、AGV `19204`、AUBO `9012` 只读通信通过；完整 AGV 快照仍缺失。WPF/Launcher 默认切为 physical。 |
 | 09-08 | 就绪监督门禁、现场预检与离线加固 | 双无线网卡完整只读通过；修复 epoch 抖动、只读 TCP 单次恢复、重启恢复门禁和预检进程收尾，`1069` 测试通过，现场全程零写入。 |
+| 09-09 | Task 5 离线验证与交接 | 统一 admission、恢复路径 fail-closed、一次性安全收尾完成离线回归；WPF 并发 Host 锁导致解决方案全量命令未能完成，未停止 Host，未访问设备。 |
 
 ## 下一步
 
