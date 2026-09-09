@@ -287,28 +287,28 @@ public sealed class MaterialManagementPersistenceTests : IClassFixture<MesWebApp
                         FOREIGN KEY (LotId) REFERENCES MaterialLots(LotId));
                     INSERT INTO WarehouseLocations
                         (LocationId, WarehouseCode, WarehouseName, LocationCode, IsEnabled, CreatedAtUtc, UpdatedAtUtc)
-                        VALUES ('$location', 'MAIN', '默认仓库', 'DEFAULT', 1, '$now', '$now');
+                        VALUES ($location, 'MAIN', '默认仓库', 'DEFAULT', 1, $now, $now);
                     INSERT INTO MaterialCatalog
                         (MaterialId, MaterialCode, Name, Kind, IsEnabled, CreatedAtUtc, UpdatedAtUtc)
-                        VALUES ('$material', 'LEGACY-MAT', 'Legacy material', 'Consumable', 1, '$now', '$now');
+                        VALUES ($material, 'LEGACY-MAT', 'Legacy material', 'Consumable', 1, $now, $now);
                     INSERT INTO MaterialLots
                         (LotId, MaterialId, MaterialCode, LotCode, Unit, IsQuarantined, CreatedAtUtc, UpdatedAtUtc)
-                        VALUES ('$lot', '$material', 'LEGACY-MAT', 'LEGACY-LOT', 'EA', 0, '$now', '$now');
+                        VALUES ($lot, $material, 'LEGACY-MAT', 'LEGACY-LOT', 'EA', 0, $now, $now);
                     INSERT INTO InventoryBalances
                         (BalanceId, LotId, LocationId, OnHand, Reserved, UpdatedAtUtc)
-                        VALUES ('$balance', '$lot', '$location', 5, 0, '$now');
+                        VALUES ($balance, $lot, $location, 5, 0, $now);
                     INSERT INTO InventoryTransactions
                         (Id, RequestId, LineKey, TransactionKind, LotId, ToLocationId, MaterialCode, LotCode,
                          Quantity, Unit, Actor, DetailsJson, OccurredAtUtc)
-                        VALUES ('$transaction', '$request', 'legacy:1', 'Receipt', '$lot', '$location',
-                                'LEGACY-MAT', 'LEGACY-LOT', 5, 'EA', 'legacy', '{}', '$now');
+                        VALUES ($transaction, $request, 'legacy:1', 'Receipt', $lot, $location,
+                                'LEGACY-MAT', 'LEGACY-LOT', 5, 'EA', 'legacy', '{}', $now);
                     """;
-                command.Parameters.Add(new SqliteParameter("$location", locationId.ToString()));
-                command.Parameters.Add(new SqliteParameter("$material", materialId.ToString()));
-                command.Parameters.Add(new SqliteParameter("$lot", lotId.ToString()));
-                command.Parameters.Add(new SqliteParameter("$balance", Guid.NewGuid().ToString()));
-                command.Parameters.Add(new SqliteParameter("$transaction", Guid.NewGuid().ToString()));
-                command.Parameters.Add(new SqliteParameter("$request", requestId.ToString()));
+                command.Parameters.Add(new SqliteParameter("$location", locationId.ToString().ToUpperInvariant()));
+                command.Parameters.Add(new SqliteParameter("$material", materialId.ToString().ToUpperInvariant()));
+                command.Parameters.Add(new SqliteParameter("$lot", lotId.ToString().ToUpperInvariant()));
+                command.Parameters.Add(new SqliteParameter("$balance", Guid.NewGuid().ToString().ToUpperInvariant()));
+                command.Parameters.Add(new SqliteParameter("$transaction", Guid.NewGuid().ToString().ToUpperInvariant()));
+                command.Parameters.Add(new SqliteParameter("$request", requestId.ToString().ToUpperInvariant()));
                 command.Parameters.Add(new SqliteParameter("$now", DateTime.UtcNow.ToString("O")));
                 await command.ExecuteNonQueryAsync();
             }
