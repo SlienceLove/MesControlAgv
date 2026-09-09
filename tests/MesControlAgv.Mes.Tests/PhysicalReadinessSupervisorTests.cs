@@ -534,6 +534,64 @@ public sealed class PhysicalReadinessSupervisorTests
     }
 
     [Fact]
+    public void Ready_failure_then_remove_and_readd_does_not_reuse_the_failure_epoch()
+    {
+        var clock = new MutableClock(new DateTimeOffset(2026, 9, 7, 5, 0, 0, TimeSpan.Zero));
+        var store = new PhysicalReadinessStateStore(clock, "failure-remove-readd");
+        var descriptor = new PhysicalDeviceDescriptor("AGV-01", WorkflowDeviceFamilyIds.Agv, true);
+        store.Configure(true, [descriptor], clock.UtcNow);
+
+        store.Apply(
+            descriptor,
+            Observation(descriptor, online: true, full: true),
+            TimeSpan.Zero,
+            requireFullPreflight: true,
+            clock.UtcNow);
+        var ready = Assert.Single(store.GetSnapshot().Devices);
+        var instanceId = store.GetSnapshot().SupervisorInstanceId;
+        Assert.True(store.AcknowledgeAuthorization(descriptor.DeviceId, ready.DeviceEpoch, instanceId));
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        store.Apply(
+            descriptor,
+            Observation(
+                descriptor,
+                online: true,
+                full: true,
+                blockers: ["emergency_status_not_clear"]),
+            TimeSpan.Zero,
+            requireFullPreflight: true,
+            clock.UtcNow);
+        var failed = Assert.Single(store.GetSnapshot().Devices);
+        Assert.Equal(PhysicalDeviceReadinessState.Blocked, failed.State);
+        Assert.Equal(ready.DeviceEpoch + 1, failed.DeviceEpoch);
+        Assert.True(failed.RequiresReauthorization);
+        Assert.False(store.IsCurrentAndReady(
+            descriptor.DeviceId,
+            ready.DeviceEpoch,
+            instanceId,
+            out var failureReason));
+        Assert.Equal(PhysicalReadinessReasonCodes.EpochMismatch, failureReason);
+
+        store.Configure(true, [], clock.UtcNow);
+        store.Configure(true, [descriptor], clock.UtcNow);
+        store.Apply(
+            descriptor,
+            Observation(descriptor, online: true, full: true),
+            TimeSpan.Zero,
+            requireFullPreflight: true,
+            clock.UtcNow);
+
+        var readded = Assert.Single(store.GetSnapshot().Devices);
+        Assert.Equal(failed.DeviceEpoch + 1, readded.DeviceEpoch);
+        Assert.True(readded.RequiresReauthorization);
+        Assert.False(store.AcknowledgeAuthorization(
+            descriptor.DeviceId,
+            failed.DeviceEpoch,
+            instanceId));
+    }
+
+    [Fact]
     public async Task Simulator_profile_never_invokes_a_physical_probe()
     {
         var profile = CreateProfile(useSimulator: true);
