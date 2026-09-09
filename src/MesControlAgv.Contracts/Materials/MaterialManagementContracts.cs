@@ -160,6 +160,7 @@ public sealed record MaterialScanResult
     public bool IsResolved { get; init; }
     public string? IssueCode { get; init; }
     public string? Message { get; init; }
+    public bool IsIdempotentReplay { get; init; }
     public SampleMaterial? Sample { get; init; }
     public MaterialLotInventory? Lot { get; init; }
     public IReadOnlyList<string> AllowedActions { get; init; } = Array.Empty<string>();
@@ -216,6 +217,17 @@ public sealed record MaterialImportPreview
     public bool CanCommit => Issues.Count == 0;
 }
 
+/// <summary>Durable result returned after a sample/consumable import is committed.</summary>
+public sealed record MaterialImportResult
+{
+    public Guid RequestId { get; init; }
+    public int ImportedSamples { get; init; }
+    public int ImportedConsumableLots { get; init; }
+    public int ExistingCount { get; init; }
+    public IReadOnlyList<MaterialImportIssue> Issues { get; init; } = Array.Empty<MaterialImportIssue>();
+    public bool IsIdempotentReplay { get; init; }
+}
+
 public sealed record MaterialScanRequest
 {
     public Guid RequestId { get; init; }
@@ -247,6 +259,8 @@ public sealed record MoveMaterialRequest
     public Guid RequestId { get; init; }
     public string Actor { get; init; } = string.Empty;
     public Guid LotId { get; init; }
+    /// <summary>Optional source location. If omitted, the only non-empty lot balance is used.</summary>
+    public string? FromLocationCode { get; init; }
     public string ToLocationCode { get; init; } = string.Empty;
     public decimal? Quantity { get; init; }
     public string? Reason { get; init; }
@@ -257,6 +271,8 @@ public sealed record AdjustMaterialRequest
     public Guid RequestId { get; init; }
     public string Actor { get; init; } = string.Empty;
     public Guid LotId { get; init; }
+    /// <summary>Optional location. If omitted, the only non-empty lot balance is used.</summary>
+    public string? LocationCode { get; init; }
     public decimal QuantityDelta { get; init; }
     public string Reason { get; init; } = string.Empty;
 }
@@ -310,4 +326,35 @@ public sealed record MaterialBinding
     public string? InjectionPosition { get; init; }
     public DateTimeOffset CreatedAt { get; init; }
     public DateTimeOffset UpdatedAt { get; init; }
+}
+
+public sealed record MaterialReservationResult
+{
+    public Guid RequestId { get; init; }
+    public Guid ExperimentJobId { get; init; }
+    public IReadOnlyList<MaterialBinding> Bindings { get; init; } = Array.Empty<MaterialBinding>();
+    public bool IsIdempotentReplay { get; init; }
+}
+
+public sealed record MaterialReleaseResult
+{
+    public Guid RequestId { get; init; }
+    public Guid ExperimentJobId { get; init; }
+    public int ReleasedCount { get; init; }
+    public bool IsIdempotentReplay { get; init; }
+}
+
+public sealed record MaterialConsumeResult
+{
+    public Guid RequestId { get; init; }
+    public Guid ExperimentJobId { get; init; }
+    public int ConsumedCount { get; init; }
+    public bool IsIdempotentReplay { get; init; }
+}
+
+public sealed record MaterialCommandResult<T>
+{
+    public Guid RequestId { get; init; }
+    public T? Data { get; init; }
+    public bool IsIdempotentReplay { get; init; }
 }

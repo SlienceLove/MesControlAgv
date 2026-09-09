@@ -122,6 +122,9 @@ builder.Services.AddScoped<IWorkflowApplicationService>(services => services.Get
 builder.Services.AddScoped<IExperimentSchedulingQueryService, ExperimentSchedulingQueryService>();
 builder.Services.AddScoped<IExperimentSchedulingCommandService, ExperimentSchedulingCommandService>();
 builder.Services.AddScoped<MaterialOperationCoordinator>();
+builder.Services.AddScoped<MaterialManagementService>();
+builder.Services.AddScoped<IMaterialManagementService>(services =>
+    services.GetRequiredService<MaterialManagementService>());
 builder.Services.AddScoped<ExperimentRuntimeLeaseLifecycle>();
 builder.Services.AddScoped<ExperimentRuntimeAdmissionService>();
 builder.Services.AddScoped<IExperimentRuntimeAdmissionService>(services =>
@@ -177,6 +180,7 @@ app.MapShineLabStatusEndpoints();
 app.MapMesWorkflowEndpoints();
 
 app.MapMesExperimentSchedulingEndpoints();
+app.MapMaterialManagementEndpoints();
 
 app.MapPost("/api/field-navigation-acceptances", async (
     CreateFieldNavigationAcceptanceRequest request,
@@ -1000,6 +1004,8 @@ static async Task EnsureMaterialManagementTablesAsync(MesDbContext database)
         await command.ExecuteNonQueryAsync();
     }
 
+    await EnsureMaterialManagementSchemaCompatibilityAsync(connection);
+
     const string defaultLocationId = "00000000-0000-0000-0000-000000000001";
     await using var seed = connection.CreateCommand();
     seed.CommandText =
@@ -1011,6 +1017,114 @@ static async Task EnsureMaterialManagementTablesAsync(MesDbContext database)
     seed.Parameters.Add(new Microsoft.Data.Sqlite.SqliteParameter("$id", defaultLocationId));
     seed.Parameters.Add(new Microsoft.Data.Sqlite.SqliteParameter("$now", DateTime.UtcNow.ToString("O")));
     await seed.ExecuteNonQueryAsync();
+}
+
+/// <summary>
+/// The first material-management build shipped before request-level operation
+/// records and all foreign keys were added. SQLite's CREATE TABLE IF NOT EXISTS
+/// deliberately leaves those old tables untouched, so add a small, explicit
+/// compatibility layer. Existing request rows are backfilled as completed
+/// legacy operations and triggers enforce the same references for old tables.
+/// A future migration can rebuild the tables without changing this contract.
+/// </summary>
+static async Task EnsureMaterialManagementSchemaCompatibilityAsync(
+    System.Data.Common.DbConnection connection)
+{
+    await using (var pragma = connection.CreateCommand())
+    {
+        pragma.CommandText = "PRAGMA foreign_keys = ON;";
+        await pragma.ExecuteNonQueryAsync();
+    }
+
+    await using (var version = connection.CreateCommand())
+    {
+        version.CommandText =
+            "CREATE TABLE IF NOT EXISTS MaterialSchemaMigrations (Version INTEGER NOT NULL PRIMARY KEY, AppliedAtUtc TEXT NOT NULL);";
+        await version.ExecuteNonQueryAsync();
+    }
+
+    // Preserve material audit rows created by the pre-operation-record build.
+    await using (var backfill = connection.CreateCommand())
+    {
+        backfill.CommandText =
+            """
+            INSERT OR IGNORE INTO MaterialOperations
+                (RequestId, OperationKind, Fingerprint, Outcome, ResultJson, Actor, CreatedAtUtc)
+            SELECT RequestId, 'legacy', 'legacy:' || RequestId, 'Completed', '{}', 'schema-migration', MIN(OccurredAtUtc)
+            FROM InventoryTransactions
+            GROUP BY RequestId;
+            INSERT OR IGNORE INTO MaterialOperations
+                (RequestId, OperationKind, Fingerprint, Outcome, ResultJson, Actor, CreatedAtUtc)
+            SELECT RequestId, 'legacy', 'legacy:' || RequestId, 'Completed', '{}', 'schema-migration', MIN(OccurredAtUtc)
+            FROM BarcodeScanEvents
+            GROUP BY RequestId;
+            INSERT OR IGNORE INTO MaterialOperations
+                (RequestId, OperationKind, Fingerprint, Outcome, ResultJson, Actor, CreatedAtUtc)
+            SELECT RequestId, 'legacy', 'legacy:' || RequestId, 'Completed', '{}', 'schema-migration', MIN(CreatedAtUtc)
+            FROM ExperimentJobMaterialBindings
+            GROUP BY RequestId;
+            """;
+        await backfill.ExecuteNonQueryAsync();
+    }
+
+    var foreignKeys = new[]
+    {
+        (Table: "MaterialLots", Column: "MaterialId", Target: "MaterialCatalog", TargetColumn: "MaterialId"),
+        (Table: "SampleMaterials", Column: "LocationId", Target: "WarehouseLocations", TargetColumn: "LocationId"),
+        (Table: "SampleMaterials", Column: "BoundExperimentJobId", Target: "ExperimentJobs", TargetColumn: "JobId"),
+        (Table: "InventoryBalances", Column: "LotId", Target: "MaterialLots", TargetColumn: "LotId"),
+        (Table: "InventoryBalances", Column: "LocationId", Target: "WarehouseLocations", TargetColumn: "LocationId"),
+        (Table: "InventoryTransactions", Column: "RequestId", Target: "MaterialOperations", TargetColumn: "RequestId"),
+        (Table: "InventoryTransactions", Column: "LotId", Target: "MaterialLots", TargetColumn: "LotId"),
+        (Table: "InventoryTransactions", Column: "SampleId", Target: "SampleMaterials", TargetColumn: "SampleId"),
+        (Table: "InventoryTransactions", Column: "FromLocationId", Target: "WarehouseLocations", TargetColumn: "LocationId"),
+        (Table: "InventoryTransactions", Column: "ToLocationId", Target: "WarehouseLocations", TargetColumn: "LocationId"),
+        (Table: "InventoryTransactions", Column: "ExperimentJobId", Target: "ExperimentJobs", TargetColumn: "JobId"),
+        (Table: "BarcodeScanEvents", Column: "RequestId", Target: "MaterialOperations", TargetColumn: "RequestId"),
+        (Table: "BarcodeScanEvents", Column: "SampleId", Target: "SampleMaterials", TargetColumn: "SampleId"),
+        (Table: "BarcodeScanEvents", Column: "LotId", Target: "MaterialLots", TargetColumn: "LotId"),
+        (Table: "ExperimentJobMaterialBindings", Column: "RequestId", Target: "MaterialOperations", TargetColumn: "RequestId"),
+        (Table: "ExperimentJobMaterialBindings", Column: "ExperimentJobId", Target: "ExperimentJobs", TargetColumn: "JobId"),
+        (Table: "ExperimentJobMaterialBindings", Column: "SampleId", Target: "SampleMaterials", TargetColumn: "SampleId"),
+        (Table: "ExperimentJobMaterialBindings", Column: "LotId", Target: "MaterialLots", TargetColumn: "LotId")
+    };
+
+    foreach (var foreignKey in foreignKeys)
+    {
+        var triggerBase = $"TR_Material_{foreignKey.Table}_{foreignKey.Column}_FK";
+        var insertTrigger = $"""
+            CREATE TRIGGER IF NOT EXISTS {insertTriggerName(triggerBase)}
+            BEFORE INSERT ON {foreignKey.Table}
+            WHEN NEW.{foreignKey.Column} IS NOT NULL AND NOT EXISTS
+                (SELECT 1 FROM {foreignKey.Target} WHERE {foreignKey.TargetColumn} = NEW.{foreignKey.Column})
+            BEGIN
+                SELECT RAISE(ABORT, 'material foreign key violation');
+            END;
+            """;
+        var updateTrigger = $"""
+            CREATE TRIGGER IF NOT EXISTS {updateTriggerName(triggerBase)}
+            BEFORE UPDATE OF {foreignKey.Column} ON {foreignKey.Table}
+            WHEN NEW.{foreignKey.Column} IS NOT NULL AND NOT EXISTS
+                (SELECT 1 FROM {foreignKey.Target} WHERE {foreignKey.TargetColumn} = NEW.{foreignKey.Column})
+            BEGIN
+                SELECT RAISE(ABORT, 'material foreign key violation');
+            END;
+            """;
+        await using var triggerCommand = connection.CreateCommand();
+        triggerCommand.CommandText = insertTrigger + updateTrigger;
+        await triggerCommand.ExecuteNonQueryAsync();
+    }
+
+    await using (var migration = connection.CreateCommand())
+    {
+        migration.CommandText =
+            "INSERT OR REPLACE INTO MaterialSchemaMigrations (Version, AppliedAtUtc) VALUES (2, $now);";
+        migration.Parameters.Add(new Microsoft.Data.Sqlite.SqliteParameter("$now", DateTime.UtcNow.ToString("O")));
+        await migration.ExecuteNonQueryAsync();
+    }
+
+    static string insertTriggerName(string value) => value + "_Insert";
+    static string updateTriggerName(string value) => value + "_Update";
 }
 
 static async Task EnsureFieldNavigationAcceptanceTablesAsync(MesDbContext database)
