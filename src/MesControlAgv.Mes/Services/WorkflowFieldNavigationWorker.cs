@@ -3,6 +3,7 @@ using MesControlAgv.Contracts;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Mes.Entities;
+using Microsoft.EntityFrameworkCore;
 using System.Collections.Concurrent;
 
 namespace MesControlAgv.Mes.Services;
@@ -730,6 +731,9 @@ public sealed class WorkflowFieldNavigationDispatcher(
             ? TimeSpan.FromSeconds(10)
             : options.ControlReleaseTimeout;
         using var cleanup = new CancellationTokenSource(timeout);
+        var releaseAttempted = false;
+        PhysicalSafetyActionResponse? result = null;
+        Exception? releaseException = null;
         try
         {
             var actionService = safetyActions ?? new PhysicalSafetyActionService(
@@ -739,7 +743,8 @@ public sealed class WorkflowFieldNavigationDispatcher(
                 profile,
                 _physicalReadiness,
                 _timeProvider);
-            var result = await actionService.ReleaseFinalMoveAsync(
+            releaseAttempted = true;
+            result = await actionService.ReleaseFinalMoveAsync(
                 workItem.NodeExecution.WorkflowRunId,
                 workItem.NodeExecution.Id,
                 acceptance.WorkflowDeviceOperationId ?? Guid.Empty,
@@ -770,6 +775,7 @@ public sealed class WorkflowFieldNavigationDispatcher(
         }
         catch (Exception exception)
         {
+            releaseException = exception;
             // A lost response after POST is ambiguous. Never retry release;
             // the next read-only preflight must expose the owner.
             _logger?.LogWarning(
@@ -777,6 +783,73 @@ public sealed class WorkflowFieldNavigationDispatcher(
                 "Workflow run {WorkflowRunId} {TerminalContext}, but AGV control release could not be confirmed. Recheck ownership without replaying the request.",
                 workItem.NodeExecution.WorkflowRunId,
                 terminalContext);
+        }
+
+        await TrySaveFinalMoveReleaseAuditAsync(
+            workItem,
+            acceptance,
+            moveOutcome,
+            terminalContext,
+            releaseAttempted,
+            result,
+            releaseException);
+    }
+
+    private async Task TrySaveFinalMoveReleaseAuditAsync(
+        WorkflowNodeExecutionWorkItem workItem,
+        FieldNavigationAcceptanceResponse acceptance,
+        WorkflowStepCompletionOutcome moveOutcome,
+        string terminalContext,
+        bool releaseAttempted,
+        PhysicalSafetyActionResponse? result,
+        Exception? releaseException)
+    {
+        var database = repository.Database;
+        var deviceOperationId = acceptance.WorkflowDeviceOperationId ?? Guid.Empty;
+        var releaseResult = result?.Status ?? (releaseException is null ? "NotAttempted" : "Exception");
+        var audit = new WorkflowAuditRecord
+        {
+            Id = Guid.NewGuid(),
+            EventType = "WorkflowFinalMoveRelease",
+            Outcome = result?.Status ?? PhysicalSafetyActionStatuses.Unknown,
+            Reason = result?.ResultSummary ?? releaseException?.Message ?? terminalContext,
+            WorkflowId = workItem.NodeExecution.WorkflowId,
+            Version = workItem.NodeExecution.Version,
+            RequestId = workItem.DeviceOperation?.RequestId,
+            ExecutionId = workItem.NodeExecution.WorkflowRunId,
+            Actor = acceptance.OperatorName ?? "workflow-worker",
+            CorrelationId = workItem.DeviceOperation?.CorrelationId,
+            DetailsJson = WorkflowPersistence.Serialize(new Dictionary<string, string?>
+            {
+                ["workflowRunId"] = workItem.NodeExecution.WorkflowRunId.ToString(),
+                ["nodeExecutionId"] = workItem.NodeExecution.Id.ToString(),
+                ["deviceOperationId"] = deviceOperationId.ToString(),
+                ["releaseAttempted"] = releaseAttempted ? "true" : "false",
+                ["releaseResult"] = releaseResult,
+                ["safetyActionId"] = result?.Id.ToString(),
+                ["safetyActionStatus"] = result?.Status,
+                ["safetyActionResultSummary"] = result?.ResultSummary,
+                ["terminalOutcome"] = moveOutcome.ToString(),
+                ["terminalReason"] = "workflow_final_move_completed",
+                ["terminalContext"] = terminalContext,
+                ["exceptionType"] = releaseException?.GetType().FullName,
+                ["exceptionMessage"] = releaseException?.Message
+            }),
+            OccurredAtUtc = _timeProvider.GetUtcNow().UtcDateTime
+        };
+
+        try
+        {
+            database.WorkflowAudits.Add(audit);
+            await database.SaveChangesAsync(CancellationToken.None);
+        }
+        catch (Exception exception)
+        {
+            _logger?.LogWarning(
+                exception,
+                "Unable to persist final Move release audit for workflow run {WorkflowRunId}; workflow completion will continue without retrying the release.",
+                workItem.NodeExecution.WorkflowRunId);
+            database.Entry(audit).State = EntityState.Detached;
         }
     }
 

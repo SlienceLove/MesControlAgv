@@ -5,9 +5,11 @@ using MesControlAgv.Domain;
 using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Domain.Workflows;
 using MesControlAgv.Mes.Data;
+using MesControlAgv.Mes.Entities;
 using MesControlAgv.Mes.Services;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace MesControlAgv.Mes.Tests;
 
@@ -248,90 +250,137 @@ public sealed class WorkflowFieldNavigationWorkerTests
     [Fact]
     public async Task Final_arrived_move_completes_run_and_releases_adapter_control_once()
     {
-        await using var connection = new SqliteConnection("Data Source=:memory:");
-        await connection.OpenAsync();
-        var dbOptions = new DbContextOptionsBuilder<MesDbContext>().UseSqlite(connection).Options;
-        await using var database = new MesDbContext(dbOptions);
-        await database.Database.EnsureCreatedAsync();
-        var profile = CreateProfile();
-        var validator = new WorkflowValidator(
-            BuiltInWorkflowCatalog.Create(),
-            WorkflowPublicationContext.FromProfile(profile));
-        var reader = new MesWorkflowVersionReader(database);
-        var workflows = new WorkflowApplicationService(
-            database,
-            reader,
-            new WorkflowRuntimeExecutor(reader, validator),
-            validator);
-        var draft = await workflows.CreateDraftAsync(CreateSingleMoveWorkflow(), "test", CancellationToken.None);
-        Assert.True((await workflows.ValidateVersionAsync(draft.WorkflowId, draft.Version, CancellationToken.None)).IsValid);
-        await workflows.PublishAsync(draft.WorkflowId, draft.Version, "test", CancellationToken.None);
-        var execution = await workflows.ExecuteAsync(new WorkflowExecutionRequest
-        {
-            WorkflowId = draft.WorkflowId,
-            Version = draft.Version,
-            RequestId = Guid.NewGuid(),
-            RequestedBy = "operator",
-            PhysicalAuthorization = new WorkflowPhysicalRunAuthorization
-            {
-                AgvId = "AGV-01",
-                OperatorName = "operator",
-                SafetyObserverName = "observer",
-                PermitPrefix = "final-move",
-                ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(1)
-            }
-        }, CancellationToken.None);
-        var move = Assert.Single(await workflows.ListFieldNavigationDispatchableNodesAsync(CancellationToken.None));
-        var adapter = new FieldAcceptanceAdapter();
-        var repository = new FieldNavigationAcceptanceRepository(database);
-        var acceptanceService = new FieldNavigationAcceptanceService(
-            repository,
-            adapter,
-            profile,
-            new PathPlanner(AgvMap.FromProfile(profile.Map)),
-            workflows: workflows);
-        var draftAcceptance = await acceptanceService.CreateAsync(
-            new CreateFieldNavigationAcceptanceRequest("AGV-01", "LM1", "LM4")
-            {
-                WorkflowRunId = execution.ExecutionId,
-                WorkflowNodeExecutionId = move.NodeExecution.Id
-            },
-            CancellationToken.None);
-        await acceptanceService.AuthorizeAsync(
-            draftAcceptance.Id,
-            new AuthorizeFieldNavigationAcceptanceRequest(
-                "operator", "observer", "permit-final-move", DateTimeOffset.UtcNow.AddHours(1)),
-            CancellationToken.None);
-        var dispatcher = new WorkflowFieldNavigationDispatcher(
-            workflows,
-            acceptanceService,
-            repository,
-            profile,
-            new WorkflowFieldNavigationWorkerOptions { Enabled = true },
-            agv: adapter,
-            physicalReadiness: new TestPhysicalReadinessState(
-                enabled: true,
-                supervisorInstanceId: "test",
-                deviceEpoch: 1,
-                reason: "test readiness failure"));
+        await using var fixture = await FinalMoveFixture.CreateAsync();
 
-        await dispatcher.ProcessAsync(CancellationToken.None);
-        var acceptance = await repository.GetAsync(draftAcceptance.Id, CancellationToken.None);
-        acceptance!.Status = FieldNavigationAcceptanceStatuses.Arrived;
-        await repository.SaveWithAuditAsync(
-            acceptance,
-            "AdapterStateReconciled",
-            new { state = "arrived" },
-            CancellationToken.None);
-        await dispatcher.ProcessAsync(CancellationToken.None);
+        await fixture.CompleteAsync();
 
         Assert.Equal(WorkflowRuntimeStatus.Completed,
-            (await workflows.GetExecutionAsync(execution.ExecutionId, CancellationToken.None))!.RuntimeStatus);
-        Assert.Equal(1, adapter.ReleaseControlCalls);
-        var safetyAction = Assert.Single(await database.PhysicalSafetyActions.ToListAsync());
+            (await fixture.Workflows.GetExecutionAsync(fixture.ExecutionId, CancellationToken.None))!.RuntimeStatus);
+        Assert.Equal(1, fixture.Adapter.ReleaseControlCalls);
+        var safetyAction = Assert.Single(await fixture.Database.PhysicalSafetyActions.AsNoTracking().ToListAsync());
         Assert.Equal(PhysicalSafetyActionTypes.AgvRelease, safetyAction.ActionType);
         Assert.Equal(PhysicalSafetyActionStatuses.Succeeded, safetyAction.Status);
-        Assert.Equal(execution.ExecutionId, safetyAction.WorkflowRunId);
+        Assert.Equal(fixture.ExecutionId, safetyAction.WorkflowRunId);
+
+        var (_, details) = await AssertFinalMoveReleaseAuditAsync(
+            fixture,
+            PhysicalSafetyActionStatuses.Succeeded,
+            PhysicalSafetyActionStatuses.Succeeded);
+        Assert.Equal(safetyAction.Id.ToString(), details["safetyActionId"]);
+        Assert.Equal(PhysicalSafetyActionStatuses.Succeeded, details["safetyActionStatus"]);
+        Assert.Null(details["exceptionType"]);
+        Assert.Null(details["exceptionMessage"]);
+    }
+
+    [Fact]
+    public async Task Final_move_release_rejection_is_audited_without_blocking_workflow_completion()
+    {
+        await using var fixture = await FinalMoveFixture.CreateAsync();
+        fixture.Adapter.ReleaseControlResult = false;
+
+        await fixture.CompleteAsync();
+
+        Assert.Equal(WorkflowRuntimeStatus.Completed,
+            (await fixture.Workflows.GetExecutionAsync(fixture.ExecutionId, CancellationToken.None))!.RuntimeStatus);
+        Assert.Equal(1, fixture.Adapter.ReleaseControlCalls);
+        var safetyAction = Assert.Single(await fixture.Database.PhysicalSafetyActions.AsNoTracking().ToListAsync());
+        Assert.Equal(PhysicalSafetyActionStatuses.Rejected, safetyAction.Status);
+        var (_, details) = await AssertFinalMoveReleaseAuditAsync(
+            fixture,
+            PhysicalSafetyActionStatuses.Rejected,
+            PhysicalSafetyActionStatuses.Rejected);
+        Assert.Equal(safetyAction.Id.ToString(), details["safetyActionId"]);
+        Assert.Equal(PhysicalSafetyActionStatuses.Rejected, details["safetyActionStatus"]);
+        Assert.Null(details["exceptionType"]);
+        Assert.Null(details["exceptionMessage"]);
+    }
+
+    [Fact]
+    public async Task Ambiguous_final_move_release_is_audited_as_unknown()
+    {
+        await using var fixture = await FinalMoveFixture.CreateAsync();
+        fixture.Adapter.ReleaseControlException = new TimeoutException("ambiguous release response");
+
+        await fixture.CompleteAsync();
+
+        Assert.Equal(WorkflowRuntimeStatus.Completed,
+            (await fixture.Workflows.GetExecutionAsync(fixture.ExecutionId, CancellationToken.None))!.RuntimeStatus);
+        Assert.Equal(1, fixture.Adapter.ReleaseControlCalls);
+        var safetyAction = Assert.Single(await fixture.Database.PhysicalSafetyActions.AsNoTracking().ToListAsync());
+        Assert.Equal(PhysicalSafetyActionStatuses.Unknown, safetyAction.Status);
+        var (_, details) = await AssertFinalMoveReleaseAuditAsync(
+            fixture,
+            PhysicalSafetyActionStatuses.Unknown,
+            PhysicalSafetyActionStatuses.Unknown);
+        Assert.Equal(safetyAction.Id.ToString(), details["safetyActionId"]);
+        Assert.Equal(PhysicalSafetyActionStatuses.Unknown, details["safetyActionStatus"]);
+        Assert.Contains(
+            "TimeoutException",
+            details["safetyActionResultSummary"] ?? string.Empty,
+            StringComparison.Ordinal);
+        Assert.Null(details["exceptionType"]);
+        Assert.Null(details["exceptionMessage"]);
+    }
+
+    [Fact]
+    public async Task Throwing_final_move_safety_action_is_audited_and_does_not_crash_worker()
+    {
+        await using var fixture = await FinalMoveFixture.CreateAsync();
+        var disposedDatabase = new MesDbContext(
+            new DbContextOptionsBuilder<MesDbContext>()
+                .UseSqlite("Data Source=:memory:")
+                .Options);
+        await disposedDatabase.DisposeAsync();
+        var throwingSafetyActions = new PhysicalSafetyActionService(
+            disposedDatabase,
+            fixture.Adapter,
+            null,
+            fixture.Profile,
+            fixture.Readiness);
+
+        await fixture.CompleteAsync(throwingSafetyActions);
+
+        Assert.Equal(WorkflowRuntimeStatus.Completed,
+            (await fixture.Workflows.GetExecutionAsync(fixture.ExecutionId, CancellationToken.None))!.RuntimeStatus);
+        Assert.Equal(0, fixture.Adapter.ReleaseControlCalls);
+        Assert.Empty(await fixture.Database.PhysicalSafetyActions.AsNoTracking().ToListAsync());
+        var (_, details) = await AssertFinalMoveReleaseAuditAsync(
+            fixture,
+            PhysicalSafetyActionStatuses.Unknown,
+            "Exception");
+        Assert.Null(details["safetyActionId"]);
+        Assert.Null(details["safetyActionStatus"]);
+        Assert.Equal(typeof(ObjectDisposedException).FullName, details["exceptionType"]);
+        Assert.False(string.IsNullOrWhiteSpace(details["exceptionMessage"]));
+    }
+
+    [Fact]
+    public async Task Final_move_audit_failure_is_detached_and_does_not_retry_release_or_crash_worker()
+    {
+        await using var fixture = await FinalMoveFixture.CreateAsync();
+        await fixture.Database.Database.ExecuteSqlRawAsync("""
+            CREATE TRIGGER FailFinalMoveReleaseAudit
+            BEFORE INSERT ON WorkflowAudits
+            WHEN NEW.EventType = 'WorkflowFinalMoveRelease'
+            BEGIN
+                SELECT RAISE(FAIL, 'simulated final Move release audit failure');
+            END;
+            """);
+
+        await fixture.CompleteAsync();
+        await fixture.CompleteAsync();
+
+        Assert.Equal(WorkflowRuntimeStatus.Completed,
+            (await fixture.Workflows.GetExecutionAsync(fixture.ExecutionId, CancellationToken.None))!.RuntimeStatus);
+        Assert.Equal(1, fixture.Adapter.ReleaseControlCalls);
+        Assert.Single(await fixture.Database.PhysicalSafetyActions.AsNoTracking().ToListAsync());
+        Assert.Empty(await fixture.Database.WorkflowAudits
+            .AsNoTracking()
+            .Where(audit => audit.EventType == "WorkflowFinalMoveRelease")
+            .ToListAsync());
+        Assert.DoesNotContain(
+            fixture.Database.ChangeTracker.Entries<WorkflowAuditRecord>(),
+            entry => entry.Entity.EventType == "WorkflowFinalMoveRelease");
     }
 
     [Theory]
@@ -666,6 +715,225 @@ public sealed class WorkflowFieldNavigationWorkerTests
         Assert.Empty(database.FieldNavigationAcceptances);
     }
 
+    private static async Task<(WorkflowAuditRecord Audit, Dictionary<string, string?> Details)>
+        AssertFinalMoveReleaseAuditAsync(
+            FinalMoveFixture fixture,
+            string expectedOutcome,
+            string expectedReleaseResult)
+    {
+        var audit = Assert.Single(await fixture.Database.WorkflowAudits
+            .AsNoTracking()
+            .Where(item => item.EventType == "WorkflowFinalMoveRelease")
+            .ToListAsync());
+        Assert.Equal(expectedOutcome, audit.Outcome);
+        Assert.Equal(fixture.WorkflowId, audit.WorkflowId);
+        Assert.Equal(fixture.Version, audit.Version);
+        Assert.Equal(fixture.RequestId, audit.RequestId);
+        Assert.Equal(fixture.ExecutionId, audit.ExecutionId);
+        Assert.Equal("operator", audit.Actor);
+
+        var details = JsonSerializer.Deserialize<Dictionary<string, string?>>(audit.DetailsJson)
+            ?? throw new InvalidOperationException("The final Move release audit details were empty.");
+        Assert.Equal(fixture.ExecutionId.ToString(), details["workflowRunId"]);
+        Assert.Equal(fixture.NodeExecutionId.ToString(), details["nodeExecutionId"]);
+        Assert.Equal(fixture.DeviceOperationId.ToString(), details["deviceOperationId"]);
+        Assert.Equal("true", details["releaseAttempted"]);
+        Assert.Equal(expectedReleaseResult, details["releaseResult"]);
+        Assert.Equal(WorkflowStepCompletionOutcome.Succeeded.ToString(), details["terminalOutcome"]);
+        Assert.Equal("workflow_final_move_completed", details["terminalReason"]);
+        Assert.Equal("completed its final Move node", details["terminalContext"]);
+        return (audit, details);
+    }
+
+    private sealed class FinalMoveFixture : IAsyncDisposable
+    {
+        private readonly SqliteConnection _connection;
+
+        private FinalMoveFixture(
+            SqliteConnection connection,
+            MesDbContext database,
+            ProfileConfiguration profile,
+            WorkflowApplicationService workflows,
+            FieldNavigationAcceptanceRepository repository,
+            FieldNavigationAcceptanceService acceptanceService,
+            FieldAcceptanceAdapter adapter,
+            TestPhysicalReadinessState readiness,
+            Guid requestId,
+            Guid executionId,
+            Guid workflowId,
+            int version,
+            Guid nodeExecutionId,
+            Guid deviceOperationId)
+        {
+            _connection = connection;
+            Database = database;
+            Profile = profile;
+            Workflows = workflows;
+            Repository = repository;
+            AcceptanceService = acceptanceService;
+            Adapter = adapter;
+            Readiness = readiness;
+            RequestId = requestId;
+            ExecutionId = executionId;
+            WorkflowId = workflowId;
+            Version = version;
+            NodeExecutionId = nodeExecutionId;
+            DeviceOperationId = deviceOperationId;
+        }
+
+        public MesDbContext Database { get; }
+        public ProfileConfiguration Profile { get; }
+        public WorkflowApplicationService Workflows { get; }
+        public FieldNavigationAcceptanceRepository Repository { get; }
+        public FieldNavigationAcceptanceService AcceptanceService { get; }
+        public FieldAcceptanceAdapter Adapter { get; }
+        public TestPhysicalReadinessState Readiness { get; }
+        public Guid RequestId { get; }
+        public Guid ExecutionId { get; }
+        public Guid WorkflowId { get; }
+        public int Version { get; }
+        public Guid NodeExecutionId { get; }
+        public Guid DeviceOperationId { get; }
+
+        public static async Task<FinalMoveFixture> CreateAsync()
+        {
+            var connection = new SqliteConnection("Data Source=:memory:");
+            await connection.OpenAsync();
+            var database = new MesDbContext(
+                new DbContextOptionsBuilder<MesDbContext>()
+                    .UseSqlite(connection)
+                    .Options);
+            await database.Database.EnsureCreatedAsync();
+            var profile = CreateProfile();
+            var validator = new WorkflowValidator(
+                BuiltInWorkflowCatalog.Create(),
+                WorkflowPublicationContext.FromProfile(profile));
+            var reader = new MesWorkflowVersionReader(database);
+            var workflows = new WorkflowApplicationService(
+                database,
+                reader,
+                new WorkflowRuntimeExecutor(reader, validator),
+                validator);
+            var draft = await workflows.CreateDraftAsync(
+                CreateSingleMoveWorkflow(),
+                "test",
+                CancellationToken.None);
+            Assert.True((await workflows.ValidateVersionAsync(
+                draft.WorkflowId,
+                draft.Version,
+                CancellationToken.None)).IsValid);
+            await workflows.PublishAsync(
+                draft.WorkflowId,
+                draft.Version,
+                "test",
+                CancellationToken.None);
+            var requestId = Guid.NewGuid();
+            var execution = await workflows.ExecuteAsync(new WorkflowExecutionRequest
+            {
+                WorkflowId = draft.WorkflowId,
+                Version = draft.Version,
+                RequestId = requestId,
+                RequestedBy = "operator",
+                PhysicalAuthorization = new WorkflowPhysicalRunAuthorization
+                {
+                    AgvId = "AGV-01",
+                    OperatorName = "operator",
+                    SafetyObserverName = "observer",
+                    PermitPrefix = "final-move",
+                    ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(1),
+                    DeviceEpochs = new Dictionary<string, long> { ["AGV-01"] = 1 },
+                    ReadinessSupervisorInstanceId = "test"
+                }
+            }, CancellationToken.None);
+            Assert.True(execution.IsAccepted);
+
+            var move = Assert.Single(await workflows.ListFieldNavigationDispatchableNodesAsync(
+                CancellationToken.None));
+            var adapter = new FieldAcceptanceAdapter();
+            var repository = new FieldNavigationAcceptanceRepository(database);
+            var acceptanceService = new FieldNavigationAcceptanceService(
+                repository,
+                adapter,
+                profile,
+                new PathPlanner(AgvMap.FromProfile(profile.Map)),
+                workflows: workflows);
+            var draftAcceptance = await acceptanceService.CreateAsync(
+                new CreateFieldNavigationAcceptanceRequest("AGV-01", "LM1", "LM4")
+                {
+                    WorkflowRunId = execution.ExecutionId,
+                    WorkflowNodeExecutionId = move.NodeExecution.Id
+                },
+                CancellationToken.None);
+            await acceptanceService.AuthorizeAsync(
+                draftAcceptance.Id,
+                new AuthorizeFieldNavigationAcceptanceRequest(
+                    "operator", "observer", "permit-final-move", DateTimeOffset.UtcNow.AddHours(1))
+                {
+                    DeviceEpoch = 1,
+                    ReadinessSupervisorInstanceId = "test"
+                },
+                CancellationToken.None);
+            var readiness = new TestPhysicalReadinessState(
+                enabled: true,
+                supervisorInstanceId: "test",
+                deviceEpoch: 1,
+                reason: "test readiness failure");
+            var dispatcher = new WorkflowFieldNavigationDispatcher(
+                workflows,
+                acceptanceService,
+                repository,
+                profile,
+                new WorkflowFieldNavigationWorkerOptions { Enabled = true },
+                agv: adapter,
+                physicalReadiness: readiness);
+
+            await dispatcher.ProcessAsync(CancellationToken.None);
+            var acceptance = await repository.GetAsync(draftAcceptance.Id, CancellationToken.None)
+                ?? throw new InvalidOperationException("The final Move acceptance was not found.");
+            Assert.True(acceptance.WorkflowDeviceOperationId.HasValue);
+            acceptance.Status = FieldNavigationAcceptanceStatuses.Arrived;
+            await repository.SaveWithAuditAsync(
+                acceptance,
+                "AdapterStateReconciled",
+                new { state = "arrived" },
+                CancellationToken.None);
+
+            return new FinalMoveFixture(
+                connection,
+                database,
+                profile,
+                workflows,
+                repository,
+                acceptanceService,
+                adapter,
+                readiness,
+                requestId,
+                execution.ExecutionId,
+                draft.WorkflowId,
+                draft.Version,
+                move.NodeExecution.Id,
+                acceptance.WorkflowDeviceOperationId.Value);
+        }
+
+        public Task CompleteAsync(PhysicalSafetyActionService? safetyActions = null) =>
+            new WorkflowFieldNavigationDispatcher(
+                Workflows,
+                AcceptanceService,
+                Repository,
+                Profile,
+                new WorkflowFieldNavigationWorkerOptions { Enabled = true },
+                agv: Adapter,
+                physicalReadiness: Readiness,
+                safetyActions: safetyActions)
+            .ProcessAsync(CancellationToken.None);
+
+        public async ValueTask DisposeAsync()
+        {
+            await Database.DisposeAsync();
+            await _connection.DisposeAsync();
+        }
+    }
+
     private static ProfileConfiguration CreateProfile() => new()
     {
         Product = new ProductProfile { ProductId = "MES-AGV", DisplayName = "test", Version = "1.0" },
@@ -834,6 +1102,7 @@ public sealed class WorkflowFieldNavigationWorkerTests
     {
         public int DispatchCalls { get; private set; }
         public int ReleaseControlCalls { get; private set; }
+        public bool ReleaseControlResult { get; set; } = true;
         public Exception? ReleaseControlException { get; set; }
 
         public Task<AgvTaskResponse> DispatchFieldNavigationAcceptanceAsync(
@@ -878,7 +1147,7 @@ public sealed class WorkflowFieldNavigationWorkerTests
             ReleaseControlCalls++;
             if (ReleaseControlException is not null)
                 return Task.FromException<bool>(ReleaseControlException);
-            return Task.FromResult(true);
+            return Task.FromResult(ReleaseControlResult);
         }
     }
 
