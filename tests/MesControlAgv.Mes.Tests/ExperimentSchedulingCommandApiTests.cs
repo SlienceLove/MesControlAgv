@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using MesControlAgv.Contracts.Experiments;
+using MesControlAgv.Contracts.Materials;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Mes.Data;
@@ -640,6 +641,109 @@ public sealed class ExperimentSchedulingCommandApiTests : IClassFixture<MesWebAp
         Assert.Equal(ScheduleEntryStatus.Scheduled, scheduled.Status);
         Assert.Empty(scheduled.BlockingReasons);
         Assert.Single(scheduled.Reservations);
+    }
+
+    [Fact]
+    public async Task Scheduling_reserves_job_sample_and_unscheduling_releases_it()
+    {
+        var workflow = await PublishWorkflowAsync();
+        var plan = await CreatePublishedPlanAsync(workflow);
+        var sampleId = Guid.NewGuid();
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            var now = DateTime.UtcNow;
+            database.SampleMaterials.Add(new SampleMaterialRecord
+            {
+                SampleId = sampleId,
+                Barcode = "SCHED-SAMPLE-" + Guid.NewGuid().ToString("N"),
+                SampleBatchId = "SCHED-BATCH",
+                Status = SampleLifecycleStatus.Available.ToString(),
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now
+            });
+            await database.SaveChangesAsync();
+        }
+
+        var jobResponse = await _client.PostAsJsonAsync("/api/experiment-jobs", new CreateExperimentJobRequest
+        {
+            RequestId = Guid.NewGuid(),
+            Actor = "sample-schedule-test",
+            Reason = "Create sample-backed job",
+            PlanId = plan.PlanId,
+            PlanVersion = plan.Version,
+            SampleBatchId = "SCHED-BATCH",
+            SampleId = sampleId.ToString()
+        });
+        jobResponse.EnsureSuccessStatusCode();
+        var job = (await jobResponse.Content.ReadFromJsonAsync<ExperimentJob>())!;
+
+        var start = new DateTimeOffset(2035, 1, 2, 9, 0, 0, TimeSpan.Zero);
+        var scheduleResponse = await _client.PutAsJsonAsync(
+            $"/api/experiment-jobs/{job.JobId}/schedule",
+            Schedule(start, start.AddHours(1), 10, "Reserve the scheduled sample"));
+        scheduleResponse.EnsureSuccessStatusCode();
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            var binding = await database.ExperimentJobMaterialBindings.SingleAsync(
+                item => item.ExperimentJobId == job.JobId);
+            Assert.Equal(sampleId, binding.SampleId);
+            Assert.Equal(MaterialBindingStatus.Reserved.ToString(), binding.Status);
+            Assert.Equal(SampleLifecycleStatus.Reserved.ToString(),
+                await database.SampleMaterials.Where(item => item.SampleId == sampleId)
+                    .Select(item => item.Status).SingleAsync());
+        }
+
+        var unschedule = await _client.PostAsJsonAsync(
+            $"/api/experiment-jobs/{job.JobId}/unschedule",
+            Action("Release the scheduled sample"));
+        unschedule.EnsureSuccessStatusCode();
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            Assert.Equal(SampleLifecycleStatus.Available.ToString(),
+                await database.SampleMaterials.Where(item => item.SampleId == sampleId)
+                    .Select(item => item.Status).SingleAsync());
+            Assert.Equal(MaterialBindingStatus.Released.ToString(),
+                await database.ExperimentJobMaterialBindings
+                    .Where(item => item.ExperimentJobId == job.JobId)
+                    .Select(item => item.Status).SingleAsync());
+        }
+    }
+
+    [Fact]
+    public async Task Scheduling_rejects_unregistered_job_sample_without_changing_job_state()
+    {
+        var workflow = await PublishWorkflowAsync();
+        var plan = await CreatePublishedPlanAsync(workflow);
+        var jobResponse = await _client.PostAsJsonAsync("/api/experiment-jobs", new CreateExperimentJobRequest
+        {
+            RequestId = Guid.NewGuid(),
+            Actor = "sample-schedule-test",
+            Reason = "Create missing-sample job",
+            PlanId = plan.PlanId,
+            PlanVersion = plan.Version,
+            SampleBatchId = "MISSING-SAMPLE-BATCH",
+            SampleId = Guid.NewGuid().ToString()
+        });
+        jobResponse.EnsureSuccessStatusCode();
+        var job = (await jobResponse.Content.ReadFromJsonAsync<ExperimentJob>())!;
+
+        var start = new DateTimeOffset(2036, 1, 2, 9, 0, 0, TimeSpan.Zero);
+        var response = await _client.PutAsJsonAsync(
+            $"/api/experiment-jobs/{job.JobId}/schedule",
+            Schedule(start, start.AddHours(1), 10, "Reject missing sample"));
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var error = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(MaterialIssueCodes.SampleNotFound, error.GetProperty("code").GetString());
+
+        using var scope = _factory.Services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+        Assert.Equal(ExperimentJobStatus.Ready.ToString(),
+            await database.ExperimentJobs.Where(item => item.JobId == job.JobId)
+                .Select(item => item.Status).SingleAsync());
     }
 
     private async Task<WorkflowVersion> PublishWorkflowAsync()

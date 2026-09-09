@@ -592,6 +592,7 @@ public sealed class ExperimentSchedulingCommandService(
             ? await materials.ReserveForExperimentAsync(
                 job.JobId,
                 materialRequirements,
+                job.SampleId,
                 DeriveRequestId(metadata.RequestId, "material-reserve"),
                 metadata.Actor,
                 metadata.Reason,

@@ -247,6 +247,17 @@ public static class ExperimentSchedulingEndpointRouteBuilderExtensions
         {
             return success(await action());
         }
+        catch (MaterialManagementException exception)
+        {
+            return Results.Json(
+                new
+                {
+                    code = exception.Code,
+                    detail = exception.Message,
+                    issues = exception.Issues
+                },
+                statusCode: exception.StatusCode);
+        }
         catch (ArgumentException exception)
         {
             return Results.BadRequest(new { detail = exception.Message });

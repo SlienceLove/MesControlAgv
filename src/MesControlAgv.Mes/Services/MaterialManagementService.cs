@@ -84,6 +84,7 @@ public interface IMaterialManagementService
     Task<MaterialReservationResult> ReserveForExperimentAsync(
         Guid experimentJobId,
         IReadOnlyList<ExperimentMaterialRequirement> requirements,
+        string? sampleId,
         Guid requestId,
         string actor,
         string reason,
@@ -744,6 +745,7 @@ public sealed class MaterialManagementService : IMaterialManagementService
     public async Task<MaterialReservationResult> ReserveForExperimentAsync(
         Guid experimentJobId,
         IReadOnlyList<ExperimentMaterialRequirement> requirements,
+        string? sampleId,
         Guid requestId,
         string actor,
         string reason,
@@ -752,7 +754,28 @@ public sealed class MaterialManagementService : IMaterialManagementService
         var positiveRequirements = requirements
             .Where(item => item.Quantity is > 0)
             .ToArray();
-        if (positiveRequirements.Length == 0)
+        string? sampleBarcode = null;
+        if (!string.IsNullOrWhiteSpace(sampleId))
+        {
+            var normalizedSampleId = Normalize(sampleId);
+            SampleMaterialRecord? sample = null;
+            if (Guid.TryParse(normalizedSampleId, out var parsedSampleId))
+            {
+                sample = await _database.SampleMaterials.SingleOrDefaultAsync(
+                    item => item.SampleId == parsedSampleId,
+                    cancellationToken);
+            }
+            sample ??= await _database.SampleMaterials.SingleOrDefaultAsync(
+                item => item.Barcode.ToUpper() == normalizedSampleId,
+                cancellationToken);
+            if (sample is null)
+                throw Issue(
+                    MaterialIssueCodes.SampleNotFound,
+                    "任务引用的样品不存在。",
+                    StatusCodes.Status404NotFound);
+            sampleBarcode = sample.Barcode;
+        }
+        if (positiveRequirements.Length == 0 && sampleBarcode is null)
         {
             return new MaterialReservationResult
             {
@@ -784,6 +807,7 @@ public sealed class MaterialManagementService : IMaterialManagementService
                 ExperimentJobId = experimentJobId,
                 Actor = actor,
                 Reason = reason,
+                SampleBarcode = sampleBarcode,
                 Requirements = positiveRequirements
                     .Select(item => new MaterialReservationLine
                     {
@@ -1293,7 +1317,9 @@ public sealed class MaterialManagementService : IMaterialManagementService
         if (!string.IsNullOrWhiteSpace(request.SampleBarcode))
         {
             var sample = await _database.SampleMaterials
-                .SingleOrDefaultAsync(item => item.Barcode == Normalize(request.SampleBarcode), cancellationToken)
+                .SingleOrDefaultAsync(
+                    item => item.Barcode.ToUpper() == Normalize(request.SampleBarcode),
+                    cancellationToken)
                 ?? throw Issue(MaterialIssueCodes.SampleNotFound, "样品不存在。", StatusCodes.Status404NotFound);
             var sampleStatus = ParseEnum(sample.Status, SampleLifecycleStatus.Unknown);
             if (sampleStatus != SampleLifecycleStatus.Available)
