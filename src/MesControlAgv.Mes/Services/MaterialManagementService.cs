@@ -254,6 +254,7 @@ public sealed class MaterialManagementService : IMaterialManagementService
         var acceptedCount = 0;
 
         var sampleBarcodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var importBarcodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (var index = 0; index < request.Samples.Count; index++)
         {
             var row = request.Samples[index];
@@ -275,6 +276,11 @@ public sealed class MaterialManagementService : IMaterialManagementService
             if (!sampleBarcodes.Add(barcode))
             {
                 issues.Add(ImportIssue(rowNumber, MaterialIssueCodes.SampleAlreadyExists, "导入数据中存在重复样品条码。", nameof(row.Barcode)));
+                continue;
+            }
+            if (!importBarcodes.Add(barcode))
+            {
+                issues.Add(ImportIssue(rowNumber, MaterialIssueCodes.BarcodeAlreadyExists, "導入資料中存在跨類型重複條碼。", nameof(row.Barcode)));
                 continue;
             }
 
@@ -299,6 +305,12 @@ public sealed class MaterialManagementService : IMaterialManagementService
                     existingCount++;
                 }
 
+                continue;
+            }
+
+            if (await _database.MaterialLots.AsNoTracking().AnyAsync(lot => lot.Barcode == barcode, cancellationToken))
+            {
+                issues.Add(ImportIssue(rowNumber, MaterialIssueCodes.BarcodeAlreadyExists, "條碼已被耗材批次使用。", nameof(row.Barcode)));
                 continue;
             }
 
@@ -343,6 +355,26 @@ public sealed class MaterialManagementService : IMaterialManagementService
                 continue;
             }
 
+            var lotBarcode = NormalizeOptional(row.Barcode);
+            if (lotBarcode is not null)
+            {
+                if (!importBarcodes.Add(lotBarcode))
+                {
+                    issues.Add(ImportIssue(rowNumber, MaterialIssueCodes.BarcodeAlreadyExists, "導入資料中存在跨類型重複條碼。", nameof(row.Barcode)));
+                    continue;
+                }
+                if (await _database.SampleMaterials.AnyAsync(item => item.Barcode == lotBarcode, cancellationToken))
+                {
+                    issues.Add(ImportIssue(rowNumber, MaterialIssueCodes.BarcodeAlreadyExists, "條碼已被樣品使用。", nameof(row.Barcode)));
+                    continue;
+                }
+                if (await _database.MaterialLots.AnyAsync(item => item.Barcode == lotBarcode && !(item.MaterialCode == materialCode && item.LotCode == lotCode), cancellationToken))
+                {
+                    issues.Add(ImportIssue(rowNumber, MaterialIssueCodes.BarcodeAlreadyExists, "條碼已被其他耗材批次使用。", nameof(row.Barcode)));
+                    continue;
+                }
+            }
+
             if (!await LocationExistsAsync(row.LocationCode, cancellationToken))
             {
                 issues.Add(ImportIssue(rowNumber, MaterialIssueCodes.LocationNotFound, "耗材库位不存在或已停用。", nameof(row.LocationCode)));
@@ -354,6 +386,16 @@ public sealed class MaterialManagementService : IMaterialManagementService
                 .SingleOrDefaultAsync(lot => lot.MaterialCode == materialCode && lot.LotCode == lotCode, cancellationToken);
             if (existingLot is not null)
             {
+                if (existingLot.IsQuarantined)
+                {
+                    issues.Add(ImportIssue(rowNumber, MaterialIssueCodes.Quarantined, "耗材批次已隔離，不能增加庫存。", nameof(row.LotCode)));
+                    continue;
+                }
+                if (existingLot.ExpiryDateUtc is not null && existingLot.ExpiryDateUtc <= Now())
+                {
+                    issues.Add(ImportIssue(rowNumber, MaterialIssueCodes.Expired, "耗材批次已過期，不能增加庫存。", nameof(row.LotCode)));
+                    continue;
+                }
                 existingCount++;
             }
 
@@ -538,6 +580,9 @@ public sealed class MaterialManagementService : IMaterialManagementService
             .AsNoTracking()
             .Where(item =>
                 (experimentJobId == null || item.ExperimentJobId == experimentJobId) &&
+                (normalizedBarcode == null ||
+                    (item.LotId != null && _database.MaterialLots.Any(lot => lot.LotId == item.LotId && lot.Barcode == normalizedBarcode)) ||
+                    (item.SampleId != null && _database.SampleMaterials.Any(sample => sample.SampleId == item.SampleId && sample.Barcode == normalizedBarcode))) &&
                 (normalizedMaterial == null || item.LotId != null &&
                     _database.MaterialLots.Any(lot => lot.LotId == item.LotId && lot.MaterialCode == normalizedMaterial)) &&
                 (normalizedLot == null || item.LotId != null &&
@@ -545,6 +590,13 @@ public sealed class MaterialManagementService : IMaterialManagementService
             .OrderByDescending(item => item.UpdatedAtUtc)
             .Take(limit)
             .ToListAsync(cancellationToken);
+
+        var lotIds = bindings.Where(item => item.LotId is not null).Select(item => item.LotId!.Value).Distinct().ToArray();
+        var sampleIds = bindings.Where(item => item.SampleId is not null).Select(item => item.SampleId!.Value).Distinct().ToArray();
+        var bindingLots = await _database.MaterialLots.AsNoTracking()
+            .Where(item => lotIds.Contains(item.LotId)).ToDictionaryAsync(item => item.LotId, cancellationToken);
+        var bindingSamples = await _database.SampleMaterials.AsNoTracking()
+            .Where(item => sampleIds.Contains(item.SampleId)).ToDictionaryAsync(item => item.SampleId, cancellationToken);
 
         var result = new List<MaterialTraceEvent>(transactions.Count + scans.Count + bindings.Count);
         result.AddRange(transactions.Select(item => new MaterialTraceEvent
@@ -571,18 +623,24 @@ public sealed class MaterialManagementService : IMaterialManagementService
             Reason = item.IssueCode,
             OccurredAt = ToOffset(item.OccurredAtUtc)
         }));
-        result.AddRange(bindings.Select(item => new MaterialTraceEvent
+        result.AddRange(bindings.Select(item =>
         {
-            Id = item.BindingId,
-            EventType = "binding." + item.Status.ToLowerInvariant(),
-            MaterialCode = item.LotId is null ? null : normalizedMaterial,
-            LotCode = normalizedLot,
-            Quantity = item.Quantity,
-            Unit = item.Unit,
-            ExperimentJobId = item.ExperimentJobId,
-            Actor = item.Actor,
-            Reason = item.Reason,
-            OccurredAt = ToOffset(item.UpdatedAtUtc)
+            bindingLots.TryGetValue(item.LotId ?? Guid.Empty, out var bindingLot);
+            bindingSamples.TryGetValue(item.SampleId ?? Guid.Empty, out var bindingSample);
+            return new MaterialTraceEvent
+            {
+                Id = item.BindingId,
+                EventType = "binding." + item.Status.ToLowerInvariant(),
+                Barcode = bindingLot?.Barcode ?? bindingSample?.Barcode,
+                MaterialCode = bindingLot?.MaterialCode ?? bindingSample?.MaterialCode,
+                LotCode = bindingLot?.LotCode,
+                Quantity = item.Quantity,
+                Unit = item.Unit,
+                ExperimentJobId = item.ExperimentJobId,
+                Actor = item.Actor,
+                Reason = item.Reason,
+                OccurredAt = ToOffset(item.UpdatedAtUtc)
+            };
         }));
 
         return result
@@ -681,6 +739,9 @@ public sealed class MaterialManagementService : IMaterialManagementService
                 continue;
             }
 
+            if (await _database.MaterialLots.AnyAsync(lot => lot.Barcode == barcode, cancellationToken))
+                throw Issue(MaterialIssueCodes.BarcodeAlreadyExists, "條碼已被耗材批次使用。", StatusCodes.Status409Conflict);
+
             var location = await RequireLocationAsync(row.LocationCode, cancellationToken);
             var sample = new SampleMaterialRecord
             {
@@ -746,6 +807,7 @@ public sealed class MaterialManagementService : IMaterialManagementService
                     UpdatedAtUtc = now
                 };
                 await ValidateLotBarcodeConflictAsync(lot.Barcode, null, cancellationToken);
+                await ValidateCrossTypeBarcodeConflictAsync(lot.Barcode, cancellationToken);
                 _database.MaterialLots.Add(lot);
                 importedLots++;
             }
@@ -753,6 +815,13 @@ public sealed class MaterialManagementService : IMaterialManagementService
             {
                 existingCount++;
                 EnsureLotCompatible(lot, row.Barcode, row.ExpiryDate);
+                EnsureLotUsableForMutation(lot, now, catalog);
+                if (lot.Barcode is null && NormalizeOptional(row.Barcode) is { } suppliedBarcode)
+                {
+                    await ValidateLotBarcodeConflictAsync(suppliedBarcode, lot.LotId, cancellationToken);
+                    await ValidateCrossTypeBarcodeConflictAsync(suppliedBarcode, cancellationToken);
+                    lot.Barcode = suppliedBarcode;
+                }
             }
 
             var balance = await GetOrCreateBalanceAsync(lot, location, now, cancellationToken);
@@ -804,7 +873,13 @@ public sealed class MaterialManagementService : IMaterialManagementService
         var message = (string?)null;
         var resolved = true;
 
-        if (requestedKind != MaterialScanKind.Unknown && actualKind != MaterialScanKind.Unknown && requestedKind != actualKind)
+        if (sample is not null && lot is not null)
+        {
+            resolved = false;
+            issueCode = MaterialIssueCodes.BarcodeAlreadyExists;
+            message = "條碼同時匹配樣品和耗材批次，無法解析。";
+        }
+        else if (requestedKind != MaterialScanKind.Unknown && actualKind != MaterialScanKind.Unknown && requestedKind != actualKind)
         {
             resolved = false;
             issueCode = MaterialIssueCodes.BarcodeKindMismatch;
@@ -824,12 +899,35 @@ public sealed class MaterialManagementService : IMaterialManagementService
             message = "样品已过期。";
         }
 
+        if (resolved && lot is not null)
+        {
+            var now = NowUtc();
+            if (lot.IsQuarantined)
+            {
+                resolved = false;
+                issueCode = MaterialIssueCodes.Quarantined;
+                message = "耗材批次已隔離。";
+            }
+            else if (lot.ExpiryDateUtc is not null && lot.ExpiryDateUtc <= now)
+            {
+                resolved = false;
+                issueCode = MaterialIssueCodes.Expired;
+                message = "耗材批次已過期。";
+            }
+        }
+
         var locationById = await _database.WarehouseLocations
             .AsNoTracking()
             .ToDictionaryAsync(item => item.LocationId, cancellationToken);
         var catalogByCode = await _database.MaterialCatalog
             .AsNoTracking()
             .ToDictionaryAsync(item => item.MaterialCode, StringComparer.OrdinalIgnoreCase, cancellationToken);
+        if (resolved && lot is not null && catalogByCode.TryGetValue(lot.MaterialCode, out var lotCatalog) && !lotCatalog.IsEnabled)
+        {
+            resolved = false;
+            issueCode = MaterialIssueCodes.MaterialDisabled;
+            message = "物料已停用。";
+        }
         var mappedSample = sample is null ? null : ToSample(sample, locationById);
         var mappedLot = lot is null
             ? null
@@ -880,6 +978,10 @@ public sealed class MaterialManagementService : IMaterialManagementService
         var lotCode = Normalize(request.LotCode);
         var location = await RequireLocationAsync(request.LocationCode, cancellationToken);
         var now = NowUtc();
+        if (request.ExpiryDate is not null && request.ExpiryDate.Value.UtcDateTime <= now)
+        {
+            throw Issue(MaterialIssueCodes.Expired, "耗材批次已过期，不能入库。", StatusCodes.Status409Conflict);
+        }
         var catalog = await GetOrCreateCatalogAsync(
             materialCode,
             request.MaterialName,
@@ -907,11 +1009,18 @@ public sealed class MaterialManagementService : IMaterialManagementService
                 UpdatedAtUtc = now
             };
             await ValidateLotBarcodeConflictAsync(lot.Barcode, null, cancellationToken);
+            await ValidateCrossTypeBarcodeConflictAsync(lot.Barcode, cancellationToken);
             _database.MaterialLots.Add(lot);
         }
         else
         {
             EnsureLotCompatible(lot, request.Barcode, request.ExpiryDate);
+            if (lot.Barcode is null && NormalizeOptional(request.Barcode) is { } suppliedBarcode)
+            {
+                await ValidateLotBarcodeConflictAsync(suppliedBarcode, lot.LotId, cancellationToken);
+                await ValidateCrossTypeBarcodeConflictAsync(suppliedBarcode, cancellationToken);
+                lot.Barcode = suppliedBarcode;
+            }
             if (lot.IsQuarantined) throw Issue(MaterialIssueCodes.Quarantined, "耗材批次已隔离。", StatusCodes.Status409Conflict);
             if (lot.ExpiryDateUtc is not null && lot.ExpiryDateUtc <= now) throw Issue(MaterialIssueCodes.Expired, "耗材批次已过期。", StatusCodes.Status409Conflict);
         }
@@ -948,6 +1057,7 @@ public sealed class MaterialManagementService : IMaterialManagementService
         var lot = await _database.MaterialLots.SingleOrDefaultAsync(item => item.LotId == request.LotId, cancellationToken)
             ?? throw Issue(MaterialIssueCodes.LotNotFound, "耗材批次不存在。", StatusCodes.Status404NotFound);
         var catalog = await _database.MaterialCatalog.SingleAsync(item => item.MaterialId == lot.MaterialId, cancellationToken);
+        EnsureLotUsableForMutation(lot, NowUtc(), catalog);
         var source = await ResolveBalanceLocationAsync(lot.LotId, request.FromLocationCode, cancellationToken);
         var target = await RequireLocationAsync(request.ToLocationCode, cancellationToken);
         if (source.Location.LocationId == target.LocationId)
@@ -1002,6 +1112,7 @@ public sealed class MaterialManagementService : IMaterialManagementService
         var lot = await _database.MaterialLots.SingleOrDefaultAsync(item => item.LotId == request.LotId, cancellationToken)
             ?? throw Issue(MaterialIssueCodes.LotNotFound, "耗材批次不存在。", StatusCodes.Status404NotFound);
         var catalog = await _database.MaterialCatalog.SingleAsync(item => item.MaterialId == lot.MaterialId, cancellationToken);
+        EnsureLotUsableForMutation(lot, NowUtc(), catalog);
         var selected = await ResolveBalanceLocationAsync(lot.LotId, request.LocationCode, cancellationToken);
         var next = selected.Balance.OnHand + request.QuantityDelta;
         if (next < 0 || next < selected.Balance.Reserved)
@@ -1093,6 +1204,17 @@ public sealed class MaterialManagementService : IMaterialManagementService
         {
             ValidatePositive(requirement.Quantity);
             var materialCode = Normalize(requirement.MaterialCode);
+            if (NormalizeOptional(requirement.LotCode) is { } requestedLotCode)
+            {
+                var requestedLot = await _database.MaterialLots.SingleOrDefaultAsync(
+                    item => item.MaterialCode == materialCode && item.LotCode == requestedLotCode,
+                    cancellationToken);
+                if (requestedLot is not null)
+                {
+                    var requestedCatalog = await _database.MaterialCatalog.SingleAsync(item => item.MaterialId == requestedLot.MaterialId, cancellationToken);
+                    EnsureLotUsableForMutation(requestedLot, now, requestedCatalog);
+                }
+            }
             var allocations = await AllocateLotBalancesAsync(
                 materialCode,
                 requirement.LotCode,
@@ -1155,7 +1277,17 @@ public sealed class MaterialManagementService : IMaterialManagementService
         {
             if (binding.LotId is not null)
             {
-                var balance = await FindBalanceForReservedQuantityAsync(binding.LotId.Value, binding.Quantity, cancellationToken)
+                var reservationTransaction = await _database.InventoryTransactions
+                    .AsNoTracking()
+                    .SingleOrDefaultAsync(item =>
+                        item.RequestId == binding.RequestId &&
+                        item.LineKey == "reserve:" + binding.LineKey,
+                        cancellationToken);
+                var balance = await FindBalanceForReservedQuantityAsync(
+                        binding.LotId.Value,
+                        binding.Quantity,
+                        reservationTransaction?.ToLocationId,
+                        cancellationToken)
                     ?? throw Issue(MaterialIssueCodes.InventoryStateInvalid, "预占库存记录不完整。", StatusCodes.Status409Conflict);
                 balance.Reserved -= binding.Quantity;
                 balance.UpdatedAtUtc = now;
@@ -1214,8 +1346,45 @@ public sealed class MaterialManagementService : IMaterialManagementService
         if (!string.IsNullOrWhiteSpace(request.SampleBarcode))
         {
             var sampleCode = Normalize(request.SampleBarcode);
-            bindings = bindings.Where(item => item.SampleId is not null &&
-                _database.SampleMaterials.Any(sample => sample.SampleId == item.SampleId && sample.Barcode == sampleCode)).ToList();
+            var sampleId = await _database.SampleMaterials
+                .Where(sample => sample.Barcode == sampleCode)
+                .Select(sample => (Guid?)sample.SampleId)
+                .SingleOrDefaultAsync(cancellationToken);
+            bindings = bindings.Where(item => item.SampleId == sampleId).ToList();
+        }
+
+        if (request.Materials.Count > 0)
+        {
+            var lotIds = bindings
+                .Where(item => item.LotId is not null)
+                .Select(item => item.LotId!.Value)
+                .Distinct()
+                .ToList();
+            var lots = await _database.MaterialLots
+                .Where(lot => lotIds.Contains(lot.LotId))
+                .ToDictionaryAsync(lot => lot.LotId, cancellationToken);
+            var selected = new List<ExperimentJobMaterialBindingRecord>();
+            foreach (var requirement in request.Materials)
+            {
+                ValidatePositive(requirement.Quantity);
+                var materialCode = Normalize(requirement.MaterialCode);
+                var lotCode = NormalizeOptional(requirement.LotCode);
+                var matches = bindings.Where(binding =>
+                    binding.LotId is not null &&
+                    lots.TryGetValue(binding.LotId.Value, out var lot) &&
+                    string.Equals(lot.MaterialCode, materialCode, StringComparison.OrdinalIgnoreCase) &&
+                    (lotCode is null || string.Equals(lot.LotCode, lotCode, StringComparison.OrdinalIgnoreCase))).ToList();
+                var matchedQuantity = matches.Sum(binding => binding.Quantity);
+                if (matches.Count == 0 || matchedQuantity != requirement.Quantity)
+                {
+                    throw Issue(MaterialIssueCodes.BindingConflict, "请求的消耗数量与已预占物料不一致。", StatusCodes.Status409Conflict);
+                }
+                selected.AddRange(matches);
+            }
+
+            bindings = selected
+                .DistinctBy(binding => binding.BindingId)
+                .ToList();
         }
         if (bindings.Count == 0)
             throw Issue(MaterialIssueCodes.BindingConflict, "没有可消耗的预占物料。", StatusCodes.Status409Conflict);
@@ -1225,7 +1394,17 @@ public sealed class MaterialManagementService : IMaterialManagementService
         {
             if (binding.LotId is not null)
             {
-                var balance = await FindBalanceForReservedQuantityAsync(binding.LotId.Value, binding.Quantity, cancellationToken)
+                var reservationTransaction = await _database.InventoryTransactions
+                    .AsNoTracking()
+                    .SingleOrDefaultAsync(item =>
+                        item.RequestId == binding.RequestId &&
+                        item.LineKey == "reserve:" + binding.LineKey,
+                        cancellationToken);
+                var balance = await FindBalanceForReservedQuantityAsync(
+                        binding.LotId.Value,
+                        binding.Quantity,
+                        reservationTransaction?.ToLocationId,
+                        cancellationToken)
                     ?? throw Issue(MaterialIssueCodes.InventoryInsufficient, "预占库存不足以完成消耗。", StatusCodes.Status409Conflict);
                 balance.OnHand -= binding.Quantity;
                 balance.Reserved -= binding.Quantity;
@@ -1396,6 +1575,18 @@ public sealed class MaterialManagementService : IMaterialManagementService
             .ThenBy(lot => lot.CreatedAtUtc)
             .ToListAsync(cancellationToken);
         var now = NowUtc();
+        var catalog = await _database.MaterialCatalog
+            .SingleOrDefaultAsync(item => item.MaterialCode == materialCode, cancellationToken);
+        if (catalog is null)
+        {
+            throw Issue(MaterialIssueCodes.MaterialNotFound, "物料编码不存在。", StatusCodes.Status404NotFound);
+        }
+
+        if (!catalog.IsEnabled)
+        {
+            throw Issue(MaterialIssueCodes.MaterialDisabled, "物料已停用，不能预占。", StatusCodes.Status409Conflict);
+        }
+
         var allocations = new List<(MaterialLotRecord, WarehouseLocationRecord, InventoryBalanceRecord, decimal)>();
         var remaining = quantity;
         foreach (var lot in lots)
@@ -1438,10 +1629,14 @@ public sealed class MaterialManagementService : IMaterialManagementService
     private async Task<InventoryBalanceRecord?> FindBalanceForReservedQuantityAsync(
         Guid lotId,
         decimal quantity,
+        Guid? locationId,
         CancellationToken cancellationToken)
     {
         return await _database.InventoryBalances
-            .Where(item => item.LotId == lotId && item.Reserved >= quantity && item.OnHand >= quantity)
+            .Where(item => item.LotId == lotId &&
+                           (locationId == null || item.LocationId == locationId) &&
+                           item.Reserved >= quantity &&
+                           item.OnHand >= quantity)
             .OrderBy(item => item.LocationId)
             .FirstOrDefaultAsync(cancellationToken);
     }
@@ -1655,7 +1850,9 @@ public sealed class MaterialManagementService : IMaterialManagementService
 
         if (kind == MaterialScanKind.ConsumableLot && lot is not null)
         {
-            return lot.IsQuarantined ? new[] { "trace" } : new[] { "receive", "move", "reserve", "trace" };
+            return lot.IsQuarantined || lot.ExpiryDateUtc is not null && lot.ExpiryDateUtc <= DateTime.UtcNow
+                ? new[] { "trace" }
+                : new[] { "receive", "move", "reserve", "trace" };
         }
 
         return Array.Empty<string>();
@@ -1668,6 +1865,16 @@ public sealed class MaterialManagementService : IMaterialManagementService
             throw Issue(MaterialIssueCodes.LotAlreadyExists, "同一物料批号对应的条码不一致。", StatusCodes.Status409Conflict);
         if (expiry is not null && lot.ExpiryDateUtc is not null && lot.ExpiryDateUtc != expiry.Value.UtcDateTime)
             throw Issue(MaterialIssueCodes.LotAlreadyExists, "同一物料批号的有效期不一致。", StatusCodes.Status409Conflict);
+    }
+
+    private static void EnsureLotUsableForMutation(MaterialLotRecord lot, DateTime now, MaterialCatalogRecord? catalog = null)
+    {
+        if (catalog is not null && !catalog.IsEnabled)
+            throw Issue(MaterialIssueCodes.MaterialDisabled, "物料已停用，不能改变库存。", StatusCodes.Status409Conflict);
+        if (lot.IsQuarantined)
+            throw Issue(MaterialIssueCodes.Quarantined, "耗材批次已隔离，不能改变库存。", StatusCodes.Status409Conflict);
+        if (lot.ExpiryDateUtc is not null && lot.ExpiryDateUtc <= now)
+            throw Issue(MaterialIssueCodes.Expired, "耗材批次已过期，不能改变库存。", StatusCodes.Status409Conflict);
     }
 
     private async Task ValidateLotBarcodeConflictAsync(
@@ -1689,6 +1896,15 @@ public sealed class MaterialManagementService : IMaterialManagementService
         {
             throw Issue(MaterialIssueCodes.LotAlreadyExists, "耗材条码已被其他批次使用。", StatusCodes.Status409Conflict);
         }
+    }
+
+    private async Task ValidateCrossTypeBarcodeConflictAsync(string? barcode, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(barcode)) return;
+        var normalized = Normalize(barcode);
+        if (await _database.SampleMaterials.AnyAsync(item => item.Barcode == normalized, cancellationToken) ||
+            _database.ChangeTracker.Entries<SampleMaterialRecord>().Any(entry => string.Equals(entry.Entity.Barcode, normalized, StringComparison.OrdinalIgnoreCase)))
+            throw Issue(MaterialIssueCodes.BarcodeAlreadyExists, "條碼已被樣品使用。", StatusCodes.Status409Conflict);
     }
 
     private static void ValidateRequestMetadata(Guid requestId, string actor)

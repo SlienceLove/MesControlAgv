@@ -26,6 +26,8 @@ public sealed class MaterialOperationCoordinator
         ArgumentNullException.ThrowIfNull(serialize);
         ArgumentNullException.ThrowIfNull(deserialize);
         Validate(requestId, operationKind, fingerprint, actor);
+        operationKind = operationKind.Trim();
+        fingerprint = fingerprint.Trim();
 
         await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken);
         var existing = await database.MaterialOperations
@@ -83,12 +85,30 @@ public sealed class MaterialOperationCoordinator
                 IsReplay: true);
         }
 
-        var result = await mutation();
-        operation.Outcome = "Completed";
-        operation.ResultJson = serialize(result);
-        await database.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        return new MaterialOperationExecution<T>(result, IsReplay: false);
+        try
+        {
+            var result = await mutation();
+            operation.Outcome = "Completed";
+            operation.ResultJson = serialize(result);
+            await database.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return new MaterialOperationExecution<T>(result, IsReplay: false);
+        }
+        catch
+        {
+            try
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+            }
+            finally
+            {
+                // Do not leave Added/Modified entities from a rolled-back
+                // request in a scoped context that may be reused by a caller.
+                database.ChangeTracker.Clear();
+            }
+
+            throw;
+        }
     }
 
     public async Task<MaterialOperationRecord> GetOrAddAsync(
@@ -100,14 +120,16 @@ public sealed class MaterialOperationCoordinator
         CancellationToken cancellationToken)
     {
         Validate(requestId, operationKind, fingerprint, actor);
+        operationKind = operationKind.Trim();
+        fingerprint = fingerprint.Trim();
 
         var existing = await database.MaterialOperations
             .AsNoTracking()
             .SingleOrDefaultAsync(operation => operation.RequestId == requestId, cancellationToken);
         if (existing is not null)
         {
-            if (!string.Equals(existing.OperationKind, operationKind, StringComparison.Ordinal) ||
-                !string.Equals(existing.Fingerprint, fingerprint, StringComparison.Ordinal))
+            if (!string.Equals(existing.OperationKind?.Trim(), operationKind, StringComparison.Ordinal) ||
+                !string.Equals(existing.Fingerprint?.Trim(), fingerprint, StringComparison.Ordinal))
             {
                 throw new MaterialRequestIdReusedException(requestId);
             }
@@ -150,8 +172,8 @@ public sealed class MaterialOperationCoordinator
         string fingerprint,
         Guid requestId)
     {
-        if (!string.Equals(existing.OperationKind, operationKind, StringComparison.Ordinal) ||
-            !string.Equals(existing.Fingerprint, fingerprint, StringComparison.Ordinal))
+        if (!string.Equals(existing.OperationKind?.Trim(), operationKind.Trim(), StringComparison.Ordinal) ||
+            !string.Equals(existing.Fingerprint?.Trim(), fingerprint.Trim(), StringComparison.Ordinal))
         {
             throw new MaterialRequestIdReusedException(requestId);
         }

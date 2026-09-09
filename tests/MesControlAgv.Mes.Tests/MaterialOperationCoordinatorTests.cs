@@ -158,6 +158,19 @@ public sealed class MaterialOperationCoordinatorTests
                 CancellationToken.None));
 
         Assert.False(await database.MaterialOperations.AnyAsync(item => item.RequestId == requestId));
+
+        var retry = await coordinator.ExecuteAsync(
+            database,
+            requestId,
+            "receive",
+            "fingerprint-failing",
+            "operator",
+            () => Task.FromResult(11),
+            value => JsonSerializer.Serialize(value),
+            value => JsonSerializer.Deserialize<int>(value),
+            CancellationToken.None);
+        Assert.Equal(11, retry.Value);
+        Assert.False(retry.IsReplay);
     }
 
     private static InventoryTransactionRecord NewTransaction(

@@ -1067,6 +1067,8 @@ static async Task EnsureMaterialManagementSchemaCompatibilityAsync(
         await backfill.ExecuteNonQueryAsync();
     }
 
+    await MaterialSchemaCompatibilityChecker.EnsureNoOrphanForeignKeysAsync(connection);
+
     var foreignKeys = new[]
     {
         (Table: "MaterialLots", Column: "MaterialId", Target: "MaterialCatalog", TargetColumn: "MaterialId"),

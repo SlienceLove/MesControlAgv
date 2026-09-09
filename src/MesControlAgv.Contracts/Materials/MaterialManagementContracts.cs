@@ -76,6 +76,7 @@ public static class MaterialIssueCodes
     public const string Quarantined = "MAT-QUARANTINED";
     public const string ImportRowInvalid = "MAT-IMPORT-ROW-INVALID";
     public const string BarcodeUnknown = "MAT-BARCODE-UNKNOWN";
+    public const string BarcodeAlreadyExists = "MAT-BARCODE-ALREADY-EXISTS";
     public const string BarcodeKindMismatch = "MAT-BARCODE-KIND-MISMATCH";
     public const string BindingConflict = "MAT-BINDING-CONFLICT";
     public const string InvalidQuantity = "MAT-INVALID-QUANTITY";
