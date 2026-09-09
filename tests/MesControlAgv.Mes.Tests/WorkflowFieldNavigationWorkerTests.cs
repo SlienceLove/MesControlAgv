@@ -328,6 +328,10 @@ public sealed class WorkflowFieldNavigationWorkerTests
         Assert.Equal(WorkflowRuntimeStatus.Completed,
             (await workflows.GetExecutionAsync(execution.ExecutionId, CancellationToken.None))!.RuntimeStatus);
         Assert.Equal(1, adapter.ReleaseControlCalls);
+        var safetyAction = Assert.Single(await database.PhysicalSafetyActions.ToListAsync());
+        Assert.Equal(PhysicalSafetyActionTypes.AgvRelease, safetyAction.ActionType);
+        Assert.Equal(PhysicalSafetyActionStatuses.Succeeded, safetyAction.Status);
+        Assert.Equal(execution.ExecutionId, safetyAction.WorkflowRunId);
     }
 
     [Theory]

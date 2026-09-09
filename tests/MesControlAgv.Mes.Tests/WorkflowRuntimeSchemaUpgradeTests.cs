@@ -1,4 +1,5 @@
 using MesControlAgv.Application;
+using MesControlAgv.Contracts;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Services;
 using MesControlAgv.Mes.Entities;
@@ -69,6 +70,101 @@ public sealed class WorkflowRuntimeSchemaUpgradeTests
         }
         finally
         {
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+            if (File.Exists(databasePath + "-shm")) File.Delete(databasePath + "-shm");
+            if (File.Exists(databasePath + "-wal")) File.Delete(databasePath + "-wal");
+        }
+    }
+
+    [Fact]
+    public async Task Existing_database_adds_physical_safety_action_tables_without_recreating_prior_data()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"mes-safety-schema-{Guid.NewGuid():N}.db");
+        try
+        {
+            var options = new DbContextOptionsBuilder<MesDbContext>()
+                .UseSqlite($"Data Source={databasePath};Pooling=False").Options;
+            await using (var setup = new MesDbContext(options))
+            {
+                await setup.Database.EnsureCreatedAsync();
+                await setup.Database.ExecuteSqlRawAsync("DROP TABLE PhysicalSafetyActions;");
+                setup.WorkflowVersions.Add(new WorkflowVersionRecord
+                {
+                    WorkflowId = Guid.NewGuid(),
+                    Version = 1,
+                    DefinitionJson = "{}",
+                    Status = "Published",
+                    PublishStatus = "Published",
+                    CreatedBy = "safety-schema-test",
+                    CreatedAtUtc = DateTime.UtcNow,
+                    UpdatedAtUtc = DateTime.UtcNow
+                });
+                await setup.SaveChangesAsync();
+            }
+
+            await using (var factory = new ExistingWorkflowDatabaseFactory(databasePath))
+            {
+                using var client = factory.CreateClient();
+                (await client.GetAsync("/health")).EnsureSuccessStatusCode();
+                await using var connection = new SqliteConnection($"Data Source={databasePath};Pooling=False");
+                await connection.OpenAsync();
+                Assert.Contains(
+                    "PhysicalSafetyActions",
+                    await ReadNamesAsync(connection, "SELECT name FROM sqlite_master WHERE type = 'table';"));
+                var indexes = await ReadNamesAsync(connection, "SELECT name FROM sqlite_master WHERE type = 'index';");
+                Assert.Contains("IX_PhysicalSafetyActions_RequestId", indexes);
+                Assert.Contains("IX_PhysicalSafetyActions_Fingerprint", indexes);
+                await using var count = connection.CreateCommand();
+                count.CommandText = "SELECT COUNT(*) FROM WorkflowVersions;";
+                Assert.Equal(1L, (long)(await count.ExecuteScalarAsync())!);
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+            if (File.Exists(databasePath + "-shm")) File.Delete(databasePath + "-shm");
+            if (File.Exists(databasePath + "-wal")) File.Delete(databasePath + "-wal");
+        }
+    }
+
+    [Fact]
+    public async Task Startup_reconciles_prepared_physical_safety_actions_to_unknown()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"mes-safety-reconcile-{Guid.NewGuid():N}.db");
+        var requestId = Guid.NewGuid();
+        try
+        {
+            var options = new DbContextOptionsBuilder<MesDbContext>()
+                .UseSqlite($"Data Source={databasePath};Pooling=False").Options;
+            await using (var setup = new MesDbContext(options))
+            {
+                await setup.Database.EnsureCreatedAsync();
+                setup.PhysicalSafetyActions.Add(new PhysicalSafetyActionRecord
+                {
+                    RequestId = requestId,
+                    Fingerprint = "startup-reconcile-fingerprint",
+                    ActionType = PhysicalSafetyActionTypes.AgvRelease,
+                    DeviceId = "AGV-01",
+                    OperatorName = "operator-a",
+                    Reason = "startup reconciliation",
+                    Status = PhysicalSafetyActionStatuses.Prepared
+                });
+                await setup.SaveChangesAsync();
+            }
+
+            await using (var factory = new ExistingWorkflowDatabaseFactory(databasePath))
+            {
+                using var client = factory.CreateClient();
+                (await client.GetAsync("/health")).EnsureSuccessStatusCode();
+                await using var verify = new MesDbContext(options);
+                var action = await verify.PhysicalSafetyActions.SingleAsync(item => item.RequestId == requestId);
+                Assert.Equal(PhysicalSafetyActionStatuses.Unknown, action.Status);
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
             if (File.Exists(databasePath)) File.Delete(databasePath);
             if (File.Exists(databasePath + "-shm")) File.Delete(databasePath + "-shm");
             if (File.Exists(databasePath + "-wal")) File.Delete(databasePath + "-wal");

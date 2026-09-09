@@ -78,7 +78,8 @@ public sealed class WorkflowFieldNavigationDispatcher(
     IAgvGateway? agv = null,
     ILogger? logger = null,
     WorkflowFieldNavigationRetryState? retryState = null,
-    IPhysicalReadinessState? physicalReadiness = null)
+    IPhysicalReadinessState? physicalReadiness = null,
+    PhysicalSafetyActionService? safetyActions = null)
 {
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private readonly IAgvGateway? _agv = agv;
@@ -689,7 +690,7 @@ public sealed class WorkflowFieldNavigationDispatcher(
             // Release before marking the run Completed. The active-run gate
             // therefore prevents a new physical batch from being admitted
             // while cleanup is in progress. A lost response is never replayed.
-            await TryReleaseBatchControlOnceAsync(workItem, "completed its final Move node");
+            await TryReleaseBatchControlOnceAsync(workItem, acceptance, "completed its final Move node");
         }
 
         await CompleteAsync(
@@ -714,7 +715,7 @@ public sealed class WorkflowFieldNavigationDispatcher(
             workItem.NodeExecution.WorkflowRunId,
             cancellationToken);
         if (run?.PhysicalAuthorization is not null)
-            await TryReleaseBatchControlOnceAsync(workItem, "was cancelled");
+            await TryReleaseBatchControlOnceAsync(workItem, acceptance, "was cancelled");
 
         await CompleteAsync(
             workItem,
@@ -726,30 +727,48 @@ public sealed class WorkflowFieldNavigationDispatcher(
 
     private async Task TryReleaseBatchControlOnceAsync(
         WorkflowNodeExecutionWorkItem workItem,
+        FieldNavigationAcceptanceResponse acceptance,
         string terminalContext)
     {
-        if (_agv is not IPhysicalAgvControlGateway control) return;
-
         var timeout = options.ControlReleaseTimeout <= TimeSpan.Zero
             ? TimeSpan.FromSeconds(10)
             : options.ControlReleaseTimeout;
         using var cleanup = new CancellationTokenSource(timeout);
         try
         {
-            var released = await control.ReleaseControlAsync(cleanup.Token);
-            if (released)
+            var actionService = safetyActions ?? new PhysicalSafetyActionService(
+                repository.Database,
+                _agv,
+                null,
+                profile,
+                _physicalReadiness,
+                _timeProvider);
+            var result = await actionService.ReleaseFinalMoveAsync(
+                workItem.NodeExecution.WorkflowRunId,
+                workItem.NodeExecution.Id,
+                acceptance.WorkflowDeviceOperationId ?? Guid.Empty,
+                acceptance.AgvId,
+                acceptance.OperatorName ?? "workflow-worker",
+                acceptance.DeviceEpoch,
+                acceptance.ReadinessSupervisorInstanceId,
+                cleanup.Token);
+            if (result.Status == PhysicalSafetyActionStatuses.Succeeded)
             {
                 _logger?.LogInformation(
-                    "Released Adapter AGV control before workflow run {WorkflowRunId} {TerminalContext}.",
+                    "Released Adapter AGV control through safety action {ActionId} before workflow run {WorkflowRunId} {TerminalContext}.",
+                    result.Id,
                     workItem.NodeExecution.WorkflowRunId,
                     terminalContext);
             }
             else
             {
                 _logger?.LogWarning(
-                    "Workflow run {WorkflowRunId} {TerminalContext}, but Adapter control was not owned at cleanup time; no release command was sent.",
+                    "Workflow run {WorkflowRunId} {TerminalContext}, but safety action {ActionId} ended {Status}: {Summary}.",
                     workItem.NodeExecution.WorkflowRunId,
-                    terminalContext);
+                    terminalContext,
+                    result.Id,
+                    result.Status,
+                    result.ResultSummary);
             }
         }
         catch (Exception exception)
@@ -899,7 +918,8 @@ public sealed class WorkflowFieldNavigationWorker(
                 recoveryScope.ServiceProvider.GetRequiredService<IAgvGateway>(),
                 logger,
                 retryState,
-                recoveryScope.ServiceProvider.GetService<IPhysicalReadinessState>());
+                recoveryScope.ServiceProvider.GetService<IPhysicalReadinessState>(),
+                recoveryScope.ServiceProvider.GetService<PhysicalSafetyActionService>());
             await recoveryDispatcher.RecoverAsync(stoppingToken);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -929,7 +949,8 @@ public sealed class WorkflowFieldNavigationWorker(
                     scope.ServiceProvider.GetRequiredService<IAgvGateway>(),
                     logger,
                     retryState,
-                    scope.ServiceProvider.GetService<IPhysicalReadinessState>());
+                    scope.ServiceProvider.GetService<IPhysicalReadinessState>(),
+                    scope.ServiceProvider.GetService<PhysicalSafetyActionService>());
                 await dispatcher.ProcessAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

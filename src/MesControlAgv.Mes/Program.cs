@@ -42,6 +42,8 @@ builder.Services.AddHttpClient<IAgvIoGateway, AdapterIoClient>(client =>
 builder.Services.AddHttpClient<IAuboArmGateway, AdapterAuboArmClient>(client =>
     client.BaseAddress = new Uri(
         builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5041/"));
+builder.Services.AddScoped<IAuboArmProgramGateway>(services =>
+    services.GetRequiredService<IAuboArmGateway>());
 var physicalReadinessOptions = builder.Configuration
     .GetSection(PhysicalReadinessSupervisorOptions.SectionName)
     .Get<PhysicalReadinessSupervisorOptions>() ?? new PhysicalReadinessSupervisorOptions();
@@ -135,6 +137,7 @@ builder.Services.AddScoped<TaskRepository>();
 builder.Services.AddScoped<ITaskApplicationService, TaskService>();
 builder.Services.AddScoped<IKpiDashboardApplicationService, KpiDashboardService>();
 builder.Services.AddScoped<IAgvAuboSequenceService, AgvAuboSequenceService>();
+builder.Services.AddScoped<PhysicalSafetyActionService>();
 builder.Services.AddSingleton<PhysicalReadinessStateStore>();
 builder.Services.AddSingleton<PhysicalReadinessSupervisor>();
 builder.Services.AddSingleton<IPhysicalReadinessState>(services =>
@@ -164,6 +167,8 @@ using (var scope = app.Services.CreateScope())
     await EnsureExperimentSchedulingTablesAsync(database);
     await EnsureFieldNavigationAcceptanceTablesAsync(database);
     await EnsureShineLabTablesAsync(database);
+    await EnsurePhysicalSafetyActionTablesAsync(database);
+    await PhysicalSafetyActionService.ReconcilePreparedRecordsAsync(database, CancellationToken.None);
 }
 
 app.MapGet("/health", () => Results.Ok(new { service = "mes", status = "ok" }));
@@ -924,6 +929,65 @@ static async Task EnsureShineLabTablesAsync(MesDbContext database)
         command.CommandText = statement;
         await command.ExecuteNonQueryAsync();
     }
+
+}
+
+static async Task EnsurePhysicalSafetyActionTablesAsync(MesDbContext database)
+{
+    var connection = database.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open)
+        await connection.OpenAsync();
+
+    var statements = new[]
+    {
+        """
+        CREATE TABLE IF NOT EXISTS PhysicalSafetyActions (
+            Id TEXT NOT NULL PRIMARY KEY,
+            RequestId TEXT NOT NULL,
+            Fingerprint TEXT NOT NULL,
+            ActionType TEXT NOT NULL,
+            DeviceId TEXT NOT NULL,
+            OperatorName TEXT NOT NULL,
+            Reason TEXT NOT NULL,
+            Status TEXT NOT NULL,
+            ResultSummary TEXT NULL,
+            WorkflowRunId TEXT NULL,
+            WorkflowNodeExecutionId TEXT NULL,
+            WorkflowDeviceOperationId TEXT NULL,
+            CorrelationId TEXT NULL,
+            DeviceEpoch INTEGER NULL,
+            SupervisorInstanceId TEXT NULL,
+            PreparedAtUtc TEXT NOT NULL,
+            CompletedAtUtc TEXT NULL,
+            UpdatedAtUtc TEXT NOT NULL
+        );
+        """,
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_PhysicalSafetyActions_RequestId ON PhysicalSafetyActions (RequestId);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_PhysicalSafetyActions_Fingerprint ON PhysicalSafetyActions (Fingerprint);",
+        "CREATE INDEX IF NOT EXISTS IX_PhysicalSafetyActions_DeviceId_PreparedAtUtc ON PhysicalSafetyActions (DeviceId, PreparedAtUtc);"
+    };
+
+    foreach (var statement in statements)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = statement;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    await EnsureColumnsAsync(
+        connection,
+        "PhysicalSafetyActions",
+        [
+            (Name: "ResultSummary", Sql: "TEXT NULL"),
+            (Name: "WorkflowRunId", Sql: "TEXT NULL"),
+            (Name: "WorkflowNodeExecutionId", Sql: "TEXT NULL"),
+            (Name: "WorkflowDeviceOperationId", Sql: "TEXT NULL"),
+            (Name: "CorrelationId", Sql: "TEXT NULL"),
+            (Name: "DeviceEpoch", Sql: "INTEGER NULL"),
+            (Name: "SupervisorInstanceId", Sql: "TEXT NULL"),
+            (Name: "CompletedAtUtc", Sql: "TEXT NULL"),
+            (Name: "UpdatedAtUtc", Sql: "TEXT NOT NULL DEFAULT ''")
+        ]);
 }
 
 static ProfileConfiguration BindProfile(IConfiguration configuration)

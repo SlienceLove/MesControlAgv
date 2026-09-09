@@ -48,6 +48,8 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
 
     public DbSet<ShineLabTaskEventRecord> ShineLabTaskEvents => Set<ShineLabTaskEventRecord>();
 
+    public DbSet<PhysicalSafetyActionRecord> PhysicalSafetyActions => Set<PhysicalSafetyActionRecord>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<TransportTask>(entity =>
@@ -347,6 +349,24 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.Property(taskEvent => taskEvent.EventType).HasMaxLength(128);
             entity.Property(taskEvent => taskEvent.PayloadJson).HasMaxLength(65535);
             entity.HasIndex(taskEvent => new { taskEvent.TaskUuid, taskEvent.OccurredAtUtc });
+        });
+
+        modelBuilder.Entity<PhysicalSafetyActionRecord>(entity =>
+        {
+            entity.ToTable("PhysicalSafetyActions");
+            entity.HasKey(action => action.Id);
+            entity.Property(action => action.Fingerprint).HasMaxLength(128).IsRequired();
+            entity.Property(action => action.ActionType).HasMaxLength(64).IsRequired();
+            entity.Property(action => action.DeviceId).HasMaxLength(128).IsRequired();
+            entity.Property(action => action.OperatorName).HasMaxLength(256).IsRequired();
+            entity.Property(action => action.Reason).HasMaxLength(2048).IsRequired();
+            entity.Property(action => action.Status).HasMaxLength(32).IsRequired();
+            entity.Property(action => action.ResultSummary).HasMaxLength(2048);
+            entity.Property(action => action.CorrelationId).HasMaxLength(256);
+            entity.HasIndex(action => action.RequestId).IsUnique();
+            entity.HasIndex(action => action.Fingerprint).IsUnique();
+            entity.HasIndex(action => new { action.DeviceId, action.PreparedAtUtc });
+            entity.Property(action => action.SupervisorInstanceId).HasMaxLength(128);
         });
     }
 }

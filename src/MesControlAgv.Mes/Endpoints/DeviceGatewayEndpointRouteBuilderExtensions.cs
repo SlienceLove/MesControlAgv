@@ -205,6 +205,29 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
             }
         });
 
+        endpoints.MapPost("/api/agvs/{agvId}/control/release", async (
+            string agvId,
+            PhysicalAgvReleaseRequest request,
+            PhysicalSafetyActionService service,
+            CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                var result = await service.ReleaseAgvAsync(agvId, request, cancellationToken);
+                return result.Status == PhysicalSafetyActionStatuses.Rejected
+                    ? Results.Conflict(new { code = "physical_safety_action_rejected", detail = result.ResultSummary, action = result })
+                    : Results.Ok(result);
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.BadRequest(new { detail = exception.Message });
+            }
+            catch (InvalidOperationException exception)
+            {
+                return Results.Conflict(new { code = "physical_safety_action_conflict", detail = exception.Message });
+            }
+        });
+
         endpoints.MapGet("/api/agvs/{agvId}/io", async (
             string agvId,
             IAgvIoGateway io,
@@ -409,39 +432,20 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
         endpoints.MapPost("/api/robot-arms/{deviceId}/program/stop", async (
             string deviceId,
             AuboArmProgramStopRequest request,
-            IAuboArmGateway arm,
-            IWorkflowApplicationService workflows,
-            IPhysicalReadinessState physicalReadiness,
-            ILoggerFactory loggerFactory,
+            PhysicalSafetyActionService service,
             CancellationToken cancellationToken) =>
             await ExecuteArmProgramWriteAsync(
                 async () =>
                 {
-                    if (!RequireProgramRequest("ok", request.EffectiveOperatorName))
-                        throw new ArgumentException("OperatorName is required.");
-                    var operationId = request.OperationId.GetValueOrDefault(Guid.NewGuid());
-                    var correlation = await AuboArmWorkflowCorrelationValidator.ValidateAsync(
+                    var operationId = request.OperationId.GetValueOrDefault();
+                    return await service.StopAuboAsync(
                         deviceId,
-                        operationId,
-                        request.WorkflowCorrelation,
-                        workflows,
-                        loggerFactory.CreateLogger("AuboArmWorkflowCorrelation"),
-                        "stop",
+                        new PhysicalAuboStopRequest(
+                            request.RequestId.GetValueOrDefault(operationId),
+                            operationId,
+                            request.EffectiveOperatorName,
+                            request.WorkflowCorrelation),
                         cancellationToken);
-                    await EnsureCurrentPhysicalReadinessAsync(
-                        deviceId,
-                        correlation,
-                        workflows,
-                        physicalReadiness,
-                        null,
-                        cancellationToken);
-                    var result = await arm.StopProgramAsync(
-                        deviceId,
-                        request.EffectiveOperatorName,
-                        operationId,
-                        correlation,
-                        cancellationToken);
-                    return MarkUncorrelated(result, correlation);
                 }));
 
         endpoints.MapPost("/api/agv-aubo-sequences", async (
