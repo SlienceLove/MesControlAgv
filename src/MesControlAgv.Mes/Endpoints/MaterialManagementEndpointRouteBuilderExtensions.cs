@@ -189,6 +189,14 @@ public static class MaterialManagementEndpointRouteBuilderExtensions
         {
             return Results.NotFound(new { detail = exception.Message });
         }
+        catch (DbUpdateException exception) when (IsMaterialBarcodeConflict(exception))
+        {
+            return Results.Conflict(new
+            {
+                code = MaterialIssueCodes.BarcodeAlreadyExists,
+                detail = "物料条码已存在。"
+            });
+        }
         catch (DbUpdateException)
         {
             return Results.Conflict(new
@@ -205,5 +213,16 @@ public static class MaterialManagementEndpointRouteBuilderExtensions
                 detail = exception.Message
             });
         }
+    }
+
+    private static bool IsMaterialBarcodeConflict(Exception exception)
+    {
+        for (var current = exception; current is not null; current = current.InnerException)
+        {
+            if (current.Message.Contains("material barcode already exists", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
     }
 }

@@ -345,8 +345,71 @@ public sealed class MaterialManagementApiTests : IClassFixture<MesWebApplication
         var reserve = await client.PostAsJsonAsync($"/api/experiment-jobs/{jobId}/materials/reserve", new ReserveExperimentMaterialsRequest
         { RequestId = Guid.NewGuid(), ExperimentJobId = jobId, Actor = "api-test", Requirements = new[] { new MaterialReservationLine { MaterialCode = code, LotCode = "TRACE-LOT", Quantity = 1, Unit = "EA" } } });
         reserve.EnsureSuccessStatusCode();
-        var trace = await client.GetFromJsonAsync<List<MaterialTraceEvent>>($"/api/materials/trace?experimentJobId={jobId}");
-        Assert.Contains(trace!, item => item.MaterialCode == code.ToUpperInvariant() && item.LotCode == "TRACE-LOT" && item.Barcode == "TRACE-BC");
+        var reserveBody = await reserve.Content.ReadFromJsonAsync<MaterialReservationResult>();
+        var traceLotId = reserveBody!.Bindings[0].LotId!.Value;
+
+        Guid sampleScanId;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            var lot = await db.MaterialLots.SingleAsync(item => item.LotId == traceLotId);
+            lot.MaterialCode = lot.MaterialCode.ToLowerInvariant();
+            lot.LotCode = lot.LotCode.ToLowerInvariant();
+            lot.Barcode = lot.Barcode!.ToLowerInvariant();
+            foreach (var transaction in await db.InventoryTransactions.Where(item => item.LotId == lot.LotId).ToListAsync())
+            {
+                transaction.MaterialCode = transaction.MaterialCode?.ToLowerInvariant();
+                transaction.LotCode = transaction.LotCode?.ToLowerInvariant();
+                transaction.Barcode = transaction.Barcode?.ToLowerInvariant();
+            }
+
+            var sampleId = Guid.NewGuid();
+            var scanRequestId = Guid.NewGuid();
+            db.SampleMaterials.Add(new SampleMaterialRecord
+            {
+                SampleId = sampleId,
+                Barcode = "TRACE-SAMPLE-" + Guid.NewGuid().ToString("N"),
+                SampleBatchId = "trace-scan",
+                MaterialCode = lot.MaterialCode,
+                Status = "Available",
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            });
+            db.MaterialOperations.Add(new MaterialOperationRecord
+            {
+                RequestId = scanRequestId,
+                OperationKind = "scan",
+                Fingerprint = "trace-scan",
+                Outcome = "accepted",
+                Actor = "api-test",
+                CreatedAtUtc = DateTime.UtcNow
+            });
+            var scan = new BarcodeScanEventRecord
+            {
+                Id = Guid.NewGuid(),
+                RequestId = scanRequestId,
+                RawCode = lot.Barcode,
+                NormalizedCode = lot.Barcode,
+                ScanKind = "Sample",
+                Source = "test",
+                Outcome = "Resolved",
+                SampleId = sampleId,
+                Actor = "api-test",
+                OccurredAtUtc = DateTime.UtcNow
+            };
+            sampleScanId = scan.Id;
+            db.BarcodeScanEvents.Add(scan);
+            await db.SaveChangesAsync();
+        }
+
+        var trace = await client.GetFromJsonAsync<List<MaterialTraceEvent>>(
+            "/api/materials/trace?barcode=TRACE-BC&materialCode=" + code.ToUpperInvariant() + "&lotCode=TRACE-LOT");
+        Assert.Contains(trace!, item => item.MaterialCode == code.ToLowerInvariant() && item.LotCode == "trace-lot" && item.Barcode == "trace-bc");
+        Assert.DoesNotContain(trace!, item => item.Id == sampleScanId);
+
+        var jobTrace = await client.GetFromJsonAsync<List<MaterialTraceEvent>>($"/api/materials/trace?experimentJobId={jobId}");
+        Assert.Contains(jobTrace!, item => item.MaterialCode == code.ToLowerInvariant() && item.LotCode == "trace-lot" && item.Barcode == "trace-bc");
+        Assert.DoesNotContain(jobTrace!, item => item.Id == sampleScanId);
     }
 
     [Fact]

@@ -1128,6 +1128,59 @@ static async Task EnsureMaterialManagementSchemaCompatibilityAsync(
         await triggerCommand.ExecuteNonQueryAsync();
     }
 
+    var barcodeTriggers = new[]
+    {
+        (Name: "TR_Material_SampleMaterials_Barcode", Table: "SampleMaterials", Key: "SampleId", Nullable: false),
+        (Name: "TR_Material_MaterialLots_Barcode", Table: "MaterialLots", Key: "LotId", Nullable: true)
+    };
+
+    foreach (var barcodeTrigger in barcodeTriggers)
+    {
+        var nullGuard = barcodeTrigger.Nullable ? "NEW.Barcode IS NOT NULL AND " : string.Empty;
+        var sampleExclusion = barcodeTrigger.Table == "SampleMaterials"
+            ? "SampleId <> NEW.SampleId AND "
+            : string.Empty;
+        var lotExclusion = barcodeTrigger.Table == "MaterialLots"
+            ? "LotId <> NEW.LotId AND "
+            : string.Empty;
+        var insertTrigger = $"""
+            CREATE TRIGGER IF NOT EXISTS {barcodeTrigger.Name}_Insert
+            BEFORE INSERT ON {barcodeTrigger.Table}
+            WHEN {nullGuard}
+                (EXISTS (
+                    SELECT 1 FROM SampleMaterials
+                    WHERE upper(Barcode) = upper(NEW.Barcode)
+                ) OR EXISTS (
+                    SELECT 1 FROM MaterialLots
+                    WHERE Barcode IS NOT NULL AND upper(Barcode) = upper(NEW.Barcode)
+                ))
+            BEGIN
+                SELECT RAISE(ABORT, 'material barcode already exists');
+            END;
+            """;
+        var updateTrigger = $"""
+            CREATE TRIGGER IF NOT EXISTS {barcodeTrigger.Name}_Update
+            BEFORE UPDATE OF Barcode ON {barcodeTrigger.Table}
+                WHEN {nullGuard}
+                (EXISTS (
+                    SELECT 1 FROM SampleMaterials
+                    WHERE {sampleExclusion}
+                      upper(Barcode) = upper(NEW.Barcode)
+                ) OR EXISTS (
+                    SELECT 1 FROM MaterialLots
+                    WHERE {lotExclusion}
+                      Barcode IS NOT NULL
+                      AND upper(Barcode) = upper(NEW.Barcode)
+                ))
+            BEGIN
+                SELECT RAISE(ABORT, 'material barcode already exists');
+            END;
+            """;
+        await using var barcodeTriggerCommand = connection.CreateCommand();
+        barcodeTriggerCommand.CommandText = insertTrigger + updateTrigger;
+        await barcodeTriggerCommand.ExecuteNonQueryAsync();
+    }
+
     await using (var migration = connection.CreateCommand())
     {
         migration.CommandText =

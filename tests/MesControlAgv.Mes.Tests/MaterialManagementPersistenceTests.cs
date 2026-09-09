@@ -379,6 +379,106 @@ public sealed class MaterialManagementPersistenceTests : IClassFixture<MesWebApp
         await Assert.ThrowsAsync<InvalidOperationException>(() => MaterialSchemaCompatibilityChecker.EnsureNoOrphanForeignKeysAsync(connection));
     }
 
+    [Fact]
+    public async Task Barcode_triggers_reject_case_insensitive_duplicates_and_allow_null_lot_barcodes()
+    {
+        using var scope = _factory.Services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+        var now = DateTime.UtcNow;
+        var material = new MaterialCatalogRecord
+        {
+            MaterialId = Guid.NewGuid(),
+            MaterialCode = "TRIGGER-" + Guid.NewGuid().ToString("N"),
+            Name = "Trigger test material",
+            Kind = "Consumable",
+            IsEnabled = true,
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        };
+        database.MaterialCatalog.Add(material);
+        database.SampleMaterials.Add(new SampleMaterialRecord
+        {
+            SampleId = Guid.NewGuid(),
+            Barcode = "trigger-sample",
+            SampleBatchId = "trigger-batch",
+            Status = "Available",
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        });
+        await database.SaveChangesAsync();
+        database.ChangeTracker.Clear();
+
+        database.SampleMaterials.Add(new SampleMaterialRecord
+        {
+            SampleId = Guid.NewGuid(),
+            Barcode = "TRIGGER-SAMPLE",
+            SampleBatchId = "trigger-batch-2",
+            Status = "Available",
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        });
+        var sampleDuplicate = await Assert.ThrowsAsync<DbUpdateException>(() => database.SaveChangesAsync());
+        Assert.Contains("material barcode already exists", sampleDuplicate.ToString(), StringComparison.OrdinalIgnoreCase);
+        database.ChangeTracker.Clear();
+
+        database.MaterialLots.Add(new MaterialLotRecord
+        {
+            LotId = Guid.NewGuid(),
+            MaterialId = material.MaterialId,
+            MaterialCode = material.MaterialCode,
+            LotCode = "trigger-lot",
+            Barcode = "trigger-sample",
+            Unit = "EA",
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        });
+        var crossTypeDuplicate = await Assert.ThrowsAsync<DbUpdateException>(() => database.SaveChangesAsync());
+        Assert.Contains("material barcode already exists", crossTypeDuplicate.ToString(), StringComparison.OrdinalIgnoreCase);
+        database.ChangeTracker.Clear();
+
+        database.MaterialLots.Add(new MaterialLotRecord
+        {
+            LotId = Guid.NewGuid(),
+            MaterialId = material.MaterialId,
+            MaterialCode = material.MaterialCode,
+            LotCode = "trigger-lot-1",
+            Barcode = "trigger-lot-barcode",
+            Unit = "EA",
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        });
+        await database.SaveChangesAsync();
+        database.ChangeTracker.Clear();
+
+        database.MaterialLots.Add(new MaterialLotRecord
+        {
+            LotId = Guid.NewGuid(),
+            MaterialId = material.MaterialId,
+            MaterialCode = material.MaterialCode,
+            LotCode = "trigger-lot-2",
+            Barcode = "TRIGGER-LOT-BARCODE",
+            Unit = "EA",
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        });
+        var lotDuplicate = await Assert.ThrowsAsync<DbUpdateException>(() => database.SaveChangesAsync());
+        Assert.Contains("material barcode already exists", lotDuplicate.ToString(), StringComparison.OrdinalIgnoreCase);
+        database.ChangeTracker.Clear();
+
+        database.MaterialLots.Add(new MaterialLotRecord
+        {
+            LotId = Guid.NewGuid(),
+            MaterialId = material.MaterialId,
+            MaterialCode = material.MaterialCode,
+            LotCode = "trigger-lot-null",
+            Barcode = null,
+            Unit = "EA",
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        });
+        await database.SaveChangesAsync();
+    }
+
     private static InventoryTransactionRecord NewTransaction(Guid requestId, DateTime occurredAtUtc) => new()
     {
         Id = Guid.NewGuid(),

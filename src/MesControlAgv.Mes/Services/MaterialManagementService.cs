@@ -568,9 +568,9 @@ public sealed class MaterialManagementService : IMaterialManagementService
         var transactions = await _database.InventoryTransactions
             .AsNoTracking()
             .Where(item =>
-                (normalizedBarcode == null || item.Barcode == normalizedBarcode) &&
-                (normalizedMaterial == null || item.MaterialCode == normalizedMaterial) &&
-                (normalizedLot == null || item.LotCode == normalizedLot) &&
+                (normalizedBarcode == null || item.Barcode != null && item.Barcode.ToUpper() == normalizedBarcode) &&
+                (normalizedMaterial == null || item.MaterialCode != null && item.MaterialCode.ToUpper() == normalizedMaterial) &&
+                (normalizedLot == null || item.LotCode != null && item.LotCode.ToUpper() == normalizedLot) &&
                 (experimentJobId == null || item.ExperimentJobId == experimentJobId))
             .OrderByDescending(item => item.OccurredAtUtc)
             .Take(limit)
@@ -587,7 +587,7 @@ public sealed class MaterialManagementService : IMaterialManagementService
                 item.LotId != null && _database.MaterialLots.Any(lot => lot.LotId == item.LotId &&
                     (normalizedMaterial == null || lot.MaterialCode.ToUpper() == normalizedMaterial) &&
                     (normalizedLot == null || lot.LotCode.ToUpper() == normalizedLot)) ||
-                item.SampleId != null && _database.SampleMaterials.Any(sample => sample.SampleId == item.SampleId &&
+                item.SampleId != null && normalizedLot == null && _database.SampleMaterials.Any(sample => sample.SampleId == item.SampleId &&
                     (normalizedMaterial == null || sample.MaterialCode != null && sample.MaterialCode.ToUpper() == normalizedMaterial)));
         }
         var scans = await scanQuery
@@ -600,12 +600,12 @@ public sealed class MaterialManagementService : IMaterialManagementService
             .Where(item =>
                 (experimentJobId == null || item.ExperimentJobId == experimentJobId) &&
                 (normalizedBarcode == null ||
-                    (item.LotId != null && _database.MaterialLots.Any(lot => lot.LotId == item.LotId && lot.Barcode == normalizedBarcode)) ||
-                    (item.SampleId != null && _database.SampleMaterials.Any(sample => sample.SampleId == item.SampleId && sample.Barcode == normalizedBarcode))) &&
+                    (item.LotId != null && _database.MaterialLots.Any(lot => lot.LotId == item.LotId && lot.Barcode != null && lot.Barcode.ToUpper() == normalizedBarcode)) ||
+                    (item.SampleId != null && _database.SampleMaterials.Any(sample => sample.SampleId == item.SampleId && sample.Barcode.ToUpper() == normalizedBarcode))) &&
                 (normalizedMaterial == null || item.LotId != null &&
-                    _database.MaterialLots.Any(lot => lot.LotId == item.LotId && lot.MaterialCode == normalizedMaterial)) &&
+                    _database.MaterialLots.Any(lot => lot.LotId == item.LotId && lot.MaterialCode.ToUpper() == normalizedMaterial)) &&
                 (normalizedLot == null || item.LotId != null &&
-                    _database.MaterialLots.Any(lot => lot.LotId == item.LotId && lot.LotCode == normalizedLot)))
+                    _database.MaterialLots.Any(lot => lot.LotId == item.LotId && lot.LotCode.ToUpper() == normalizedLot)))
             .OrderByDescending(item => item.UpdatedAtUtc)
             .Take(limit)
             .ToListAsync(cancellationToken);
