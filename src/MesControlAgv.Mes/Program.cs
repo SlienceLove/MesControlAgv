@@ -805,6 +805,17 @@ static async Task EnsureMaterialManagementTablesAsync(MesDbContext database)
     var tableStatements = new[]
     {
         """
+        CREATE TABLE IF NOT EXISTS MaterialOperations (
+            RequestId TEXT NOT NULL PRIMARY KEY,
+            OperationKind TEXT NOT NULL,
+            Fingerprint TEXT NOT NULL,
+            Outcome TEXT NOT NULL,
+            ResultJson TEXT NOT NULL,
+            Actor TEXT NOT NULL,
+            CreatedAtUtc TEXT NOT NULL
+        );
+        """,
+        """
         CREATE TABLE IF NOT EXISTS MaterialCatalog (
             MaterialId TEXT NOT NULL PRIMARY KEY,
             MaterialCode TEXT NOT NULL,
@@ -840,7 +851,8 @@ static async Task EnsureMaterialManagementTablesAsync(MesDbContext database)
             BoundExperimentJobId TEXT NULL,
             CreatedAtUtc TEXT NOT NULL,
             UpdatedAtUtc TEXT NOT NULL,
-            FOREIGN KEY (LocationId) REFERENCES WarehouseLocations(LocationId) ON DELETE NO ACTION
+            FOREIGN KEY (LocationId) REFERENCES WarehouseLocations(LocationId) ON DELETE NO ACTION,
+            FOREIGN KEY (BoundExperimentJobId) REFERENCES ExperimentJobs(JobId) ON DELETE NO ACTION
         );
         """,
         """
@@ -894,7 +906,10 @@ static async Task EnsureMaterialManagementTablesAsync(MesDbContext database)
             DetailsJson TEXT NOT NULL,
             OccurredAtUtc TEXT NOT NULL,
             FOREIGN KEY (LotId) REFERENCES MaterialLots(LotId) ON DELETE NO ACTION,
-            FOREIGN KEY (SampleId) REFERENCES SampleMaterials(SampleId) ON DELETE NO ACTION
+            FOREIGN KEY (SampleId) REFERENCES SampleMaterials(SampleId) ON DELETE NO ACTION,
+            FOREIGN KEY (FromLocationId) REFERENCES WarehouseLocations(LocationId) ON DELETE NO ACTION,
+            FOREIGN KEY (ToLocationId) REFERENCES WarehouseLocations(LocationId) ON DELETE NO ACTION,
+            FOREIGN KEY (ExperimentJobId) REFERENCES ExperimentJobs(JobId) ON DELETE NO ACTION
         );
         """,
         """
@@ -911,7 +926,9 @@ static async Task EnsureMaterialManagementTablesAsync(MesDbContext database)
             LotId TEXT NULL,
             Actor TEXT NOT NULL,
             DetailsJson TEXT NOT NULL,
-            OccurredAtUtc TEXT NOT NULL
+            OccurredAtUtc TEXT NOT NULL,
+            FOREIGN KEY (SampleId) REFERENCES SampleMaterials(SampleId) ON DELETE NO ACTION,
+            FOREIGN KEY (LotId) REFERENCES MaterialLots(LotId) ON DELETE NO ACTION
         );
         """,
         """
@@ -946,6 +963,7 @@ static async Task EnsureMaterialManagementTablesAsync(MesDbContext database)
 
     var indexStatements = new[]
     {
+        "CREATE INDEX IF NOT EXISTS IX_MaterialOperations_OperationKind_CreatedAtUtc ON MaterialOperations (OperationKind, CreatedAtUtc);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_MaterialCatalog_MaterialCode ON MaterialCatalog (MaterialCode);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_WarehouseLocations_WarehouseCode_LocationCode ON WarehouseLocations (WarehouseCode, LocationCode);",
         "CREATE INDEX IF NOT EXISTS IX_WarehouseLocations_WarehouseCode_IsEnabled ON WarehouseLocations (WarehouseCode, IsEnabled);",

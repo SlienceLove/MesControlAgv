@@ -1,5 +1,16 @@
 namespace MesControlAgv.Mes.Entities;
 
+public sealed class MaterialOperationRecord
+{
+    public Guid RequestId { get; set; }
+    public string OperationKind { get; set; } = string.Empty;
+    public string Fingerprint { get; set; } = string.Empty;
+    public string Outcome { get; set; } = string.Empty;
+    public string ResultJson { get; set; } = "{}";
+    public string Actor { get; set; } = string.Empty;
+    public DateTime CreatedAtUtc { get; set; }
+}
+
 public sealed class MaterialCatalogRecord
 {
     public Guid MaterialId { get; set; }

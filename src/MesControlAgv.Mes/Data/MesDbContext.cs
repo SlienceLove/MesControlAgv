@@ -65,6 +65,8 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
     public DbSet<ExperimentJobMaterialBindingRecord> ExperimentJobMaterialBindings =>
         Set<ExperimentJobMaterialBindingRecord>();
 
+    public DbSet<MaterialOperationRecord> MaterialOperations => Set<MaterialOperationRecord>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<TransportTask>(entity =>
@@ -366,6 +368,18 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.HasIndex(taskEvent => new { taskEvent.TaskUuid, taskEvent.OccurredAtUtc });
         });
 
+        modelBuilder.Entity<MaterialOperationRecord>(entity =>
+        {
+            entity.ToTable("MaterialOperations");
+            entity.HasKey(operation => operation.RequestId);
+            entity.Property(operation => operation.OperationKind).HasMaxLength(64).IsRequired();
+            entity.Property(operation => operation.Fingerprint).HasMaxLength(256).IsRequired();
+            entity.Property(operation => operation.Outcome).HasMaxLength(32).IsRequired();
+            entity.Property(operation => operation.ResultJson).HasMaxLength(65535).IsRequired();
+            entity.Property(operation => operation.Actor).HasMaxLength(256).IsRequired();
+            entity.HasIndex(operation => new { operation.OperationKind, operation.CreatedAtUtc });
+        });
+
         modelBuilder.Entity<MaterialCatalogRecord>(entity =>
         {
             entity.ToTable("MaterialCatalog");
@@ -405,6 +419,10 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.HasOne<WarehouseLocationRecord>()
                 .WithMany()
                 .HasForeignKey(sample => sample.LocationId)
+                .OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne<ExperimentJobRecord>()
+                .WithMany()
+                .HasForeignKey(sample => sample.BoundExperimentJobId)
                 .OnDelete(DeleteBehavior.NoAction);
         });
 
@@ -471,6 +489,18 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
                 .WithMany()
                 .HasForeignKey(transaction => transaction.SampleId)
                 .OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne<WarehouseLocationRecord>()
+                .WithMany()
+                .HasForeignKey(transaction => transaction.FromLocationId)
+                .OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne<WarehouseLocationRecord>()
+                .WithMany()
+                .HasForeignKey(transaction => transaction.ToLocationId)
+                .OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne<ExperimentJobRecord>()
+                .WithMany()
+                .HasForeignKey(transaction => transaction.ExperimentJobId)
+                .OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<BarcodeScanEventRecord>(entity =>
@@ -489,6 +519,14 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.HasIndex(scan => new { scan.NormalizedCode, scan.OccurredAtUtc });
             entity.HasIndex(scan => new { scan.SampleId, scan.OccurredAtUtc });
             entity.HasIndex(scan => new { scan.LotId, scan.OccurredAtUtc });
+            entity.HasOne<SampleMaterialRecord>()
+                .WithMany()
+                .HasForeignKey(scan => scan.SampleId)
+                .OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne<MaterialLotRecord>()
+                .WithMany()
+                .HasForeignKey(scan => scan.LotId)
+                .OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<ExperimentJobMaterialBindingRecord>(entity =>

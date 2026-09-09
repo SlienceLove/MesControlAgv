@@ -12,7 +12,20 @@ namespace MesControlAgv.Mes.Tests;
 
 public sealed class MesWebApplicationFactory : WebApplicationFactory<Program>
 {
-    private readonly string _databasePath = Path.Combine(Path.GetTempPath(), $"mes-control-agv-{Guid.NewGuid():N}.db");
+    private readonly string _databasePath;
+
+    public MesWebApplicationFactory()
+        : this(null)
+    {
+    }
+
+    internal MesWebApplicationFactory(string? databasePath)
+    {
+        _databasePath = databasePath ??
+            Path.Combine(Path.GetTempPath(), $"mes-control-agv-{Guid.NewGuid():N}.db");
+    }
+
+    public string DatabasePath => _databasePath;
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
