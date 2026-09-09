@@ -14,4 +14,11 @@ public sealed class ShineLabTcpOptions
     public int Port { get; set; } = 5500;
     public int StaleAfterSeconds { get; set; } = 10;
     public int CommandTimeoutMs { get; set; } = 10000;
+    /// <summary>
+    /// Diagnostic-only compatibility probe. Disabled by default because the
+    /// production protocol expects the downstream client to initiate
+    /// Certification.
+    /// </summary>
+    public bool SendCertificationOnConnect { get; set; }
+    public string ServerEquipmentCode { get; set; } = "SHDC-IRAY-C";
 }

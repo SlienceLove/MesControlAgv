@@ -94,6 +94,21 @@ public sealed class ShineLabTcpServer(
                 AutoFlush = true
             };
 
+            if (_options.SendCertificationOnConnect)
+            {
+                var probe = new
+                {
+                    strID = $"mes-cert-probe-{Guid.NewGuid():N}",
+                    strMethod = "Certification",
+                    equipmentCode = _options.ServerEquipmentCode,
+                    body = new { chan = "A" }
+                };
+                await writer.WriteLineAsync(JsonSerializer.Serialize(probe));
+                logger.LogInformation(
+                    "Sent diagnostic Certification probe to ShineLab client as {EquipmentCode}.",
+                    _options.ServerEquipmentCode);
+            }
+
             while (!stoppingToken.IsCancellationRequested)
             {
                 var line = await reader.ReadLineAsync(clientTimeout.Token);
