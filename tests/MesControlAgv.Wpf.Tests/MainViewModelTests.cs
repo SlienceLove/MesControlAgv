@@ -416,6 +416,9 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
     public int GetRuntimeSettingsCallCount { get; private set; }
     public IonChromatographyControlCenterStatusResponse? IonChromatographyStatus { get; set; }
     public IReadOnlyList<ShineLabDeviceStatusResponse> ShineLabDeviceStatuses { get; set; } = [];
+    public SampleWorkstationDashboardSnapshot? SampleWorkstationSnapshot { get; set; }
+    public TaskCompletionSource<SampleWorkstationDashboardSnapshot?>? SampleWorkstationSnapshotGate { get; set; }
+    public string? LastSampleWorkstationDeviceId { get; private set; }
     public ShineLabCommandResponse? LastShineLabResponse { get; set; }
     public ShineLabConfigRequest? LastShineLabConfig { get; private set; }
     public ShineLabCommandRequest? LastShineLabCommand { get; private set; }
@@ -484,6 +487,15 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
         CancellationToken cancellationToken) => Task.FromResult(IonChromatographyStatus);
     public Task<IReadOnlyList<ShineLabDeviceStatusResponse>> GetShineLabDeviceStatusesAsync(
         CancellationToken cancellationToken) => Task.FromResult(ShineLabDeviceStatuses);
+    public Task<SampleWorkstationDashboardSnapshot?> GetSampleWorkstationSnapshotAsync(
+        string deviceId,
+        CancellationToken cancellationToken)
+    {
+        LastSampleWorkstationDeviceId = deviceId;
+        return SampleWorkstationSnapshotGate is { } gate
+            ? gate.Task
+            : Task.FromResult(SampleWorkstationSnapshot);
+    }
     public Task<ShineLabCommandResponse> SendShineLabConfigAsync(
         string equipmentCode,
         ShineLabConfigRequest request,
