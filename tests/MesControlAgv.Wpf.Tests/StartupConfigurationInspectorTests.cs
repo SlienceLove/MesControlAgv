@@ -15,6 +15,24 @@ public sealed class StartupConfigurationInspectorTests : IDisposable
     public StartupConfigurationInspectorTests() => Directory.CreateDirectory(_directory);
 
     [Fact]
+    public void EnsureDataDirectory_CreatesWritableMesRuntimeDataFolder()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "mes-wpf-data-" + Guid.NewGuid().ToString("N"));
+        var assemblyPath = Path.Combine(root, "services", "Mes", "MesControlAgv.Mes.dll");
+        try
+        {
+            var dataDirectory = LocalMesRuntime.EnsureDataDirectory(assemblyPath);
+
+            Assert.Equal(Path.Combine(root, "services", "Mes", "data"), dataDirectory);
+            Assert.True(Directory.Exists(dataDirectory));
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    [Fact]
     public void Physical_defaults_are_startable_without_managing_local_simulator_services()
     {
         var report = StartupConfigurationInspector.Inspect(new StartupConfigurationInput

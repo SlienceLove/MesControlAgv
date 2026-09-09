@@ -93,6 +93,7 @@ internal sealed class LocalMesRuntime : IDisposable
     {
         var dotnetHost = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH");
         if (string.IsNullOrWhiteSpace(dotnetHost)) dotnetHost = "dotnet";
+        var dataDirectory = EnsureDataDirectory(service.AssemblyPath);
 
         var startInfo = new ProcessStartInfo
         {
@@ -112,9 +113,24 @@ internal sealed class LocalMesRuntime : IDisposable
         startInfo.Environment["ShineLabTcp__ListenAddress"] = "0.0.0.0";
         startInfo.Environment["ShineLabTcp__Port"] = "5500";
         startInfo.Environment["Adapter__BaseUrl"] = "http://127.0.0.1:5141/";
+        // The published WPF bundle does not contain a writable `data` folder
+        // next to the copied MES runtime. Use an absolute path so SQLite can
+        // create the database before the health check runs.
+        startInfo.Environment["ConnectionStrings__Mes"] =
+            $"Data Source={Path.Combine(dataDirectory, "mes.db")}";
 
         return Process.Start(startInfo)
             ?? throw new InvalidOperationException("MES 进程无法启动。" );
+    }
+
+    internal static string EnsureDataDirectory(string assemblyPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(assemblyPath);
+        var assemblyDirectory = Path.GetDirectoryName(Path.GetFullPath(assemblyPath))
+            ?? throw new InvalidOperationException("MES 程序目录无法解析。" );
+        var dataDirectory = Path.Combine(assemblyDirectory, "data");
+        Directory.CreateDirectory(dataDirectory);
+        return dataDirectory;
     }
 
     private static async Task WaitForHealthAsync(
