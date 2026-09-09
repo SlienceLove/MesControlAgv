@@ -86,7 +86,7 @@ WPF 就绪页会显示设备列表、代次、位置、活动任务、重新授�
 - AGV 幂等只读 API 遇到 EOF、`IOException` 或 `SocketException` 时，在同一个总超时内最多重连重读一次并记录审计；控制权、导航、暂停/恢复/取消、Push 和 I/O 写入仍为零自动重试。
 - `Invoke-PhysicalReadOnlyPreflight.ps1` 已把“启动 Adapter→核对 health→完整只读采集→按本次状态文件停止”固化为单次会话。成功和注入失败的本机假 TCP 回放均确认命令/Other 端口零请求且无遗留 PID。
 - 现场导航 worker 在进程重启恢复旧 Move 前重新校验监督器实例和 AGV 设备代次；绑定过期时只记录 `Unknown` 并要求人工核销，不释放控制权或重新派发。
-- 离线全量结果为 `1069 passed / 5 allowed skipped / 0 failed`，Release 构建 `0` 警告、`0` 错误。该结果不替代下次上电实证。
+- Task 5 的已完成定向离线回归为 MES `224/224`、WPF（`--no-build`）`411/411`、WorkflowContract `71/71`、Simulator `5/5`；原始解决方案全量命令实际因 WPF Host 锁定 Debug DLL 退出 `1`，不能宣称全量通过。Release 构建 `0` 警告、`0` 错误。该结果不替代下次上电实证。
 - 下次设备上电必须使用新 RunId、新隔离数据库、新 `SupervisorInstanceId`/设备 epoch 和新授权；断电前作废的许可、旧工作流执行、请求 ID 与证据不得复用。
 
 ## 2026-09-09 Task 5 离线交接

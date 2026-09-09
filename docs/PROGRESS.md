@@ -8,7 +8,9 @@ Last updated: 2026-09-09
 ## 当前结论
 
 - 当前分支 `feature/wpf-ui-layout-optimization`；Task 5 离线验证基线为
-  `e29289c`。早期交接中的 `794127f`/`fb743fa` 不作为当前基线。
+  `e29289c`，它是当前 HEAD `e4e1993` 的祖先；`e4e1993` 仅记录该轮
+  文档交接，不应被误写成测试执行基线。早期交接中的 `794127f`/`fb743fa`
+  不作为当前基线。
 - 既有现场证据、用户删除项和无关工作树修改均保留，未被清理或覆盖。
 - 默认桌面启动已改为 `physical`：WPF/Launcher 默认连接外部
   `127.0.0.1:5141`（Adapter）和 `127.0.0.1:5145`（MES），不托管或启动
@@ -92,7 +94,7 @@ Last updated: 2026-09-09
 - 详见 [`ION-CHROMATOGRAPHY-RPA-HANDOFF-2026-08-24.md`](ION-CHROMATOGRAPHY-RPA-HANDOFF-2026-08-24.md)
   和 [`ION-CHROMATOGRAPHY-D160-PROTOCOL-VERIFICATION.md`](ION-CHROMATOGRAPHY-D160-PROTOCOL-VERIFICATION.md)。
 
-## 最近一周主线（2026-08-31 至 2026-09-08）
+## 最近一周主线（2026-09-03 至 2026-09-09）
 
 | 日期 | 推进节点 | 结果/边界 |
 | --- | --- | --- |
