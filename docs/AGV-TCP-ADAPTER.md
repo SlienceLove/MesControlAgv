@@ -21,8 +21,10 @@ The controller snapshot recorded for future re-verification is:
 - confirmed directed edges: `LM1 -> LM2`, `LM2 -> LM3`, `LM1 -> LM4`,
   `LM4 -> LM1`, `LM4 -> LM5`, `LM5 -> LM4`, `LM1 -> LM5`
 
-There is no direct `LM5 -> LM1` edge. The Simulator remains the default driver
-and default configuration contains no physical controller address.
+There is no direct `LM5 -> LM1` edge. The canonical physical driver is
+`vendor-tcp`. Simulator requires the explicit simulation profile
+(`WPF_RUNTIME_MODE=simulator`); the committed default configuration contains
+no physical controller address.
 
 ## Driver and deployment configuration
 

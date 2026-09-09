@@ -1,7 +1,7 @@
 # YhLoop TCP 原生帧接入设计
 
-日期：2026-09-09  
-范围：中控 MES 的 ShineLab/YhLoop 被动 TCP 监听与离线验证  
+日期：2026-09-09
+范围：中控 MES 的 ShineLab/YhLoop 被动 TCP 监听与离线验证
 状态：设计已确认，待实现
 
 ## 1. 背景与证据

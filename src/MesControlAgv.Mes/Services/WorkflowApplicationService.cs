@@ -856,7 +856,10 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
                 }
 
                 if (result.IsAccepted && readinessBinding.DeviceEpochs is { Count: > 0 } epochs &&
-                    !TryAcknowledgePhysicalAuthorization(epochs, out var acknowledgementError))
+                    !TryAcknowledgePhysicalAuthorization(
+                        epochs,
+                        request.PhysicalAuthorization?.ReadinessSupervisorInstanceId,
+                        out var acknowledgementError))
                 {
                     result = CreateRejection(
                         request,
@@ -1082,6 +1085,7 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
 
     private bool TryAcknowledgePhysicalAuthorization(
         IReadOnlyDictionary<string, long> epochs,
+        string? supervisorInstanceId,
         out string? error)
     {
         if (_physicalReadiness is not { Enabled: true } readiness)
@@ -1092,7 +1096,10 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
 
         foreach (var pair in epochs)
         {
-            if (readiness.AcknowledgeAuthorization(pair.Key, pair.Value)) continue;
+            if (readiness.AcknowledgeAuthorization(
+                    pair.Key,
+                    pair.Value,
+                    supervisorInstanceId)) continue;
             error = $"Physical device '{pair.Key}' changed readiness while the run was being admitted; submit a new authorization.";
             return false;
         }

@@ -89,7 +89,10 @@ internal sealed class DisabledPhysicalReadinessState : IPhysicalReadinessState
     public bool TryGetDevice(string deviceId, out PhysicalDeviceReadinessSnapshot snapshot) { snapshot = null!; return false; }
     public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, out string? reason) { reason = PhysicalReadinessReasonCodes.DeviceNotReady; return false; }
     public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, string? expectedSupervisorInstanceId, out string? reason) { reason = PhysicalReadinessReasonCodes.DeviceNotReady; return false; }
-    public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
+    public bool AcknowledgeAuthorization(
+        string deviceId,
+        long expectedEpoch,
+        string? expectedSupervisorInstanceId) => false;
 }
 
 /// <summary>Stable exception raised by the physical execution admission policy.</summary>

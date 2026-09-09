@@ -791,7 +791,7 @@ public sealed class PhysicalSafetyActionServiceTests
                 (string.IsNullOrWhiteSpace(expectedSupervisorInstanceId) || expectedSupervisorInstanceId == "supervisor-1");
         }
 
-        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
+        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch, string? expectedSupervisorInstanceId) => false;
     }
 
     private sealed class ChangesAfterFirstCheckReadinessState : IPhysicalReadinessState
@@ -831,7 +831,7 @@ public sealed class PhysicalSafetyActionServiceTests
             return ready;
         }
 
-        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
+        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch, string? expectedSupervisorInstanceId) => false;
     }
 
     private sealed class AnyEpochReadyPhysicalReadinessState : IPhysicalReadinessState
@@ -871,6 +871,6 @@ public sealed class PhysicalSafetyActionServiceTests
             return true;
         }
 
-        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => true;
+        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch, string? expectedSupervisorInstanceId) => true;
     }
 }

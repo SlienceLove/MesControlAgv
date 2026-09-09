@@ -10,6 +10,7 @@ using MesControlAgv.Mes.Services;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace MesControlAgv.Mes.Tests;
 
@@ -273,22 +274,25 @@ public sealed class WorkflowFieldNavigationWorkerTests
     }
 
     [Fact]
-    public async Task Final_move_release_rejection_is_audited_without_blocking_workflow_completion()
+    public async Task Final_move_release_rejection_leaves_workflow_unknown_and_is_audited()
     {
         await using var fixture = await FinalMoveFixture.CreateAsync();
         fixture.Adapter.ReleaseControlResult = false;
 
         await fixture.CompleteAsync();
 
-        Assert.Equal(WorkflowRuntimeStatus.Completed,
+        Assert.Equal(WorkflowRuntimeStatus.Unknown,
             (await fixture.Workflows.GetExecutionAsync(fixture.ExecutionId, CancellationToken.None))!.RuntimeStatus);
         Assert.Equal(1, fixture.Adapter.ReleaseControlCalls);
+        await AssertUnknownFinalMoveStopsWithoutContinuationAsync(fixture);
         var safetyAction = Assert.Single(await fixture.Database.PhysicalSafetyActions.AsNoTracking().ToListAsync());
         Assert.Equal(PhysicalSafetyActionStatuses.Rejected, safetyAction.Status);
         var (_, details) = await AssertFinalMoveReleaseAuditAsync(
             fixture,
             PhysicalSafetyActionStatuses.Rejected,
-            PhysicalSafetyActionStatuses.Rejected);
+            PhysicalSafetyActionStatuses.Rejected,
+            expectedFailureClassification: PhysicalSafetyActionStatuses.Rejected,
+            expectedTerminalReason: "workflow_final_move_release_rejected");
         Assert.Equal(safetyAction.Id.ToString(), details["safetyActionId"]);
         Assert.Equal(PhysicalSafetyActionStatuses.Rejected, details["safetyActionStatus"]);
         Assert.Null(details["exceptionType"]);
@@ -303,15 +307,18 @@ public sealed class WorkflowFieldNavigationWorkerTests
 
         await fixture.CompleteAsync();
 
-        Assert.Equal(WorkflowRuntimeStatus.Completed,
+        Assert.Equal(WorkflowRuntimeStatus.Unknown,
             (await fixture.Workflows.GetExecutionAsync(fixture.ExecutionId, CancellationToken.None))!.RuntimeStatus);
         Assert.Equal(1, fixture.Adapter.ReleaseControlCalls);
+        await AssertUnknownFinalMoveStopsWithoutContinuationAsync(fixture);
         var safetyAction = Assert.Single(await fixture.Database.PhysicalSafetyActions.AsNoTracking().ToListAsync());
         Assert.Equal(PhysicalSafetyActionStatuses.Unknown, safetyAction.Status);
         var (_, details) = await AssertFinalMoveReleaseAuditAsync(
             fixture,
             PhysicalSafetyActionStatuses.Unknown,
-            PhysicalSafetyActionStatuses.Unknown);
+            PhysicalSafetyActionStatuses.Unknown,
+            expectedFailureClassification: PhysicalSafetyActionStatuses.Unknown,
+            expectedTerminalReason: "workflow_final_move_release_unknown");
         Assert.Equal(safetyAction.Id.ToString(), details["safetyActionId"]);
         Assert.Equal(PhysicalSafetyActionStatuses.Unknown, details["safetyActionStatus"]);
         Assert.Contains(
@@ -340,14 +347,17 @@ public sealed class WorkflowFieldNavigationWorkerTests
 
         await fixture.CompleteAsync(throwingSafetyActions);
 
-        Assert.Equal(WorkflowRuntimeStatus.Completed,
+        Assert.Equal(WorkflowRuntimeStatus.Unknown,
             (await fixture.Workflows.GetExecutionAsync(fixture.ExecutionId, CancellationToken.None))!.RuntimeStatus);
         Assert.Equal(0, fixture.Adapter.ReleaseControlCalls);
+        await AssertUnknownFinalMoveStopsWithoutContinuationAsync(fixture);
         Assert.Empty(await fixture.Database.PhysicalSafetyActions.AsNoTracking().ToListAsync());
         var (_, details) = await AssertFinalMoveReleaseAuditAsync(
             fixture,
             PhysicalSafetyActionStatuses.Unknown,
-            "Exception");
+            "Exception",
+            expectedFailureClassification: "Exception",
+            expectedTerminalReason: "workflow_final_move_release_exception");
         Assert.Null(details["safetyActionId"]);
         Assert.Null(details["safetyActionStatus"]);
         Assert.Equal(typeof(ObjectDisposedException).FullName, details["exceptionType"]);
@@ -381,6 +391,31 @@ public sealed class WorkflowFieldNavigationWorkerTests
         Assert.DoesNotContain(
             fixture.Database.ChangeTracker.Entries<WorkflowAuditRecord>(),
             entry => entry.Entity.EventType == "WorkflowFinalMoveRelease");
+    }
+
+    [Fact]
+    public async Task Unknown_final_move_topology_stops_without_release_or_continuation()
+    {
+        await using var fixture = await FinalMoveFixture.CreateAsync();
+        await fixture.MakeMoveTopologyUnknownAsync();
+
+        await fixture.CompleteAsync();
+
+        await AssertUnknownFinalMoveStopsWithoutContinuationAsync(fixture);
+        Assert.Equal(0, fixture.Adapter.ReleaseControlCalls);
+        Assert.Empty(await fixture.Database.PhysicalSafetyActions
+            .AsNoTracking()
+            .ToListAsync());
+        var (_, details) = await AssertFinalMoveReleaseAuditAsync(
+            fixture,
+            PhysicalSafetyActionStatuses.Unknown,
+            "NotAttempted",
+            expectedFailureClassification: "TopologyUnknown",
+            expectedTerminalReason: "workflow_final_move_topology_unknown",
+            expectedReleaseAttempted: false,
+            expectedTerminalContext: "The current Move node does not have exactly one next node.");
+        Assert.Null(details["safetyActionId"]);
+        Assert.Null(details["safetyActionStatus"]);
     }
 
     [Theory]
@@ -719,7 +754,13 @@ public sealed class WorkflowFieldNavigationWorkerTests
         AssertFinalMoveReleaseAuditAsync(
             FinalMoveFixture fixture,
             string expectedOutcome,
-            string expectedReleaseResult)
+            string expectedReleaseResult,
+            WorkflowStepCompletionOutcome? expectedTerminalOutcome = null,
+            WorkflowRuntimeStatus? expectedWorkflowStatus = null,
+            string? expectedTerminalReason = null,
+            string? expectedFailureClassification = null,
+            bool expectedReleaseAttempted = true,
+            string? expectedTerminalContext = null)
     {
         var audit = Assert.Single(await fixture.Database.WorkflowAudits
             .AsNoTracking()
@@ -737,12 +778,49 @@ public sealed class WorkflowFieldNavigationWorkerTests
         Assert.Equal(fixture.ExecutionId.ToString(), details["workflowRunId"]);
         Assert.Equal(fixture.NodeExecutionId.ToString(), details["nodeExecutionId"]);
         Assert.Equal(fixture.DeviceOperationId.ToString(), details["deviceOperationId"]);
-        Assert.Equal("true", details["releaseAttempted"]);
+        Assert.Equal(expectedReleaseAttempted ? "true" : "false", details["releaseAttempted"]);
         Assert.Equal(expectedReleaseResult, details["releaseResult"]);
-        Assert.Equal(WorkflowStepCompletionOutcome.Succeeded.ToString(), details["terminalOutcome"]);
-        Assert.Equal("workflow_final_move_completed", details["terminalReason"]);
-        Assert.Equal("completed its final Move node", details["terminalContext"]);
+        var terminalOutcome = expectedTerminalOutcome ??
+            (expectedReleaseResult == PhysicalSafetyActionStatuses.Succeeded
+                ? WorkflowStepCompletionOutcome.Succeeded
+                : WorkflowStepCompletionOutcome.Unknown);
+        var workflowStatus = expectedWorkflowStatus ??
+            (terminalOutcome == WorkflowStepCompletionOutcome.Succeeded
+                ? WorkflowRuntimeStatus.Completed
+                : WorkflowRuntimeStatus.Unknown);
+        Assert.Equal(terminalOutcome.ToString(), details["terminalOutcome"]);
+        Assert.Equal(workflowStatus.ToString(), details["workflowTerminalStatus"]);
+        Assert.Equal(
+            expectedTerminalReason ?? "workflow_final_move_completed",
+            details["terminalReason"]);
+        Assert.Equal(
+            expectedTerminalContext ?? "completed its final Move node",
+            details["terminalContext"]);
+        if (expectedFailureClassification is not null)
+            Assert.Equal(expectedFailureClassification, details["releaseFailureClassification"]);
         return (audit, details);
+    }
+
+    private static async Task AssertUnknownFinalMoveStopsWithoutContinuationAsync(
+        FinalMoveFixture fixture)
+    {
+        var run = await fixture.Workflows.GetExecutionAsync(
+            fixture.ExecutionId,
+            CancellationToken.None);
+        Assert.Equal(WorkflowRuntimeStatus.Unknown, run!.RuntimeStatus);
+
+        var node = Assert.Single(await fixture.Workflows.ListNodeExecutionsAsync(
+            fixture.ExecutionId,
+            CancellationToken.None));
+        Assert.Equal(WorkflowNodeExecutionStatus.Unknown, node.Status);
+        var operation = Assert.Single(await fixture.Workflows.ListDeviceOperationsAsync(
+            fixture.ExecutionId,
+            CancellationToken.None));
+        Assert.Equal(WorkflowDeviceOperationStatus.Unknown, operation.Status);
+
+        var releaseCalls = fixture.Adapter.ReleaseControlCalls;
+        await fixture.CompleteAsync();
+        Assert.Equal(releaseCalls, fixture.Adapter.ReleaseControlCalls);
     }
 
     private sealed class FinalMoveFixture : IAsyncDisposable
@@ -926,6 +1004,32 @@ public sealed class WorkflowFieldNavigationWorkerTests
                 physicalReadiness: Readiness,
                 safetyActions: safetyActions)
             .ProcessAsync(CancellationToken.None);
+
+        public async Task MakeMoveTopologyUnknownAsync()
+        {
+            var version = await Database.WorkflowVersions.SingleAsync(
+                item => item.WorkflowId == WorkflowId && item.Version == Version);
+            var serializerOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+            {
+                PropertyNameCaseInsensitive = true
+            };
+            serializerOptions.Converters.Add(new JsonStringEnumConverter());
+            var definition = JsonSerializer.Deserialize<WorkflowDefinition>(
+                version.DefinitionJson,
+                serializerOptions)
+                ?? throw new InvalidOperationException("The persisted workflow definition was empty.");
+            var moveNodeId = (await Database.WorkflowNodeExecutions.SingleAsync(
+                item => item.Id == NodeExecutionId)).NodeId;
+            version.DefinitionJson = JsonSerializer.Serialize(definition with
+            {
+                Nodes = definition.Nodes
+                    .Select(node => node.Id == moveNodeId
+                        ? node with { NextNodeIds = Array.Empty<Guid>() }
+                        : node)
+                    .ToArray()
+            }, serializerOptions);
+            await Database.SaveChangesAsync();
+        }
 
         public async ValueTask DisposeAsync()
         {
@@ -1213,7 +1317,7 @@ public sealed class WorkflowFieldNavigationWorkerTests
             return isCurrent;
         }
 
-        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
+        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch, string? expectedSupervisorInstanceId) => false;
     }
 
     private sealed class CompletingArmGateway : IAuboArmGateway

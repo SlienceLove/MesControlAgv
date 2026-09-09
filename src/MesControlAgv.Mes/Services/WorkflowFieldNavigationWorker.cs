@@ -82,6 +82,28 @@ public sealed class WorkflowFieldNavigationDispatcher(
     IPhysicalReadinessState? physicalReadiness = null,
     PhysicalSafetyActionService? safetyActions = null)
 {
+    private enum FinalMoveTopology
+    {
+        NotFinal,
+        Final,
+        Unknown
+    }
+
+    private sealed record FinalMoveTopologyResult(
+        FinalMoveTopology Topology,
+        string Reason);
+
+    private sealed record FinalMoveReleaseAttempt(
+        WorkflowStepCompletionOutcome WorkflowOutcome,
+        string ReleaseResult,
+        string FailureClassification,
+        string TerminalReason,
+        string TerminalContext,
+        bool ReleaseAttempted,
+        PhysicalSafetyActionResponse? Response,
+        Exception? Exception,
+        string? Error);
+
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private readonly IAgvGateway? _agv = agv;
     private readonly ILogger? _logger = logger;
@@ -673,37 +695,49 @@ public sealed class WorkflowFieldNavigationDispatcher(
         FieldNavigationAcceptanceResponse acceptance,
         CancellationToken cancellationToken)
     {
-        var isFinalPhysicalMove = false;
-        try
+        var topology = await DetermineFinalMoveTopologyAsync(workItem, cancellationToken);
+        if (topology.Topology == FinalMoveTopology.NotFinal)
         {
-            isFinalPhysicalMove = await IsFinalPhysicalMoveAsync(workItem, cancellationToken);
-        }
-        catch (Exception exception) when (exception is not OperationCanceledException)
-        {
-            _logger?.LogWarning(
-                exception,
-                "Unable to determine whether workflow Move {NodeExecutionId} is the final physical node; control will remain unchanged.",
-                workItem.NodeExecution.Id);
+            await CompleteAsync(
+                workItem,
+                WorkflowStepCompletionOutcome.Succeeded,
+                null,
+                acceptance,
+                cancellationToken);
+            return;
         }
 
-        if (isFinalPhysicalMove)
+        if (topology.Topology == FinalMoveTopology.Unknown)
         {
-            // Release before marking the run Completed. The active-run gate
-            // therefore prevents a new physical batch from being admitted
-            // while cleanup is in progress. A lost response is never replayed.
-            await TryReleaseBatchControlOnceAsync(
+            // An incomplete or ambiguous topology is not evidence that this
+            // Move was ordinary. Stop the workflow as Unknown and record that
+            // no release request was attempted; otherwise a missing graph
+            // edge could incorrectly create a successful continuation.
+            await CompleteFinalMoveAsync(
                 workItem,
                 acceptance,
-                WorkflowStepCompletionOutcome.Succeeded,
-                "completed its final Move node");
+                new FinalMoveReleaseAttempt(
+                    WorkflowStepCompletionOutcome.Unknown,
+                    "NotAttempted",
+                    "TopologyUnknown",
+                    "workflow_final_move_topology_unknown",
+                    topology.Reason,
+                    false,
+                    null,
+                    null,
+                    topology.Reason),
+                cancellationToken);
+            return;
         }
 
-        await CompleteAsync(
+        // Release before recording the final workflow outcome. The active-run
+        // gate therefore remains occupied while cleanup is in progress. A
+        // lost or rejected response is never replayed automatically.
+        var release = await TryReleaseBatchControlOnceAsync(
             workItem,
-            WorkflowStepCompletionOutcome.Succeeded,
-            null,
             acceptance,
-            cancellationToken);
+            "completed its final Move node");
+        await CompleteFinalMoveAsync(workItem, acceptance, release, cancellationToken);
     }
 
     private async Task CompleteCancelledAsync(
@@ -721,10 +755,9 @@ public sealed class WorkflowFieldNavigationDispatcher(
             cancellationToken);
     }
 
-    private async Task TryReleaseBatchControlOnceAsync(
+    private async Task<FinalMoveReleaseAttempt> TryReleaseBatchControlOnceAsync(
         WorkflowNodeExecutionWorkItem workItem,
         FieldNavigationAcceptanceResponse acceptance,
-        WorkflowStepCompletionOutcome moveOutcome,
         string terminalContext)
     {
         var timeout = options.ControlReleaseTimeout <= TimeSpan.Zero
@@ -734,6 +767,7 @@ public sealed class WorkflowFieldNavigationDispatcher(
         var releaseAttempted = false;
         PhysicalSafetyActionResponse? result = null;
         Exception? releaseException = null;
+        var failureClassification = "NotAttempted";
         try
         {
             var actionService = safetyActions ?? new PhysicalSafetyActionService(
@@ -752,7 +786,7 @@ public sealed class WorkflowFieldNavigationDispatcher(
                 acceptance.OperatorName ?? "workflow-worker",
                 acceptance.DeviceEpoch,
                 acceptance.ReadinessSupervisorInstanceId,
-                moveOutcome,
+                WorkflowStepCompletionOutcome.Succeeded,
                 cleanup.Token);
             if (result.Status == PhysicalSafetyActionStatuses.Succeeded)
             {
@@ -772,10 +806,28 @@ public sealed class WorkflowFieldNavigationDispatcher(
                     result.Status,
                     result.ResultSummary);
             }
+
+            failureClassification = result.Status switch
+            {
+                PhysicalSafetyActionStatuses.Rejected => PhysicalSafetyActionStatuses.Rejected,
+                PhysicalSafetyActionStatuses.Unknown => PhysicalSafetyActionStatuses.Unknown,
+                _ => "UnrecognizedStatus"
+            };
+        }
+        catch (OperationCanceledException exception) when (cleanup.IsCancellationRequested)
+        {
+            releaseException = exception;
+            failureClassification = "Timeout";
+            _logger?.LogWarning(
+                exception,
+                "Workflow run {WorkflowRunId} {TerminalContext}, but AGV control release timed out. Recheck ownership without replaying the request.",
+                workItem.NodeExecution.WorkflowRunId,
+                terminalContext);
         }
         catch (Exception exception)
         {
             releaseException = exception;
+            failureClassification = "Exception";
             // A lost response after POST is ambiguous. Never retry release;
             // the next read-only preflight must expose the owner.
             _logger?.LogWarning(
@@ -785,61 +837,119 @@ public sealed class WorkflowFieldNavigationDispatcher(
                 terminalContext);
         }
 
-        await TrySaveFinalMoveReleaseAuditAsync(
-            workItem,
-            acceptance,
-            moveOutcome,
+        if (result?.Status == PhysicalSafetyActionStatuses.Succeeded)
+        {
+            return new FinalMoveReleaseAttempt(
+                WorkflowStepCompletionOutcome.Succeeded,
+                result.Status,
+                "Succeeded",
+                "workflow_final_move_completed",
+                terminalContext,
+                releaseAttempted,
+                result,
+                null,
+                null);
+        }
+
+        var releaseResult = result?.Status ?? failureClassification;
+        var terminalReason = failureClassification switch
+        {
+            PhysicalSafetyActionStatuses.Rejected => "workflow_final_move_release_rejected",
+            "Timeout" => "workflow_final_move_release_timeout",
+            "Exception" => "workflow_final_move_release_exception",
+            "UnrecognizedStatus" => "workflow_final_move_release_unrecognized",
+            _ => "workflow_final_move_release_unknown"
+        };
+        var error = result?.ResultSummary ?? failureClassification switch
+        {
+            "Timeout" => "Final Move release timed out; manual reconciliation is required.",
+            "Exception" => "Final Move release failed before a result could be confirmed; manual reconciliation is required.",
+            "UnrecognizedStatus" => $"Final Move release returned an unrecognized status '{releaseResult}'.",
+            _ => "Final Move release outcome is unknown; manual reconciliation is required."
+        };
+        return new FinalMoveReleaseAttempt(
+            WorkflowStepCompletionOutcome.Unknown,
+            releaseResult,
+            failureClassification,
+            terminalReason,
             terminalContext,
             releaseAttempted,
             result,
-            releaseException);
+            releaseException,
+            error);
+    }
+
+    private async Task CompleteFinalMoveAsync(
+        WorkflowNodeExecutionWorkItem workItem,
+        FieldNavigationAcceptanceResponse acceptance,
+        FinalMoveReleaseAttempt release,
+        CancellationToken cancellationToken)
+    {
+        WorkflowExecutionSnapshot? completed = null;
+        try
+        {
+            completed = await CompleteAsync(
+                workItem,
+                release.WorkflowOutcome,
+                release.Error,
+                acceptance,
+                cancellationToken);
+        }
+        finally
+        {
+            await TrySaveFinalMoveReleaseAuditAsync(workItem, acceptance, release, completed);
+        }
     }
 
     private async Task TrySaveFinalMoveReleaseAuditAsync(
         WorkflowNodeExecutionWorkItem workItem,
         FieldNavigationAcceptanceResponse acceptance,
-        WorkflowStepCompletionOutcome moveOutcome,
-        string terminalContext,
-        bool releaseAttempted,
-        PhysicalSafetyActionResponse? result,
-        Exception? releaseException)
+        FinalMoveReleaseAttempt release,
+        WorkflowExecutionSnapshot? completed)
     {
-        var database = repository.Database;
-        var deviceOperationId = acceptance.WorkflowDeviceOperationId ?? Guid.Empty;
-        var releaseResult = result?.Status ?? (releaseException is null ? "NotAttempted" : "Exception");
-        var audit = new WorkflowAuditRecord
-        {
-            Id = Guid.NewGuid(),
-            EventType = "WorkflowFinalMoveRelease",
-            Outcome = result?.Status ?? PhysicalSafetyActionStatuses.Unknown,
-            Reason = result?.ResultSummary ?? releaseException?.Message ?? terminalContext,
-            WorkflowId = workItem.NodeExecution.WorkflowId,
-            Version = workItem.NodeExecution.Version,
-            RequestId = workItem.DeviceOperation?.RequestId,
-            ExecutionId = workItem.NodeExecution.WorkflowRunId,
-            Actor = acceptance.OperatorName ?? "workflow-worker",
-            CorrelationId = workItem.DeviceOperation?.CorrelationId,
-            DetailsJson = WorkflowPersistence.Serialize(new Dictionary<string, string?>
-            {
-                ["workflowRunId"] = workItem.NodeExecution.WorkflowRunId.ToString(),
-                ["nodeExecutionId"] = workItem.NodeExecution.Id.ToString(),
-                ["deviceOperationId"] = deviceOperationId.ToString(),
-                ["releaseAttempted"] = releaseAttempted ? "true" : "false",
-                ["releaseResult"] = releaseResult,
-                ["safetyActionId"] = result?.Id.ToString(),
-                ["safetyActionStatus"] = result?.Status,
-                ["safetyActionResultSummary"] = result?.ResultSummary,
-                ["terminalOutcome"] = moveOutcome.ToString(),
-                ["terminalReason"] = "workflow_final_move_completed",
-                ["terminalContext"] = terminalContext,
-                ["exceptionType"] = releaseException?.GetType().FullName,
-                ["exceptionMessage"] = releaseException?.Message
-            }),
-            OccurredAtUtc = _timeProvider.GetUtcNow().UtcDateTime
-        };
-
         try
         {
+            var database = repository.Database;
+            var deviceOperationId = acceptance.WorkflowDeviceOperationId ?? Guid.Empty;
+            var terminalStatus = completed?.RuntimeStatus.ToString() ??
+                                 (release.WorkflowOutcome == WorkflowStepCompletionOutcome.Succeeded
+                                     ? WorkflowRuntimeStatus.Completed.ToString()
+                                     : WorkflowRuntimeStatus.Unknown.ToString());
+            var audit = new WorkflowAuditRecord
+            {
+                Id = Guid.NewGuid(),
+                EventType = "WorkflowFinalMoveRelease",
+                Outcome = release.Response?.Status ?? PhysicalSafetyActionStatuses.Unknown,
+                Code = release.FailureClassification,
+                Reason = release.Response?.ResultSummary ?? release.Exception?.Message ?? release.TerminalReason,
+                WorkflowId = workItem.NodeExecution.WorkflowId,
+                Version = workItem.NodeExecution.Version,
+                RequestId = workItem.DeviceOperation?.RequestId,
+                ExecutionId = workItem.NodeExecution.WorkflowRunId,
+                Actor = acceptance.OperatorName ?? "workflow-worker",
+                CorrelationId = workItem.DeviceOperation?.CorrelationId,
+                DetailsJson = WorkflowPersistence.Serialize(new Dictionary<string, string?>
+                {
+                    ["workflowRunId"] = workItem.NodeExecution.WorkflowRunId.ToString(),
+                    ["nodeExecutionId"] = workItem.NodeExecution.Id.ToString(),
+                    ["deviceOperationId"] = deviceOperationId.ToString(),
+                    ["releaseAttempted"] = release.ReleaseAttempted ? "true" : "false",
+                    ["releaseResult"] = release.ReleaseResult,
+                    ["releaseFailureClassification"] = release.FailureClassification,
+                    ["safetyActionId"] = release.Response?.Id.ToString(),
+                    ["safetyActionStatus"] = release.Response?.Status,
+                    ["safetyActionResultSummary"] = release.Response?.ResultSummary,
+                    ["moveOutcome"] = WorkflowStepCompletionOutcome.Succeeded.ToString(),
+                    ["terminalOutcome"] = release.WorkflowOutcome.ToString(),
+                    ["workflowTerminalStatus"] = terminalStatus,
+                    ["terminalReason"] = release.TerminalReason,
+                    ["terminalContext"] = release.TerminalContext,
+                    ["exceptionType"] = release.Exception?.GetType().FullName,
+                    ["exceptionMessage"] = release.Exception?.Message
+                }),
+                OccurredAtUtc = _timeProvider.GetUtcNow().UtcDateTime
+            };
+
             database.WorkflowAudits.Add(audit);
             await database.SaveChangesAsync(CancellationToken.None);
         }
@@ -849,28 +959,57 @@ public sealed class WorkflowFieldNavigationDispatcher(
                 exception,
                 "Unable to persist final Move release audit for workflow run {WorkflowRunId}; workflow completion will continue without retrying the release.",
                 workItem.NodeExecution.WorkflowRunId);
-            database.Entry(audit).State = EntityState.Detached;
+            try
+            {
+                repository.Database.ChangeTracker.Entries<WorkflowAuditRecord>()
+                    .Where(entry => entry.Entity.EventType == "WorkflowFinalMoveRelease")
+                    .ToList()
+                    .ForEach(entry => entry.State = EntityState.Detached);
+            }
+            catch
+            {
+                // The audit is best effort and must never mask the terminal
+                // workflow outcome or cause a physical retry.
+            }
         }
     }
 
-    private async Task<bool> IsFinalPhysicalMoveAsync(
+    private async Task<FinalMoveTopologyResult> DetermineFinalMoveTopologyAsync(
         WorkflowNodeExecutionWorkItem workItem,
         CancellationToken cancellationToken)
     {
         var run = await workflows.GetExecutionAsync(
             workItem.NodeExecution.WorkflowRunId,
             cancellationToken);
-        if (run?.PhysicalAuthorization is null) return false;
+        if (run is null)
+            return new(FinalMoveTopology.Unknown, "Workflow execution could not be loaded.");
+        if (run.PhysicalAuthorization is null)
+            return new(FinalMoveTopology.Unknown, "The physical workflow authorization is missing.");
 
         var version = await workflows.GetVersionAsync(
             run.WorkflowId,
             run.Version,
             cancellationToken);
-        var current = version?.Definition.Nodes.SingleOrDefault(
-            node => node.Id == workItem.NodeExecution.NodeId);
-        if (current?.NextNodeIds is not { Count: 1 } nextIds) return false;
-        return version!.Definition.Nodes.Any(node =>
-            node.Id == nextIds[0] && node.Type == WorkflowNodeType.End);
+        if (version?.Definition?.Nodes is not { Count: > 0 } nodes)
+            return new(FinalMoveTopology.Unknown, "The immutable workflow definition is missing.");
+
+        var currentNodes = nodes
+            .Where(node => node.Id == workItem.NodeExecution.NodeId)
+            .ToArray();
+        if (currentNodes.Length != 1)
+            return new(FinalMoveTopology.Unknown, "The current Move node is missing or ambiguous in the workflow definition.");
+
+        var nextNodeIds = currentNodes[0].NextNodeIds?.ToArray() ?? [];
+        if (nextNodeIds.Length != 1)
+            return new(FinalMoveTopology.Unknown, "The current Move node does not have exactly one next node.");
+
+        var nextNodes = nodes.Where(node => node.Id == nextNodeIds[0]).ToArray();
+        if (nextNodes.Length != 1)
+            return new(FinalMoveTopology.Unknown, "The next workflow node is missing or ambiguous.");
+
+        return nextNodes[0].Type == WorkflowNodeType.End
+            ? new(FinalMoveTopology.Final, "The Move node leads directly to the workflow End node.")
+            : new(FinalMoveTopology.NotFinal, "The Move node has a non-End successor.");
     }
 
     private Task RecordProgressAsync(

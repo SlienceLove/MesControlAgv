@@ -85,6 +85,6 @@ public sealed class PhysicalExecutionAdmissionPolicyTests
             return false;
         }
 
-        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
+        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch, string? expectedSupervisorInstanceId) => false;
     }
 }

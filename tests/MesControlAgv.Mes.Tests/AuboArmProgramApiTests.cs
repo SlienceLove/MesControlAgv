@@ -563,7 +563,7 @@ public sealed class AuboArmProgramApiTests
             return true;
         }
 
-        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
+        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch, string? expectedSupervisorInstanceId) => false;
 
         private PhysicalDeviceReadinessSnapshot CreateDevice() => new()
         {
@@ -613,7 +613,7 @@ public sealed class AuboArmProgramApiTests
             return false;
         }
 
-        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
+        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch, string? expectedSupervisorInstanceId) => false;
     }
 
     private sealed class DisabledPhysicalReadinessState : IPhysicalReadinessState
@@ -623,6 +623,6 @@ public sealed class AuboArmProgramApiTests
         public bool TryGetDevice(string deviceId, out PhysicalDeviceReadinessSnapshot snapshot) { snapshot = null!; return false; }
         public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, out string? reason) { reason = PhysicalReadinessReasonCodes.SupervisorDisabled; return false; }
         public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, string? expectedSupervisorInstanceId, out string? reason) { reason = PhysicalReadinessReasonCodes.SupervisorDisabled; return false; }
-        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
+        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch, string? expectedSupervisorInstanceId) => false;
     }
 }

@@ -4,8 +4,8 @@ Last updated: 2026-09-09
 
 ## 当前结论
 
-- 分支：`feature/wpf-ui-layout-optimization`；本地物理准入收尾为 `ef112a2`、`b65eb0f`，已合并远端同名分支等价 WPF 提交，当前合并提交为 `134a82a`。
-- 最新离线验证：定向 `60/60`、MES `258/258`、解决方案 `1135 passed / 5 existing skipped / 0 failed`；Release 构建 `0` 警告、`0` 错误，`git diff --check` 通过。
+- 分支：`feature/wpf-ui-layout-optimization`；当前 HEAD 为 `52c64ca`（物理准入拒绝持久化）。
+- 最新离线验证：定向 `60/60`、MES `269 passed / 0 failed`、解决方案 `1151 total / 1146 passed / 5 skipped / 0 failed`；Release 构建 `0` 警告、`0` 错误，`git diff --check` 通过。
 - 默认桌面启动为 `physical`，连接外部本地 Adapter/MES；Simulator 仍须显式设置 `WPF_RUNTIME_MODE=simulator`，不会被默认启动。
 - 现场实体设备当前仍按 **NO-GO** 管理。此前只读网络/状态证据不等于本次上电后的运行授权；本轮离线验证未访问现场 IP/端口，也未执行 AGV/AUBO/Modbus/DI/DO 写入。
 
