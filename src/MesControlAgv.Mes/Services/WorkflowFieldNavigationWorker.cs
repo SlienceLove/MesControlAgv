@@ -90,11 +90,9 @@ public sealed class WorkflowFieldNavigationDispatcher(
     {
         if (!CanRun()) return;
 
-        // Reconcile already claimed physical work before waiting on any new
-        // Ready node. A five-minute preflight window for a disconnected new
-        // batch must never starve status propagation for a navigation command
-        // that may already be moving on the controller.
-        await RecoverAsync(cancellationToken);
+        // A running node created by this process is part of the forward path;
+        // startup recovery is invoked explicitly by the hosted worker.
+        await ObserveCurrentRunningAsync(cancellationToken);
 
         foreach (var workItem in await workflows.ListFieldNavigationDispatchableNodesAsync(cancellationToken))
         {
@@ -367,8 +365,16 @@ public sealed class WorkflowFieldNavigationDispatcher(
         WorkflowNodeExecutionWorkItem workItem,
         CancellationToken cancellationToken)
     {
-        if (_physicalReadiness is not { Enabled: true } readiness)
+        if (profile.Features.UseSimulator)
             return true;
+
+        if (_physicalReadiness is not { Enabled: true } readiness)
+        {
+            _logger?.LogWarning(
+                "Workflow Move {NodeExecutionId} remains Ready because the physical readiness supervisor is missing or disabled.",
+                workItem.NodeExecution.Id);
+            return false;
+        }
 
         var request = await workflows.GetExecutionRequestAsync(
             workItem.NodeExecution.WorkflowRunId,
@@ -489,7 +495,15 @@ public sealed class WorkflowFieldNavigationDispatcher(
         return $"{normalized}-{runId:N}-{nodeId:N}-a{Math.Max(1, attempt)}";
     }
 
-    public async Task RecoverAsync(CancellationToken cancellationToken)
+    private Task ObserveCurrentRunningAsync(CancellationToken cancellationToken) =>
+        ReconcileRunningAsync(cancellationToken, recovery: false);
+
+    public Task RecoverAsync(CancellationToken cancellationToken) =>
+        ReconcileRunningAsync(cancellationToken, recovery: true);
+
+    private async Task ReconcileRunningAsync(
+        CancellationToken cancellationToken,
+        bool recovery)
     {
         if (!CanRun()) return;
 
@@ -527,24 +541,26 @@ public sealed class WorkflowFieldNavigationDispatcher(
                 continue;
             }
 
-            if (_physicalReadiness is null)
-            {
-                // Preserve the simulator/legacy in-memory caller behavior.
-                await ApplyAcceptanceAsync(
-                    workItem,
-                    ToResponse(acceptance),
-                    cancellationToken);
-            }
-            else
+            if (recovery)
             {
                 // Recovery can inspect persisted state, but cannot prove
-                // which side of the dispatch boundary the process crossed.
-                // Never complete Arrived or release control from a restart.
+                // which side of the dispatch boundary the prior process
+                // crossed. Never apply acceptance or release control from a
+                // restart.
                 await CompleteWithEntityAsync(
                     workItem,
                     WorkflowStepCompletionOutcome.Unknown,
                     "The physical Move was recovered after restart; completion requires manual reconciliation and no command was replayed.",
                     acceptance,
+                    cancellationToken);
+            }
+            else
+            {
+                // A current-instance observation may apply the persisted
+                // acceptance, including the existing final-arrival release.
+                await ApplyAcceptanceAsync(
+                    workItem,
+                    ToResponse(acceptance),
                     cancellationToken);
             }
         }
@@ -554,13 +570,16 @@ public sealed class WorkflowFieldNavigationDispatcher(
         WorkflowNodeExecutionWorkItem workItem,
         CancellationToken cancellationToken)
     {
-        // A null capability is retained for legacy/in-memory callers that do
-        // not opt into physical supervision. Once a supervisor is supplied,
-        // disabled or stale state remains fail-closed.
-        if (_physicalReadiness is null)
-            return true;
         if (_physicalReadiness is not { Enabled: true } readiness)
+        {
+            await CompleteWithEntityAsync(
+                workItem,
+                WorkflowStepCompletionOutcome.Unknown,
+                "Manual reconciliation required: the physical readiness supervisor is missing or disabled; no recovery write or release was attempted.",
+                null,
+                cancellationToken);
             return false;
+        }
 
         var request = await workflows.GetExecutionRequestAsync(
             workItem.NodeExecution.WorkflowRunId,
@@ -862,6 +881,35 @@ public sealed class WorkflowFieldNavigationWorker(
     {
         if (!options.Enabled || profile.Features.UseSimulator ||
             !profile.Features.EnableFieldNavigationAcceptance) return;
+
+        // Recovery is a startup-only operation. A normal polling cycle must
+        // continue observing the current supervisor instance's forward path;
+        // treating every Running node as a restart would incorrectly force a
+        // valid Arrived observation into Unknown and suppress final release.
+        try
+        {
+            using var recoveryScope = scopeFactory.CreateScope();
+            var recoveryDispatcher = new WorkflowFieldNavigationDispatcher(
+                recoveryScope.ServiceProvider.GetRequiredService<IWorkflowApplicationService>(),
+                recoveryScope.ServiceProvider.GetRequiredService<IFieldNavigationAcceptanceApplicationService>(),
+                recoveryScope.ServiceProvider.GetRequiredService<FieldNavigationAcceptanceRepository>(),
+                profile,
+                options,
+                timeProvider,
+                recoveryScope.ServiceProvider.GetRequiredService<IAgvGateway>(),
+                logger,
+                retryState,
+                recoveryScope.ServiceProvider.GetService<IPhysicalReadinessState>());
+            await recoveryDispatcher.RecoverAsync(stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "Field-navigation workflow startup recovery failed; no recovery write was replayed.");
+        }
 
         var interval = options.PollInterval <= TimeSpan.Zero
             ? TimeSpan.FromSeconds(2)

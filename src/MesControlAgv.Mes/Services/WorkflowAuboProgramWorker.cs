@@ -64,12 +64,6 @@ public sealed class WorkflowAuboProgramDispatcher(
     {
         if (!CanUseProfile()) return;
 
-        // Running programs have crossed the write boundary and need priority
-        // observation. Do this before a new Ready node enters its potentially
-        // long readiness wait so an unrelated offline/manual robot state cannot
-        // starve completion evidence for work already in motion.
-        await RecoverRunningAsync(cancellationToken);
-
         foreach (var workItem in await workflows.ListAuboProgramDispatchableNodesAsync(cancellationToken))
         {
             if (!await HasActiveBatchAuthorizationAsync(workItem, cancellationToken))
@@ -927,6 +921,30 @@ public sealed class WorkflowAuboProgramWorker(
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!options.Enabled) return;
+
+        // Recovery is startup-only. Subsequent polls are the current process's
+        // forward path and must not reinterpret an in-flight node as a restart.
+        try
+        {
+            using var recoveryScope = scopeFactory.CreateScope();
+            var recoveryDispatcher = new WorkflowAuboProgramDispatcher(
+                recoveryScope.ServiceProvider.GetRequiredService<IWorkflowApplicationService>(),
+                recoveryScope.ServiceProvider.GetRequiredService<IAuboArmGateway>(),
+                profile,
+                options,
+                timeProvider,
+                logger,
+                recoveryScope.ServiceProvider.GetService<IPhysicalReadinessState>());
+            await recoveryDispatcher.RecoverAsync(stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "AUBO workflow startup recovery failed; no recovery mutation was replayed.");
+        }
 
         var interval = TimeSpan.FromMilliseconds(Math.Max(250, options.PollIntervalMs));
         while (!stoppingToken.IsCancellationRequested)

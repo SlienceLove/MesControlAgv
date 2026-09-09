@@ -48,7 +48,17 @@ public sealed class WorkflowFieldNavigationWorkerTests
             WorkflowId = draft.WorkflowId,
             Version = draft.Version,
             RequestId = Guid.NewGuid(),
-            RequestedBy = "test"
+            RequestedBy = "test",
+            PhysicalAuthorization = new WorkflowPhysicalRunAuthorization
+            {
+                AgvId = "AGV-01",
+                OperatorName = "test",
+                SafetyObserverName = "observer",
+                PermitPrefix = "worker-test",
+                ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(1),
+                DeviceEpochs = new Dictionary<string, long> { ["AGV-01"] = 1 },
+                ReadinessSupervisorInstanceId = "test"
+            }
         }, CancellationToken.None);
         Assert.True(execution.IsAccepted);
 
@@ -101,7 +111,12 @@ public sealed class WorkflowFieldNavigationWorkerTests
             acceptanceService,
             repository,
             profile,
-            new WorkflowFieldNavigationWorkerOptions { Enabled = true });
+            new WorkflowFieldNavigationWorkerOptions { Enabled = true },
+            physicalReadiness: new TestPhysicalReadinessState(
+                enabled: true,
+                supervisorInstanceId: "test",
+                deviceEpoch: 1,
+                reason: "test readiness failure"));
         await dispatcher.ProcessAsync(CancellationToken.None);
 
         var movingAcceptance = await repository.GetAsync(created.Id, CancellationToken.None);
@@ -211,7 +226,12 @@ public sealed class WorkflowFieldNavigationWorkerTests
                 Enabled = true,
                 AutoAuthorizeFromRunRequest = true
             },
-            agv: adapter);
+            agv: adapter,
+            physicalReadiness: new TestPhysicalReadinessState(
+                enabled: true,
+                supervisorInstanceId: "test",
+                deviceEpoch: 1,
+                reason: "test readiness failure"));
 
         await dispatcher.ProcessAsync(CancellationToken.None);
 
@@ -288,7 +308,12 @@ public sealed class WorkflowFieldNavigationWorkerTests
             repository,
             profile,
             new WorkflowFieldNavigationWorkerOptions { Enabled = true },
-            agv: adapter);
+            agv: adapter,
+            physicalReadiness: new TestPhysicalReadinessState(
+                enabled: true,
+                supervisorInstanceId: "test",
+                deviceEpoch: 1,
+                reason: "test readiness failure"));
 
         await dispatcher.ProcessAsync(CancellationToken.None);
         var acceptance = await repository.GetAsync(draftAcceptance.Id, CancellationToken.None);
@@ -305,8 +330,11 @@ public sealed class WorkflowFieldNavigationWorkerTests
         Assert.Equal(1, adapter.ReleaseControlCalls);
     }
 
-    [Fact]
-    public async Task Recovery_after_readiness_supervisor_restart_marks_stale_arrival_unknown_without_writes()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Recovery_after_readiness_supervisor_restart_marks_stale_arrival_unknown_without_writes(
+        bool missingSupervisor)
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
@@ -370,7 +398,12 @@ public sealed class WorkflowFieldNavigationWorkerTests
             repository,
             profile,
             new WorkflowFieldNavigationWorkerOptions { Enabled = true },
-            agv: adapter);
+            agv: adapter,
+            physicalReadiness: new TestPhysicalReadinessState(
+                enabled: true,
+                supervisorInstanceId: "supervisor-before-restart",
+                deviceEpoch: 7,
+                reason: "test readiness failure"));
         await dispatcher.ProcessAsync(CancellationToken.None);
 
         var arrived = await repository.GetAsync(acceptance.Id, CancellationToken.None);
@@ -383,11 +416,13 @@ public sealed class WorkflowFieldNavigationWorkerTests
             CancellationToken.None);
         var releaseCallsBeforeRecovery = adapter.ReleaseControlCalls;
         var dispatchCallsBeforeRecovery = adapter.DispatchCalls;
-        var restartedReadiness = new TestPhysicalReadinessState(
-            enabled: true,
-            supervisorInstanceId: "supervisor-after-restart",
-            deviceEpoch: 8,
-            reason: PhysicalReadinessReasonCodes.SupervisorInstanceMismatch);
+        IPhysicalReadinessState? restartedReadiness = missingSupervisor
+            ? null
+            : new TestPhysicalReadinessState(
+                enabled: true,
+                supervisorInstanceId: "supervisor-after-restart",
+                deviceEpoch: 8,
+                reason: PhysicalReadinessReasonCodes.SupervisorInstanceMismatch);
         var recovery = new WorkflowFieldNavigationDispatcher(
             workflows,
             acceptanceService,
@@ -406,10 +441,14 @@ public sealed class WorkflowFieldNavigationWorkerTests
         Assert.Contains("Manual reconciliation required", node.LastError, StringComparison.Ordinal);
         Assert.Equal(releaseCallsBeforeRecovery, adapter.ReleaseControlCalls);
         Assert.Equal(dispatchCallsBeforeRecovery, adapter.DispatchCalls);
-        Assert.Equal(1, restartedReadiness.ValidationCalls);
-        Assert.Equal("AGV-01", restartedReadiness.LastDeviceId);
-        Assert.Equal(7, restartedReadiness.LastExpectedEpoch);
-        Assert.Equal("supervisor-before-restart", restartedReadiness.LastExpectedSupervisorInstanceId);
+        if (!missingSupervisor)
+        {
+            var readiness = Assert.IsType<TestPhysicalReadinessState>(restartedReadiness);
+            Assert.Equal(1, readiness.ValidationCalls);
+            Assert.Equal("AGV-01", readiness.LastDeviceId);
+            Assert.Equal(7, readiness.LastExpectedEpoch);
+            Assert.Equal("supervisor-before-restart", readiness.LastExpectedSupervisorInstanceId);
+        }
     }
 
     [Fact]
@@ -475,7 +514,12 @@ public sealed class WorkflowFieldNavigationWorkerTests
             repository,
             profile,
             new WorkflowFieldNavigationWorkerOptions { Enabled = true },
-            agv: adapter);
+            agv: adapter,
+            physicalReadiness: new TestPhysicalReadinessState(
+                enabled: true,
+                supervisorInstanceId: "test",
+                deviceEpoch: 1,
+                reason: "test readiness failure"));
 
         await dispatcher.ProcessAsync(CancellationToken.None);
         var acceptance = await repository.GetAsync(draftAcceptance.Id, CancellationToken.None);
@@ -496,6 +540,89 @@ public sealed class WorkflowFieldNavigationWorkerTests
         Assert.Equal(WorkflowNodeExecutionStatus.Cancelled,
             Assert.Single(await workflows.ListNodeExecutionsAsync(execution.ExecutionId, CancellationToken.None)).Status);
         Assert.Equal(1, adapter.ReleaseControlCalls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Physical_move_stays_ready_without_an_enabled_supervisor(bool useDisabledSupervisor)
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var dbOptions = new DbContextOptionsBuilder<MesDbContext>().UseSqlite(connection).Options;
+        await using var database = new MesDbContext(dbOptions);
+        await database.Database.EnsureCreatedAsync();
+        var profile = CreateProfile();
+        var validator = new WorkflowValidator(
+            BuiltInWorkflowCatalog.Create(),
+            WorkflowPublicationContext.FromProfile(profile));
+        var reader = new MesWorkflowVersionReader(database);
+        var workflows = new WorkflowApplicationService(
+            database,
+            reader,
+            new WorkflowRuntimeExecutor(reader, validator),
+            validator);
+        var draft = await workflows.CreateDraftAsync(CreateSingleMoveWorkflow(), "test", CancellationToken.None);
+        Assert.True((await workflows.ValidateVersionAsync(
+            draft.WorkflowId,
+            draft.Version,
+            CancellationToken.None)).IsValid);
+        await workflows.PublishAsync(draft.WorkflowId, draft.Version, "test", CancellationToken.None);
+        var execution = await workflows.ExecuteAsync(new WorkflowExecutionRequest
+        {
+            WorkflowId = draft.WorkflowId,
+            Version = draft.Version,
+            RequestId = Guid.NewGuid(),
+            RequestedBy = "operator",
+            PhysicalAuthorization = new WorkflowPhysicalRunAuthorization
+            {
+                AgvId = "AGV-01",
+                OperatorName = "operator",
+                SafetyObserverName = "observer",
+                PermitPrefix = "missing-supervisor",
+                ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(1),
+                DeviceEpochs = new Dictionary<string, long> { ["AGV-01"] = 1 },
+                ReadinessSupervisorInstanceId = "test"
+            }
+        }, CancellationToken.None);
+        Assert.True(execution.IsAccepted);
+
+        var adapter = new FieldAcceptanceAdapter();
+        var repository = new FieldNavigationAcceptanceRepository(database);
+        var readiness = useDisabledSupervisor
+            ? new TestPhysicalReadinessState(
+                enabled: false,
+                supervisorInstanceId: "test",
+                deviceEpoch: 1,
+                reason: PhysicalReadinessReasonCodes.SupervisorDisabled)
+            : null;
+        var dispatcher = new WorkflowFieldNavigationDispatcher(
+            workflows,
+            new FieldNavigationAcceptanceService(
+                repository,
+                adapter,
+                profile,
+                new PathPlanner(AgvMap.FromProfile(profile.Map)),
+                workflows: workflows),
+            repository,
+            profile,
+            new WorkflowFieldNavigationWorkerOptions
+            {
+                Enabled = true,
+                AutoAuthorizeFromRunRequest = true
+            },
+            agv: adapter,
+            physicalReadiness: readiness);
+
+        await dispatcher.ProcessAsync(CancellationToken.None);
+
+        var run = await workflows.GetExecutionAsync(execution.ExecutionId, CancellationToken.None);
+        var node = Assert.Single(await workflows.ListNodeExecutionsAsync(execution.ExecutionId, CancellationToken.None));
+        Assert.Equal(WorkflowRuntimeStatus.Prepared, run!.RuntimeStatus);
+        Assert.Equal(WorkflowNodeExecutionStatus.Ready, node.Status);
+        Assert.Empty(await repository.ListForWorkflowRunAsync(execution.ExecutionId, CancellationToken.None));
+        Assert.Equal(0, adapter.DispatchCalls);
+        Assert.Equal(0, adapter.ReleaseControlCalls);
     }
 
     [Fact]
@@ -804,11 +931,12 @@ public sealed class WorkflowFieldNavigationWorkerTests
             var currentDevice = current.Devices.SingleOrDefault(
                 item => string.Equals(item.DeviceId, deviceId, StringComparison.Ordinal));
             var isCurrent = currentDevice is not null &&
-                expectedEpoch == currentDevice.DeviceEpoch &&
-                string.Equals(
-                    expectedSupervisorInstanceId,
-                    current.SupervisorInstanceId,
-                    StringComparison.Ordinal);
+                (!expectedEpoch.HasValue || expectedEpoch == currentDevice.DeviceEpoch) &&
+                (string.IsNullOrWhiteSpace(expectedSupervisorInstanceId) ||
+                 string.Equals(
+                     expectedSupervisorInstanceId,
+                     current.SupervisorInstanceId,
+                     StringComparison.Ordinal));
             validationReason = isCurrent ? null : reason;
             return isCurrent;
         }
