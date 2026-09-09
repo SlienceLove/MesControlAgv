@@ -131,7 +131,7 @@
                     <StackPanel>
                         <Expander Header="运营总览" Style="{StaticResource NavigationGroupStyle}">
                             <StackPanel>
-                                <RadioButton Tag="TaskMonitorTab" Visibility="Collapsed" IsChecked="True"
+                                <RadioButton Tag="TaskMonitorTab" Visibility="Collapsed"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="任务监控" />
@@ -272,13 +272,13 @@
                     TextElement.Foreground="{StaticResource TextPrimaryBrush}"
                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="9">
                 <TabControl x:Name="MainTabs" Style="{StaticResource ContentOnlyTabControlStyle}"
-                            SelectedIndex="0"
+                            SelectedIndex="1"
                             SelectionChanged="MainTabs_SelectionChanged"
                             HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
     <TabItem x:Name="TaskMonitorTab" Visibility="Collapsed" Header="任务监控" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
             <views:TaskMonitorView x:Name="TaskMonitorView" />
         </TabItem>
-    <TabItem x:Name="KpiDashboardTab" IsSelected="True" Header="KPI 看板" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <TabItem x:Name="KpiDashboardTab" Header="KPI 看板" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:KpiDashboardView x:Name="KpiDashboardView" />
     </TabItem>
     <TabItem x:Name="IonChromatographyTab" Header="离子色谱（已迁移至设备状态查询）" Visibility="Collapsed" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
@@ -409,7 +409,7 @@
     <TabItem x:Name="AuboArmTab" Header="AUBO 机械臂" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:AuboArmControlView DataContext="{Binding AuboArm}" />
     </TabItem>
-    <TabItem x:Name="InstrumentTaskImportTab" IsSelected="True" Header="仪器任务导入" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <TabItem x:Name="InstrumentTaskImportTab" Header="仪器任务导入" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:InstrumentTaskImportView />
     </TabItem>
     <TabItem x:Name="BatchTaskImportTab" Visibility="Collapsed" Header="批量任务导入" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">

@@ -73,6 +73,7 @@ public sealed class WorkflowMainWindowBindingTests
                 PumpDispatcher(window.Dispatcher);
                 Assert.Equal(Visibility.Visible, Assert.IsType<Border>(workflowView.FindName("WorkflowPalettePane")).Visibility);
                 Assert.Equal(Visibility.Visible, Assert.IsType<Border>(workflowView.FindName("WorkflowInspectorPane")).Visibility);
+                Assert.False(workflowView.IsHitTestVisible);
                 Assert.NotEqual(0, ((Grid)workflowView.Content).Children.OfType<Grid>()
                     .First(child => Grid.GetRow(child) == 1 && child.ColumnDefinitions.Count == 3)
                     .ColumnDefinitions[0].Width.Value);
@@ -80,6 +81,7 @@ public sealed class WorkflowMainWindowBindingTests
                 fullscreenButton.IsChecked = false;
                 PumpDispatcher(window.Dispatcher);
                 Assert.False(fullscreenButton.IsChecked);
+                Assert.True(workflowView.IsHitTestVisible);
                 Assert.Equal(Visibility.Visible, Assert.IsType<Border>(workflowView.FindName("WorkflowPalettePane")).Visibility);
                 var validationGrid = Assert.IsType<DataGrid>(workflowView.FindName("WorkflowValidationGrid"));
                 validationGrid.SelectedItem = Assert.Single(

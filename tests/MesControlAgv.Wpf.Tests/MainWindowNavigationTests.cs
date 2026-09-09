@@ -79,12 +79,17 @@ public sealed class MainWindowNavigationTests
                     .ToArray();
                 var agvButton = FindVisualChildren<RadioButton>(sidebar)
                     .Single(button => string.Equals(button.Tag as string, "AgvCommunicationTab", StringComparison.Ordinal));
+                var instrumentImportButtons = FindVisualChildren<RadioButton>(sidebar)
+                    .Where(button => string.Equals(button.Tag as string, "InstrumentTaskImportTab", StringComparison.Ordinal))
+                    .ToArray();
 
                 Assert.Equal(4, groupHeaders.Length);
                 Assert.Contains("运营总览", groupHeaders);
                 Assert.Contains("任务与设备", groupHeaders);
                 Assert.Contains("实验工作流", groupHeaders);
                 Assert.Contains("系统与诊断", groupHeaders);
+                Assert.Single(instrumentImportButtons);
+                Assert.Equal(Visibility.Visible, instrumentImportButtons[0].Visibility);
 
                 agvButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
 

@@ -28,6 +28,8 @@ public partial class WorkflowManagementView : UserControl
 
     private void WorkflowManagementView_Loaded(object sender, RoutedEventArgs e)
     {
+        if (!IsFullscreenHost)
+            IsHitTestVisible = true;
         WorkflowCanvasFullscreenButton.Visibility = IsFullscreenHost ? Visibility.Collapsed : Visibility.Visible;
         AttachWorkflowEditor();
         ApplyResponsiveLayout();
@@ -35,6 +37,8 @@ public partial class WorkflowManagementView : UserControl
 
     private void WorkflowManagementView_Unloaded(object sender, RoutedEventArgs e)
     {
+        if (!IsFullscreenHost)
+            IsHitTestVisible = true;
         if (!IsFullscreenHost)
             CloseFullscreenWindow();
         DetachWorkflowEditor();
@@ -131,14 +135,20 @@ public partial class WorkflowManagementView : UserControl
             _fullscreenWindow.Closed += (_, _) =>
             {
                 _fullscreenWindow = null;
+                IsHitTestVisible = true;
                 WorkflowCanvasFullscreenButton.IsEnabled = true;
                 WorkflowCanvasFullscreenButton.IsChecked = false;
             };
+            // The maximized editor shares the same view model as this page.
+            // Prevent edits on the covered page from competing for viewport or
+            // selection state while the separate editor window is open.
+            IsHitTestVisible = false;
             _fullscreenWindow.Show();
         }
         catch
         {
             _fullscreenWindow = null;
+            IsHitTestVisible = true;
             WorkflowCanvasFullscreenButton.IsEnabled = true;
             WorkflowCanvasFullscreenButton.IsChecked = false;
             throw;
@@ -153,6 +163,8 @@ public partial class WorkflowManagementView : UserControl
         _fullscreenWindow = null;
         if (window.IsVisible)
             window.Close();
+        else
+            IsHitTestVisible = true;
     }
 
     private void ImportWorkflowCompatibility_Click(object sender, RoutedEventArgs e)
