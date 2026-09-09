@@ -1,5 +1,6 @@
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
+using MesControlAgv.Domain.Profiles;
 
 namespace MesControlAgv.Mes.Services;
 
@@ -20,7 +21,7 @@ public sealed class AgvAuboSequenceService : IAgvAuboSequenceService, IDisposabl
     private readonly IAuboArmGateway _arm;
     private readonly AgvAuboSequenceOptions _options;
     private readonly TimeProvider _timeProvider;
-    private readonly PhysicalExecutionAdmissionPolicy? _admissionPolicy;
+    private readonly PhysicalExecutionAdmissionPolicy _admissionPolicy;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<Guid, AgvAuboSequenceResponse> _records = [];
 
@@ -35,7 +36,10 @@ public sealed class AgvAuboSequenceService : IAgvAuboSequenceService, IDisposabl
         _arm = arm ?? throw new ArgumentNullException(nameof(arm));
         _options = options ?? new AgvAuboSequenceOptions();
         _timeProvider = timeProvider ?? TimeProvider.System;
-        _admissionPolicy = admissionPolicy;
+        _admissionPolicy = admissionPolicy ?? new PhysicalExecutionAdmissionPolicy(
+            ProfileConfiguration.Default,
+            new DisabledPhysicalReadinessState(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<PhysicalExecutionAdmissionPolicy>.Instance);
         if (_options.PollIntervalMs < 50 || _options.CompletionTimeoutMs < _options.PollIntervalMs)
             throw new ArgumentException("Invalid AGV/AUBO sequence timing options.", nameof(options));
     }
@@ -66,7 +70,7 @@ public sealed class AgvAuboSequenceService : IAgvAuboSequenceService, IDisposabl
                 return existing;
             }
 
-            _admissionPolicy?.RejectUnboundPhysicalWrite("agv-aubo-sequence.start");
+            _admissionPolicy.RejectUnboundPhysicalWrite("agv-aubo-sequence.start");
 
             var task = await _tasks.GetDetailAsync(taskId, cancellationToken).ConfigureAwait(false);
             if (task is null)

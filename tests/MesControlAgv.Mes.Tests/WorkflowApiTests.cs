@@ -2,6 +2,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using MesControlAgv.Application;
+using MesControlAgv.Contracts;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Workflows;
 
@@ -115,6 +116,40 @@ public sealed class WorkflowApiTests : IClassFixture<MesWebApplicationFactory>
         Assert.Equal(HttpStatusCode.NotFound, nodes.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, operations.StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, timeline.StatusCode);
+    }
+
+    [Fact]
+    public async Task Physical_execute_keeps_workflow_disabled_as_the_top_level_http_code()
+    {
+        var definition = WorkflowTestDefinitions.CreateMoveWorkflow();
+        var create = await _client.PostAsJsonAsync("/api/workflows?actor=physical-gate-test", definition);
+        var draft = await create.Content.ReadFromJsonAsync<WorkflowVersion>();
+        Assert.NotNull(draft);
+        await _client.PostAsync(
+            $"/api/workflows/{draft!.WorkflowId}/versions/{draft.Version}/validate", null);
+        await _client.PostAsync(
+            $"/api/workflows/{draft.WorkflowId}/versions/{draft.Version}/publish?actor=physical-gate-test", null);
+
+        var response = await _client.PostAsJsonAsync("/api/workflows/execute", new WorkflowExecutionRequest
+        {
+            WorkflowId = draft.WorkflowId,
+            Version = draft.Version,
+            RequestId = Guid.NewGuid(),
+            RequestedBy = "physical-gate-test",
+            PhysicalAuthorization = new WorkflowPhysicalRunAuthorization
+            {
+                AgvId = "AGV-01",
+                OperatorName = "physical-gate-test",
+                SafetyObserverName = "observer",
+                PermitPrefix = "http-gate",
+                ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(1)
+            }
+        });
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(WorkflowExecutionRejectionCodes.PhysicalExecutionDisabled, body.GetProperty("rejectionCode").GetString());
+        Assert.Contains(PhysicalReadinessReasonCodes.SupervisorDisabled, body.GetProperty("rejectionReason").GetString());
     }
 
     [Fact]

@@ -70,8 +70,8 @@ builder.Services.AddSingleton(new WorkflowPhysicalBatchAdmissionGate(
     physicalBatchEnabled
         ? "现场批量 worker 已启用。"
         : !physicalReadinessOptions.Enabled
-        ? "MES 启动时未启用物理就绪监督器，因此拒绝一键现场执行。"
-        : "MES 启动时未同时启用现场导航、自动许可和 AUBO worker，因此拒绝一键现场执行。"));
+        ? $"{PhysicalReadinessReasonCodes.SupervisorDisabled}: MES 启动时未启用物理就绪监督器，因此拒绝一键现场执行。"
+        : "physical_execution_workers_disabled: MES 启动时未同时启用现场导航、自动许可和 AUBO worker，因此拒绝一键现场执行。"));
 builder.Services.AddSingleton<WorkflowFieldNavigationRetryState>();
 builder.Services.AddHttpClient<ISampleWorkstationReader, SampleWorkstationAdapterClient>(client =>
     client.BaseAddress = new Uri(
@@ -268,16 +268,25 @@ app.MapPost("/api/field-navigation-acceptances/{acceptanceId:guid}/dispatch", as
 
 app.MapPost("/api/field-navigation-acceptances/{acceptanceId:guid}/cancel", async (
     Guid acceptanceId,
+    OperatorActionRequest request,
     IFieldNavigationAcceptanceApplicationService service,
     CancellationToken cancellationToken) =>
 {
     try
     {
-        return Results.Ok(await service.CancelAsync(acceptanceId, cancellationToken));
+        return Results.Ok(await service.CancelAsync(acceptanceId, request.OperatorName, cancellationToken));
     }
     catch (KeyNotFoundException)
     {
         return Results.NotFound();
+    }
+    catch (ArgumentException exception)
+    {
+        return Results.BadRequest(new { detail = exception.Message });
+    }
+    catch (PhysicalExecutionAdmissionException exception)
+    {
+        return Results.Conflict(new { code = exception.Code, detail = exception.Detail });
     }
     catch (InvalidOperationException exception)
     {

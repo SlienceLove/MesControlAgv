@@ -330,11 +330,13 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
             IAuboArmGateway arm,
             IWorkflowApplicationService workflows,
             IPhysicalReadinessState physicalReadiness,
+            PhysicalExecutionAdmissionPolicy admissionPolicy,
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
             await ExecuteArmProgramWriteAsync(
                 async () =>
                 {
+                    admissionPolicy.RequireSupervisedExecution("aubo.program.load");
                     if (!RequireProgramRequest(request.EffectiveProgramName, request.EffectiveOperatorName))
                         throw new ArgumentException("ProgramName and OperatorName are required.");
                     var operationId = request.OperationId.GetValueOrDefault(Guid.NewGuid());
@@ -351,6 +353,7 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
                         correlation,
                         workflows,
                         physicalReadiness,
+                        admissionPolicy,
                         cancellationToken);
                     var result = await arm.LoadProgramAsync(
                         deviceId,
@@ -368,11 +371,13 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
             IAuboArmGateway arm,
             IWorkflowApplicationService workflows,
             IPhysicalReadinessState physicalReadiness,
+            PhysicalExecutionAdmissionPolicy admissionPolicy,
             ILoggerFactory loggerFactory,
             CancellationToken cancellationToken) =>
             await ExecuteArmProgramWriteAsync(
                 async () =>
                 {
+                    admissionPolicy.RequireSupervisedExecution("aubo.program.run");
                     if (!RequireProgramRequest(request.EffectiveProgramName, request.EffectiveOperatorName))
                         throw new ArgumentException("OperatorName is required.");
                     var operationId = request.OperationId.GetValueOrDefault(Guid.NewGuid());
@@ -389,6 +394,7 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
                         correlation,
                         workflows,
                         physicalReadiness,
+                        admissionPolicy,
                         cancellationToken);
                     var result = await arm.RunProgramAsync(
                         deviceId,
@@ -427,6 +433,7 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
                         correlation,
                         workflows,
                         physicalReadiness,
+                        null,
                         cancellationToken);
                     var result = await arm.StopProgramAsync(
                         deviceId,
@@ -596,8 +603,15 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
         AuboArmOperationCorrelation? correlation,
         IWorkflowApplicationService workflows,
         IPhysicalReadinessState physicalReadiness,
+        PhysicalExecutionAdmissionPolicy? admissionPolicy,
         CancellationToken cancellationToken)
     {
+        if (admissionPolicy is { IsSimulator: false } && correlation is null)
+        {
+            throw new PhysicalExecutionAdmissionException(
+                PhysicalReadinessReasonCodes.EpochAuthorizationRequired,
+                "AUBO physical program writes require a current workflow correlation and epoch authorization.");
+        }
         if (!physicalReadiness.Enabled) return;
         if (correlation is null)
         {

@@ -15,7 +15,7 @@ public sealed class TaskService : ITaskApplicationService
     private readonly PathPlanner _planner;
     private readonly IReadOnlyDictionary<int, Station> _stations;
     private readonly IPhysicalReadinessState? _physicalReadiness;
-    private readonly PhysicalExecutionAdmissionPolicy? _admissionPolicy;
+    private readonly PhysicalExecutionAdmissionPolicy _admissionPolicy;
 
     public TaskService(TaskRepository repository, IAgvGateway adapter)
         : this(repository, adapter, ProfileConfiguration.Default, new PathPlanner(AgvMap.Default))
@@ -35,7 +35,10 @@ public sealed class TaskService : ITaskApplicationService
         _planner = planner;
         _stations = Stations.FromProfile(profile).ToDictionary(station => station.Code);
         _physicalReadiness = physicalReadiness;
-        _admissionPolicy = admissionPolicy;
+        _admissionPolicy = admissionPolicy ?? new PhysicalExecutionAdmissionPolicy(
+            profile,
+            physicalReadiness ?? new DisabledPhysicalReadinessState(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<PhysicalExecutionAdmissionPolicy>.Instance);
     }
 
     public async Task<TaskResponse> CreateAsync(CreateTaskRequest request, CancellationToken cancellationToken)
@@ -61,7 +64,7 @@ public sealed class TaskService : ITaskApplicationService
 
     public async Task<TaskResponse> DispatchAsync(Guid taskId, CancellationToken cancellationToken)
     {
-        _admissionPolicy?.RejectUnboundPhysicalWrite("task.dispatch");
+        _admissionPolicy.RejectUnboundPhysicalWrite("task.dispatch");
         var task = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
         if (task.Status != DomainTaskStatus.Created)
         {
@@ -81,7 +84,7 @@ public sealed class TaskService : ITaskApplicationService
 
     public async Task<TaskResponse> ConfirmPickupAsync(Guid taskId, string operatorName, CancellationToken cancellationToken)
     {
-        _admissionPolicy?.RejectUnboundPhysicalWrite("task.confirm-pickup");
+        _admissionPolicy.RejectUnboundPhysicalWrite("task.confirm-pickup");
         await _repository.ApplyEventAsync(taskId, TaskEvent.PickupConfirmed, new { operatorName }, cancellationToken);
         var task = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
         await DispatchLegAsync(task.Id, TaskEvent.DropoffMoveStarted, GetEnabledStation(task.TargetStationCode).AgvStationId, cancellationToken);
@@ -93,7 +96,7 @@ public sealed class TaskService : ITaskApplicationService
 
     public async Task<TaskResponse> RetryAsync(Guid taskId, CancellationToken cancellationToken)
     {
-        _admissionPolicy?.RejectUnboundPhysicalWrite("task.retry");
+        _admissionPolicy.RejectUnboundPhysicalWrite("task.retry");
         var current = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
         if (current.Status != DomainTaskStatus.Failed)
         {
@@ -109,14 +112,26 @@ public sealed class TaskService : ITaskApplicationService
 
     public async Task<TaskResponse> CancelAsync(Guid taskId, string operatorName, CancellationToken cancellationToken)
     {
+        var actor = string.IsNullOrWhiteSpace(operatorName)
+            ? throw new ArgumentException("An operator name is required.", nameof(operatorName))
+            : operatorName.Trim();
         var task = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
+        if (task.Status is DomainTaskStatus.Completed or DomainTaskStatus.Failed or DomainTaskStatus.Cancelled)
+            return ToResponse(task);
         if (task.Status == DomainTaskStatus.Created)
         {
             return ToResponse(await _repository.ApplyEventAsync(
                 taskId,
                 TaskEvent.CancelConfirmed,
-                new { operatorName, source = "mes-pending-task" },
+                new { operatorName = actor, source = "mes-pending-task" },
                 cancellationToken));
+        }
+
+        if (task.Status is not (DomainTaskStatus.Dispatching or
+            DomainTaskStatus.MovingToPickup or DomainTaskStatus.MovingToDropoff or
+            DomainTaskStatus.Paused or DomainTaskStatus.Unknown))
+        {
+            throw new InvalidTaskTransitionException(task.Status, TaskEvent.CancelConfirmed);
         }
 
         var operationId = task.ActiveTargetStationId == GetEnabledStation(task.TargetStationCode).AgvStationId
@@ -124,7 +139,7 @@ public sealed class TaskService : ITaskApplicationService
             : TransportOperationIds.Pickup(task.Id);
         var cancellation = await _adapter.CancelAsync(operationId, cancellationToken);
         if (cancellation?.State == "cancelled")
-            return ToResponse(await _repository.ApplyEventAsync(taskId, TaskEvent.CancelConfirmed, new { operatorName }, cancellationToken));
+            return ToResponse(await _repository.ApplyEventAsync(taskId, TaskEvent.CancelConfirmed, new { operatorName = actor }, cancellationToken));
 
         if (cancellation is { State: "unknown" }
             && task.Status is DomainTaskStatus.Dispatching or DomainTaskStatus.MovingToPickup or DomainTaskStatus.MovingToDropoff or DomainTaskStatus.Paused)
@@ -133,7 +148,7 @@ public sealed class TaskService : ITaskApplicationService
             return ToResponse(await _repository.ApplyEventAsync(
                 taskId,
                 TaskEvent.Timeout,
-                new { operatorName, operationId, source = "adapter-cancel", error },
+                new { operatorName = actor, operationId, source = "adapter-cancel", error },
                 cancellationToken,
                 error));
         }

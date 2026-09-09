@@ -324,6 +324,13 @@ public sealed class FieldNavigationAcceptanceServiceTests
         };
         var database = new MesDbContext(options);
         database.Database.EnsureCreated();
+        admissionPolicy ??= new PhysicalExecutionAdmissionPolicy(
+            ProfileConfiguration.Default with
+            {
+                Features = ProfileConfiguration.Default.Features with { UseSimulator = true }
+            },
+            new DisabledReadinessState(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<PhysicalExecutionAdmissionPolicy>.Instance);
         return new FieldNavigationAcceptanceService(
             new FieldNavigationAcceptanceRepository(database),
             adapter,
@@ -338,9 +345,9 @@ public sealed class FieldNavigationAcceptanceServiceTests
         public bool Enabled => false;
         public PhysicalReadinessResponse GetSnapshot() => new() { Enabled = false };
         public bool TryGetDevice(string deviceId, out PhysicalDeviceReadinessSnapshot snapshot) { snapshot = null!; return false; }
-        public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, out string? reason) { reason = PhysicalReadinessReasonCodes.DeviceNotReady; return false; }
-        public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, string? expectedSupervisorInstanceId, out string? reason) { reason = PhysicalReadinessReasonCodes.DeviceNotReady; return false; }
-        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
+        public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, out string? reason) { reason = null; return true; }
+        public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, string? expectedSupervisorInstanceId, out string? reason) { reason = null; return true; }
+        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => true;
     }
 
     private sealed class FieldAcceptanceAdapter : IAgvGateway, IFieldNavigationAcceptanceGateway

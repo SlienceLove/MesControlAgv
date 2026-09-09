@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
+using MesControlAgv.Domain.Profiles;
+using MesControlAgv.Mes.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -91,8 +93,17 @@ public sealed class AuboArmProgramApiTests
             {
                 services.RemoveAll<IAuboArmGateway>();
                 services.RemoveAll<IPhysicalReadinessState>();
+                services.RemoveAll<PhysicalExecutionAdmissionPolicy>();
                 services.AddSingleton<IAuboArmGateway>(gateway);
-                services.AddSingleton<IPhysicalReadinessState>(new BlockingPhysicalReadinessState());
+                var readiness = new BlockingPhysicalReadinessState();
+                services.AddSingleton<IPhysicalReadinessState>(readiness);
+                services.AddSingleton(new PhysicalExecutionAdmissionPolicy(
+                    ProfileConfiguration.Default with
+                    {
+                        Features = ProfileConfiguration.Default.Features with { UseSimulator = false }
+                    },
+                    readiness,
+                    Microsoft.Extensions.Logging.Abstractions.NullLogger<PhysicalExecutionAdmissionPolicy>.Instance));
             }));
         using var client = factory.CreateClient();
 
@@ -100,8 +111,56 @@ public sealed class AuboArmProgramApiTests
             "/api/robot-arms/ARM-01/program/load",
             new { program = "测试.pro", @operator = "alice" });
 
-        Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(PhysicalReadinessReasonCodes.EpochAuthorizationRequired, body.GetProperty("code").GetString());
         Assert.Equal(0, gateway.LoadCalls);
+    }
+
+    [Theory]
+    [InlineData("load")]
+    [InlineData("run")]
+    public async Task Physical_program_load_and_run_fail_closed_when_supervisor_is_off(string operation)
+    {
+        var gateway = new FakeAuboGateway();
+        using var factory = new MesWebApplicationFactory().WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IAuboArmGateway>();
+                services.RemoveAll<IPhysicalReadinessState>();
+                services.RemoveAll<PhysicalExecutionAdmissionPolicy>();
+                services.AddSingleton<IAuboArmGateway>(gateway);
+                var readiness = new DisabledPhysicalReadinessState();
+                services.AddSingleton<IPhysicalReadinessState>(readiness);
+                services.AddSingleton(new PhysicalExecutionAdmissionPolicy(
+                    ProfileConfiguration.Default with
+                    {
+                        Features = ProfileConfiguration.Default.Features with { UseSimulator = false }
+                    },
+                    readiness,
+                    Microsoft.Extensions.Logging.Abstractions.NullLogger<PhysicalExecutionAdmissionPolicy>.Instance));
+            }));
+        using var client = factory.CreateClient();
+
+        HttpResponseMessage response;
+        if (operation == "load")
+        {
+            response = await client.PostAsJsonAsync(
+                "/api/robot-arms/ARM-01/program/load",
+                new { program = "test.pro", @operator = "alice" });
+        }
+        else
+        {
+            response = await client.PostAsJsonAsync(
+                "/api/robot-arms/ARM-01/program/run",
+                new { programName = "test", operatorName = "alice" });
+        }
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(PhysicalReadinessReasonCodes.SupervisorDisabled, body.GetProperty("code").GetString());
+        Assert.Equal(0, gateway.LoadCalls);
+        Assert.Equal(0, gateway.RunCalls);
     }
 
     private sealed class FakeAuboGateway : IAuboArmGateway
@@ -219,6 +278,16 @@ public sealed class AuboArmProgramApiTests
             return false;
         }
 
+        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
+    }
+
+    private sealed class DisabledPhysicalReadinessState : IPhysicalReadinessState
+    {
+        public bool Enabled => false;
+        public PhysicalReadinessResponse GetSnapshot() => new() { Enabled = false };
+        public bool TryGetDevice(string deviceId, out PhysicalDeviceReadinessSnapshot snapshot) { snapshot = null!; return false; }
+        public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, out string? reason) { reason = PhysicalReadinessReasonCodes.SupervisorDisabled; return false; }
+        public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, string? expectedSupervisorInstanceId, out string? reason) { reason = PhysicalReadinessReasonCodes.SupervisorDisabled; return false; }
         public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
     }
 }

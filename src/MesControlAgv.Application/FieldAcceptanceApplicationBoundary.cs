@@ -30,7 +30,10 @@ public interface IFieldNavigationAcceptanceApplicationService
         Guid workflowDeviceOperationId,
         CancellationToken cancellationToken);
 
-    Task<FieldNavigationAcceptanceResponse> CancelAsync(Guid acceptanceId, CancellationToken cancellationToken);
+    Task<FieldNavigationAcceptanceResponse> CancelAsync(
+        Guid acceptanceId,
+        string operatorName,
+        CancellationToken cancellationToken);
 
     Task<FieldNavigationAcceptanceDetailResponse?> GetAsync(Guid acceptanceId, CancellationToken cancellationToken);
 

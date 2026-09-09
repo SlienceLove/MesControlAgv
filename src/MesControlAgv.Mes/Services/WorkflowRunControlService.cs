@@ -47,7 +47,6 @@ public sealed partial class WorkflowApplicationService
 
         await EnsureLegacySimulatorRuntimeRecordsAsync(cancellationToken);
         var run = await FindExecutionAsync(workflowRunId, cancellationToken);
-        await RequirePhysicalAdmissionForRunAsync(run, "workflow.resume", cancellationToken);
         var current = WorkflowPersistence.ToExecutionSnapshot(run).RuntimeStatus;
         if (current is not WorkflowRuntimeStatus.Prepared and not WorkflowRuntimeStatus.Running)
         {
@@ -103,6 +102,7 @@ public sealed partial class WorkflowApplicationService
         if (replay is not null) return replay;
 
         var run = await FindExecutionAsync(workflowRunId, cancellationToken);
+        await RequirePhysicalAdmissionForRunAsync(run, "workflow.resume", cancellationToken);
         var current = WorkflowPersistence.ToExecutionSnapshot(run).RuntimeStatus;
         if (current != WorkflowRuntimeStatus.Paused)
         {
@@ -300,7 +300,8 @@ public sealed partial class WorkflowApplicationService
                 $"Only an Unknown workflow run can be resolved; current state is '{current}'.");
         }
 
-        await RequirePhysicalAdmissionForRunAsync(run, "workflow.resolve-unknown", cancellationToken);
+        if (request.Outcome == WorkflowUnknownResolutionOutcome.ConfirmedSucceeded)
+            await RequirePhysicalAdmissionForRunAsync(run, "workflow.resolve-unknown", cancellationToken);
 
         await EnsureLegacyUnknownRuntimeRecordsAsync(run, cancellationToken);
 
@@ -444,19 +445,41 @@ public sealed partial class WorkflowApplicationService
         string operation,
         CancellationToken cancellationToken)
     {
-        if (_admissionPolicy is null) return;
         var request = await GetExecutionRequestAsync(run.ExecutionId, cancellationToken);
         if (request is not { DryRun: false, PhysicalAuthorization: { } authorization }) return;
+        if (_admissionPolicy is null)
+        {
+            throw new PhysicalExecutionAdmissionException(
+                PhysicalReadinessReasonCodes.SupervisorDisabled,
+                "Physical execution admission policy is unavailable; physical execution is disabled.");
+        }
         _admissionPolicy.RequireSupervisedExecution(operation);
-        if (_physicalReadiness is not { Enabled: true } readiness) return;
-
         var epochs = authorization.DeviceEpochs ?? new Dictionary<string, long>();
         if (epochs.Count == 0 && !string.IsNullOrWhiteSpace(authorization.AgvId))
         {
+            var agvEpoch = authorization.GetDeviceEpoch(authorization.AgvId);
+            if (!agvEpoch.HasValue)
+            {
+                throw new PhysicalExecutionAdmissionException(
+                    PhysicalReadinessReasonCodes.EpochAuthorizationRequired,
+                    "Physical workflow control requires a current epoch authorization for the AGV.");
+            }
             epochs = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase)
             {
-                [authorization.AgvId.Trim()] = authorization.GetDeviceEpoch(authorization.AgvId) ?? 0
+                [authorization.AgvId.Trim()] = agvEpoch.Value
             };
+        }
+        if (epochs.Count == 0)
+        {
+            throw new PhysicalExecutionAdmissionException(
+                PhysicalReadinessReasonCodes.EpochAuthorizationRequired,
+                "Physical workflow control requires a bound device epoch authorization.");
+        }
+        if (_physicalReadiness is not { Enabled: true } readiness)
+        {
+            throw new PhysicalExecutionAdmissionException(
+                PhysicalReadinessReasonCodes.SupervisorDisabled,
+                "Physical readiness state is unavailable; physical workflow control is disabled.");
         }
         foreach (var pair in epochs)
         {
@@ -466,8 +489,10 @@ public sealed partial class WorkflowApplicationService
                     expectedEpoch,
                     authorization.ReadinessSupervisorInstanceId,
                     out var reason)) continue;
-            throw new InvalidOperationException(
-                $"Physical device '{pair.Key}' is not currently Ready: {reason ?? PhysicalReadinessReasonCodes.DeviceNotReady}.");
+            var readinessCode = reason ?? PhysicalReadinessReasonCodes.DeviceNotReady;
+            throw new PhysicalExecutionAdmissionException(
+                readinessCode,
+                $"Physical device '{pair.Key}' is not currently Ready: {readinessCode}.");
         }
     }
 

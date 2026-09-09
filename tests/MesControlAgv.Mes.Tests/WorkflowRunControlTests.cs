@@ -1,4 +1,5 @@
 using MesControlAgv.Application;
+using MesControlAgv.Contracts;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Domain.Workflows;
@@ -87,6 +88,33 @@ public sealed class WorkflowRunControlTests
             CancellationToken.None);
         Assert.Equal(WorkflowRuntimeStatus.Prepared, resumed.Run.RuntimeStatus);
         Assert.Single(await fixture.Service.ListSimulatorDispatchableNodesAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Physical_pause_remains_available_but_resume_is_admitted_before_state_migration()
+    {
+        await using var fixture = await WorkflowRunControlFixture.CreateAsync();
+        var executionId = await fixture.AdmitAsync(
+            WorkflowTestDefinitions.CreateMoveWorkflow(null, "SAMPLE_01"),
+            physical: true);
+
+        var paused = await fixture.Service.PauseRunAsync(
+            executionId,
+            Request("operator-1", "Hold physical run"),
+            CancellationToken.None);
+        Assert.Equal(WorkflowRuntimeStatus.Paused, paused.Run.RuntimeStatus);
+
+        fixture.DisablePhysicalSupervisor();
+        var exception = await Assert.ThrowsAsync<PhysicalExecutionAdmissionException>(() =>
+            fixture.Service.ResumeRunAsync(
+                executionId,
+                Request("operator-1", "Resume physical run"),
+                CancellationToken.None));
+
+        Assert.Equal(PhysicalReadinessReasonCodes.SupervisorDisabled, exception.Code);
+        Assert.Equal(
+            WorkflowRuntimeStatus.Paused,
+            (await fixture.Service.GetExecutionAsync(executionId, CancellationToken.None))!.RuntimeStatus);
     }
 
     [Fact]
@@ -304,11 +332,13 @@ internal sealed class WorkflowRunControlFixture : IAsyncDisposable
     private WorkflowRunControlFixture(
         SqliteConnection connection,
         MesDbContext database,
-        WorkflowApplicationService service)
+        WorkflowApplicationService service,
+        PhysicalReadinessStateStore readiness)
     {
         _connection = connection;
         Database = database;
         Service = service;
+        Readiness = readiness;
     }
 
     public MesDbContext Database { get; }
@@ -346,6 +376,11 @@ internal sealed class WorkflowRunControlFixture : IAsyncDisposable
         await database.Database.EnsureCreatedAsync();
         var validator = new WorkflowValidator();
         var reader = new MesWorkflowVersionReader(database);
+        var readiness = CreateReadiness();
+        var profile = ProfileConfiguration.Default with
+        {
+            Features = ProfileConfiguration.Default.Features with { UseSimulator = false }
+        };
         var authorizer = new ConfiguredWorkflowRunControlAuthorizer(Options.Create(
             new WorkflowRunControlAuthorizationOptions { Operators = [.. operators] }));
         var service = new WorkflowApplicationService(
@@ -357,11 +392,16 @@ internal sealed class WorkflowRunControlFixture : IAsyncDisposable
                 admissionPolicies: [new ActiveProfileWorkflowAdmissionPolicy(ProfileConfiguration.Default)]),
             validator,
             timeProvider: null,
-            controlAuthorizer: authorizer);
-        return new WorkflowRunControlFixture(connection, database, service);
+            controlAuthorizer: authorizer,
+            physicalReadiness: readiness,
+            admissionPolicy: new PhysicalExecutionAdmissionPolicy(
+                profile,
+                readiness,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<PhysicalExecutionAdmissionPolicy>.Instance));
+        return new WorkflowRunControlFixture(connection, database, service, readiness);
     }
 
-    public async Task<Guid> AdmitAsync(WorkflowDefinition definition)
+    public async Task<Guid> AdmitAsync(WorkflowDefinition definition, bool physical = false)
     {
         var draft = await Service.CreateDraftAsync(definition, "planner", CancellationToken.None);
         Assert.True((await Service.ValidateVersionAsync(
@@ -374,9 +414,19 @@ internal sealed class WorkflowRunControlFixture : IAsyncDisposable
             WorkflowId = draft.WorkflowId,
             Version = draft.Version,
             RequestId = Guid.NewGuid(),
-            RequestedBy = "run-operator"
+            RequestedBy = "run-operator",
+            PhysicalAuthorization = physical
+                ? new WorkflowPhysicalRunAuthorization
+                {
+                    AgvId = "AGV-01",
+                    OperatorName = "run-operator",
+                    SafetyObserverName = "observer",
+                    PermitPrefix = "control-test",
+                    ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(1)
+                }
+                : null
         }, CancellationToken.None);
-        Assert.True(result.IsAccepted);
+        Assert.True(result.IsAccepted, $"{result.RejectionCode}: {result.RejectionReason}");
         return result.ExecutionId;
     }
 
@@ -384,5 +434,29 @@ internal sealed class WorkflowRunControlFixture : IAsyncDisposable
     {
         await Database.DisposeAsync();
         await _connection.DisposeAsync();
+    }
+
+    public void DisablePhysicalSupervisor()
+    {
+        var now = DateTimeOffset.UtcNow;
+        Readiness.Configure(false, [new PhysicalDeviceDescriptor("AGV-01", "agv", true)], now);
+    }
+
+    private PhysicalReadinessStateStore Readiness { get; }
+
+    private static PhysicalReadinessStateStore CreateReadiness()
+    {
+        var readiness = new PhysicalReadinessStateStore(instanceId: "workflow-control-test");
+        var now = DateTimeOffset.UtcNow;
+        var descriptor = new PhysicalDeviceDescriptor("AGV-01", "agv", true);
+        readiness.Configure(true, [descriptor], now);
+        readiness.Apply(descriptor, new PhysicalDeviceReadinessObservation
+        {
+            DeviceId = "AGV-01", DeviceFamily = "agv", ProbeSucceeded = true, Online = true,
+            CurrentStationId = "SAMPLE_01", ControlOwner = "adapter", MapName = "test-map",
+            MapVersion = "1", MapMd5 = "test-md5", VehicleModel = "test", IsFullPreflight = true,
+            FullPreflightPassed = true, ObservedAtUtc = now, FullPreflightObservedAtUtc = now
+        }, TimeSpan.Zero, true, now);
+        return readiness;
     }
 }

@@ -23,7 +23,7 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
     private readonly TimeProvider _timeProvider;
     private readonly IWorkflowApplicationService? _workflows;
     private readonly IPhysicalReadinessState? _physicalReadiness;
-    private readonly PhysicalExecutionAdmissionPolicy? _admissionPolicy;
+    private readonly PhysicalExecutionAdmissionPolicy _admissionPolicy;
 
     public FieldNavigationAcceptanceService(
         FieldNavigationAcceptanceRepository repository,
@@ -42,7 +42,16 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
         _timeProvider = timeProvider ?? TimeProvider.System;
         _workflows = workflows;
         _physicalReadiness = physicalReadiness;
-        _admissionPolicy = admissionPolicy;
+        _admissionPolicy = admissionPolicy ?? new PhysicalExecutionAdmissionPolicy(
+            profile with
+            {
+                Features = profile.Features with
+                {
+                    UseSimulator = physicalReadiness is null
+                }
+            },
+            physicalReadiness ?? new DisabledPhysicalReadinessState(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<PhysicalExecutionAdmissionPolicy>.Instance);
     }
 
     public async Task<FieldNavigationAcceptanceResponse> CreateAsync(
@@ -126,7 +135,7 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        _admissionPolicy?.RequireSupervisedExecution("field-navigation.authorize");
+        _admissionPolicy.RequireSupervisedExecution("field-navigation.authorize");
         var acceptance = await RequireAcceptanceAsync(acceptanceId, cancellationToken);
         if (acceptance.Status != FieldNavigationAcceptanceStatuses.Draft)
         {
@@ -220,7 +229,7 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
         Guid acceptanceId,
         CancellationToken cancellationToken)
     {
-        _admissionPolicy?.RejectUnboundPhysicalWrite("field-navigation.dispatch");
+        _admissionPolicy.RequireSupervisedExecution("field-navigation.dispatch");
         var acceptance = await RequireAcceptanceAsync(acceptanceId, cancellationToken);
         if (acceptance.WorkflowRunId.HasValue)
         {
@@ -237,7 +246,7 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
         Guid workflowDeviceOperationId,
         CancellationToken cancellationToken)
     {
-        _admissionPolicy?.RequireSupervisedExecution("field-navigation.workflow-dispatch");
+        _admissionPolicy.RequireSupervisedExecution("field-navigation.workflow-dispatch");
         var acceptance = await RequireAcceptanceAsync(acceptanceId, cancellationToken);
         if (acceptance.WorkflowRunId is null ||
             acceptance.WorkflowNodeExecutionId != workflowNodeExecutionId ||
@@ -387,10 +396,25 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
         return ToResponse(acceptance);
     }
 
-    public async Task<FieldNavigationAcceptanceResponse> CancelAsync(
+    public Task<FieldNavigationAcceptanceResponse> CancelAsync(
+        Guid acceptanceId,
+        CancellationToken cancellationToken) =>
+        CancelLegacyAsync(acceptanceId, cancellationToken);
+
+    private async Task<FieldNavigationAcceptanceResponse> CancelLegacyAsync(
         Guid acceptanceId,
         CancellationToken cancellationToken)
     {
+        var acceptance = await RequireAcceptanceAsync(acceptanceId, cancellationToken);
+        return await CancelAsync(acceptanceId, acceptance.OperatorName, cancellationToken);
+    }
+
+    public async Task<FieldNavigationAcceptanceResponse> CancelAsync(
+        Guid acceptanceId,
+        string? operatorName,
+        CancellationToken cancellationToken)
+    {
+        var actor = RequireValue(operatorName, nameof(operatorName));
         var acceptance = await RequireAcceptanceAsync(acceptanceId, cancellationToken);
         if (acceptance.Status is FieldNavigationAcceptanceStatuses.Cancelled or
             FieldNavigationAcceptanceStatuses.Failed or
@@ -407,7 +431,7 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
             throw new InvalidOperationException("Only a dispatched field-navigation acceptance can be cancelled.");
         }
 
-        await _repository.SaveWithAuditAsync(acceptance, "CancelRequested", new { acceptance.DeviceTaskId }, cancellationToken);
+        await _repository.SaveWithAuditAsync(acceptance, "CancelRequested", new { acceptance.DeviceTaskId, operatorName = actor }, cancellationToken);
         try
         {
             var deviceTask = await _gateway.CancelAsync(acceptance.Id, cancellationToken);
@@ -416,7 +440,7 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
                 acceptance.Status = FieldNavigationAcceptanceStatuses.Cancelled;
                 acceptance.DeviceTaskId = deviceTask.DeviceTaskId;
                 acceptance.LastError = deviceTask.LastError;
-                await _repository.SaveWithAuditAsync(acceptance, "CancelConfirmed", new { deviceTask.DeviceTaskId }, cancellationToken);
+                await _repository.SaveWithAuditAsync(acceptance, "CancelConfirmed", new { deviceTask.DeviceTaskId, operatorName = actor }, cancellationToken);
             }
             else
             {

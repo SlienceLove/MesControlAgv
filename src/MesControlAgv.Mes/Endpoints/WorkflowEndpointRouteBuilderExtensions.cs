@@ -166,7 +166,11 @@ public static class WorkflowEndpointRouteBuilderExtensions
             }
             catch (PhysicalExecutionAdmissionException exception)
             {
-                return Results.Conflict(new { code = exception.Code, detail = exception.Detail });
+                return Results.Conflict(new
+                {
+                    code = WorkflowExecutionRejectionCodes.PhysicalExecutionDisabled,
+                    detail = $"{exception.Code}: {exception.Detail}"
+                });
             }
             if (result.IsAccepted)
             {
@@ -181,7 +185,8 @@ public static class WorkflowEndpointRouteBuilderExtensions
             {
                 WorkflowExecutionRejectionCodes.VersionNotFound => Results.NotFound(result),
                 WorkflowExecutionRejectionCodes.RequestIdReused or
-                WorkflowExecutionRejectionCodes.PhysicalAgvBusy => Results.Conflict(result),
+                WorkflowExecutionRejectionCodes.PhysicalAgvBusy or
+                WorkflowExecutionRejectionCodes.PhysicalExecutionDisabled => Results.Conflict(result),
                 _ => Results.UnprocessableEntity(result)
             };
         });

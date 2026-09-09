@@ -44,6 +44,8 @@ public sealed class PhysicalExecutionAdmissionPolicy
             "Physical execution requires the readiness supervisor, which is disabled.");
     }
 
+    public bool IsSimulator => _profile.Features.UseSimulator;
+
     /// <summary>
     /// Rejects physical direct writes that do not carry a workflow or other
     /// current epoch authorization. Simulator behavior remains unchanged.
@@ -78,6 +80,16 @@ public sealed class PhysicalExecutionAdmissionPolicy
             code);
         throw new PhysicalExecutionAdmissionException(code, detail);
     }
+}
+
+internal sealed class DisabledPhysicalReadinessState : IPhysicalReadinessState
+{
+    public bool Enabled => false;
+    public PhysicalReadinessResponse GetSnapshot() => new() { Enabled = false };
+    public bool TryGetDevice(string deviceId, out PhysicalDeviceReadinessSnapshot snapshot) { snapshot = null!; return false; }
+    public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, out string? reason) { reason = PhysicalReadinessReasonCodes.DeviceNotReady; return false; }
+    public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, string? expectedSupervisorInstanceId, out string? reason) { reason = PhysicalReadinessReasonCodes.DeviceNotReady; return false; }
+    public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
 }
 
 /// <summary>Stable exception raised by the physical execution admission policy.</summary>

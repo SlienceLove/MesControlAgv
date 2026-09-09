@@ -134,6 +134,27 @@ public sealed class TaskApiTests : IClassFixture<MesWebApplicationFactory>
     }
 
     [Fact]
+    public async Task Cancel_requires_an_operator_before_changing_a_pending_task()
+    {
+        var create = await _client.PostAsJsonAsync("/api/tasks", new
+        {
+            sourceStationCode = 2,
+            targetStationCode = 4
+        });
+        var created = await create.Content.ReadFromJsonAsync<TaskResponse>();
+        Assert.NotNull(created);
+
+        var cancel = await _client.PostAsJsonAsync(
+            $"/api/tasks/{created!.Id}/cancel",
+            new { operatorName = " " });
+
+        Assert.Equal(HttpStatusCode.BadRequest, cancel.StatusCode);
+        var unchanged = await _client.GetFromJsonAsync<TaskDetailResponse>(
+            $"/api/tasks/{created.Id}");
+        Assert.Equal("Created", unchanged!.Task.Status);
+    }
+
+    [Fact]
     public async Task List_tasks_filters_by_the_requested_utc_date_and_defaults_to_today()
     {
         var createResponse = await _client.PostAsJsonAsync("/api/tasks", new

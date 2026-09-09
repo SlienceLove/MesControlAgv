@@ -102,7 +102,24 @@ public static class TaskEndpointRouteBuilderExtensions
             OperatorActionRequest request,
             ITaskApplicationService service,
             CancellationToken cancellationToken) =>
-            Results.Ok(await service.CancelAsync(taskId, request.OperatorName, cancellationToken)));
+        {
+            try
+            {
+                return Results.Ok(await service.CancelAsync(taskId, request.OperatorName, cancellationToken));
+            }
+            catch (ArgumentException exception)
+            {
+                return Results.BadRequest(new { detail = exception.Message });
+            }
+            catch (PhysicalExecutionAdmissionException exception)
+            {
+                return Results.Conflict(new { code = exception.Code, detail = exception.Detail });
+            }
+            catch (InvalidTaskTransitionException exception)
+            {
+                return Results.Conflict(new { detail = exception.Message });
+            }
+        });
 
         endpoints.MapPost("/api/tasks/{taskId:guid}/recover", async (
             Guid taskId,

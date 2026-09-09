@@ -6,9 +6,11 @@ using MesControlAgv.Application;
 using MesControlAgv.Contracts;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Workflows;
+using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace MesControlAgv.Mes.Services;
 
@@ -92,7 +94,16 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
             new ExperimentRuntimeLeaseLifecycle(database, _timeProvider);
         _physicalBatchAdmissionGate = physicalBatchAdmissionGate;
         _physicalReadiness = physicalReadiness;
-        _admissionPolicy = admissionPolicy;
+        _admissionPolicy = admissionPolicy ?? new PhysicalExecutionAdmissionPolicy(
+            ProfileConfiguration.Default with
+            {
+                Features = ProfileConfiguration.Default.Features with
+                {
+                    UseSimulator = physicalReadiness is null
+                }
+            },
+            physicalReadiness ?? new DisabledPhysicalReadinessState(),
+            NullLogger<PhysicalExecutionAdmissionPolicy>.Instance);
     }
 
     public async Task<IReadOnlyList<WorkflowDefinition>> ListAsync(CancellationToken cancellationToken)
@@ -647,7 +658,15 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
             }
         }
         if (isPhysical)
-            _admissionPolicy?.RequireSupervisedExecution("workflow.execute");
+        {
+            if (_admissionPolicy is null)
+            {
+                throw new PhysicalExecutionAdmissionException(
+                    PhysicalReadinessReasonCodes.SupervisorDisabled,
+                    "Physical execution admission policy is unavailable; physical execution is disabled.");
+            }
+            _admissionPolicy.RequireSupervisedExecution("workflow.execute");
+        }
 
         var readinessBinding = await BindPhysicalReadinessAsync(request, cancellationToken);
         request = readinessBinding.Request;
