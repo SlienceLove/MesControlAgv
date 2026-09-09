@@ -67,7 +67,6 @@ Files changed for this repair:
 - `tests/MesControlAgv.Adapter.Tests/AdapterServiceTests.cs`
 - `docs/AGV-TCP-ADAPTER.md`
 - `docs/physical-acceptance/FIELD-NAVIGATION-ACCEPTANCE.md`
-- `docs/superpowers/plans/2026-08-11-physical-read-only-preflight.md`
 - `docs/PROGRESS.md`
 
 ## Verification completed

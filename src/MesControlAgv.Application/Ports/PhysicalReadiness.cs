@@ -41,7 +41,10 @@ public interface IPhysicalReadinessState
         string? expectedSupervisorInstanceId,
         out string? reason);
 
-    bool AcknowledgeAuthorization(string deviceId, long expectedEpoch);
+    bool AcknowledgeAuthorization(
+        string deviceId,
+        long expectedEpoch,
+        string? expectedSupervisorInstanceId);
 }
 
 /// <summary>Hosted refresh capability layered on top of the read-only state.</summary>

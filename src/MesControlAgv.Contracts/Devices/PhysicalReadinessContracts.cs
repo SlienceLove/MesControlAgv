@@ -42,6 +42,8 @@ public static class PhysicalReadinessReasonCodes
     public const string ReauthorizationRequired = "device_reauthorization_required";
     public const string ProbeNotRegistered = "physical_readiness_probe_not_registered";
     public const string IdentityChanged = "device_identity_or_map_changed";
+    public const string ConfigurationChanged = "physical_readiness_configuration_changed";
+    public const string DescriptorChanged = "physical_device_descriptor_changed";
 }
 
 /// <summary>

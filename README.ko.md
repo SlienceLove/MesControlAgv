@@ -155,4 +155,3 @@ Adapter에는 구성 가능한 벤더 TCP 드라이버가 있지만 기본값은
 - [벤더 TCP Adapter](docs/AGV-TCP-ADAPTER.md)
 - [물리 인수 경계](docs/physical-acceptance/README.md)
 - [진행 상황 및 인계](docs/PROGRESS.md)
-- [MVP 설계](docs/superpowers/specs/2026-07-29-agv-mes-mvp-design.md)

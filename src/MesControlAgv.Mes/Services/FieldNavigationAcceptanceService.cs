@@ -197,7 +197,10 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
 
             deviceEpoch = device.DeviceEpoch;
             supervisorInstanceId = supervisorSnapshot.SupervisorInstanceId;
-            if (!readiness.AcknowledgeAuthorization(acceptance.AgvId, deviceEpoch.Value))
+            if (!readiness.AcknowledgeAuthorization(
+                    acceptance.AgvId,
+                    deviceEpoch.Value,
+                    supervisorInstanceId))
             {
                 throw new InvalidOperationException(
                     "Physical readiness changed while the field-navigation permit was being authorized; submit a new permit.");

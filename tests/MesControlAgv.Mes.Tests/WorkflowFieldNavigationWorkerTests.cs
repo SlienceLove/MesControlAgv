@@ -941,7 +941,10 @@ public sealed class WorkflowFieldNavigationWorkerTests
             return isCurrent;
         }
 
-        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
+        public bool AcknowledgeAuthorization(
+            string deviceId,
+            long expectedEpoch,
+            string? expectedSupervisorInstanceId) => false;
     }
 
     private sealed class CompletingArmGateway : IAuboArmGateway

@@ -752,6 +752,9 @@ public sealed class WorkflowAuboProgramWorkerTests
             return ready;
         }
 
-        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
+        public bool AcknowledgeAuthorization(
+            string deviceId,
+            long expectedEpoch,
+            string? expectedSupervisorInstanceId) => false;
     }
 }

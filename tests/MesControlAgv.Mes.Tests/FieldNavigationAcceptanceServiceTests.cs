@@ -347,7 +347,10 @@ public sealed class FieldNavigationAcceptanceServiceTests
         public bool TryGetDevice(string deviceId, out PhysicalDeviceReadinessSnapshot snapshot) { snapshot = null!; return false; }
         public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, out string? reason) { reason = null; return true; }
         public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, string? expectedSupervisorInstanceId, out string? reason) { reason = null; return true; }
-        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => true;
+        public bool AcknowledgeAuthorization(
+            string deviceId,
+            long expectedEpoch,
+            string? expectedSupervisorInstanceId) => true;
     }
 
     private sealed class FieldAcceptanceAdapter : IAgvGateway, IFieldNavigationAcceptanceGateway

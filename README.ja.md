@@ -155,4 +155,3 @@ Adapter には設定可能なベンダー TCP ドライバーがありますが�
 - [ベンダー TCP Adapter](docs/AGV-TCP-ADAPTER.md)
 - [物理受入の境界](docs/physical-acceptance/README.md)
 - [進捗と引継ぎ](docs/PROGRESS.md)
-- [MVP 設計](docs/superpowers/specs/2026-07-29-agv-mes-mvp-design.md)

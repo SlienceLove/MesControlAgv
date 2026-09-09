@@ -29,6 +29,10 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
     private readonly object _gate = new();
     private readonly Dictionary<string, DeviceEntry> _devices =
         new(StringComparer.OrdinalIgnoreCase);
+    // Keep allocation history after an entry is removed so a later re-add can
+    // never reuse the numeric epoch of an older physical session.
+    private readonly Dictionary<string, long> _epochCounters =
+        new(StringComparer.OrdinalIgnoreCase);
     private readonly string _instanceId;
     private readonly TimeProvider _timeProvider;
     private bool _enabled;
@@ -36,6 +40,7 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
     private DateTimeOffset _lastRefreshAtUtc;
     private TimeSpan _observationStaleAfter = TimeSpan.FromSeconds(10);
     private string _disabledReason = PhysicalReadinessReasonCodes.SupervisorDisabled;
+    private string? _supervisorConfigurationFingerprint;
 
     public PhysicalReadinessStateStore(
         TimeProvider? timeProvider = null,
@@ -60,7 +65,8 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
         IEnumerable<PhysicalDeviceDescriptor> descriptors,
         DateTimeOffset observedAtUtc,
         string? disabledReason = null,
-        TimeSpan? observationStaleAfter = null)
+        TimeSpan? observationStaleAfter = null,
+        string? configurationFingerprint = null)
     {
         ArgumentNullException.ThrowIfNull(descriptors);
         var normalizedDescriptors = descriptors
@@ -70,18 +76,33 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
             .Select(group => group.First())
             .ToArray();
         var now = NormalizeTime(observedAtUtc);
+        var normalizedDisabledReason = string.IsNullOrWhiteSpace(disabledReason)
+            ? PhysicalReadinessReasonCodes.SupervisorDisabled
+            : disabledReason.Trim();
+        var configuredStaleness = observationStaleAfter is { } suppliedStaleness &&
+                                  suppliedStaleness > TimeSpan.Zero
+            ? suppliedStaleness
+            : TimeSpan.FromSeconds(10);
+        var effectiveConfigurationFingerprint = string.IsNullOrWhiteSpace(configurationFingerprint)
+            ? BuildSupervisorConfigurationFingerprint(
+                enabled,
+                normalizedDisabledReason,
+                configuredStaleness)
+            : configurationFingerprint.Trim();
 
         lock (_gate)
         {
+            var supervisorConfigurationChanged =
+                _supervisorConfigurationFingerprint is not null &&
+                !string.Equals(
+                    _supervisorConfigurationFingerprint,
+                    effectiveConfigurationFingerprint,
+                    StringComparison.Ordinal);
             _enabled = enabled;
-            _disabledReason = string.IsNullOrWhiteSpace(disabledReason)
-                ? PhysicalReadinessReasonCodes.SupervisorDisabled
-                : disabledReason.Trim();
+            _disabledReason = normalizedDisabledReason;
             _lastRefreshAtUtc = now;
-            _observationStaleAfter = observationStaleAfter is { } configuredStaleness &&
-                                     configuredStaleness > TimeSpan.Zero
-                ? configuredStaleness
-                : TimeSpan.FromSeconds(10);
+            _observationStaleAfter = configuredStaleness;
+            _supervisorConfigurationFingerprint = effectiveConfigurationFingerprint;
 
             var activeIds = normalizedDescriptors
                 .Select(device => device.DeviceId)
@@ -93,22 +114,43 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
 
             foreach (var descriptor in normalizedDescriptors)
             {
+                var descriptorFingerprint = BuildDescriptorFingerprint(descriptor);
                 if (_devices.TryGetValue(descriptor.DeviceId, out var existing))
                 {
-                    existing.Descriptor = descriptor;
-                    existing.Snapshot = existing.Snapshot with
+                    var descriptorChanged = existing.DescriptorFingerprint is not null &&
+                                            !string.Equals(
+                                                existing.DescriptorFingerprint,
+                                                descriptorFingerprint,
+                                                StringComparison.Ordinal);
+                    if (supervisorConfigurationChanged || descriptorChanged)
                     {
-                        DeviceFamily = descriptor.DeviceFamily,
-                        RequiredForScheduling = descriptor.RequiredForScheduling,
-                        Enabled = descriptor.Enabled,
-                        ControlEnabled = descriptor.ControlEnabled
-                    };
+                        ResetForConfiguration(
+                            existing,
+                            descriptor,
+                            now,
+                            supervisorConfigurationChanged
+                                ? PhysicalReadinessReasonCodes.ConfigurationChanged
+                                : PhysicalReadinessReasonCodes.DescriptorChanged);
+                    }
+                    else
+                    {
+                        existing.Descriptor = descriptor;
+                        existing.DescriptorFingerprint = descriptorFingerprint;
+                        existing.Snapshot = existing.Snapshot with
+                        {
+                            DeviceFamily = descriptor.DeviceFamily,
+                            RequiredForScheduling = descriptor.RequiredForScheduling,
+                            Enabled = descriptor.Enabled,
+                            ControlEnabled = descriptor.ControlEnabled
+                        };
+                    }
                     continue;
                 }
 
                 _devices.Add(descriptor.DeviceId, new DeviceEntry
                 {
                     Descriptor = descriptor,
+                    DescriptorFingerprint = descriptorFingerprint,
                     Snapshot = CreateInitialSnapshot(
                         descriptor,
                         now,
@@ -202,6 +244,7 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
                 entry = new DeviceEntry
                 {
                     Descriptor = descriptor,
+                    DescriptorFingerprint = BuildDescriptorFingerprint(descriptor),
                     Snapshot = CreateInitialSnapshot(
                         descriptor,
                         currentTime,
@@ -210,7 +253,26 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
                 _devices.Add(descriptor.DeviceId, entry);
             }
 
-            entry.Descriptor = descriptor;
+            var descriptorFingerprint = BuildDescriptorFingerprint(descriptor);
+            var descriptorChanged = entry.DescriptorFingerprint is not null &&
+                                    !string.Equals(
+                                        entry.DescriptorFingerprint,
+                                        descriptorFingerprint,
+                                        StringComparison.Ordinal);
+            if (descriptorChanged)
+            {
+                ResetForConfiguration(
+                    entry,
+                    descriptor,
+                    currentTime,
+                    PhysicalReadinessReasonCodes.DescriptorChanged);
+            }
+            else
+            {
+                entry.Descriptor = descriptor;
+                entry.DescriptorFingerprint = descriptorFingerprint;
+            }
+
             var previous = entry.Snapshot;
             // Only a complete preflight carries the authoritative identity/map
             // fields.  Ordinary polling intentionally omits some of them; if a
@@ -233,9 +295,10 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
                                   identityChanged;
 
             var epoch = previous.DeviceEpoch;
-            if (sessionBoundary || epoch <= 0)
+            var reservedConfigurationEpoch = entry.EpochReserved && !entry.HasObservation;
+            if ((sessionBoundary || epoch <= 0) && !reservedConfigurationEpoch)
             {
-                epoch = checked(Math.Max(0, epoch) + 1);
+                epoch = NextEpoch(entry.Descriptor.DeviceId, epoch);
             }
 
             if (observation.IsFullPreflight)
@@ -305,7 +368,7 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
                 !sessionBoundary &&
                 !transientOperationalBlockersOnly)
             {
-                epoch = checked(epoch + 1);
+                epoch = NextEpoch(entry.Descriptor.DeviceId, epoch);
                 sessionBoundary = true;
             }
 
@@ -413,6 +476,7 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
             };
 
             entry.HasObservation = true;
+            entry.EpochReserved = false;
             entry.LastProbeSucceeded = observation.ProbeSucceeded;
             entry.LastOnline = observation.Online;
             if (identity is not null) entry.IdentityFingerprint = identity;
@@ -566,14 +630,25 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
         }
     }
 
-    public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch)
+    public bool AcknowledgeAuthorization(
+        string deviceId,
+        long expectedEpoch,
+        string? expectedSupervisorInstanceId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
-        if (expectedEpoch <= 0) return false;
+        if (expectedEpoch <= 0 || string.IsNullOrWhiteSpace(expectedSupervisorInstanceId))
+            return false;
         lock (_gate)
         {
             InvalidateStaleEntries(_timeProvider.GetUtcNow());
             if (!_enabled) return true;
+            if (!string.Equals(
+                    expectedSupervisorInstanceId.Trim(),
+                    _instanceId,
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
             if (!_devices.TryGetValue(deviceId.Trim(), out var entry) ||
                 entry.Snapshot.DeviceEpoch != expectedEpoch ||
                 entry.Snapshot.State != PhysicalDeviceReadinessState.Ready)
@@ -585,6 +660,12 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
             return true;
         }
     }
+
+    // Keep the original convenience overload for local callers that already
+    // hold this store instance.  The explicit supervisor-instance overload
+    // above remains the fail-closed boundary used by persisted authorizations.
+    public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) =>
+        AcknowledgeAuthorization(deviceId, expectedEpoch, _instanceId);
 
     private static PhysicalDeviceDescriptor NormalizeDescriptor(PhysicalDeviceDescriptor descriptor)
     {
@@ -601,7 +682,8 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
     private static PhysicalDeviceReadinessSnapshot CreateInitialSnapshot(
         PhysicalDeviceDescriptor descriptor,
         DateTimeOffset observedAtUtc,
-        string reason) => new()
+        string reason,
+        long deviceEpoch = 0) => new()
         {
             DeviceId = descriptor.DeviceId,
             DeviceFamily = descriptor.DeviceFamily,
@@ -609,7 +691,7 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
             Enabled = descriptor.Enabled,
             ControlEnabled = descriptor.ControlEnabled,
             State = PhysicalDeviceReadinessState.Unknown,
-            DeviceEpoch = 0,
+            DeviceEpoch = deviceEpoch,
             Online = false,
             ProbeSucceeded = false,
             FullPreflightValid = false,
@@ -645,6 +727,65 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
         return string.Join('\u001f', values.Select(value => value?.Trim() ?? string.Empty));
     }
 
+    private static string BuildDescriptorFingerprint(PhysicalDeviceDescriptor descriptor) =>
+        string.Join(
+            '\u001f',
+            FingerprintValue(descriptor.DeviceId),
+            FingerprintValue(descriptor.DeviceFamily),
+            descriptor.RequiredForScheduling,
+            descriptor.Enabled,
+            descriptor.ControlEnabled);
+
+    private static string BuildSupervisorConfigurationFingerprint(
+        bool enabled,
+        string disabledReason,
+        TimeSpan observationStaleAfter) =>
+        string.Join(
+            '\u001f',
+            enabled,
+            FingerprintValue(disabledReason),
+            observationStaleAfter.Ticks);
+
+    private static string FingerprintValue(string? value) =>
+        $"{value?.Length ?? -1}:{value}";
+
+    private void ResetForConfiguration(
+        DeviceEntry entry,
+        PhysicalDeviceDescriptor descriptor,
+        DateTimeOffset observedAtUtc,
+        string reason)
+    {
+        var epoch = NextEpoch(descriptor.DeviceId, entry.Snapshot.DeviceEpoch);
+        entry.Descriptor = descriptor;
+        entry.DescriptorFingerprint = BuildDescriptorFingerprint(descriptor);
+        entry.HasObservation = false;
+        entry.LastProbeSucceeded = false;
+        entry.LastOnline = null;
+        entry.HasFullPreflight = false;
+        entry.FullPreflightPassed = false;
+        entry.FullPreflightBlockingReasons = Array.Empty<string>();
+        entry.LastFullPreflightAtUtc = null;
+        entry.StableSinceUtc = null;
+        entry.IdentityFingerprint = null;
+        entry.EpochReserved = true;
+        entry.Snapshot = CreateInitialSnapshot(
+            descriptor,
+            observedAtUtc,
+            reason,
+            epoch);
+    }
+
+    private long NextEpoch(string deviceId, long currentEpoch)
+    {
+        var normalizedDeviceId = deviceId.Trim();
+        var previous = _epochCounters.TryGetValue(normalizedDeviceId, out var allocated)
+            ? allocated
+            : 0;
+        var next = checked(Math.Max(Math.Max(0, currentEpoch), previous) + 1);
+        _epochCounters[normalizedDeviceId] = next;
+        return next;
+    }
+
     private static DateTimeOffset NormalizeTime(DateTimeOffset value) =>
         value.ToUniversalTime();
 
@@ -670,7 +811,7 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
             entry.Snapshot = snapshot with
             {
                 State = PhysicalDeviceReadinessState.Degraded,
-                DeviceEpoch = checked(Math.Max(0, snapshot.DeviceEpoch) + 1),
+                DeviceEpoch = NextEpoch(entry.Descriptor.DeviceId, snapshot.DeviceEpoch),
                 ProbeSucceeded = false,
                 RequiresReauthorization = true,
                 ReadySinceUtc = null,
@@ -684,7 +825,9 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
     {
         public required PhysicalDeviceDescriptor Descriptor { get; set; }
         public required PhysicalDeviceReadinessSnapshot Snapshot { get; set; }
+        public string? DescriptorFingerprint { get; set; }
         public bool HasObservation { get; set; }
+        public bool EpochReserved { get; set; }
         public bool LastProbeSucceeded { get; set; }
         public bool? LastOnline { get; set; }
         public bool HasFullPreflight { get; set; }

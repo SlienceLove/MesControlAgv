@@ -47,7 +47,8 @@ public sealed class PhysicalReadinessSupervisor : BackgroundService, IPhysicalRe
             options.Enabled && profile.Features.UseSimulator
                 ? PhysicalReadinessReasonCodes.SimulatorProfile
                 : PhysicalReadinessReasonCodes.SupervisorDisabled,
-            options.ObservationStaleAfter);
+            options.ObservationStaleAfter,
+            BuildConfigurationFingerprint());
     }
 
     public bool Enabled => _enabled;
@@ -75,6 +76,15 @@ public sealed class PhysicalReadinessSupervisor : BackgroundService, IPhysicalRe
             expectedEpoch,
             expectedSupervisorInstanceId,
             out reason);
+
+    public bool AcknowledgeAuthorization(
+        string deviceId,
+        long expectedEpoch,
+        string? expectedSupervisorInstanceId) =>
+        _store.AcknowledgeAuthorization(
+            deviceId,
+            expectedEpoch,
+            expectedSupervisorInstanceId);
 
     public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) =>
         _store.AcknowledgeAuthorization(deviceId, expectedEpoch);
@@ -251,4 +261,15 @@ public sealed class PhysicalReadinessSupervisor : BackgroundService, IPhysicalRe
             .Select(group => group.First())
             .ToArray();
     }
+
+    private string BuildConfigurationFingerprint() => string.Join(
+        '\u001f',
+        _enabled,
+        _options.Enabled,
+        _options.PollInterval.Ticks,
+        _options.ReadyStabilityWindow.Ticks,
+        _options.FullPreflightInterval.Ticks,
+        _options.ObservationStaleAfter.Ticks,
+        _options.RequireFullPreflightForReady,
+        _profile.Features.UseSimulator);
 }

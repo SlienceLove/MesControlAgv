@@ -130,12 +130,15 @@ public sealed class WorkflowApiTests : IClassFixture<MesWebApplicationFactory>
         await _client.PostAsync(
             $"/api/workflows/{draft.WorkflowId}/versions/{draft.Version}/publish?actor=physical-gate-test", null);
 
-        var response = await _client.PostAsJsonAsync("/api/workflows/execute", new WorkflowExecutionRequest
+        var request = new WorkflowExecutionRequest
         {
             WorkflowId = draft.WorkflowId,
             Version = draft.Version,
-            RequestId = Guid.NewGuid(),
+            RequestId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
             RequestedBy = "physical-gate-test",
+            CorrelationId = "physical-gate-correlation",
+            RequestedAt = DateTimeOffset.Parse("2026-09-09T01:02:03Z"),
+            DryRun = false,
             PhysicalAuthorization = new WorkflowPhysicalRunAuthorization
             {
                 AgvId = "AGV-01",
@@ -144,12 +147,33 @@ public sealed class WorkflowApiTests : IClassFixture<MesWebApplicationFactory>
                 PermitPrefix = "http-gate",
                 ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(1)
             }
-        });
+        };
+        var response = await _client.PostAsJsonAsync("/api/workflows/execute", request);
 
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal(WorkflowExecutionRejectionCodes.PhysicalExecutionDisabled, body.GetProperty("rejectionCode").GetString());
-        Assert.Contains(PhysicalReadinessReasonCodes.SupervisorDisabled, body.GetProperty("rejectionReason").GetString());
+        var json = await response.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("http-gate", json, StringComparison.Ordinal);
+        var result = JsonSerializer.Deserialize<WorkflowExecutionResult>(
+            json,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(result);
+        Assert.True(result!.IsRejected);
+        Assert.True(
+            string.Equals(WorkflowExecutionRejectionCodes.PhysicalExecutionDisabled, result.RejectionCode, StringComparison.Ordinal),
+            $"Unexpected workflow rejection response: {json}");
+        Assert.Contains(PhysicalReadinessReasonCodes.SupervisorDisabled, result.RejectionReason, StringComparison.Ordinal);
+        Assert.Contains("MES 启动时未启用物理就绪监督器", result.RejectionReason, StringComparison.Ordinal);
+        Assert.Equal(request.RequestId, result.RequestId);
+        Assert.Equal(Guid.Empty, result.ExecutionId);
+        Assert.Equal(request.WorkflowId, result.WorkflowId);
+        Assert.Equal(request.Version, result.Version);
+        Assert.Equal(request.RequestedAt, result.RequestedAt);
+        Assert.Equal(request.DryRun, result.DryRun);
+        Assert.Equal(request.RequestedBy, result.Audit.RequestedBy);
+        Assert.Equal(request.CorrelationId, result.Audit.CorrelationId);
+        Assert.Equal("WorkflowExecutionRejected", result.Audit.EventType);
+        Assert.Equal(WorkflowExecutionRejectionCodes.PhysicalExecutionDisabled, result.Audit.Code);
+        Assert.Equal(Guid.Empty, result.Audit.ExecutionId);
     }
 
     [Fact]

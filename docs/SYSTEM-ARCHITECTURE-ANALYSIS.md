@@ -1147,7 +1147,6 @@ public sealed class CompoundTaskServiceV2 {
 | **DEVELOPMENT-ROADMAP.md** | `docs/` | 机械臂与视觉集成路线图 |
 | **物理验收文档** | `docs/physical-acceptance/` | 现场验收边界与记录 |
 | **架构决策** | `docs/ARCHITECTURE-DECISION.md` | 技术选型与架构决策 |
-| **MVP 设计说明** | `docs/superpowers/specs/` | 详细设计文档 |
 
 ---
 

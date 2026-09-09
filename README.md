@@ -227,7 +227,6 @@ MES 还提供默认关闭的常驻物理设备就绪监督器。显式启用后�
 - [物理验收边界](docs/physical-acceptance/README.md)
 - [物理设备就绪监督模块](docs/PHYSICAL-DEVICE-READINESS-SUPERVISOR.md)
 - [项目进度与交接记录](docs/PROGRESS.md)
-- [MVP 设计说明](docs/superpowers/specs/2026-07-29-agv-mes-mvp-design.md)
 
 ## 当前状态
 
