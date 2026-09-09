@@ -233,7 +233,10 @@ public sealed class WorkflowAuboProgramWorkerTests
             requireFullPreflight: true,
             now);
         var oldEpoch = Assert.Single(state.GetSnapshot().Devices).DeviceEpoch;
-        Assert.True(state.AcknowledgeAuthorization("ARM-01", oldEpoch));
+        Assert.True(state.AcknowledgeAuthorization(
+            "ARM-01",
+            oldEpoch,
+            state.GetSnapshot().SupervisorInstanceId));
 
         var execution = await workflows.ExecuteAsync(new WorkflowExecutionRequest
         {
@@ -752,6 +755,6 @@ public sealed class WorkflowAuboProgramWorkerTests
             return ready;
         }
 
-        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
+        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch, string? expectedSupervisorInstanceId) => false;
     }
 }

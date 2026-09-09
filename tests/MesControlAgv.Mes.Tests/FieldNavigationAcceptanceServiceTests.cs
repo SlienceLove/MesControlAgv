@@ -214,7 +214,10 @@ public sealed class FieldNavigationAcceptanceServiceTests
             requireFullPreflight: true,
             now);
         var first = Assert.Single(state.GetSnapshot().Devices);
-        Assert.True(state.AcknowledgeAuthorization("AGV-01", first.DeviceEpoch));
+        Assert.True(state.AcknowledgeAuthorization(
+            "AGV-01",
+            first.DeviceEpoch,
+            state.GetSnapshot().SupervisorInstanceId));
 
         var service = CreateService(adapter, physicalReadiness: state);
         var authorized = await CreateAuthorizedAsync(service, "permit-old-epoch");
@@ -407,7 +410,7 @@ public sealed class FieldNavigationAcceptanceServiceTests
         public bool TryGetDevice(string deviceId, out PhysicalDeviceReadinessSnapshot snapshot) { snapshot = null!; return false; }
         public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, out string? reason) { reason = null; return true; }
         public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, string? expectedSupervisorInstanceId, out string? reason) { reason = null; return true; }
-        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => true;
+        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch, string? expectedSupervisorInstanceId) => true;
     }
 
     private sealed class MutableDispatchReadinessState : IPhysicalReadinessState
@@ -451,7 +454,7 @@ public sealed class FieldNavigationAcceptanceServiceTests
             return _rejectionReason is null;
         }
 
-        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) =>
+        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch, string? expectedSupervisorInstanceId) =>
             _rejectionReason is null && deviceId == "AGV-01" && expectedEpoch == 7;
 
         public void RejectWith(string reasonCode) => _rejectionReason = reasonCode;

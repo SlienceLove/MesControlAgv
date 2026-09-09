@@ -52,7 +52,7 @@ public sealed class PhysicalReadinessSupervisorTests
         Assert.Equal(2, ready.DeviceEpoch);
         Assert.False(store.GetSnapshot().SchedulingPermitted);
 
-        Assert.True(store.AcknowledgeAuthorization("AGV-01", ready.DeviceEpoch));
+        Assert.True(store.AcknowledgeAuthorization("AGV-01", ready.DeviceEpoch, store.GetSnapshot().SupervisorInstanceId));
         Assert.True(store.GetSnapshot().SchedulingPermitted);
         Assert.True(store.IsCurrentAndReady("AGV-01", ready.DeviceEpoch, out var reason));
         Assert.Null(reason);
@@ -78,6 +78,115 @@ public sealed class PhysicalReadinessSupervisorTests
     }
 
     [Fact]
+    public void Reconfiguring_with_the_same_descriptor_and_configuration_does_not_advance_epoch()
+    {
+        var clock = new MutableClock(new DateTimeOffset(2026, 9, 7, 5, 0, 0, TimeSpan.Zero));
+        var store = new PhysicalReadinessStateStore(clock, "configure-stable");
+        var descriptor = new PhysicalDeviceDescriptor("AGV-01", WorkflowDeviceFamilyIds.Agv, true);
+
+        store.Configure(true, [descriptor], clock.UtcNow, configurationFingerprint: "cfg-a");
+        store.Apply(descriptor, Observation(descriptor, online: true, full: true), TimeSpan.Zero, true, clock.UtcNow);
+        var firstEpoch = Assert.Single(store.GetSnapshot().Devices).DeviceEpoch;
+
+        store.Configure(true, [descriptor with { DeviceId = " AGV-01 " }], clock.UtcNow, configurationFingerprint: "cfg-a");
+        store.Configure(true, [descriptor], clock.UtcNow, configurationFingerprint: "cfg-a");
+
+        Assert.Equal(firstEpoch, Assert.Single(store.GetSnapshot().Devices).DeviceEpoch);
+    }
+
+    [Fact]
+    public void A_descriptor_change_advances_epoch_once_and_reserves_that_epoch_for_first_observation()
+    {
+        var clock = new MutableClock(new DateTimeOffset(2026, 9, 7, 5, 0, 0, TimeSpan.Zero));
+        var store = new PhysicalReadinessStateStore(clock, "descriptor-change");
+        var descriptor = new PhysicalDeviceDescriptor("AGV-01", WorkflowDeviceFamilyIds.Agv, true);
+
+        store.Configure(true, [descriptor], clock.UtcNow);
+        store.Apply(descriptor, Observation(descriptor, online: true, full: true), TimeSpan.Zero, true, clock.UtcNow);
+        var firstEpoch = Assert.Single(store.GetSnapshot().Devices).DeviceEpoch;
+
+        var changedDescriptor = descriptor with { ControlEnabled = true };
+        store.Configure(true, [changedDescriptor], clock.UtcNow);
+        var changed = Assert.Single(store.GetSnapshot().Devices);
+        Assert.Equal(firstEpoch + 1, changed.DeviceEpoch);
+        Assert.Contains(PhysicalReadinessReasonCodes.DescriptorChanged, changed.BlockingReasons);
+
+        store.Configure(true, [changedDescriptor], clock.UtcNow);
+        Assert.Equal(changed.DeviceEpoch, Assert.Single(store.GetSnapshot().Devices).DeviceEpoch);
+        store.Apply(changedDescriptor, Observation(changedDescriptor, online: true, full: true), TimeSpan.Zero, true, clock.UtcNow);
+        Assert.Equal(changed.DeviceEpoch, Assert.Single(store.GetSnapshot().Devices).DeviceEpoch);
+    }
+
+    [Fact]
+    public void Supervisor_configuration_change_clears_ready_and_authorization()
+    {
+        var clock = new MutableClock(new DateTimeOffset(2026, 9, 7, 5, 0, 0, TimeSpan.Zero));
+        var store = new PhysicalReadinessStateStore(clock, "configuration-change");
+        var descriptor = new PhysicalDeviceDescriptor("AGV-01", WorkflowDeviceFamilyIds.Agv, true);
+
+        store.Configure(true, [descriptor], clock.UtcNow, configurationFingerprint: "cfg-a");
+        store.Apply(descriptor, Observation(descriptor, online: true, full: true), TimeSpan.Zero, true, clock.UtcNow);
+        var ready = Assert.Single(store.GetSnapshot().Devices);
+        var instanceId = store.GetSnapshot().SupervisorInstanceId;
+        Assert.True(store.AcknowledgeAuthorization(descriptor.DeviceId, ready.DeviceEpoch, instanceId));
+
+        store.Configure(true, [descriptor], clock.UtcNow, configurationFingerprint: "cfg-b");
+        var reset = Assert.Single(store.GetSnapshot().Devices);
+        Assert.Equal(ready.DeviceEpoch + 1, reset.DeviceEpoch);
+        Assert.True(reset.RequiresReauthorization);
+        Assert.NotEqual(PhysicalDeviceReadinessState.Ready, reset.State);
+        Assert.Contains(PhysicalReadinessReasonCodes.ConfigurationChanged, reset.BlockingReasons);
+        Assert.False(store.AcknowledgeAuthorization(descriptor.DeviceId, ready.DeviceEpoch, instanceId));
+    }
+
+    [Fact]
+    public void Removing_and_readding_a_device_does_not_reuse_its_old_epoch()
+    {
+        var clock = new MutableClock(new DateTimeOffset(2026, 9, 7, 5, 0, 0, TimeSpan.Zero));
+        var store = new PhysicalReadinessStateStore(clock, "remove-readd");
+        var descriptor = new PhysicalDeviceDescriptor("AGV-01", WorkflowDeviceFamilyIds.Agv, true);
+
+        store.Configure(true, [descriptor], clock.UtcNow);
+        store.Apply(descriptor, Observation(descriptor, online: true, full: true), TimeSpan.Zero, true, clock.UtcNow);
+        var oldEpoch = Assert.Single(store.GetSnapshot().Devices).DeviceEpoch;
+        store.Configure(true, [], clock.UtcNow);
+        Assert.Empty(store.GetSnapshot().Devices);
+
+        store.Configure(true, [descriptor], clock.UtcNow);
+        store.Apply(descriptor, Observation(descriptor, online: true, full: true), TimeSpan.Zero, true, clock.UtcNow);
+        Assert.Equal(oldEpoch + 1, Assert.Single(store.GetSnapshot().Devices).DeviceEpoch);
+    }
+
+    [Fact]
+    public void Authorization_from_an_old_supervisor_instance_fails()
+    {
+        var clock = new MutableClock(new DateTimeOffset(2026, 9, 7, 5, 0, 0, TimeSpan.Zero));
+        var store = new PhysicalReadinessStateStore(clock, "current-supervisor");
+        var descriptor = new PhysicalDeviceDescriptor("AGV-01", WorkflowDeviceFamilyIds.Agv, true);
+        store.Configure(true, [descriptor], clock.UtcNow);
+        store.Apply(descriptor, Observation(descriptor, online: true, full: true), TimeSpan.Zero, true, clock.UtcNow);
+        var ready = Assert.Single(store.GetSnapshot().Devices);
+
+        Assert.False(store.AcknowledgeAuthorization(descriptor.DeviceId, ready.DeviceEpoch, "old-supervisor"));
+        Assert.True(store.AcknowledgeAuthorization(descriptor.DeviceId, ready.DeviceEpoch, "current-supervisor"));
+    }
+
+    [Fact]
+    public void Only_the_current_instance_and_epoch_can_confirm_authorization()
+    {
+        var clock = new MutableClock(new DateTimeOffset(2026, 9, 7, 5, 0, 0, TimeSpan.Zero));
+        var store = new PhysicalReadinessStateStore(clock, "instance-and-epoch");
+        var descriptor = new PhysicalDeviceDescriptor("AGV-01", WorkflowDeviceFamilyIds.Agv, true);
+        store.Configure(true, [descriptor], clock.UtcNow);
+        store.Apply(descriptor, Observation(descriptor, online: true, full: true), TimeSpan.Zero, true, clock.UtcNow);
+        var ready = Assert.Single(store.GetSnapshot().Devices);
+
+        Assert.False(store.AcknowledgeAuthorization(descriptor.DeviceId, ready.DeviceEpoch + 1, "instance-and-epoch"));
+        Assert.False(store.AcknowledgeAuthorization(descriptor.DeviceId, ready.DeviceEpoch, "other-instance"));
+        Assert.True(store.AcknowledgeAuthorization(descriptor.DeviceId, ready.DeviceEpoch, "instance-and-epoch"));
+    }
+
+    [Fact]
     public void Map_or_identity_change_invalidates_a_ready_epoch()
     {
         var clock = new MutableClock(new DateTimeOffset(2026, 9, 7, 5, 0, 0, TimeSpan.Zero));
@@ -92,7 +201,7 @@ public sealed class PhysicalReadinessSupervisorTests
         ApplyHealthy(store, descriptor, clock, mapMd5: "aaa");
         first = Assert.Single(store.GetSnapshot().Devices);
         Assert.Equal(PhysicalDeviceReadinessState.Ready, first.State);
-        Assert.True(store.AcknowledgeAuthorization("AGV-01", first.DeviceEpoch));
+        Assert.True(store.AcknowledgeAuthorization("AGV-01", first.DeviceEpoch, store.GetSnapshot().SupervisorInstanceId));
 
         clock.Advance(TimeSpan.FromSeconds(1));
         ApplyHealthy(store, descriptor, clock, mapMd5: "bbb");
@@ -120,7 +229,7 @@ public sealed class PhysicalReadinessSupervisorTests
             clock.UtcNow);
         var authorized = Assert.Single(store.GetSnapshot().Devices);
         Assert.Equal(PhysicalDeviceReadinessState.Ready, authorized.State);
-        Assert.True(store.AcknowledgeAuthorization(descriptor.DeviceId, authorized.DeviceEpoch));
+        Assert.True(store.AcknowledgeAuthorization(descriptor.DeviceId, authorized.DeviceEpoch, store.GetSnapshot().SupervisorInstanceId));
 
         var partial = Observation(descriptor, online: true, full: false) with
         {
@@ -174,7 +283,7 @@ public sealed class PhysicalReadinessSupervisorTests
             requireFullPreflight: true,
             clock.UtcNow);
         var first = Assert.Single(store.GetSnapshot().Devices);
-        Assert.True(store.AcknowledgeAuthorization(descriptor.DeviceId, first.DeviceEpoch));
+        Assert.True(store.AcknowledgeAuthorization(descriptor.DeviceId, first.DeviceEpoch, store.GetSnapshot().SupervisorInstanceId));
 
         clock.Advance(TimeSpan.FromSeconds(1));
         var partial = Observation(descriptor, online: true, full: false) with
@@ -229,7 +338,7 @@ public sealed class PhysicalReadinessSupervisorTests
             requireFullPreflight: true,
             clock.UtcNow);
         var ready = Assert.Single(store.GetSnapshot().Devices);
-        Assert.True(store.AcknowledgeAuthorization("AGV-01", ready.DeviceEpoch));
+        Assert.True(store.AcknowledgeAuthorization("AGV-01", ready.DeviceEpoch, store.GetSnapshot().SupervisorInstanceId));
 
         clock.Advance(TimeSpan.FromSeconds(1));
         store.Apply(
@@ -273,7 +382,7 @@ public sealed class PhysicalReadinessSupervisorTests
             requireFullPreflight: true,
             clock.UtcNow);
         var ready = Assert.Single(store.GetSnapshot().Devices);
-        Assert.True(store.AcknowledgeAuthorization("AGV-01", ready.DeviceEpoch));
+        Assert.True(store.AcknowledgeAuthorization("AGV-01", ready.DeviceEpoch, store.GetSnapshot().SupervisorInstanceId));
 
         clock.Advance(TimeSpan.FromSeconds(11));
         var stale = Assert.Single(store.GetSnapshot().Devices);
@@ -301,7 +410,7 @@ public sealed class PhysicalReadinessSupervisorTests
         ApplyHealthy(store, arm, clock);
         var ready = store.GetSnapshot().Devices.ToDictionary(item => item.DeviceId);
         Assert.All(ready.Values, item => Assert.Equal(PhysicalDeviceReadinessState.Ready, item.State));
-        Assert.True(store.AcknowledgeAuthorization("ARM-01", ready["ARM-01"].DeviceEpoch));
+        Assert.True(store.AcknowledgeAuthorization("ARM-01", ready["ARM-01"].DeviceEpoch, store.GetSnapshot().SupervisorInstanceId));
 
         clock.Advance(TimeSpan.FromSeconds(1));
         store.Apply(
@@ -337,7 +446,7 @@ public sealed class PhysicalReadinessSupervisorTests
             requireFullPreflight: true,
             clock.UtcNow);
         var authorized = Assert.Single(store.GetSnapshot().Devices);
-        Assert.True(store.AcknowledgeAuthorization(descriptor.DeviceId, authorized.DeviceEpoch));
+        Assert.True(store.AcknowledgeAuthorization(descriptor.DeviceId, authorized.DeviceEpoch, store.GetSnapshot().SupervisorInstanceId));
 
         clock.Advance(TimeSpan.FromSeconds(1));
         store.Apply(
@@ -399,7 +508,7 @@ public sealed class PhysicalReadinessSupervisorTests
             requireFullPreflight: true,
             clock.UtcNow);
         var authorized = Assert.Single(store.GetSnapshot().Devices);
-        Assert.True(store.AcknowledgeAuthorization(descriptor.DeviceId, authorized.DeviceEpoch));
+        Assert.True(store.AcknowledgeAuthorization(descriptor.DeviceId, authorized.DeviceEpoch, store.GetSnapshot().SupervisorInstanceId));
 
         clock.Advance(TimeSpan.FromSeconds(1));
         store.Apply(
@@ -469,7 +578,7 @@ public sealed class PhysicalReadinessSupervisorTests
         Assert.Equal(PhysicalReadinessReasonCodes.ReauthorizationRequired, reason);
         // A caller must explicitly bind the current epoch before it can pass
         // the dispatch gate.
-        Assert.True(supervisor.AcknowledgeAuthorization("AGV-01", firstDevice.DeviceEpoch));
+        Assert.True(supervisor.AcknowledgeAuthorization("AGV-01", firstDevice.DeviceEpoch, first.SupervisorInstanceId));
         Assert.True(supervisor.IsCurrentAndReady("AGV-01", firstDevice.DeviceEpoch, out reason));
         Assert.Null(reason);
 
