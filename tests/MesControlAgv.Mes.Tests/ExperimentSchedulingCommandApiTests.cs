@@ -746,6 +746,109 @@ public sealed class ExperimentSchedulingCommandApiTests : IClassFixture<MesWebAp
                 .Select(item => item.Status).SingleAsync());
     }
 
+    [Fact]
+    public async Task Scheduling_rolls_back_when_material_inventory_is_insufficient()
+    {
+        var workflow = await PublishWorkflowAsync();
+        var materialCode = ("SCHED-INSUFFICIENT-" + Guid.NewGuid().ToString("N")).ToUpperInvariant();
+        var materialId = Guid.NewGuid();
+        var lotId = Guid.NewGuid();
+        var locationId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            database.MaterialCatalog.Add(new MaterialCatalogRecord
+            {
+                MaterialId = materialId,
+                MaterialCode = materialCode,
+                Name = "Insufficient scheduling material",
+                Kind = "Consumable",
+                Unit = "EA",
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now
+            });
+            database.WarehouseLocations.Add(new WarehouseLocationRecord
+            {
+                LocationId = locationId,
+                WarehouseCode = "TEST",
+                WarehouseName = "Test warehouse",
+                LocationCode = "TEST-01",
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now
+            });
+            database.MaterialLots.Add(new MaterialLotRecord
+            {
+                LotId = lotId,
+                MaterialId = materialId,
+                MaterialCode = materialCode,
+                LotCode = "LOT-INSUFFICIENT",
+                Unit = "EA",
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now
+            });
+            database.InventoryBalances.Add(new InventoryBalanceRecord
+            {
+                BalanceId = Guid.NewGuid(),
+                LotId = lotId,
+                LocationId = locationId,
+                OnHand = 0,
+                Reserved = 0,
+                UpdatedAtUtc = now
+            });
+            await database.SaveChangesAsync();
+        }
+
+        var planRequest = CreatePlanRequest(
+            workflow,
+            "Create insufficient material plan",
+            [new ExperimentMaterialRequirement
+            {
+                MaterialId = materialCode,
+                Name = "Insufficient scheduling material",
+                Quantity = 1,
+                Unit = "EA"
+            }]);
+        var createPlan = await _client.PostAsJsonAsync("/api/experiment-plans", planRequest);
+        createPlan.EnsureSuccessStatusCode();
+        var draft = (await createPlan.Content.ReadFromJsonAsync<ExperimentPlan>())!;
+        (await _client.PostAsJsonAsync(
+            $"/api/experiment-plans/{draft.PlanId}/versions/{draft.Version}/validate",
+            Action("Validate insufficient material plan"))).EnsureSuccessStatusCode();
+        var publish = await _client.PostAsJsonAsync(
+            $"/api/experiment-plans/{draft.PlanId}/versions/{draft.Version}/publish",
+            Action("Publish insufficient material plan"));
+        publish.EnsureSuccessStatusCode();
+        var plan = (await publish.Content.ReadFromJsonAsync<ExperimentPlan>())!;
+        var job = await CreateJobAsync(plan, "INSUFFICIENT-BATCH-" + Guid.NewGuid().ToString("N"));
+
+        var start = new DateTimeOffset(2037, 1, 2, 9, 0, 0, TimeSpan.Zero);
+        var response = await _client.PutAsJsonAsync(
+            $"/api/experiment-jobs/{job.JobId}/schedule",
+            Schedule(start, start.AddHours(1), 10, "Reject insufficient material"));
+        var errorBody = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.Conflict, errorBody);
+        var error = JsonSerializer.Deserialize<JsonElement>(errorBody);
+        Assert.Equal(MaterialIssueCodes.InventoryInsufficient, error.GetProperty("code").GetString());
+
+        using var verifyScope = _factory.Services.CreateScope();
+        var verifyDatabase = verifyScope.ServiceProvider.GetRequiredService<MesDbContext>();
+        Assert.Equal(ExperimentJobStatus.Ready.ToString(),
+            await verifyDatabase.ExperimentJobs.Where(item => item.JobId == job.JobId)
+                .Select(item => item.Status).SingleAsync());
+        var scheduleEntryIds = await verifyDatabase.ScheduleEntries
+            .Where(item => item.ExperimentJobId == job.JobId)
+            .Select(item => item.ScheduleEntryId)
+            .ToArrayAsync();
+        Assert.Empty(scheduleEntryIds);
+        Assert.Empty(await verifyDatabase.ResourceReservations
+            .Where(item => scheduleEntryIds.Contains(item.ScheduleEntryId)).ToListAsync());
+        Assert.Empty(await verifyDatabase.ExperimentJobMaterialBindings
+            .Where(item => item.ExperimentJobId == job.JobId).ToListAsync());
+        Assert.Equal(0m, await verifyDatabase.InventoryBalances
+            .Where(item => item.LotId == lotId).Select(item => item.Reserved).SingleAsync());
+    }
+
     private async Task<WorkflowVersion> PublishWorkflowAsync()
     {
         var definition = WorkflowTestDefinitions.CreateMoveWorkflow();
@@ -794,7 +897,8 @@ public sealed class ExperimentSchedulingCommandApiTests : IClassFixture<MesWebAp
 
     private static SaveExperimentPlanDraftRequest CreatePlanRequest(
         WorkflowVersion workflow,
-        string reason) => new()
+        string reason,
+        IReadOnlyList<ExperimentMaterialRequirement>? materialRequirements = null) => new()
         {
             RequestId = Guid.NewGuid(),
             Actor = "planner-api-test",
@@ -812,7 +916,7 @@ public sealed class ExperimentSchedulingCommandApiTests : IClassFixture<MesWebAp
                 // Material reservation is covered by the material-management
                 // integration tests; these scheduling tests exercise resource
                 // lifecycle behavior without requiring inventory fixtures.
-                MaterialRequirements = [],
+                MaterialRequirements = materialRequirements ?? [],
                 ResourceRequirements =
             [
                 new ExperimentResourceRequirement

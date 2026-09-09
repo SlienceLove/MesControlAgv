@@ -1,5 +1,6 @@
 using MesControlAgv.Application;
 using MesControlAgv.Contracts.Experiments;
+using MesControlAgv.Contracts.Materials;
 using MesControlAgv.Mes.Services;
 using Microsoft.AspNetCore.Routing;
 
@@ -246,6 +247,15 @@ public static class ExperimentSchedulingEndpointRouteBuilderExtensions
         try
         {
             return success(await action());
+        }
+        catch (MaterialRequestIdReusedException exception)
+        {
+            return Results.Conflict(new
+            {
+                code = MaterialIssueCodes.RequestIdReused,
+                detail = exception.Message,
+                requestId = exception.RequestId
+            });
         }
         catch (MaterialManagementException exception)
         {
