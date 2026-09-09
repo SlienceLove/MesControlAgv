@@ -121,6 +121,7 @@ builder.Services.AddScoped<WorkflowApplicationService>();
 builder.Services.AddScoped<IWorkflowApplicationService>(services => services.GetRequiredService<WorkflowApplicationService>());
 builder.Services.AddScoped<IExperimentSchedulingQueryService, ExperimentSchedulingQueryService>();
 builder.Services.AddScoped<IExperimentSchedulingCommandService, ExperimentSchedulingCommandService>();
+builder.Services.AddScoped<MaterialOperationCoordinator>();
 builder.Services.AddScoped<ExperimentRuntimeLeaseLifecycle>();
 builder.Services.AddScoped<ExperimentRuntimeAdmissionService>();
 builder.Services.AddScoped<IExperimentRuntimeAdmissionService>(services =>
@@ -928,6 +929,7 @@ static async Task EnsureMaterialManagementTablesAsync(MesDbContext database)
             Actor TEXT NOT NULL,
             DetailsJson TEXT NOT NULL,
             OccurredAtUtc TEXT NOT NULL,
+            FOREIGN KEY (RequestId) REFERENCES MaterialOperations(RequestId) ON DELETE NO ACTION,
             FOREIGN KEY (SampleId) REFERENCES SampleMaterials(SampleId) ON DELETE NO ACTION,
             FOREIGN KEY (LotId) REFERENCES MaterialLots(LotId) ON DELETE NO ACTION
         );

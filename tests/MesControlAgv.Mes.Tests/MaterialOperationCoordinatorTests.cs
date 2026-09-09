@@ -3,6 +3,7 @@ using MesControlAgv.Mes.Entities;
 using MesControlAgv.Mes.Services;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 
 namespace MesControlAgv.Mes.Tests;
 
@@ -77,6 +78,86 @@ public sealed class MaterialOperationCoordinatorTests
         await database.SaveChangesAsync();
 
         Assert.Equal(2, await database.InventoryTransactions.CountAsync(item => item.RequestId == requestId));
+    }
+
+    [Fact]
+    public async Task Execute_is_atomic_and_replay_does_not_run_mutation_again()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<MesDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var database = new MesDbContext(options);
+        await database.Database.EnsureCreatedAsync();
+        var coordinator = new MaterialOperationCoordinator();
+        var requestId = Guid.NewGuid();
+        var mutationCount = 0;
+
+        var first = await coordinator.ExecuteAsync(
+            database,
+            requestId,
+            "receive",
+            "fingerprint-atomic",
+            "operator",
+            () =>
+            {
+                mutationCount++;
+                database.InventoryTransactions.Add(NewTransaction(requestId, "line-1", DateTime.UtcNow));
+                return Task.FromResult(7);
+            },
+            value => JsonSerializer.Serialize(value),
+            value => JsonSerializer.Deserialize<int>(value),
+            CancellationToken.None);
+
+        var replay = await coordinator.ExecuteAsync(
+            database,
+            requestId,
+            "receive",
+            "fingerprint-atomic",
+            "operator",
+            () =>
+            {
+                mutationCount++;
+                return Task.FromResult(99);
+            },
+            value => JsonSerializer.Serialize(value),
+            value => JsonSerializer.Deserialize<int>(value),
+            CancellationToken.None);
+
+        Assert.False(first.IsReplay);
+        Assert.True(replay.IsReplay);
+        Assert.Equal(7, replay.Value);
+        Assert.Equal(1, mutationCount);
+        Assert.Single(await database.InventoryTransactions.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Execute_rolls_back_pending_operation_when_mutation_fails()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<MesDbContext>()
+            .UseSqlite(connection)
+            .Options;
+        await using var database = new MesDbContext(options);
+        await database.Database.EnsureCreatedAsync();
+        var coordinator = new MaterialOperationCoordinator();
+        var requestId = Guid.NewGuid();
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            coordinator.ExecuteAsync(
+                database,
+                requestId,
+                "receive",
+                "fingerprint-failing",
+                "operator",
+                () => throw new InvalidOperationException("boom"),
+                value => JsonSerializer.Serialize(value),
+                value => JsonSerializer.Deserialize<int>(value),
+                CancellationToken.None));
+
+        Assert.False(await database.MaterialOperations.AnyAsync(item => item.RequestId == requestId));
     }
 
     private static InventoryTransactionRecord NewTransaction(

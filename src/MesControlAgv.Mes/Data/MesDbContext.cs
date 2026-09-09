@@ -523,6 +523,10 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.HasIndex(scan => new { scan.NormalizedCode, scan.OccurredAtUtc });
             entity.HasIndex(scan => new { scan.SampleId, scan.OccurredAtUtc });
             entity.HasIndex(scan => new { scan.LotId, scan.OccurredAtUtc });
+            entity.HasOne<MaterialOperationRecord>()
+                .WithMany()
+                .HasForeignKey(scan => scan.RequestId)
+                .OnDelete(DeleteBehavior.NoAction);
             entity.HasOne<SampleMaterialRecord>()
                 .WithMany()
                 .HasForeignKey(scan => scan.SampleId)
