@@ -12,8 +12,14 @@ public partial class AgvCommunicationView : UserControl
         InitializeComponent();
     }
 
-    private void ResetAgvGridLayout_Click(object sender, RoutedEventArgs e) =>
-        DataGridLayoutPersistence.Reset(AgvGrid);
+    private void ResetAgvGridLayout_Click(object sender, RoutedEventArgs e)
+    {
+        try { DataGridLayoutPersistence.Reset(AgvGrid); }
+        catch (Exception exception)
+        {
+            MessageBox.Show(Window.GetWindow(this), $"恢复列布局失败：{exception.Message}", "布局恢复", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
 
     private void AgvWorkspaceGrid_SizeChanged(object sender, SizeChangedEventArgs e)
     {

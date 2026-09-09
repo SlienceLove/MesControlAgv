@@ -9,7 +9,7 @@ namespace MesControlAgv.Wpf.Tests;
 public sealed class MainWindowNavigationTests
 {
     [Fact]
-    public void First_tab_is_selected_and_rendered_on_initial_show()
+    public void Kpi_tab_is_selected_and_rendered_on_initial_show()
     {
         Exception? failure = null;
         var thread = new Thread(() =>
@@ -26,10 +26,10 @@ public sealed class MainWindowNavigationTests
                 window.UpdateLayout();
 
                 var tabs = Assert.IsType<TabControl>(window.FindName("MainTabs"));
-                var firstTab = Assert.IsType<TabItem>(window.FindName("TaskMonitorTab"));
-                var taskView = Assert.IsType<Views.TaskMonitorView>(window.FindName("TaskMonitorView"));
+                var firstTab = Assert.IsType<TabItem>(window.FindName("KpiDashboardTab"));
+                var taskView = Assert.IsType<Views.KpiDashboardView>(window.FindName("KpiDashboardView"));
 
-                Assert.Equal(0, tabs.SelectedIndex);
+                Assert.Equal(tabs.Items.IndexOf(firstTab), tabs.SelectedIndex);
                 Assert.Same(firstTab, tabs.SelectedItem);
                 Assert.Same(taskView, tabs.SelectedContent);
                 Assert.Equal(Visibility.Visible, taskView.Visibility);

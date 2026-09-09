@@ -12,6 +12,13 @@
             </ResourceDictionary.MergedDictionaries>
             <converters:StatusBrushConverter x:Key="StatusBrushConverter" />
             <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+            <Style TargetType="TextBlock">
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding Text, RelativeSource={RelativeSource Self}}" Value="机械臂程序目录：">
+                        <Setter Property="Visibility" Value="Collapsed" />
+                    </DataTrigger>
+                </Style.Triggers>
+            </Style>
         </ResourceDictionary>
     </UserControl.Resources>
         <Grid Margin="0,12,0,0">
@@ -49,7 +56,7 @@
                     <Button Margin="6,0,0,0" Padding="14,7" Background="#1769AA" Foreground="White" Command="{Binding WorkflowEditor.SaveCommand}" Content="保存" />
                     <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.LoadFromMesCommand}" Content="从 MES 加载" />
                     <Button AutomationProperties.AutomationId="WorkflowSaveDraftButton" Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.SaveDraftCommand}" Content="保存草稿" />
-                    <Button AutomationProperties.AutomationId="WorkflowValidateButton" Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.ValidateCommand}" Content="校验" />
+                    <Button AutomationProperties.AutomationId="WorkflowValidateButton" Margin="6,0,0,0" Padding="10,7" Click="WorkflowValidate_Click" Command="{Binding WorkflowEditor.ValidateCommand}" Content="校验" />
                     <Button AutomationProperties.AutomationId="WorkflowPublishButton" Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.PublishCommand}" Content="发布" />
                     <Button Margin="6,0,0,0" Padding="10,7" Command="{Binding WorkflowEditor.DryRunCommand}" Content="试运行" />
                     <Button x:Name="WorkflowSimulatorExecuteButton"
@@ -67,7 +74,7 @@
                                   Checked="WorkflowCanvasFullscreen_Checked"
                                   Unchecked="WorkflowCanvasFullscreen_Unchecked"
                                   Content="全屏编辑"
-                                  ToolTip="隐藏流程列表和属性面板，扩大画布查看或编辑节点；点击再次恢复" />
+                                  ToolTip="在独立最大化窗口打开完整流程管理页面" />
                 </WrapPanel>
             </Grid>
 
@@ -201,9 +208,10 @@
                                        Text="机械臂程序目录：" />
                             <TextBlock Margin="0,2,0,0"
                                        Foreground="#475467"
+                                       Visibility="Collapsed"
                                        Text="{Binding WorkflowEditor.RobotProgramCatalogStatus}"
                                        TextWrapping="Wrap" />
-                            <Button AutomationProperties.AutomationId="WorkflowRefreshRobotProgramsButton"
+                            <Button Visibility="Collapsed" AutomationProperties.AutomationId="WorkflowRefreshRobotProgramsButton"
                                     Margin="0,6,0,0"
                                     Padding="10,5"
                                     HorizontalAlignment="Left"
@@ -369,19 +377,21 @@
                     </ScrollViewer>
                 </Border>
             </Grid>
-            <Border Grid.Row="2"
+            <Border x:Name="WorkflowValidationPane" Grid.Row="2"
                     MinHeight="180"
                     MaxHeight="250"
                     Margin="0,10,0,0"
                     BorderBrush="#D0D7DE"
                     BorderThickness="1"
-                    CornerRadius="4">
+                    CornerRadius="4"
+                    Visibility="Collapsed">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
                     <DockPanel Margin="10,7" LastChildFill="True">
+                        <Button DockPanel.Dock="Right" Margin="8,0,0,0" Padding="10,4" Click="CloseValidation_Click" Content="关闭" />
                         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                             <ComboBox Width="112"
                                       AutomationProperties.AutomationId="WorkflowValidationSeverityFilter"

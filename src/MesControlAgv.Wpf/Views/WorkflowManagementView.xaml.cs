@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Threading;
+using MesControlAgv.Wpf;
 using MesControlAgv.Wpf.ViewModels;
 using MesControlAgv.Wpf.Workflows;
 using Microsoft.Win32;
@@ -11,8 +12,10 @@ namespace MesControlAgv.Wpf.Views;
 public partial class WorkflowManagementView : UserControl
 {
     private WorkflowEditorViewModel? _workflowEditor;
+    private WorkflowManagementFullscreenWindow? _fullscreenWindow;
     private bool? _isCompactLayout;
-    private bool _isCanvasFocusMode;
+
+    public bool IsFullscreenHost { get; set; }
 
     public WorkflowManagementView()
     {
@@ -25,13 +28,15 @@ public partial class WorkflowManagementView : UserControl
 
     private void WorkflowManagementView_Loaded(object sender, RoutedEventArgs e)
     {
+        WorkflowCanvasFullscreenButton.Visibility = IsFullscreenHost ? Visibility.Collapsed : Visibility.Visible;
         AttachWorkflowEditor();
         ApplyResponsiveLayout();
     }
 
     private void WorkflowManagementView_Unloaded(object sender, RoutedEventArgs e)
     {
-        SetCanvasFocusMode(false);
+        if (!IsFullscreenHost)
+            CloseFullscreenWindow();
         DetachWorkflowEditor();
         WorkflowCanvasSurface.Detach();
     }
@@ -43,12 +48,6 @@ public partial class WorkflowManagementView : UserControl
 
     private void ApplyResponsiveLayout()
     {
-        if (_isCanvasFocusMode)
-        {
-            ApplyCanvasFocusLayout();
-            return;
-        }
-
         if (Content is not Grid root)
         {
             return;
@@ -95,56 +94,65 @@ public partial class WorkflowManagementView : UserControl
     }
 
     private void WorkflowCanvasFullscreen_Checked(object sender, RoutedEventArgs e) =>
-        SetCanvasFocusMode(true);
+        OpenFullscreenWindow();
+
+    private void WorkflowValidate_Click(object sender, RoutedEventArgs e) => WorkflowValidationPane.Visibility = Visibility.Visible;
+    private void CloseValidation_Click(object sender, RoutedEventArgs e) => WorkflowValidationPane.Visibility = Visibility.Collapsed;
 
     private void WorkflowCanvasFullscreen_Unchecked(object sender, RoutedEventArgs e) =>
-        SetCanvasFocusMode(false);
+        CloseFullscreenWindow();
 
-    private void SetCanvasFocusMode(bool isFocusMode)
+    private void OpenFullscreenWindow()
     {
-        _isCanvasFocusMode = isFocusMode;
-        WorkflowCanvasFullscreenButton.Content = isFocusMode ? "退出全屏编辑" : "全屏编辑";
-        WorkflowPalettePane.Visibility = isFocusMode ? Visibility.Collapsed : Visibility.Visible;
-        WorkflowInspectorPane.Visibility = isFocusMode ? Visibility.Collapsed : Visibility.Visible;
-        WorkflowCanvasPane.Margin = isFocusMode ? new Thickness(0) : new Thickness(12, 0, 12, 0);
-
-        if (Content is not Grid root)
+        if (IsFullscreenHost)
             return;
-
-        var workspace = root.Children
-            .OfType<Grid>()
-            .FirstOrDefault(child => Grid.GetRow(child) == 1 && child.ColumnDefinitions.Count == 3);
-        if (workspace is null)
-            return;
-
-        var columns = workspace.ColumnDefinitions;
-        if (isFocusMode)
+        if (_fullscreenWindow is { IsVisible: true })
         {
-            columns[0].Width = new GridLength(0);
-            columns[1].Width = new GridLength(1, GridUnitType.Star);
-            columns[2].Width = new GridLength(0);
+            _fullscreenWindow.Activate();
             return;
         }
 
-        _isCompactLayout = null;
-        ApplyResponsiveLayout();
+        var owner = Window.GetWindow(this);
+        if (owner is null || DataContext is null)
+        {
+            WorkflowCanvasFullscreenButton.IsChecked = false;
+            return;
+        }
+
+        WorkflowCanvasFullscreenButton.IsEnabled = false;
+        try
+        {
+            _fullscreenWindow = new WorkflowManagementFullscreenWindow
+            {
+                DataContext = DataContext
+            };
+            if (owner.IsVisible)
+                _fullscreenWindow.Owner = owner;
+            _fullscreenWindow.Closed += (_, _) =>
+            {
+                _fullscreenWindow = null;
+                WorkflowCanvasFullscreenButton.IsEnabled = true;
+                WorkflowCanvasFullscreenButton.IsChecked = false;
+            };
+            _fullscreenWindow.Show();
+        }
+        catch
+        {
+            _fullscreenWindow = null;
+            WorkflowCanvasFullscreenButton.IsEnabled = true;
+            WorkflowCanvasFullscreenButton.IsChecked = false;
+            throw;
+        }
     }
 
-    private void ApplyCanvasFocusLayout()
+    private void CloseFullscreenWindow()
     {
-        if (Content is not Grid root)
+        if (IsFullscreenHost || _fullscreenWindow is null)
             return;
-
-        var workspace = root.Children
-            .OfType<Grid>()
-            .FirstOrDefault(child => Grid.GetRow(child) == 1 && child.ColumnDefinitions.Count == 3);
-        if (workspace is null)
-            return;
-
-        var columns = workspace.ColumnDefinitions;
-        columns[0].Width = new GridLength(0);
-        columns[1].Width = new GridLength(1, GridUnitType.Star);
-        columns[2].Width = new GridLength(0);
+        var window = _fullscreenWindow;
+        _fullscreenWindow = null;
+        if (window.IsVisible)
+            window.Close();
     }
 
     private void ImportWorkflowCompatibility_Click(object sender, RoutedEventArgs e)

@@ -141,14 +141,27 @@ public static class DataGridLayoutPersistence
             _suppress = true;
             try
             {
+                // DataGrid rejects transient duplicate DisplayIndex values. Reorder
+                // columns in one deterministic pass before restoring widths.
+                var ordered = _grid.Columns
+                    .Select((column, index) => new { column, index, key = ColumnKey(column, index) })
+                    .OrderBy(item => _defaults.TryGetValue(item.key, out var snapshot) ? snapshot.DisplayIndex : int.MaxValue)
+                    .ThenBy(item => item.index)
+                    .ToList();
+                for (var index = 0; index < ordered.Count; index++)
+                    ordered[index].column.DisplayIndex = index;
+
                 foreach (var pair in _defaults)
                 {
                     var column = FindColumn(pair.Key);
                     if (column is null) continue;
-                    column.DisplayIndex = pair.Value.DisplayIndex;
                     if (pair.Value.Width > 24 && !double.IsNaN(pair.Value.Width) && !double.IsInfinity(pair.Value.Width))
                         column.Width = new DataGridLength(pair.Value.Width);
                 }
+            }
+            catch (ArgumentException)
+            {
+                // A malformed persisted/default layout must never terminate the UI.
             }
             finally { _suppress = false; }
 

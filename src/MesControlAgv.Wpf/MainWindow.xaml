@@ -131,16 +131,22 @@
                     <StackPanel>
                         <Expander Header="运营总览" Style="{StaticResource NavigationGroupStyle}">
                             <StackPanel>
-                                <RadioButton Tag="TaskMonitorTab" IsChecked="True"
+                                <RadioButton Tag="TaskMonitorTab" Visibility="Collapsed" IsChecked="True"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="任务监控" />
                                 </RadioButton>
-                                <RadioButton Tag="KpiDashboardTab"
+                                <RadioButton Tag="KpiDashboardTab" IsChecked="True"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="KPI 看板" />
                                 </RadioButton>
+                                <RadioButton Tag="ExperimentSchedulingTab"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="任务排程" />
+                                </RadioButton>
+                                <RadioButton Tag="InstrumentTaskImportTab" Style="{StaticResource NavigationRadioButtonStyle}" Click="NavigationButton_Click"><TextBlock Text="仪器任务导入" /></RadioButton>
                                 <RadioButton Tag="MapDashboardTab"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
@@ -171,17 +177,17 @@
 
                         <Expander Header="实验工作流" Style="{StaticResource NavigationGroupStyle}">
                             <StackPanel>
-                                <RadioButton Tag="ShineLabTaskDispatchTab"
+                                <RadioButton Tag="ShineLabTaskDispatchTab" Visibility="Collapsed"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="ShineLab 任务下发" TextWrapping="Wrap" />
                                 </RadioButton>
-                                <RadioButton Tag="ShineLabSequenceImportTab"
+                                <RadioButton Tag="ShineLabSequenceImportTab" Visibility="Collapsed"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="离子色谱样品任务导入" TextWrapping="Wrap" />
                                 </RadioButton>
-                                <RadioButton Tag="BatchTaskImportTab"
+                                <RadioButton Tag="BatchTaskImportTab" Visibility="Collapsed"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="批量任务导入" />
@@ -196,7 +202,7 @@
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="实验方案" />
                                 </RadioButton>
-                                <RadioButton Tag="ExperimentSchedulingTab"
+                                <RadioButton Tag="ExperimentSchedulingTab" Visibility="Collapsed"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="任务排程" />
@@ -269,10 +275,10 @@
                             SelectedIndex="0"
                             SelectionChanged="MainTabs_SelectionChanged"
                             HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
-        <TabItem x:Name="TaskMonitorTab" Header="任务监控" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <TabItem x:Name="TaskMonitorTab" Visibility="Collapsed" Header="任务监控" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
             <views:TaskMonitorView x:Name="TaskMonitorView" />
         </TabItem>
-    <TabItem x:Name="KpiDashboardTab" Header="KPI 看板" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <TabItem x:Name="KpiDashboardTab" IsSelected="True" Header="KPI 看板" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:KpiDashboardView x:Name="KpiDashboardView" />
     </TabItem>
     <TabItem x:Name="IonChromatographyTab" Header="离子色谱（已迁移至设备状态查询）" Visibility="Collapsed" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
@@ -391,10 +397,10 @@
     <TabItem x:Name="ShineLabDeviceStatusTab" Header="设备状态查询" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:ShineLabDeviceStatusView DataContext="{Binding ShineLabDeviceStatus}" />
     </TabItem>
-    <TabItem x:Name="ShineLabTaskDispatchTab" Header="ShineLab 任务下发（实验）" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <TabItem x:Name="ShineLabTaskDispatchTab" Visibility="Collapsed" Header="ShineLab 任务下发（实验）" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:ShineLabTaskDispatchView DataContext="{Binding ShineLabTaskDispatch}" />
     </TabItem>
-    <TabItem x:Name="ShineLabSequenceImportTab" Header="离子色谱样品任务导入" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <TabItem x:Name="ShineLabSequenceImportTab" Visibility="Collapsed" Header="离子色谱样品任务导入" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:ShineLabSequenceImportView x:Name="ShineLabSequenceImportView" />
     </TabItem>
     <TabItem x:Name="AgvCommunicationTab" Header="AGV 通讯与调度" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
@@ -403,7 +409,10 @@
     <TabItem x:Name="AuboArmTab" Header="AUBO 机械臂" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:AuboArmControlView DataContext="{Binding AuboArm}" />
     </TabItem>
-    <TabItem x:Name="BatchTaskImportTab" Header="批量任务导入" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <TabItem x:Name="InstrumentTaskImportTab" IsSelected="True" Header="仪器任务导入" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <views:InstrumentTaskImportView />
+    </TabItem>
+    <TabItem x:Name="BatchTaskImportTab" Visibility="Collapsed" Header="批量任务导入" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:BatchTaskImportView x:Name="BatchTaskImportView" />
     </TabItem>
     <TabItem x:Name="WorkflowManagementTab" AutomationProperties.AutomationId="WorkflowManagementTab" Header="实验流程管理" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
@@ -415,7 +424,7 @@
                  VerticalContentAlignment="Stretch">
             <experiments:ExperimentPlanManagementView DataContext="{Binding ExperimentPlans}" />
         </TabItem>
-        <TabItem x:Name="ExperimentSchedulingTab" AutomationProperties.AutomationId="ExperimentSchedulingTab"
+        <TabItem x:Name="ExperimentSchedulingTab" IsSelected="False" AutomationProperties.AutomationId="ExperimentSchedulingTab"
                  Header="任务排程"
                  HorizontalContentAlignment="Stretch"
                  VerticalContentAlignment="Stretch">
@@ -431,7 +440,7 @@
                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
             <views:StartupDiagnosticsView x:Name="StartupDiagnosticsView" DataContext="{Binding Diagnostics}" />
         </TabItem>
-        <TabItem x:Name="ReadinessTab" Header="就绪 / 地图 / 审计" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <TabItem x:Name="ReadinessTab" Visibility="Collapsed" Header="就绪 / 地图 / 审计" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
             <Grid Margin="0,12,0,0">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
@@ -619,7 +628,7 @@
                 </Grid>
             </Grid>
         </TabItem>
-        <TabItem x:Name="MapDashboardTab" Header="地图视图" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <TabItem x:Name="MapDashboardTab" Header="地图视图" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
             <views:MapDashboardView x:Name="MapDashboardView" />
         </TabItem>
                 </TabControl>

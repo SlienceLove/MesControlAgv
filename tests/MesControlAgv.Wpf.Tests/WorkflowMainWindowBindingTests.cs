@@ -71,14 +71,15 @@ public sealed class WorkflowMainWindowBindingTests
                 Assert.Equal("全屏编辑", fullscreenButton.Content);
                 fullscreenButton.IsChecked = true;
                 PumpDispatcher(window.Dispatcher);
-                Assert.Equal(Visibility.Collapsed, Assert.IsType<Border>(workflowView.FindName("WorkflowPalettePane")).Visibility);
-                Assert.Equal(Visibility.Collapsed, Assert.IsType<Border>(workflowView.FindName("WorkflowInspectorPane")).Visibility);
-                Assert.Equal(0, ((Grid)workflowView.Content).Children.OfType<Grid>()
+                Assert.Equal(Visibility.Visible, Assert.IsType<Border>(workflowView.FindName("WorkflowPalettePane")).Visibility);
+                Assert.Equal(Visibility.Visible, Assert.IsType<Border>(workflowView.FindName("WorkflowInspectorPane")).Visibility);
+                Assert.NotEqual(0, ((Grid)workflowView.Content).Children.OfType<Grid>()
                     .First(child => Grid.GetRow(child) == 1 && child.ColumnDefinitions.Count == 3)
                     .ColumnDefinitions[0].Width.Value);
-                Assert.Equal("退出全屏编辑", fullscreenButton.Content);
+                Assert.True(fullscreenButton.IsChecked);
                 fullscreenButton.IsChecked = false;
                 PumpDispatcher(window.Dispatcher);
+                Assert.False(fullscreenButton.IsChecked);
                 Assert.Equal(Visibility.Visible, Assert.IsType<Border>(workflowView.FindName("WorkflowPalettePane")).Visibility);
                 var validationGrid = Assert.IsType<DataGrid>(workflowView.FindName("WorkflowValidationGrid"));
                 validationGrid.SelectedItem = Assert.Single(

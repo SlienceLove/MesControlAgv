@@ -19,6 +19,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged
     private string _connectionStatus = "尚未读取";
     private string _message = "等待 ShineLab TCP Client 推送状态...";
     private bool _isRefreshing;
+    private string _selectedInstrument = "离子色谱";
 
     public ShineLabDeviceStatusViewModel(IMesClient mes)
     {
@@ -27,6 +28,17 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged
     }
 
     public ObservableCollection<ShineLabDeviceStatusResponse> Devices { get; } = [];
+    public IReadOnlyList<string> InstrumentOptions { get; } = ["离子色谱", "开盖分液"];
+    public string SelectedInstrument
+    {
+        get => _selectedInstrument;
+        set { if (!SetField(ref _selectedInstrument, value)) return; OnPropertyChanged(nameof(VisibleDevices)); OnPropertyChanged(nameof(InstrumentTitle)); OnPropertyChanged(nameof(InstrumentDescription)); }
+    }
+    public string InstrumentTitle => $"{SelectedInstrument}设备状态";
+    public string InstrumentDescription => SelectedInstrument == "离子色谱"
+        ? "显示离子色谱及其子设备（如 D160、自动进样器 18I）的在线与运行状态"
+        : "显示开盖分液及其子设备的在线与运行状态";
+    public IEnumerable<ShineLabDeviceStatusResponse> VisibleDevices => Devices.Where(IsCurrentInstrument);
     public ICommand RefreshCommand { get; }
 
     public ShineLabDeviceStatusResponse? SelectedDevice
@@ -96,10 +108,12 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged
             var statuses = await _mes.GetShineLabDeviceStatusesAsync(cancellationToken);
             Devices.Clear();
             foreach (var status in statuses) Devices.Add(status);
+            OnPropertyChanged(nameof(VisibleDevices));
+            var visibleDevices = VisibleDevices.ToList();
             SelectedDevice = selectedCode is null
-                ? Devices.FirstOrDefault()
-                : Devices.FirstOrDefault(item => string.Equals(item.EquipmentCode, selectedCode, StringComparison.OrdinalIgnoreCase))
-                  ?? Devices.FirstOrDefault();
+                ? visibleDevices.FirstOrDefault()
+                : visibleDevices.FirstOrDefault(item => string.Equals(item.EquipmentCode, selectedCode, StringComparison.OrdinalIgnoreCase))
+                  ?? visibleDevices.FirstOrDefault();
             ConnectionStatus = Devices.Count == 0 ? "暂无推送设备" : "已连接 MES";
             Message = Devices.Count == 0
                 ? "尚未收到 ShineLab 的 Certification/UpdateInfo 推送。"
@@ -129,6 +143,14 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged
             nameof(SelectedTaskState), nameof(SelectedTaskUuid), nameof(SelectedSample), nameof(SelectedChannelPosition),
             nameof(SelectedStage), nameof(SelectedProgress), nameof(SelectedAlarm), nameof(SelectedLastSeen)
         }) OnPropertyChanged(name);
+    }
+
+    private bool IsCurrentInstrument(ShineLabDeviceStatusResponse device)
+    {
+        var text = $"{device.DeviceName} {device.EquipmentCode}";
+        return SelectedInstrument == "开盖分液"
+            ? text.Contains("开盖", StringComparison.OrdinalIgnoreCase) || text.Contains("分液", StringComparison.OrdinalIgnoreCase)
+            : !text.Contains("开盖", StringComparison.OrdinalIgnoreCase) && !text.Contains("分液", StringComparison.OrdinalIgnoreCase);
     }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
