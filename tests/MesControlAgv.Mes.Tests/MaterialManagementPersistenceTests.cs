@@ -1,5 +1,6 @@
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Entities;
+using MesControlAgv.Mes.Services;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -350,6 +351,29 @@ public sealed class MaterialManagementPersistenceTests : IClassFixture<MesWebApp
                 catch (IOException) { }
             }
         }
+    }
+
+    [Fact]
+    public async Task Compatibility_checker_reports_orphan_material_foreign_keys()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<MesDbContext>().UseSqlite(connection).Options;
+        await using (var database = new MesDbContext(options))
+        {
+            await database.Database.EnsureCreatedAsync();
+        }
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "PRAGMA foreign_keys=OFF; INSERT INTO MaterialLots (LotId, MaterialId, MaterialCode, LotCode, IsQuarantined, CreatedAtUtc, UpdatedAtUtc) VALUES ($lot, $material, 'ORPHAN', 'ORPHAN', 0, $now, $now); PRAGMA foreign_keys=ON;";
+            command.Parameters.Add(new SqliteParameter("$lot", Guid.NewGuid().ToString().ToUpperInvariant()));
+            command.Parameters.Add(new SqliteParameter("$material", Guid.NewGuid().ToString().ToUpperInvariant()));
+            command.Parameters.Add(new SqliteParameter("$now", DateTime.UtcNow.ToString("O")));
+            await command.ExecuteNonQueryAsync();
+        }
+        var orphans = await MaterialSchemaCompatibilityChecker.FindOrphanForeignKeysAsync(connection);
+        Assert.Contains(orphans, item => item.StartsWith("MaterialLots.MaterialId", StringComparison.Ordinal));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => MaterialSchemaCompatibilityChecker.EnsureNoOrphanForeignKeysAsync(connection));
     }
 
     private static InventoryTransactionRecord NewTransaction(Guid requestId, DateTime occurredAtUtc) => new()

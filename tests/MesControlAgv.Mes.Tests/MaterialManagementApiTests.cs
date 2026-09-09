@@ -4,6 +4,7 @@ using System.Text.Json;
 using MesControlAgv.Contracts.Materials;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Entities;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace MesControlAgv.Mes.Tests;
@@ -277,5 +278,95 @@ public sealed class MaterialManagementApiTests : IClassFixture<MesWebApplication
         Assert.Equal(HttpStatusCode.OK, released.StatusCode);
         var releasedBody = await released.Content.ReadFromJsonAsync<MaterialReleaseResult>();
         Assert.Equal(1, releasedBody!.ReleasedCount);
+    }
+    [Fact]
+    public async Task Quarantined_lot_scan_is_rejected_with_quarantine_code()
+    {
+        using var client = _factory.CreateClient();
+        var response = await client.PostAsJsonAsync("/api/materials/receive", new ReceiveMaterialRequest
+        {
+            RequestId = Guid.NewGuid(), Actor = "api-test", MaterialCode = "LIFECYCLE-" + Guid.NewGuid().ToString("N"), MaterialName = "Lifecycle",
+            LotCode = "LOT-QUAR", Quantity = 4, Unit = "EA", Barcode = "BC-QUAR-" + Guid.NewGuid().ToString("N")
+        });
+        response.EnsureSuccessStatusCode();
+        var received = (await response.Content.ReadFromJsonAsync<MaterialCommandResult<MaterialLotInventory>>())!.Data!;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            var lot = await db.MaterialLots.SingleAsync(item => item.LotId == received.LotId);
+            lot.IsQuarantined = true;
+            await db.SaveChangesAsync();
+        }
+        var scan = await client.PostAsJsonAsync("/api/materials/scan", new MaterialScanRequest
+        { RequestId = Guid.NewGuid(), Actor = "api-test", RawCode = received.Barcode!, Kind = MaterialScanKind.ConsumableLot });
+        var scanBody = await scan.Content.ReadFromJsonAsync<MaterialScanResult>();
+        Assert.False(scanBody!.IsResolved);
+        Assert.Equal(MaterialIssueCodes.Quarantined, scanBody.IssueCode);
+        var move = await client.PostAsJsonAsync("/api/materials/move", new MoveMaterialRequest
+        { RequestId = Guid.NewGuid(), Actor = "api-test", LotId = received.LotId, ToLocationCode = "DEFAULT", Quantity = 1 });
+        var moveError = await move.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(MaterialIssueCodes.Quarantined, moveError.GetProperty("code").GetString());
+
+        response = await client.PostAsJsonAsync("/api/materials/receive", new ReceiveMaterialRequest
+        {
+            RequestId = Guid.NewGuid(), Actor = "api-test", MaterialCode = "LIFECYCLE-EXP-" + Guid.NewGuid().ToString("N"), MaterialName = "Expired",
+            LotCode = "LOT-EXP", Quantity = 1, Unit = "EA", Barcode = "BC-EXP-" + Guid.NewGuid().ToString("N"), ExpiryDate = DateTimeOffset.UtcNow.AddMinutes(1)
+        });
+        response.EnsureSuccessStatusCode();
+        received = (await response.Content.ReadFromJsonAsync<MaterialCommandResult<MaterialLotInventory>>())!.Data!;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            var lot = await db.MaterialLots.SingleAsync(item => item.LotId == received.LotId);
+            lot.ExpiryDateUtc = DateTime.UtcNow.AddMinutes(-1);
+            await db.SaveChangesAsync();
+        }
+        var adjust = await client.PostAsJsonAsync("/api/materials/adjust", new AdjustMaterialRequest
+        { RequestId = Guid.NewGuid(), Actor = "api-test", LotId = received.LotId, QuantityDelta = 1, Reason = "expired" });
+        var adjustError = await adjust.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(MaterialIssueCodes.Expired, adjustError.GetProperty("code").GetString());
+    }
+
+    [Fact]
+    public async Task Trace_by_job_returns_binding_lot_identity()
+    {
+        using var client = _factory.CreateClient();
+        var code = "TRACE-" + Guid.NewGuid().ToString("N");
+        var receive = await client.PostAsJsonAsync("/api/materials/receive", new ReceiveMaterialRequest
+        { RequestId = Guid.NewGuid(), Actor = "api-test", MaterialCode = code, MaterialName = "Trace", LotCode = "TRACE-LOT", Barcode = "TRACE-BC", Quantity = 2, Unit = "EA" });
+        receive.EnsureSuccessStatusCode();
+        var jobId = Guid.NewGuid();
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            db.ExperimentJobs.Add(new ExperimentJobRecord { JobId = jobId, PlanId = Guid.NewGuid(), PlanVersion = 1, WorkflowId = Guid.NewGuid(), WorkflowVersion = 1, Status = "Scheduled", CreatedBy = "test", CreatedAtUtc = DateTime.UtcNow, UpdatedAtUtc = DateTime.UtcNow });
+            await db.SaveChangesAsync();
+        }
+        var reserve = await client.PostAsJsonAsync($"/api/experiment-jobs/{jobId}/materials/reserve", new ReserveExperimentMaterialsRequest
+        { RequestId = Guid.NewGuid(), ExperimentJobId = jobId, Actor = "api-test", Requirements = new[] { new MaterialReservationLine { MaterialCode = code, LotCode = "TRACE-LOT", Quantity = 1, Unit = "EA" } } });
+        reserve.EnsureSuccessStatusCode();
+        var trace = await client.GetFromJsonAsync<List<MaterialTraceEvent>>($"/api/materials/trace?experimentJobId={jobId}");
+        Assert.Contains(trace!, item => item.MaterialCode == code.ToUpperInvariant() && item.LotCode == "TRACE-LOT" && item.Barcode == "TRACE-BC");
+    }
+
+    [Fact]
+    public async Task Import_preview_rejects_cross_type_barcode_conflict()
+    {
+        using var client = _factory.CreateClient();
+        var barcode = "CROSS-" + Guid.NewGuid().ToString("N");
+        var sample = new MaterialImportRequest
+        {
+            RequestId = Guid.NewGuid(), Actor = "api-test",
+            Samples = new[] { new SampleImportRow { Barcode = barcode, SampleBatchId = "cross-batch" } }
+        };
+        (await client.PostAsJsonAsync("/api/materials/import", sample)).EnsureSuccessStatusCode();
+        var conflicting = sample with
+        {
+            RequestId = Guid.NewGuid(), Samples = Array.Empty<SampleImportRow>(),
+            Consumables = new[] { new ConsumableImportRow { MaterialCode = "CROSS-MAT", Name = "Cross", LotCode = "CROSS-LOT", Quantity = 1, Barcode = barcode } }
+        };
+        var previewResponse = await client.PostAsJsonAsync("/api/materials/import/preview", conflicting);
+        var preview = await previewResponse.Content.ReadFromJsonAsync<MaterialImportPreview>();
+        Assert.Contains(preview!.Issues, issue => issue.Code == MaterialIssueCodes.BarcodeAlreadyExists);
     }
 }

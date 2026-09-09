@@ -1643,22 +1643,27 @@ public sealed class MaterialManagementService : IMaterialManagementService
 
     private async Task<WarehouseLocationRecord?> FindPrimaryLocationAsync(
         Guid lotId,
-        CancellationToken cancellationToken) =>
-        await (from balance in _database.InventoryBalances.AsNoTracking()
-               join location in _database.WarehouseLocations.AsNoTracking()
-                   on balance.LocationId equals location.LocationId
-               where balance.LotId == lotId
-               orderby balance.OnHand descending, location.LocationCode
-               select location).FirstOrDefaultAsync(cancellationToken);
+        CancellationToken cancellationToken)
+    {
+        var rows = await (from balance in _database.InventoryBalances.AsNoTracking()
+                          join location in _database.WarehouseLocations.AsNoTracking()
+                              on balance.LocationId equals location.LocationId
+                          where balance.LotId == lotId
+                          select new { balance, location }).ToListAsync(cancellationToken);
+        return rows.OrderByDescending(item => item.balance.OnHand)
+            .ThenBy(item => item.location.LocationCode)
+            .Select(item => item.location)
+            .FirstOrDefault();
+    }
 
     private async Task<InventoryBalanceRecord?> FindPrimaryBalanceAsync(
         Guid lotId,
-        CancellationToken cancellationToken) =>
-        await _database.InventoryBalances
-            .AsNoTracking()
-            .Where(balance => balance.LotId == lotId)
-            .OrderByDescending(balance => balance.OnHand)
-            .FirstOrDefaultAsync(cancellationToken);
+        CancellationToken cancellationToken)
+    {
+        var rows = await _database.InventoryBalances.AsNoTracking()
+            .Where(balance => balance.LotId == lotId).ToListAsync(cancellationToken);
+        return rows.OrderByDescending(balance => balance.OnHand).FirstOrDefault();
+    }
 
     private async Task<MaterialLotInventory> ProjectInventoryAsync(
         MaterialLotRecord lot,
