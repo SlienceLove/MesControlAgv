@@ -1,5 +1,11 @@
 # AGV MES MVP Progress
 
+## Task 5 round 2 validation update (2026-09-09)
+
+Validation was rerun offline in the detached temporary worktree `.task5-isolated-round2`, based on current HEAD `c19d30308a5a67343221e35dc5df8d115f9dc7a0`, with the existing two-line working-tree source fix mapped into that isolated copy. Exact command: `dotnet test MesControlAgv.sln -m:1`. Actual result: exit code `0`; aggregate `1101 passed / 5 skipped / 0 failed`. The five skips are the existing E2E `CompoundTaskIntegrationTests` cases only. The first detached run against HEAD alone exited `1` because HEAD lacked `FieldNavigationAcceptanceRepository.Database` (compile error at `WorkflowFieldNavigationWorker.cs:736`); this is distinct from the original WPF Host DLL-lock finding.
+
+No field IP/port was accessed, no real MES/Adapter/WPF/PhysicalAcceptance service was started, and no AGV/AUBO/Modbus/DI/DO write was performed. The WPF Host PID `38312` was not stopped. The formal documentation commit is the current handoff HEAD after this update.
+
 Last updated: 2026-09-09
 
 > 本文件只保留当前交接、关键分支和最近一周主线。更早的阶段记录、逐次会话
