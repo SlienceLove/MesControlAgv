@@ -835,6 +835,7 @@ public sealed class MaterialManagementService : IMaterialManagementService
                 existingCount++;
                 EnsureLotCompatible(lot, row.Barcode, row.ExpiryDate);
                 EnsureLotUsableForMutation(lot, now, catalog);
+                await ValidateCrossTypeBarcodeConflictAsync(lot.Barcode, cancellationToken);
                 if (lot.Barcode is null && NormalizeOptional(row.Barcode) is { } suppliedBarcode)
                 {
                     await ValidateLotBarcodeConflictAsync(suppliedBarcode, lot.LotId, cancellationToken);
@@ -1041,6 +1042,7 @@ public sealed class MaterialManagementService : IMaterialManagementService
         else
         {
             EnsureLotCompatible(lot, request.Barcode, request.ExpiryDate);
+            await ValidateCrossTypeBarcodeConflictAsync(lot.Barcode, cancellationToken);
             if (lot.Barcode is null && NormalizeOptional(request.Barcode) is { } suppliedBarcode)
             {
                 await ValidateLotBarcodeConflictAsync(suppliedBarcode, lot.LotId, cancellationToken);
