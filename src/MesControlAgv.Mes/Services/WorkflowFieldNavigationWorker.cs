@@ -367,7 +367,8 @@ public sealed class WorkflowFieldNavigationDispatcher(
         WorkflowNodeExecutionWorkItem workItem,
         CancellationToken cancellationToken)
     {
-        if (_physicalReadiness is not { Enabled: true } readiness) return true;
+        if (_physicalReadiness is not { Enabled: true } readiness)
+            return true;
 
         var request = await workflows.GetExecutionRequestAsync(
             workItem.NodeExecution.WorkflowRunId,
@@ -526,10 +527,26 @@ public sealed class WorkflowFieldNavigationDispatcher(
                 continue;
             }
 
-            await ApplyAcceptanceAsync(
-                workItem,
-                ToResponse(acceptance),
-                cancellationToken);
+            if (_physicalReadiness is null)
+            {
+                // Preserve the simulator/legacy in-memory caller behavior.
+                await ApplyAcceptanceAsync(
+                    workItem,
+                    ToResponse(acceptance),
+                    cancellationToken);
+            }
+            else
+            {
+                // Recovery can inspect persisted state, but cannot prove
+                // which side of the dispatch boundary the process crossed.
+                // Never complete Arrived or release control from a restart.
+                await CompleteWithEntityAsync(
+                    workItem,
+                    WorkflowStepCompletionOutcome.Unknown,
+                    "The physical Move was recovered after restart; completion requires manual reconciliation and no command was replayed.",
+                    acceptance,
+                    cancellationToken);
+            }
         }
     }
 
@@ -537,8 +554,13 @@ public sealed class WorkflowFieldNavigationDispatcher(
         WorkflowNodeExecutionWorkItem workItem,
         CancellationToken cancellationToken)
     {
-        if (_physicalReadiness is not { Enabled: true } readiness)
+        // A null capability is retained for legacy/in-memory callers that do
+        // not opt into physical supervision. Once a supervisor is supplied,
+        // disabled or stale state remains fail-closed.
+        if (_physicalReadiness is null)
             return true;
+        if (_physicalReadiness is not { Enabled: true } readiness)
+            return false;
 
         var request = await workflows.GetExecutionRequestAsync(
             workItem.NodeExecution.WorkflowRunId,

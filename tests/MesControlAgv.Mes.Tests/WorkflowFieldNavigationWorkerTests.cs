@@ -132,7 +132,7 @@ public sealed class WorkflowFieldNavigationWorkerTests
         var aubo = new WorkflowAuboProgramDispatcher(
             workflows,
             arm,
-            profile,
+            profile with { Features = profile.Features with { UseSimulator = true } },
             new WorkflowAuboProgramWorkerOptions
             {
                 Enabled = true,

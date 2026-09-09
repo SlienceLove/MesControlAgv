@@ -97,6 +97,11 @@ public sealed class WorkflowAuboProgramDispatcher(
     {
         if (profile.Features.UseSimulator) return true;
 
+        // Physical execution never falls back to the legacy/manual path. A
+        // missing or disabled supervisor is a closed gate.
+        if (_physicalReadiness is not { Enabled: true })
+            return false;
+
         var request = await workflows.GetExecutionRequestAsync(
             workItem.NodeExecution.WorkflowRunId,
             cancellationToken);
@@ -105,7 +110,7 @@ public sealed class WorkflowAuboProgramDispatcher(
         // physical write must carry a current device-session epoch.
         if (request?.PhysicalAuthorization is not { } authorization)
         {
-            return _physicalReadiness is not { Enabled: true };
+            return false;
         }
 
         var now = _timeProvider.GetUtcNow();
@@ -600,6 +605,28 @@ public sealed class WorkflowAuboProgramDispatcher(
                 }
 
                 var status = await arm.GetProgramAsync(armId, cancellationToken);
+                if (!profile.Features.UseSimulator)
+                {
+                    // Restart destroys proof of which side of a prior write
+                    // boundary the process crossed. Status is evidence for
+                    // manual reconciliation only; never replay a command.
+                    await CompleteAsync(
+                        workItem,
+                        WorkflowStepCompletionOutcome.Unknown,
+                        $"The AUBO controller reported {status.RuntimeStatus ?? status.RuntimeState.ToString()} after restart; physical completion requires manual reconciliation and no command was replayed.",
+                        cancellationToken,
+                        new Dictionary<string, string?>
+                        {
+                            [WorkflowNodeConfigurationKeys.DeviceId] = armId,
+                            [WorkflowNodeConfigurationKeys.ProgramName] = ReadInputOrNull(
+                                workItem.NodeExecution.Inputs,
+                                WorkflowNodeConfigurationKeys.ProgramName),
+                            ["runtime"] = status.RuntimeStatus ?? status.RuntimeState.ToString(),
+                            ["loadedProgram"] = status.LoadedProgram,
+                            ["reconciledAtUtc"] = _timeProvider.GetUtcNow().ToString("O", CultureInfo.InvariantCulture)
+                        });
+                    continue;
+                }
                 if (status.RuntimeState == AuboArmRuntimeState.Stopped)
                 {
                     // A stopped controller after a process restart is not
@@ -697,7 +724,8 @@ public sealed class WorkflowAuboProgramDispatcher(
         string deviceId,
         CancellationToken cancellationToken)
     {
-        if (_physicalReadiness is not { Enabled: true } readiness) return true;
+        if (_physicalReadiness is not { Enabled: true } readiness)
+            return profile.Features.UseSimulator;
 
         var request = await workflows.GetExecutionRequestAsync(
             workItem.NodeExecution.WorkflowRunId,
