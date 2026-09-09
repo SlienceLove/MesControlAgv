@@ -43,6 +43,10 @@ public static class TaskEndpointRouteBuilderExtensions
             {
                 return Results.NotFound();
             }
+            catch (PhysicalExecutionAdmissionException exception)
+            {
+                return Results.Conflict(new { code = exception.Code, detail = exception.Detail });
+            }
             catch (InvalidTaskTransitionException exception)
             {
                 return Results.Conflict(new { detail = exception.Message });
@@ -60,7 +64,16 @@ public static class TaskEndpointRouteBuilderExtensions
             OperatorActionRequest request,
             ITaskApplicationService service,
             CancellationToken cancellationToken) =>
-            Results.Ok(await service.ConfirmPickupAsync(taskId, request.OperatorName, cancellationToken)));
+        {
+            try
+            {
+                return Results.Ok(await service.ConfirmPickupAsync(taskId, request.OperatorName, cancellationToken));
+            }
+            catch (PhysicalExecutionAdmissionException exception)
+            {
+                return Results.Conflict(new { code = exception.Code, detail = exception.Detail });
+            }
+        });
 
         endpoints.MapPost("/api/tasks/{taskId:guid}/confirm-dropoff", async (
             Guid taskId,
@@ -73,7 +86,16 @@ public static class TaskEndpointRouteBuilderExtensions
             Guid taskId,
             ITaskApplicationService service,
             CancellationToken cancellationToken) =>
-            Results.Ok(await service.RetryAsync(taskId, cancellationToken)));
+        {
+            try
+            {
+                return Results.Ok(await service.RetryAsync(taskId, cancellationToken));
+            }
+            catch (PhysicalExecutionAdmissionException exception)
+            {
+                return Results.Conflict(new { code = exception.Code, detail = exception.Detail });
+            }
+        });
 
         endpoints.MapPost("/api/tasks/{taskId:guid}/cancel", async (
             Guid taskId,

@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using MesControlAgv.Contracts;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Mes.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -46,6 +47,7 @@ public sealed partial class WorkflowApplicationService
 
         await EnsureLegacySimulatorRuntimeRecordsAsync(cancellationToken);
         var run = await FindExecutionAsync(workflowRunId, cancellationToken);
+        await RequirePhysicalAdmissionForRunAsync(run, "workflow.resume", cancellationToken);
         var current = WorkflowPersistence.ToExecutionSnapshot(run).RuntimeStatus;
         if (current is not WorkflowRuntimeStatus.Prepared and not WorkflowRuntimeStatus.Running)
         {
@@ -298,6 +300,8 @@ public sealed partial class WorkflowApplicationService
                 $"Only an Unknown workflow run can be resolved; current state is '{current}'.");
         }
 
+        await RequirePhysicalAdmissionForRunAsync(run, "workflow.resolve-unknown", cancellationToken);
+
         await EnsureLegacyUnknownRuntimeRecordsAsync(run, cancellationToken);
 
         var node = await _database.WorkflowNodeExecutions.SingleOrDefaultAsync(
@@ -433,6 +437,38 @@ public sealed partial class WorkflowApplicationService
             await ProcessAdvancedRunCoreAsync(workflowRunId, cancellationToken);
         }
         return CreateControlResult(run, normalized.RequestId, WorkflowRunControlAction.ResolveUnknown);
+    }
+
+    private async Task RequirePhysicalAdmissionForRunAsync(
+        WorkflowExecutionRecord run,
+        string operation,
+        CancellationToken cancellationToken)
+    {
+        if (_admissionPolicy is null) return;
+        var request = await GetExecutionRequestAsync(run.ExecutionId, cancellationToken);
+        if (request is not { DryRun: false, PhysicalAuthorization: { } authorization }) return;
+        _admissionPolicy.RequireSupervisedExecution(operation);
+        if (_physicalReadiness is not { Enabled: true } readiness) return;
+
+        var epochs = authorization.DeviceEpochs ?? new Dictionary<string, long>();
+        if (epochs.Count == 0 && !string.IsNullOrWhiteSpace(authorization.AgvId))
+        {
+            epochs = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase)
+            {
+                [authorization.AgvId.Trim()] = authorization.GetDeviceEpoch(authorization.AgvId) ?? 0
+            };
+        }
+        foreach (var pair in epochs)
+        {
+            var expectedEpoch = pair.Value == 0 ? (long?)null : pair.Value;
+            if (readiness.IsCurrentAndReady(
+                    pair.Key,
+                    expectedEpoch,
+                    authorization.ReadinessSupervisorInstanceId,
+                    out var reason)) continue;
+            throw new InvalidOperationException(
+                $"Physical device '{pair.Key}' is not currently Ready: {reason ?? PhysicalReadinessReasonCodes.DeviceNotReady}.");
+        }
     }
 
     private async Task EnsureLegacyUnknownRuntimeRecordsAsync(

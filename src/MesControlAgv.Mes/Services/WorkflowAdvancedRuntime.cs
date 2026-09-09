@@ -47,6 +47,7 @@ public sealed partial class WorkflowApplicationService
             }
 
             var run = await FindExecutionAsync(workflowRunId, cancellationToken);
+            await RequirePhysicalAdmissionForRunAsync(run, "workflow.signal", cancellationToken);
             EnsureInteractionRunIsActive(run);
             var now = _timeProvider.GetUtcNow().UtcDateTime;
             var interaction = new WorkflowRuntimeInteractionRecord
@@ -113,8 +114,10 @@ public sealed partial class WorkflowApplicationService
                 return await ReplayInteractionAsync(prior, fingerprint, cancellationToken);
             }
 
-            await ProcessAdvancedRunCoreAsync(workflowRunId, cancellationToken);
             var run = await FindExecutionAsync(workflowRunId, cancellationToken);
+            await RequirePhysicalAdmissionForRunAsync(run, "workflow.manual-confirmation", cancellationToken);
+            await ProcessAdvancedRunCoreAsync(workflowRunId, cancellationToken);
+            run = await FindExecutionAsync(workflowRunId, cancellationToken);
             EnsureInteractionRunIsActive(run);
             var node = await _database.WorkflowNodeExecutions.SingleOrDefaultAsync(
                 item => item.Id == nodeExecutionId && item.WorkflowRunId == workflowRunId,

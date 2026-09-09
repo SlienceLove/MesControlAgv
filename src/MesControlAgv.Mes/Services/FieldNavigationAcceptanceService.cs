@@ -23,6 +23,7 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
     private readonly TimeProvider _timeProvider;
     private readonly IWorkflowApplicationService? _workflows;
     private readonly IPhysicalReadinessState? _physicalReadiness;
+    private readonly PhysicalExecutionAdmissionPolicy? _admissionPolicy;
 
     public FieldNavigationAcceptanceService(
         FieldNavigationAcceptanceRepository repository,
@@ -31,7 +32,8 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
         PathPlanner planner,
         TimeProvider? timeProvider = null,
         IWorkflowApplicationService? workflows = null,
-        IPhysicalReadinessState? physicalReadiness = null)
+        IPhysicalReadinessState? physicalReadiness = null,
+        PhysicalExecutionAdmissionPolicy? admissionPolicy = null)
     {
         _repository = repository;
         _gateway = gateway;
@@ -40,6 +42,7 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
         _timeProvider = timeProvider ?? TimeProvider.System;
         _workflows = workflows;
         _physicalReadiness = physicalReadiness;
+        _admissionPolicy = admissionPolicy;
     }
 
     public async Task<FieldNavigationAcceptanceResponse> CreateAsync(
@@ -123,6 +126,7 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        _admissionPolicy?.RequireSupervisedExecution("field-navigation.authorize");
         var acceptance = await RequireAcceptanceAsync(acceptanceId, cancellationToken);
         if (acceptance.Status != FieldNavigationAcceptanceStatuses.Draft)
         {
@@ -216,6 +220,7 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
         Guid acceptanceId,
         CancellationToken cancellationToken)
     {
+        _admissionPolicy?.RejectUnboundPhysicalWrite("field-navigation.dispatch");
         var acceptance = await RequireAcceptanceAsync(acceptanceId, cancellationToken);
         if (acceptance.WorkflowRunId.HasValue)
         {
@@ -232,6 +237,7 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
         Guid workflowDeviceOperationId,
         CancellationToken cancellationToken)
     {
+        _admissionPolicy?.RequireSupervisedExecution("field-navigation.workflow-dispatch");
         var acceptance = await RequireAcceptanceAsync(acceptanceId, cancellationToken);
         if (acceptance.WorkflowRunId is null ||
             acceptance.WorkflowNodeExecutionId != workflowNodeExecutionId ||

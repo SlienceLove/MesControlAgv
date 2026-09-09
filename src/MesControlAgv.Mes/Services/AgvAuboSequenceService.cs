@@ -20,6 +20,7 @@ public sealed class AgvAuboSequenceService : IAgvAuboSequenceService, IDisposabl
     private readonly IAuboArmGateway _arm;
     private readonly AgvAuboSequenceOptions _options;
     private readonly TimeProvider _timeProvider;
+    private readonly PhysicalExecutionAdmissionPolicy? _admissionPolicy;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Dictionary<Guid, AgvAuboSequenceResponse> _records = [];
 
@@ -27,12 +28,14 @@ public sealed class AgvAuboSequenceService : IAgvAuboSequenceService, IDisposabl
         ITaskApplicationService tasks,
         IAuboArmGateway arm,
         AgvAuboSequenceOptions? options = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        PhysicalExecutionAdmissionPolicy? admissionPolicy = null)
     {
         _tasks = tasks ?? throw new ArgumentNullException(nameof(tasks));
         _arm = arm ?? throw new ArgumentNullException(nameof(arm));
         _options = options ?? new AgvAuboSequenceOptions();
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _admissionPolicy = admissionPolicy;
         if (_options.PollIntervalMs < 50 || _options.CompletionTimeoutMs < _options.PollIntervalMs)
             throw new ArgumentException("Invalid AGV/AUBO sequence timing options.", nameof(options));
     }
@@ -62,6 +65,8 @@ public sealed class AgvAuboSequenceService : IAgvAuboSequenceService, IDisposabl
                 }
                 return existing;
             }
+
+            _admissionPolicy?.RejectUnboundPhysicalWrite("agv-aubo-sequence.start");
 
             var task = await _tasks.GetDetailAsync(taskId, cancellationToken).ConfigureAwait(false);
             if (task is null)

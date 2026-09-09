@@ -15,6 +15,7 @@ public sealed class TaskService : ITaskApplicationService
     private readonly PathPlanner _planner;
     private readonly IReadOnlyDictionary<int, Station> _stations;
     private readonly IPhysicalReadinessState? _physicalReadiness;
+    private readonly PhysicalExecutionAdmissionPolicy? _admissionPolicy;
 
     public TaskService(TaskRepository repository, IAgvGateway adapter)
         : this(repository, adapter, ProfileConfiguration.Default, new PathPlanner(AgvMap.Default))
@@ -26,13 +27,15 @@ public sealed class TaskService : ITaskApplicationService
         IAgvGateway adapter,
         ProfileConfiguration profile,
         PathPlanner planner,
-        IPhysicalReadinessState? physicalReadiness = null)
+        IPhysicalReadinessState? physicalReadiness = null,
+        PhysicalExecutionAdmissionPolicy? admissionPolicy = null)
     {
         _repository = repository;
         _adapter = adapter;
         _planner = planner;
         _stations = Stations.FromProfile(profile).ToDictionary(station => station.Code);
         _physicalReadiness = physicalReadiness;
+        _admissionPolicy = admissionPolicy;
     }
 
     public async Task<TaskResponse> CreateAsync(CreateTaskRequest request, CancellationToken cancellationToken)
@@ -58,6 +61,7 @@ public sealed class TaskService : ITaskApplicationService
 
     public async Task<TaskResponse> DispatchAsync(Guid taskId, CancellationToken cancellationToken)
     {
+        _admissionPolicy?.RejectUnboundPhysicalWrite("task.dispatch");
         var task = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
         if (task.Status != DomainTaskStatus.Created)
         {
@@ -77,6 +81,7 @@ public sealed class TaskService : ITaskApplicationService
 
     public async Task<TaskResponse> ConfirmPickupAsync(Guid taskId, string operatorName, CancellationToken cancellationToken)
     {
+        _admissionPolicy?.RejectUnboundPhysicalWrite("task.confirm-pickup");
         await _repository.ApplyEventAsync(taskId, TaskEvent.PickupConfirmed, new { operatorName }, cancellationToken);
         var task = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
         await DispatchLegAsync(task.Id, TaskEvent.DropoffMoveStarted, GetEnabledStation(task.TargetStationCode).AgvStationId, cancellationToken);
@@ -88,6 +93,7 @@ public sealed class TaskService : ITaskApplicationService
 
     public async Task<TaskResponse> RetryAsync(Guid taskId, CancellationToken cancellationToken)
     {
+        _admissionPolicy?.RejectUnboundPhysicalWrite("task.retry");
         var current = await _repository.GetAsync(taskId, cancellationToken) ?? throw new KeyNotFoundException();
         if (current.Status != DomainTaskStatus.Failed)
         {

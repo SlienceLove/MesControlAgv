@@ -6,11 +6,33 @@ using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace MesControlAgv.Mes.Tests;
 
 public sealed class FieldNavigationAcceptanceServiceTests
 {
+    [Fact]
+    public async Task Physical_authorize_is_rejected_by_the_shared_gate_before_acceptance_lookup()
+    {
+        var readiness = new DisabledReadinessState();
+        var policy = new PhysicalExecutionAdmissionPolicy(
+            ProfileConfiguration.Default with
+            {
+                Features = ProfileConfiguration.Default.Features with { UseSimulator = false }
+            },
+            readiness,
+            NullLogger<PhysicalExecutionAdmissionPolicy>.Instance);
+        var service = CreateService(new FieldAcceptanceAdapter(), physicalReadiness: readiness, admissionPolicy: policy);
+
+        var exception = await Assert.ThrowsAsync<PhysicalExecutionAdmissionException>(() => service.AuthorizeAsync(
+            Guid.NewGuid(),
+            new AuthorizeFieldNavigationAcceptanceRequest("operator", "observer", "permit", DateTimeOffset.UtcNow.AddMinutes(1)),
+            CancellationToken.None));
+
+        Assert.Equal(PhysicalReadinessReasonCodes.SupervisorDisabled, exception.Code);
+    }
+
     [Fact]
     public async Task Draft_authorization_and_dispatch_persist_the_supervised_flow_and_audits()
     {
@@ -238,7 +260,8 @@ public sealed class FieldNavigationAcceptanceServiceTests
     private static FieldNavigationAcceptanceService CreateService(
         FieldAcceptanceAdapter adapter,
         bool includeApprovedEdge = true,
-        IPhysicalReadinessState? physicalReadiness = null)
+        IPhysicalReadinessState? physicalReadiness = null,
+        PhysicalExecutionAdmissionPolicy? admissionPolicy = null)
     {
         var options = new DbContextOptionsBuilder<MesDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
@@ -306,7 +329,18 @@ public sealed class FieldNavigationAcceptanceServiceTests
             adapter,
             profile,
             new PathPlanner(AgvMap.FromProfile(profile.Map)),
-            physicalReadiness: physicalReadiness);
+            physicalReadiness: physicalReadiness,
+            admissionPolicy: admissionPolicy);
+    }
+
+    private sealed class DisabledReadinessState : IPhysicalReadinessState
+    {
+        public bool Enabled => false;
+        public PhysicalReadinessResponse GetSnapshot() => new() { Enabled = false };
+        public bool TryGetDevice(string deviceId, out PhysicalDeviceReadinessSnapshot snapshot) { snapshot = null!; return false; }
+        public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, out string? reason) { reason = PhysicalReadinessReasonCodes.DeviceNotReady; return false; }
+        public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, string? expectedSupervisorInstanceId, out string? reason) { reason = PhysicalReadinessReasonCodes.DeviceNotReady; return false; }
+        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
     }
 
     private sealed class FieldAcceptanceAdapter : IAgvGateway, IFieldNavigationAcceptanceGateway

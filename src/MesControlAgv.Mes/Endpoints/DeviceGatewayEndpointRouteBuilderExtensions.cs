@@ -173,19 +173,12 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
             AgvCommandRequest request,
             IAgvGateway adapter,
             ITaskApplicationService tasks,
-            IPhysicalReadinessState physicalReadiness,
+            PhysicalExecutionAdmissionPolicy admissionPolicy,
             CancellationToken cancellationToken) =>
         {
-            if (physicalReadiness.Enabled)
-            {
-                return Results.Conflict(new
-                {
-                    detail = "Direct AGV commands do not carry an epoch-bound physical authorization."
-                });
-            }
-
             try
             {
+                admissionPolicy.RejectUnboundPhysicalWrite("agv.command");
                 var result = await adapter.ExecuteAgvCommandAsync(
                     agvId,
                     request.Command,
@@ -206,6 +199,10 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
                     new { detail = exception.Detail ?? exception.Message },
                     statusCode: (int?)exception.ResponseStatusCode);
             }
+            catch (PhysicalExecutionAdmissionException exception)
+            {
+                return Results.Conflict(new { code = exception.Code, detail = exception.Detail });
+            }
         });
 
         endpoints.MapGet("/api/agvs/{agvId}/io", async (
@@ -223,6 +220,10 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
                     new { detail = exception.Detail ?? exception.Message },
                     statusCode: (int)exception.ResponseStatusCode);
             }
+            catch (PhysicalExecutionAdmissionException exception)
+            {
+                return Results.Conflict(new { code = exception.Code, detail = exception.Detail });
+            }
         });
 
         endpoints.MapPost("/api/agvs/{agvId}/io/do/{id:int}", async (
@@ -230,19 +231,12 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
             int id,
             AgvDoWriteRequest request,
             IAgvIoGateway io,
-            IPhysicalReadinessState physicalReadiness,
+            PhysicalExecutionAdmissionPolicy admissionPolicy,
             CancellationToken cancellationToken) =>
         {
-            if (physicalReadiness.Enabled)
-            {
-                return Results.Conflict(new
-                {
-                    detail = "Direct AGV I/O writes do not carry an epoch-bound physical authorization."
-                });
-            }
-
             try
             {
+                admissionPolicy.RejectUnboundPhysicalWrite("agv.io.do");
                 return Results.Ok(await io.SetDoAsync(agvId, id, request.Status, cancellationToken));
             }
             catch (AdapterHttpException exception)
@@ -250,6 +244,10 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
                 return Results.Json(
                     new { detail = exception.Detail ?? exception.Message },
                     statusCode: (int)exception.ResponseStatusCode);
+            }
+            catch (PhysicalExecutionAdmissionException exception)
+            {
+                return Results.Conflict(new { code = exception.Code, detail = exception.Detail });
             }
             catch (ArgumentException exception)
             {
@@ -282,19 +280,12 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
             string deviceId,
             AuboArmHandshakeDispatchRequest request,
             IAuboArmGateway arm,
-            IPhysicalReadinessState physicalReadiness,
+            PhysicalExecutionAdmissionPolicy admissionPolicy,
             CancellationToken cancellationToken) =>
         {
-            if (physicalReadiness.Enabled)
-            {
-                return Results.Conflict(new
-                {
-                    detail = "Direct AUBO handshake dispatch does not carry an epoch-bound physical authorization."
-                });
-            }
-
             try
             {
+                admissionPolicy.RejectUnboundPhysicalWrite("aubo.handshake.dispatch");
                 var operationId = request.OperationId.GetValueOrDefault(Guid.NewGuid());
                 return Results.Ok(await arm.DispatchAsync(
                     deviceId,
@@ -307,6 +298,10 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
                 return Results.Json(
                     new { detail = exception.Detail ?? exception.Message },
                     statusCode: (int)exception.ResponseStatusCode);
+            }
+            catch (PhysicalExecutionAdmissionException exception)
+            {
+                return Results.Conflict(new { code = exception.Code, detail = exception.Detail });
             }
             catch (ArgumentException exception)
             {
@@ -456,6 +451,10 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
             {
                 return Results.BadRequest(new { detail = exception.Message });
             }
+            catch (PhysicalExecutionAdmissionException exception)
+            {
+                return Results.Conflict(new { code = exception.Code, detail = exception.Detail });
+            }
             catch (InvalidOperationException exception)
             {
                 return Results.Conflict(new { detail = exception.Message });
@@ -552,13 +551,17 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
         {
             return Results.Ok(await operation());
         }
-        catch (AdapterHttpException exception)
-        {
-            return Results.Json(
-                new { detail = exception.Detail ?? exception.Message },
-                statusCode: (int)exception.ResponseStatusCode);
-        }
-        catch (ArgumentException exception)
+            catch (AdapterHttpException exception)
+            {
+                return Results.Json(
+                    new { detail = exception.Detail ?? exception.Message },
+                    statusCode: (int)exception.ResponseStatusCode);
+            }
+            catch (PhysicalExecutionAdmissionException exception)
+            {
+                return Results.Conflict(new { code = exception.Code, detail = exception.Detail });
+            }
+            catch (ArgumentException exception)
         {
             return Results.BadRequest(new { detail = exception.Message });
         }

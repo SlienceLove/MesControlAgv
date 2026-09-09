@@ -66,6 +66,7 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
     private readonly ExperimentRuntimeLeaseLifecycle _experimentRuntimeLeaseLifecycle;
     private readonly WorkflowPhysicalBatchAdmissionGate? _physicalBatchAdmissionGate;
     private readonly IPhysicalReadinessState? _physicalReadiness;
+    private readonly PhysicalExecutionAdmissionPolicy? _admissionPolicy;
 
     public WorkflowApplicationService(
         MesDbContext database,
@@ -76,7 +77,8 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
         IWorkflowRunControlAuthorizer? controlAuthorizer = null,
         ExperimentRuntimeLeaseLifecycle? experimentRuntimeLeaseLifecycle = null,
         WorkflowPhysicalBatchAdmissionGate? physicalBatchAdmissionGate = null,
-        IPhysicalReadinessState? physicalReadiness = null)
+        IPhysicalReadinessState? physicalReadiness = null,
+        PhysicalExecutionAdmissionPolicy? admissionPolicy = null)
     {
         _database = database;
         _versionReader = versionReader;
@@ -90,6 +92,7 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
             new ExperimentRuntimeLeaseLifecycle(database, _timeProvider);
         _physicalBatchAdmissionGate = physicalBatchAdmissionGate;
         _physicalReadiness = physicalReadiness;
+        _admissionPolicy = admissionPolicy;
     }
 
     public async Task<IReadOnlyList<WorkflowDefinition>> ListAsync(CancellationToken cancellationToken)
@@ -629,6 +632,23 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
         WorkflowExecutionRequest request,
         CancellationToken cancellationToken)
     {
+        var isPhysical = !request.DryRun && request.PhysicalAuthorization is not null;
+        if (request.RequestId != Guid.Empty)
+        {
+            var submittedFingerprint = CreateFingerprint(request);
+            var prior = await _database.WorkflowExecutions
+                .AsNoTracking()
+                .SingleOrDefaultAsync(item => item.RequestId == request.RequestId, cancellationToken);
+            if (prior is not null &&
+                (StringComparer.Ordinal.Equals(prior.Fingerprint, submittedFingerprint) ||
+                 IsLegacyPhysicalFingerprintMatch(prior, request)))
+            {
+                return WorkflowPersistence.DeserializeResult(prior.ResultJson) with { IsIdempotentReplay = true };
+            }
+        }
+        if (isPhysical)
+            _admissionPolicy?.RequireSupervisedExecution("workflow.execute");
+
         var readinessBinding = await BindPhysicalReadinessAsync(request, cancellationToken);
         request = readinessBinding.Request;
 

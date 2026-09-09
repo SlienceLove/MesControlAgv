@@ -159,7 +159,15 @@ public static class WorkflowEndpointRouteBuilderExtensions
             IWorkflowApplicationService service,
             CancellationToken cancellationToken) =>
         {
-            var result = await service.ExecuteAsync(request, cancellationToken);
+            WorkflowExecutionResult result;
+            try
+            {
+                result = await service.ExecuteAsync(request, cancellationToken);
+            }
+            catch (PhysicalExecutionAdmissionException exception)
+            {
+                return Results.Conflict(new { code = exception.Code, detail = exception.Detail });
+            }
             if (result.IsAccepted)
             {
                 return Results.Json(
@@ -346,6 +354,10 @@ public static class WorkflowEndpointRouteBuilderExtensions
         {
             return Results.Problem(detail: exception.Message, statusCode: StatusCodes.Status403Forbidden);
         }
+        catch (PhysicalExecutionAdmissionException exception)
+        {
+            return Results.Conflict(new { code = exception.Code, detail = exception.Detail });
+        }
         catch (KeyNotFoundException exception)
         {
             return Results.NotFound(new { detail = exception.Message });
@@ -379,6 +391,10 @@ public static class WorkflowEndpointRouteBuilderExtensions
         catch (WorkflowRunControlForbiddenException exception)
         {
             return Results.Problem(detail: exception.Message, statusCode: StatusCodes.Status403Forbidden);
+        }
+        catch (PhysicalExecutionAdmissionException exception)
+        {
+            return Results.Conflict(new { code = exception.Code, detail = exception.Detail });
         }
         catch (KeyNotFoundException exception)
         {

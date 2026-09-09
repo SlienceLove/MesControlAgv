@@ -233,6 +233,10 @@ app.MapPost("/api/field-navigation-acceptances/{acceptanceId:guid}/authorize", a
     {
         return Results.BadRequest(new { detail = exception.Message });
     }
+    catch (PhysicalExecutionAdmissionException exception)
+    {
+        return Results.Conflict(new { code = exception.Code, detail = exception.Detail });
+    }
     catch (InvalidOperationException exception)
     {
         return Results.Conflict(new { detail = exception.Message });
@@ -251,6 +255,10 @@ app.MapPost("/api/field-navigation-acceptances/{acceptanceId:guid}/dispatch", as
     catch (KeyNotFoundException)
     {
         return Results.NotFound();
+    }
+    catch (PhysicalExecutionAdmissionException exception)
+    {
+        return Results.Conflict(new { code = exception.Code, detail = exception.Detail });
     }
     catch (InvalidOperationException exception)
     {
