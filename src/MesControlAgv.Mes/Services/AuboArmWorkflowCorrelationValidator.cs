@@ -17,13 +17,70 @@ public static class AuboArmWorkflowCorrelationValidator
     public const string MissingCorrelationWarningCode = "AUBO_UNCORRELATED_WRITE";
     public const string InvalidCorrelationCode = "AUBO_WORKFLOW_CORRELATION_INVALID";
 
-    public static async Task<AuboArmOperationCorrelation?> ValidateAsync(
+    /// <summary>
+    /// Validates a load/run correlation.  Unknown device operations remain
+    /// rejected here: an Unknown operation is not permission to replay a
+    /// mutating program write.
+    /// </summary>
+    public static Task<AuboArmOperationCorrelation?> ValidateAsync(
         string deviceId,
         Guid operationId,
         AuboArmOperationCorrelation? correlation,
         IWorkflowApplicationService workflows,
         ILogger logger,
         string operation,
+        CancellationToken cancellationToken) =>
+        ValidateCorrelatedAsync(
+            deviceId,
+            operationId,
+            correlation,
+            workflows,
+            logger,
+            operation,
+            allowUnknownDeviceOperation: false,
+            stopValidation: false,
+            cancellationToken);
+
+    /// <summary>
+    /// Validates the narrower correlation accepted by an explicit AUBO stop.
+    /// Stop is a safety cleanup operation, so it may target a durable Running
+    /// or Unknown operation, but it must still identify the same run, node,
+    /// request, attempt, capability, and physical device.  This method only
+    /// reads workflow state and never calls an Adapter.
+    /// </summary>
+    public static async Task<AuboArmOperationCorrelation> ValidateForStopAsync(
+        string deviceId,
+        Guid operationId,
+        AuboArmOperationCorrelation? correlation,
+        IWorkflowApplicationService workflows,
+        ILogger logger,
+        string operation,
+        CancellationToken cancellationToken)
+    {
+        var validated = await ValidateCorrelatedAsync(
+                deviceId,
+                operationId,
+                correlation,
+                workflows,
+                logger,
+                operation,
+                allowUnknownDeviceOperation: true,
+                stopValidation: true,
+                cancellationToken)
+            .ConfigureAwait(false);
+
+        return validated ?? throw Invalid("AUBO stop requires a complete workflow correlation.");
+    }
+
+    private static async Task<AuboArmOperationCorrelation?> ValidateCorrelatedAsync(
+        string deviceId,
+        Guid operationId,
+        AuboArmOperationCorrelation? correlation,
+        IWorkflowApplicationService workflows,
+        ILogger logger,
+        string operation,
+        bool allowUnknownDeviceOperation,
+        bool stopValidation,
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
@@ -85,9 +142,14 @@ public static class AuboArmWorkflowCorrelationValidator
             throw Invalid("The correlated node is not a robot.execute-program node in the requested run.");
         }
 
-        if (node.Status is not (WorkflowNodeExecutionStatus.Claimed or WorkflowNodeExecutionStatus.Running))
+        var nodeIsAllowed = stopValidation
+            ? node.Status is WorkflowNodeExecutionStatus.Running or WorkflowNodeExecutionStatus.Unknown
+            : node.Status is WorkflowNodeExecutionStatus.Claimed or WorkflowNodeExecutionStatus.Running;
+        if (!nodeIsAllowed)
         {
-            throw Invalid($"The correlated node is not actively claimed ({node.Status}); a device write cannot bypass the worker claim.");
+            throw Invalid(stopValidation
+                ? $"The correlated node is not in a stoppable running/unknown state ({node.Status})."
+                : $"The correlated node is not actively claimed ({node.Status}); a device write cannot bypass the worker claim.");
         }
 
         var operations = await workflows.ListDeviceOperationsAsync(
@@ -109,17 +171,29 @@ public static class AuboArmWorkflowCorrelationValidator
             throw Invalid("The correlated device-operation identity does not match the durable workflow record.");
         }
 
+        if (stopValidation && string.IsNullOrWhiteSpace(durable.DeviceId))
+        {
+            throw Invalid("The correlated device-operation record has no physical device id for a stop.");
+        }
+
         if (!string.IsNullOrWhiteSpace(durable.DeviceId) &&
-            !string.Equals(durable.DeviceId, deviceId.Trim(), StringComparison.OrdinalIgnoreCase))
+            !string.Equals(durable.DeviceId.Trim(), deviceId.Trim(), StringComparison.OrdinalIgnoreCase))
         {
             throw Invalid("DeviceId does not match the durable device-operation record.");
         }
 
-        if (durable.Status is WorkflowDeviceOperationStatus.Succeeded or
-            WorkflowDeviceOperationStatus.Rejected or
-            WorkflowDeviceOperationStatus.Failed or
-            WorkflowDeviceOperationStatus.Cancelled or
-            WorkflowDeviceOperationStatus.Unknown)
+        if (stopValidation)
+        {
+            if (durable.Status is not (WorkflowDeviceOperationStatus.Running or WorkflowDeviceOperationStatus.Unknown))
+            {
+                throw Invalid($"The correlated device operation is not stoppable ({durable.Status}); stop requires Running or Unknown.");
+            }
+        }
+        else if (durable.Status is WorkflowDeviceOperationStatus.Succeeded or
+                  WorkflowDeviceOperationStatus.Rejected or
+                  WorkflowDeviceOperationStatus.Failed or
+                  WorkflowDeviceOperationStatus.Cancelled ||
+                  (!allowUnknownDeviceOperation && durable.Status == WorkflowDeviceOperationStatus.Unknown))
         {
             throw Invalid($"The correlated device operation is already terminal ({durable.Status}) and cannot be replayed.");
         }

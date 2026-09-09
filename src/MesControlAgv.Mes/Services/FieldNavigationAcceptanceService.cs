@@ -288,9 +288,10 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
                 acceptance.ReadinessSupervisorInstanceId,
                 out var readinessReason))
         {
+            var rejectionCode = NormalizeDispatchReadinessCode(readinessReason);
             acceptance.Status = FieldNavigationAcceptanceStatuses.Rejected;
             acceptance.LastError =
-                $"physical_readiness_epoch_invalid:{readinessReason ?? PhysicalReadinessReasonCodes.DeviceNotReady}";
+                $"physical_readiness_epoch_invalid:{rejectionCode}";
             await _repository.SaveWithAuditAsync(
                 acceptance,
                 "DispatchBlockedByPhysicalReadiness",
@@ -298,10 +299,12 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
                 {
                     acceptance.DeviceEpoch,
                     acceptance.ReadinessSupervisorInstanceId,
-                    reason = readinessReason ?? PhysicalReadinessReasonCodes.DeviceNotReady
+                    reason = rejectionCode
                 },
                 cancellationToken);
-            return ToResponse(acceptance);
+            throw new PhysicalExecutionAdmissionException(
+                rejectionCode,
+                $"Field-navigation physical readiness is not current for '{acceptance.AgvId}'.");
         }
 
         var fieldGateway = _gateway as IFieldNavigationAcceptanceGateway
@@ -623,6 +626,15 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
         "cancelled" => FieldNavigationAcceptanceStatuses.Cancelled,
         "failed" => FieldNavigationAcceptanceStatuses.Failed,
         _ => FieldNavigationAcceptanceStatuses.Unknown
+    };
+
+    private static string NormalizeDispatchReadinessCode(string? reason) => reason switch
+    {
+        PhysicalReadinessReasonCodes.SupervisorInstanceMismatch =>
+            PhysicalReadinessReasonCodes.SupervisorInstanceMismatch,
+        PhysicalReadinessReasonCodes.EpochMismatch =>
+            PhysicalReadinessReasonCodes.EpochMismatch,
+        _ => PhysicalReadinessReasonCodes.DeviceNotReady
     };
 
     private static string RequireValue(string? value, string parameterName) =>

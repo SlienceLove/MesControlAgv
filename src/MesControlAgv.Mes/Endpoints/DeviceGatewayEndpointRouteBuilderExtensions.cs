@@ -619,7 +619,8 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
         if (!physicalReadiness.Enabled) return;
         if (correlation is null)
         {
-            throw new InvalidOperationException(
+            throw new PhysicalExecutionAdmissionException(
+                PhysicalReadinessReasonCodes.EpochAuthorizationRequired,
                 "AUBO writes require workflow correlation and an epoch-bound physical authorization while the readiness supervisor is enabled.");
         }
 
@@ -627,16 +628,62 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
             correlation.WorkflowRunId,
             cancellationToken);
         var authorization = request?.PhysicalAuthorization;
-        string? reason = null;
+        var expectedEpoch = authorization?.GetDeviceEpoch(deviceId);
+        var expectedSupervisorInstanceId = authorization?.ReadinessSupervisorInstanceId;
         if (authorization is null ||
-            !physicalReadiness.IsCurrentAndReady(
-                deviceId,
-                authorization.GetDeviceEpoch(deviceId),
-                authorization.ReadinessSupervisorInstanceId,
-                out reason))
+            !expectedEpoch.HasValue ||
+            expectedEpoch.Value <= 0 ||
+            string.IsNullOrWhiteSpace(expectedSupervisorInstanceId))
         {
-            throw new InvalidOperationException(
-                $"AUBO physical readiness is not current for '{deviceId}': {reason ?? PhysicalReadinessReasonCodes.EpochRequired}.");
+            throw new PhysicalExecutionAdmissionException(
+                PhysicalReadinessReasonCodes.EpochAuthorizationRequired,
+                $"AUBO physical readiness authorization is incomplete for '{deviceId}'.");
+        }
+
+        var supervisorSnapshot = physicalReadiness.GetSnapshot();
+        if (!string.Equals(
+                expectedSupervisorInstanceId.Trim(),
+                supervisorSnapshot.SupervisorInstanceId,
+                StringComparison.Ordinal))
+        {
+            throw new PhysicalExecutionAdmissionException(
+                PhysicalReadinessReasonCodes.SupervisorInstanceMismatch,
+                $"AUBO physical readiness authorization belongs to a different supervisor instance for '{deviceId}'.");
+        }
+
+        if (!physicalReadiness.TryGetDevice(deviceId, out var device) ||
+            device.State != PhysicalDeviceReadinessState.Ready ||
+            device.RequiresReauthorization)
+        {
+            throw new PhysicalExecutionAdmissionException(
+                PhysicalReadinessReasonCodes.DeviceNotReady,
+                $"AUBO physical device '{deviceId}' is not Ready in the current supervisor snapshot.");
+        }
+
+        if (device.DeviceEpoch != expectedEpoch.Value)
+        {
+            throw new PhysicalExecutionAdmissionException(
+                PhysicalReadinessReasonCodes.EpochMismatch,
+                $"AUBO physical readiness epoch does not match the current device epoch for '{deviceId}'.");
+        }
+
+        if (!physicalReadiness.IsCurrentAndReady(
+                deviceId,
+                expectedEpoch,
+                expectedSupervisorInstanceId,
+                out var reason))
+        {
+            var code = reason switch
+            {
+                PhysicalReadinessReasonCodes.SupervisorInstanceMismatch =>
+                    PhysicalReadinessReasonCodes.SupervisorInstanceMismatch,
+                PhysicalReadinessReasonCodes.EpochMismatch =>
+                    PhysicalReadinessReasonCodes.EpochMismatch,
+                _ => PhysicalReadinessReasonCodes.DeviceNotReady
+            };
+            throw new PhysicalExecutionAdmissionException(
+                code,
+                $"AUBO physical readiness is not current for '{deviceId}': {reason ?? code}.");
         }
     }
 

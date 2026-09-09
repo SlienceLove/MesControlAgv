@@ -1,11 +1,16 @@
 using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
 using MesControlAgv.Domain;
 using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Services;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace MesControlAgv.Mes.Tests;
@@ -236,11 +241,66 @@ public sealed class FieldNavigationAcceptanceServiceTests
             requireFullPreflight: true,
             now.AddSeconds(1));
 
-        var blocked = await service.DispatchAsync(authorized.Id, CancellationToken.None);
+        var exception = await Assert.ThrowsAsync<PhysicalExecutionAdmissionException>(() =>
+            service.DispatchAsync(authorized.Id, CancellationToken.None));
 
-        Assert.Equal(FieldNavigationAcceptanceStatuses.Rejected, blocked.Status);
-        Assert.Contains("epoch_invalid", blocked.LastError, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(PhysicalReadinessReasonCodes.EpochMismatch, exception.Code);
+        var blocked = await service.GetAsync(authorized.Id, CancellationToken.None);
+        Assert.Equal(FieldNavigationAcceptanceStatuses.Rejected, blocked!.Acceptance.Status);
+        Assert.Contains("epoch_invalid", blocked.Acceptance.LastError, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(blocked.Audits, audit =>
+            audit.EventType == "DispatchBlockedByPhysicalReadiness" &&
+            audit.Details.Contains(PhysicalReadinessReasonCodes.EpochMismatch, StringComparison.Ordinal));
         Assert.Equal(0, adapter.DispatchCalls);
+    }
+
+    [Theory]
+    [InlineData(PhysicalReadinessReasonCodes.SupervisorInstanceMismatch)]
+    [InlineData(PhysicalReadinessReasonCodes.EpochMismatch)]
+    [InlineData(PhysicalReadinessReasonCodes.DeviceNotReady)]
+    public async Task Dispatch_readiness_rejection_is_durable_and_uses_a_stable_admission_code(
+        string reasonCode)
+    {
+        var adapter = new FieldAcceptanceAdapter();
+        var readiness = new MutableDispatchReadinessState();
+        var service = CreateService(adapter, physicalReadiness: readiness);
+        var authorized = await CreateAuthorizedAsync(service, $"permit-{reasonCode}");
+        readiness.RejectWith(reasonCode);
+
+        var exception = await Assert.ThrowsAsync<PhysicalExecutionAdmissionException>(() =>
+            service.DispatchAsync(authorized.Id, CancellationToken.None));
+
+        Assert.Equal(reasonCode, exception.Code);
+        Assert.Equal(0, adapter.DispatchCalls);
+        var persisted = await service.GetAsync(authorized.Id, CancellationToken.None);
+        Assert.Equal(FieldNavigationAcceptanceStatuses.Rejected, persisted!.Acceptance.Status);
+        Assert.Equal($"physical_readiness_epoch_invalid:{reasonCode}", persisted.Acceptance.LastError);
+        Assert.Contains(persisted.Audits, audit =>
+            audit.EventType == "DispatchBlockedByPhysicalReadiness" &&
+            audit.Details.Contains(reasonCode, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Dispatch_endpoint_returns_409_with_the_admission_code()
+    {
+        const string code = PhysicalReadinessReasonCodes.DeviceNotReady;
+        using var factory = new MesWebApplicationFactory().WithWebHostBuilder(builder =>
+            builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IFieldNavigationAcceptanceApplicationService>();
+                services.AddSingleton<IFieldNavigationAcceptanceApplicationService>(
+                    new RejectingFieldNavigationService(code));
+            }));
+        using var client = factory.CreateClient();
+
+        var response = await client.PostAsync(
+            $"/api/field-navigation-acceptances/{Guid.NewGuid():D}/dispatch",
+            content: null);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(code, body.GetProperty("code").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(body.GetProperty("detail").GetString()));
     }
 
     private static async Task<FieldNavigationAcceptanceResponse> CreateAuthorizedAsync(
@@ -348,6 +408,91 @@ public sealed class FieldNavigationAcceptanceServiceTests
         public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, out string? reason) { reason = null; return true; }
         public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, string? expectedSupervisorInstanceId, out string? reason) { reason = null; return true; }
         public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => true;
+    }
+
+    private sealed class MutableDispatchReadinessState : IPhysicalReadinessState
+    {
+        private string? _rejectionReason;
+
+        public bool Enabled => true;
+
+        public PhysicalReadinessResponse GetSnapshot() => new()
+        {
+            Enabled = true,
+            SupervisorInstanceId = "field-navigation-test",
+            Devices =
+            [
+                new PhysicalDeviceReadinessSnapshot
+                {
+                    DeviceId = "AGV-01",
+                    DeviceEpoch = 7,
+                    State = PhysicalDeviceReadinessState.Ready,
+                    RequiresReauthorization = false
+                }
+            ]
+        };
+
+        public bool TryGetDevice(string deviceId, out PhysicalDeviceReadinessSnapshot snapshot)
+        {
+            snapshot = GetSnapshot().Devices.Single();
+            return string.Equals(deviceId, snapshot.DeviceId, StringComparison.Ordinal);
+        }
+
+        public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, out string? reason) =>
+            IsCurrentAndReady(deviceId, expectedEpoch, "field-navigation-test", out reason);
+
+        public bool IsCurrentAndReady(
+            string deviceId,
+            long? expectedEpoch,
+            string? expectedSupervisorInstanceId,
+            out string? reason)
+        {
+            reason = _rejectionReason;
+            return _rejectionReason is null;
+        }
+
+        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) =>
+            _rejectionReason is null && deviceId == "AGV-01" && expectedEpoch == 7;
+
+        public void RejectWith(string reasonCode) => _rejectionReason = reasonCode;
+    }
+
+    private sealed class RejectingFieldNavigationService(string code)
+        : IFieldNavigationAcceptanceApplicationService
+    {
+        public Task<FieldNavigationAcceptanceResponse> DispatchAsync(
+            Guid acceptanceId,
+            CancellationToken cancellationToken) =>
+            Task.FromException<FieldNavigationAcceptanceResponse>(
+                new PhysicalExecutionAdmissionException(code, "readiness rejected for test"));
+
+        public Task<FieldNavigationAcceptanceResponse> CreateAsync(
+            CreateFieldNavigationAcceptanceRequest request,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<FieldNavigationAcceptanceResponse> AuthorizeAsync(
+            Guid acceptanceId,
+            AuthorizeFieldNavigationAcceptanceRequest request,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<FieldNavigationAcceptanceResponse> DispatchForWorkflowAsync(
+            Guid acceptanceId,
+            Guid workflowNodeExecutionId,
+            Guid workflowDeviceOperationId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<FieldNavigationAcceptanceResponse> CancelAsync(
+            Guid acceptanceId,
+            string operatorName,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<FieldNavigationAcceptanceDetailResponse?> GetAsync(
+            Guid acceptanceId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<FieldNavigationAcceptanceResponse>> ListForWorkflowRunAsync(
+            Guid workflowRunId,
+            CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 
     private sealed class FieldAcceptanceAdapter : IAgvGateway, IFieldNavigationAcceptanceGateway

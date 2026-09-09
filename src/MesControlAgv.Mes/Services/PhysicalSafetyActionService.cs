@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using MesControlAgv.Application;
@@ -7,6 +8,7 @@ using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Entities;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace MesControlAgv.Mes.Services;
 
@@ -21,16 +23,22 @@ public sealed class PhysicalSafetyActionService(
     IAuboArmProgramGateway? aubo,
     ProfileConfiguration profile,
     IPhysicalReadinessState? physicalReadiness = null,
-    TimeProvider? timeProvider = null)
+    TimeProvider? timeProvider = null,
+    IWorkflowApplicationService? workflows = null,
+    ILogger<PhysicalSafetyActionService>? logger = null)
 {
     private static readonly SemaphoreSlim ActionGate = new(1, 1);
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
+    private readonly IPhysicalReadinessState? _physicalReadiness = physicalReadiness;
+    private readonly IWorkflowApplicationService? _workflows = workflows;
+    private readonly ILogger _logger = logger ?? NullLogger<PhysicalSafetyActionService>.Instance;
 
     public async Task<PhysicalSafetyActionResponse> ReleaseAgvAsync(
         string agvId,
         PhysicalAgvReleaseRequest request,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(request);
         var deviceId = RequireValue(agvId, nameof(agvId));
         ValidateRequest(request.RequestId, request.OperatorName, request.Reason);
         var fingerprint = Fingerprint(
@@ -42,13 +50,35 @@ public sealed class PhysicalSafetyActionService(
             request.WorkflowNodeExecutionId,
             request.WorkflowDeviceOperationId,
             null,
-            null);
+            null,
+            request.DeviceEpoch,
+            request.SupervisorInstanceId);
 
         await ActionGate.WaitAsync(cancellationToken);
         try
         {
             var existing = await FindExistingAsync(request.RequestId, fingerprint, cancellationToken);
             if (existing is not null) return ToResponse(existing);
+
+            var readinessRejection = CheckReadinessBinding(deviceId, request);
+            if (readinessRejection is not null)
+            {
+                return await SaveRejectedAsync(
+                    request.RequestId,
+                    fingerprint,
+                    PhysicalSafetyActionTypes.AgvRelease,
+                    deviceId,
+                    request.OperatorName,
+                    request.Reason,
+                    null,
+                    readinessRejection,
+                    cancellationToken,
+                    request.WorkflowRunId,
+                    request.WorkflowNodeExecutionId,
+                    request.WorkflowDeviceOperationId,
+                    request.DeviceEpoch,
+                    request.SupervisorInstanceId);
+            }
 
             var rejection = await CheckAgvPreflightAsync(deviceId, cancellationToken);
             if (rejection is not null)
@@ -94,6 +124,21 @@ public sealed class PhysicalSafetyActionService(
             if (agv is not IPhysicalAgvControlGateway control)
                 return await RejectPreparedAsync(prepared, "The configured AGV gateway cannot release control.", cancellationToken);
 
+            // The readiness check above protects the read-only preflight. The
+            // supervisor may refresh while the durable reservation is being
+            // written, so perform one final synchronous binding check at the
+            // Adapter write boundary. A stale epoch must never reach
+            // ReleaseControlAsync.
+            var finalReadinessRejection = CheckReadinessBinding(deviceId, request);
+            if (finalReadinessRejection is not null)
+            {
+                return await CompleteAsync(
+                    prepared,
+                    PhysicalSafetyActionStatuses.Rejected,
+                    finalReadinessRejection,
+                    CancellationToken.None);
+            }
+
             try
             {
                 var released = await control.ReleaseControlAsync(cancellationToken);
@@ -123,26 +168,31 @@ public sealed class PhysicalSafetyActionService(
         PhysicalAuboStopRequest request,
         CancellationToken cancellationToken)
     {
+        ArgumentNullException.ThrowIfNull(request);
         var armId = RequireValue(deviceId, nameof(deviceId));
         ValidateRequest(request.RequestId, request.OperatorName, request.Reason ?? "operator_requested_safety_stop");
         if (request.OperationId == Guid.Empty)
             throw new ArgumentException("An explicit AUBO operation id is required.", nameof(request));
         if (request.Correlation is { IsComplete: false })
-            throw new ArgumentException("AUBO correlation must be complete when supplied.", nameof(request));
+            throw new AuboArmCorrelationException(
+                $"{AuboArmWorkflowCorrelationValidator.InvalidCorrelationCode}: AUBO correlation must be complete when supplied.");
 
         var reason = string.IsNullOrWhiteSpace(request.Reason)
             ? "operator_requested_safety_stop"
             : request.Reason.Trim();
+        var correlation = request.Correlation;
         var fingerprint = Fingerprint(
             PhysicalSafetyActionTypes.AuboStop,
             armId,
             request.OperatorName,
             reason,
-            request.Correlation?.WorkflowRunId,
-            request.Correlation?.WorkflowNodeExecutionId,
-            request.Correlation?.DeviceOperationId,
+            correlation?.WorkflowRunId,
+            correlation?.WorkflowNodeExecutionId,
+            correlation?.DeviceOperationId,
             request.OperationId,
-            request.Correlation?.EffectiveCorrelationId);
+            correlation?.EffectiveCorrelationId,
+            null,
+            null);
 
         await ActionGate.WaitAsync(cancellationToken);
         try
@@ -153,7 +203,25 @@ public sealed class PhysicalSafetyActionService(
             if (aubo is null)
                 return await SaveRejectedAsync(
                     request.RequestId, fingerprint, PhysicalSafetyActionTypes.AuboStop, armId,
-                    request.OperatorName, reason, request.Correlation, "The configured AUBO gateway cannot stop programs.", cancellationToken);
+                    request.OperatorName, reason, correlation, "The configured AUBO gateway cannot stop programs.", cancellationToken);
+
+            if (correlation is not null)
+            {
+                if (_workflows is null)
+                {
+                    throw new AuboArmCorrelationException(
+                        $"{AuboArmWorkflowCorrelationValidator.InvalidCorrelationCode}: workflow correlation validation is unavailable.");
+                }
+
+                correlation = await AuboArmWorkflowCorrelationValidator.ValidateForStopAsync(
+                    armId,
+                    request.OperationId,
+                    correlation,
+                    _workflows,
+                    _logger,
+                    "stop",
+                    cancellationToken);
+            }
 
             AuboArmProgramStatusResponse status;
             try
@@ -166,7 +234,7 @@ public sealed class PhysicalSafetyActionService(
             {
                 return await SaveRejectedAsync(
                     request.RequestId, fingerprint, PhysicalSafetyActionTypes.AuboStop, armId,
-                    request.OperatorName, reason, request.Correlation,
+                    request.OperatorName, reason, correlation,
                     "AUBO stop preflight failed; no stop command was sent.", cancellationToken);
             }
 
@@ -187,7 +255,7 @@ public sealed class PhysicalSafetyActionService(
                         : $"AUBO runtime state {status.RuntimeState} is not stoppable.";
                 return await SaveRejectedAsync(
                     request.RequestId, fingerprint, PhysicalSafetyActionTypes.AuboStop, armId,
-                    request.OperatorName, reason, request.Correlation, detail, cancellationToken);
+                    request.OperatorName, reason, correlation, detail, cancellationToken);
             }
 
             var prepared = NewRecord(
@@ -197,10 +265,10 @@ public sealed class PhysicalSafetyActionService(
                 armId,
                 request.OperatorName,
                 reason,
-                request.Correlation?.WorkflowRunId,
-                request.Correlation?.WorkflowNodeExecutionId,
-                request.Correlation?.DeviceOperationId,
-                request.Correlation?.EffectiveCorrelationId,
+                correlation?.WorkflowRunId,
+                correlation?.WorkflowNodeExecutionId,
+                correlation?.DeviceOperationId,
+                correlation?.EffectiveCorrelationId,
                 null,
                 null,
                 PhysicalSafetyActionStatuses.Prepared,
@@ -214,7 +282,7 @@ public sealed class PhysicalSafetyActionService(
                     armId,
                     request.OperatorName.Trim(),
                     request.OperationId,
-                    request.Correlation,
+                    correlation,
                     cancellationToken);
                 var statusResult = result.State == AuboArmProgramOperationState.Stopped
                     ? PhysicalSafetyActionStatuses.Succeeded
@@ -261,38 +329,39 @@ public sealed class PhysicalSafetyActionService(
     {
         if (workflowRunId == Guid.Empty || workflowNodeExecutionId == Guid.Empty || workflowDeviceOperationId == Guid.Empty)
             throw new ArgumentException("Final Move release requires complete workflow correlation.");
+
+        var normalizedAgvId = RequireValue(agvId, nameof(agvId));
+        var normalizedOperatorName = RequireValue(operatorName, nameof(operatorName));
+        const string reason = "workflow_final_move_completed";
+        var requestId = DeterministicRequestId(
+            workflowRunId,
+            workflowNodeExecutionId,
+            workflowDeviceOperationId,
+            deviceEpoch,
+            supervisorInstanceId);
+        var fingerprint = Fingerprint(
+            PhysicalSafetyActionTypes.AgvRelease,
+            normalizedAgvId,
+            normalizedOperatorName,
+            reason,
+            workflowRunId,
+            workflowNodeExecutionId,
+            workflowDeviceOperationId,
+            null,
+            null,
+            deviceEpoch,
+            supervisorInstanceId);
+
         if (moveOutcome != WorkflowStepCompletionOutcome.Succeeded)
         {
             return await SaveRejectedFinalMoveRejectionAsync(
-                DeterministicRequestId(workflowRunId, workflowNodeExecutionId, workflowDeviceOperationId),
-                Fingerprint(PhysicalSafetyActionTypes.AgvRelease, agvId, operatorName,
-                    "workflow_final_move_completed", workflowRunId, workflowNodeExecutionId,
-                    workflowDeviceOperationId, null, null),
+                requestId,
+                fingerprint,
                 PhysicalSafetyActionTypes.AgvRelease,
-                agvId,
-                operatorName,
-                "workflow_final_move_completed",
+                normalizedAgvId,
+                normalizedOperatorName,
+                reason,
                 $"Final Move release requires a verified normal Move terminal outcome; received {moveOutcome}.",
-                cancellationToken,
-                workflowRunId,
-                workflowNodeExecutionId,
-                workflowDeviceOperationId,
-                deviceEpoch,
-                supervisorInstanceId);
-        }
-        if (physicalReadiness is not { Enabled: true } readiness ||
-            !readiness.IsCurrentAndReady(agvId, deviceEpoch, supervisorInstanceId, out _))
-        {
-            return await SaveRejectedFinalMoveRejectionAsync(
-                DeterministicRequestId(workflowRunId, workflowNodeExecutionId, workflowDeviceOperationId),
-                Fingerprint(PhysicalSafetyActionTypes.AgvRelease, agvId, operatorName,
-                    "workflow_final_move_completed", workflowRunId, workflowNodeExecutionId,
-                    workflowDeviceOperationId, null, null),
-                PhysicalSafetyActionTypes.AgvRelease,
-                agvId,
-                operatorName,
-                "workflow_final_move_completed",
-                "The physical-readiness supervisor instance or AGV epoch is not current.",
                 cancellationToken,
                 workflowRunId,
                 workflowNodeExecutionId,
@@ -302,11 +371,11 @@ public sealed class PhysicalSafetyActionService(
         }
 
         return await ReleaseAgvAsync(
-            agvId,
+            normalizedAgvId,
             new PhysicalAgvReleaseRequest(
-                DeterministicRequestId(workflowRunId, workflowNodeExecutionId, workflowDeviceOperationId),
-                operatorName,
-                "workflow_final_move_completed",
+                requestId,
+                normalizedOperatorName,
+                reason,
                 workflowRunId,
                 workflowNodeExecutionId,
                 workflowDeviceOperationId,
@@ -498,6 +567,52 @@ public sealed class PhysicalSafetyActionService(
         return activeAcceptance ? "AGV has an active field-navigation acceptance." : null;
     }
 
+    /// <summary>
+    /// Validates an epoch binding only when the caller supplied one. Explicit
+    /// manual safety release remains available without a workflow binding; a
+    /// workflow-linked release (and any partially supplied binding) must use
+    /// the current enabled supervisor and device epoch.
+    /// </summary>
+    private string? CheckReadinessBinding(
+        string deviceId,
+        PhysicalAgvReleaseRequest request)
+    {
+        var hasWorkflowBinding = request.WorkflowRunId.HasValue ||
+                                 request.WorkflowNodeExecutionId.HasValue ||
+                                 request.WorkflowDeviceOperationId.HasValue;
+        var hasReadinessBinding = request.DeviceEpoch.HasValue ||
+                                  !string.IsNullOrWhiteSpace(request.SupervisorInstanceId);
+        if (!hasWorkflowBinding && !hasReadinessBinding)
+        {
+            return null;
+        }
+
+        if (_physicalReadiness is not { Enabled: true } readiness)
+        {
+            return $"{PhysicalReadinessReasonCodes.SupervisorDisabled}: physical safety release binding requires an enabled readiness supervisor.";
+        }
+
+        if (!request.DeviceEpoch.HasValue || request.DeviceEpoch.Value <= 0 ||
+            string.IsNullOrWhiteSpace(request.SupervisorInstanceId))
+        {
+            return $"{PhysicalReadinessReasonCodes.EpochAuthorizationRequired}: a bound AGV release requires the current device epoch and supervisor instance id.";
+        }
+
+        if (!readiness.IsCurrentAndReady(
+                deviceId,
+                request.DeviceEpoch,
+                request.SupervisorInstanceId,
+                out var reason))
+        {
+            var code = string.IsNullOrWhiteSpace(reason)
+                ? PhysicalReadinessReasonCodes.DeviceNotReady
+                : reason;
+            return $"{code}: physical readiness binding is not current for '{deviceId}'.";
+        }
+
+        return null;
+    }
+
     private PhysicalSafetyActionRecord NewRecord(
         Guid requestId,
         string fingerprint,
@@ -576,13 +691,54 @@ public sealed class PhysicalSafetyActionService(
         Guid? workflowNodeExecutionId,
         Guid? workflowDeviceOperationId,
         Guid? operationId,
-        string? correlationId) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join(
-            '\u001f', actionType, deviceId.Trim(), operatorName.Trim(), reason.Trim(),
-            workflowRunId, workflowNodeExecutionId, workflowDeviceOperationId, operationId, correlationId))));
-
-    private static Guid DeterministicRequestId(Guid runId, Guid nodeId, Guid operationId)
+        string? correlationId,
+        long? deviceEpoch = null,
+        string? supervisorInstanceId = null)
     {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"physical-safety-final-move:{runId:N}:{nodeId:N}:{operationId:N}"));
+        // Keep the original canonical form for unbound/manual actions so old
+        // persisted request ids and fingerprints remain idempotent. Once a
+        // readiness binding is present, include both values in the canonical
+        // input so a new device session cannot replay an old final release.
+        var values = new List<string?>
+        {
+            actionType,
+            deviceId.Trim(),
+            operatorName.Trim(),
+            reason.Trim(),
+            workflowRunId?.ToString(),
+            workflowNodeExecutionId?.ToString(),
+            workflowDeviceOperationId?.ToString(),
+            operationId?.ToString(),
+            correlationId
+        };
+        if (deviceEpoch.HasValue || !string.IsNullOrWhiteSpace(supervisorInstanceId))
+        {
+            values.Add(deviceEpoch?.ToString(CultureInfo.InvariantCulture));
+            values.Add(supervisorInstanceId?.Trim());
+        }
+
+        return Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes(string.Join('\u001f', values))));
+    }
+
+    private static Guid DeterministicRequestId(
+        Guid runId,
+        Guid nodeId,
+        Guid operationId,
+        long? deviceEpoch = null,
+        string? supervisorInstanceId = null)
+    {
+        var seed = deviceEpoch is null && string.IsNullOrWhiteSpace(supervisorInstanceId)
+            ? $"physical-safety-final-move:{runId:N}:{nodeId:N}:{operationId:N}"
+            : string.Join(
+                '\u001f',
+                "physical-safety-final-move:v2",
+                runId.ToString("N"),
+                nodeId.ToString("N"),
+                operationId.ToString("N"),
+                deviceEpoch?.ToString(CultureInfo.InvariantCulture),
+                supervisorInstanceId?.Trim());
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(seed));
         bytes[6] = (byte)(bytes[6] & 0x0f | 0x50);
         bytes[8] = (byte)(bytes[8] & 0x3f | 0x80);
         return new Guid(bytes[..16]);
