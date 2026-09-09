@@ -49,7 +49,7 @@ public sealed class AuboArmProgramApiTests
         Assert.Equal(HttpStatusCode.OK, run.StatusCode);
         var stop = await client.PostAsJsonAsync(
             "/api/robot-arms/ARM-01/program/stop",
-            new { operatorName = "alice" });
+            new { operatorName = "alice", operationId = Guid.NewGuid() });
         Assert.Equal(HttpStatusCode.OK, stop.StatusCode);
         Assert.Equal(1, gateway.LoadCalls);
         Assert.Equal(1, gateway.RunCalls);
@@ -197,7 +197,7 @@ public sealed class AuboArmProgramApiTests
             Task.FromResult(new AuboArmHandshakeResultResponse(operationId, deviceId, commandCode, 1, AuboArmHandshakeState.Completed, 1, null, true, DateTimeOffset.UtcNow));
 
         public Task<AuboArmProgramStatusResponse> GetProgramAsync(string deviceId, CancellationToken cancellationToken) =>
-            Task.FromResult(new AuboArmProgramStatusResponse(deviceId, true, "测试", AuboArmRuntimeState.Stopped, "Stopped", DateTimeOffset.UtcNow));
+            Task.FromResult(new AuboArmProgramStatusResponse(deviceId, true, "测试", AuboArmRuntimeState.Running, "Running", DateTimeOffset.UtcNow));
 
         public Task<AuboArmProgramCatalogResponse> GetProgramCatalogAsync(string deviceId, CancellationToken cancellationToken) =>
             GetProgramCatalogAsync(deviceId, forceFresh: false, cancellationToken);

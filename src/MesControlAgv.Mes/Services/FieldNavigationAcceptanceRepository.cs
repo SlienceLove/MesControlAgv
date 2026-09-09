@@ -8,6 +8,8 @@ namespace MesControlAgv.Mes.Services;
 
 public sealed class FieldNavigationAcceptanceRepository(MesDbContext database)
 {
+    public MesDbContext Database => database;
+
     public async Task CreateAsync(FieldNavigationAcceptance acceptance, object auditDetails, CancellationToken cancellationToken)
     {
         database.FieldNavigationAcceptances.Add(acceptance);
