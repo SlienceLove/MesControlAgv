@@ -67,6 +67,19 @@ public sealed record DashboardMapSnapshot(
     string? ProfileMapVersion,
     string? ProfileMapMd5);
 
+/// <summary>
+/// Read-only dashboard data for the sample opening/dispensing workstation.
+/// The workstation adapter owns the vendor protocol; WPF only receives the
+/// normalized MES projection.
+/// </summary>
+public sealed record SampleWorkstationDashboardSnapshot(
+    SampleWorkstationStatusResponse? Status,
+    SampleWorkstationErrorResponse? Error,
+    IReadOnlyList<SampleWorkstationTaskSummaryResponse> Tasks,
+    string? StatusReadError = null,
+    string? ErrorReadError = null,
+    string? TasksReadError = null);
+
 public sealed record DashboardWorkflowNextStep(
     Guid StepRequestId,
     Guid ExecutionId,
@@ -108,6 +121,10 @@ public interface IMesClient
     Task<IReadOnlyList<ShineLabDeviceStatusResponse>> GetShineLabDeviceStatusesAsync(
         CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<ShineLabDeviceStatusResponse>>([]);
+    Task<SampleWorkstationDashboardSnapshot?> GetSampleWorkstationSnapshotAsync(
+        string deviceId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<SampleWorkstationDashboardSnapshot?>(null);
     Task<ShineLabCommandResponse> SendShineLabConfigAsync(
         string equipmentCode,
         ShineLabConfigRequest request,

@@ -600,6 +600,84 @@ public sealed class MesClientHttpContractTests
     }
 
     [Fact]
+    public async Task Sample_workstation_snapshot_uses_only_mes_read_routes_and_maps_all_sections()
+    {
+        var observedAt = DateTimeOffset.Parse("2026-09-09T03:04:05Z");
+        var handler = new RecordingHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/workstations/SAMPLE-WORKSTATION-01/status" => JsonResponse(
+                new SampleWorkstationStatusResponse(
+                    "SAMPLE-WORKSTATION-01", "OWS-01", true,
+                    SampleWorkstationDeviceState.Running, 1, observedAt)),
+            "/api/workstations/SAMPLE-WORKSTATION-01/errors" => JsonResponse(
+                new SampleWorkstationErrorResponse(
+                    "SAMPLE-WORKSTATION-01", 17, "安全门未关闭", true, observedAt)),
+            "/api/workstations/SAMPLE-WORKSTATION-01/tasks" => JsonResponse(
+                new[]
+                {
+                    new SampleWorkstationTaskSummaryResponse(
+                        9, "TASK-09", "当前任务", SampleWorkstationTaskState.Running,
+                        "运行", "2026-09-09 11:00:00", "现场批次")
+                }),
+            _ => new HttpResponseMessage(HttpStatusCode.NotFound)
+        });
+        using var httpClient = CreateClient(handler);
+        var client = new MesClient(httpClient);
+
+        var snapshot = await client.GetSampleWorkstationSnapshotAsync(
+            "SAMPLE-WORKSTATION-01", CancellationToken.None);
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(SampleWorkstationDeviceState.Running, snapshot!.Status!.State);
+        Assert.Equal(17, snapshot.Error!.ErrorCode);
+        Assert.Equal("TASK-09", Assert.Single(snapshot.Tasks).TaskNo);
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.All(handler.Requests, request =>
+        {
+            Assert.Equal(HttpMethod.Get, request.Method);
+            Assert.Null(request.Body);
+        });
+        Assert.Equal(
+            "/api/workstations/SAMPLE-WORKSTATION-01/status",
+            handler.Requests[0].Uri.AbsolutePath);
+        Assert.Equal(
+            "/api/workstations/SAMPLE-WORKSTATION-01/errors",
+            handler.Requests[1].Uri.AbsolutePath);
+        Assert.Equal(
+            "/api/workstations/SAMPLE-WORKSTATION-01/tasks",
+            handler.Requests[2].Uri.AbsolutePath);
+        Assert.Equal("startNo=1&recordNum=50", handler.Requests[2].Uri.Query.TrimStart('?'));
+    }
+
+    [Fact]
+    public async Task Sample_workstation_snapshot_keeps_available_sections_when_one_read_route_fails()
+    {
+        var observedAt = DateTimeOffset.Parse("2026-09-09T03:04:05Z");
+        var handler = new RecordingHandler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/api/workstations/SAMPLE-WORKSTATION-01/status" => JsonResponse(
+                new SampleWorkstationStatusResponse(
+                    "SAMPLE-WORKSTATION-01", "OWS-01", true,
+                    SampleWorkstationDeviceState.Idle, 0, observedAt)),
+            "/api/workstations/SAMPLE-WORKSTATION-01/errors" => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable),
+            "/api/workstations/SAMPLE-WORKSTATION-01/tasks" => JsonResponse(Array.Empty<SampleWorkstationTaskSummaryResponse>()),
+            _ => new HttpResponseMessage(HttpStatusCode.NotFound)
+        });
+        using var httpClient = CreateClient(handler);
+        var client = new MesClient(httpClient);
+
+        var snapshot = await client.GetSampleWorkstationSnapshotAsync(
+            "SAMPLE-WORKSTATION-01", CancellationToken.None);
+
+        Assert.NotNull(snapshot);
+        Assert.Equal(SampleWorkstationDeviceState.Idle, snapshot!.Status!.State);
+        Assert.Null(snapshot.Error);
+        Assert.Contains("HTTP 503", snapshot.ErrorReadError);
+        Assert.Empty(snapshot.Tasks);
+        Assert.Equal(3, handler.Requests.Count);
+    }
+
+    [Fact]
     public async Task ShineLab_config_and_command_use_high_level_mes_routes()
     {
         var response = new ShineLabCommandResponse(

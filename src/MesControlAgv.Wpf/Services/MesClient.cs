@@ -107,6 +107,67 @@ public sealed class MesClient(HttpClient client) : IMesClient
             cancellationToken) ?? [];
     }
 
+    public async Task<SampleWorkstationDashboardSnapshot?> GetSampleWorkstationSnapshotAsync(
+        string deviceId,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
+        var escapedDeviceId = Uri.EscapeDataString(deviceId);
+
+        // Keep these calls on the normalized MES read-only routes.  The WPF
+        // client must never connect to the vendor HTTP service directly.
+        var status = await ReadWorkstationSectionAsync<SampleWorkstationStatusResponse>(
+            $"api/workstations/{escapedDeviceId}/status",
+            cancellationToken);
+        var error = await ReadWorkstationSectionAsync<SampleWorkstationErrorResponse>(
+            $"api/workstations/{escapedDeviceId}/errors",
+            cancellationToken);
+        var tasks = await ReadWorkstationSectionAsync<List<SampleWorkstationTaskSummaryResponse>>(
+            $"api/workstations/{escapedDeviceId}/tasks?startNo=1&recordNum=50",
+            cancellationToken);
+
+        return new SampleWorkstationDashboardSnapshot(
+            status.Value,
+            error.Value,
+            tasks.Value ?? [],
+            status.Error,
+            error.Error,
+            tasks.Error);
+    }
+
+    private async Task<WorkstationSectionResult<T>> ReadWorkstationSectionAsync<T>(
+        string path,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var response = await client.GetAsync(path, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return new WorkstationSectionResult<T>(
+                    default,
+                    $"HTTP {(int)response.StatusCode} {response.ReasonPhrase}".Trim());
+            }
+
+            var value = await response.Content.ReadFromJsonAsync<T>(cancellationToken);
+            return new WorkstationSectionResult<T>(value, value is null ? "响应为空" : null);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is HttpRequestException
+            or JsonException
+            or NotSupportedException
+            or TaskCanceledException
+            or TimeoutException)
+        {
+            return new WorkstationSectionResult<T>(default, exception.Message);
+        }
+    }
+
+    private sealed record WorkstationSectionResult<T>(T? Value, string? Error);
+
     public async Task<ShineLabCommandResponse> SendShineLabConfigAsync(
         string equipmentCode,
         ShineLabConfigRequest request,
