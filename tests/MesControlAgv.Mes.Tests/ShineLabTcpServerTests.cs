@@ -11,6 +11,58 @@ namespace MesControlAgv.Mes.Tests;
 public sealed class ShineLabTcpServerTests
 {
     [Fact]
+    public async Task Server_stays_passive_until_certification_and_does_not_emit_control_frames()
+    {
+        var port = ReservePort();
+        var options = Options.Create(new ShineLabTcpOptions
+        {
+            Enabled = true,
+            ListenAddress = "127.0.0.1",
+            Port = port,
+            StaleAfterSeconds = 10,
+            SendCertificationOnConnect = false
+        });
+        var hub = new ShineLabStatusHub(options);
+        var connectionManager = new ShineLabConnectionManager();
+        var server = new ShineLabTcpServer(options, hub, connectionManager, NullLogger<ShineLabTcpServer>.Instance);
+        await server.StartAsync(CancellationToken.None);
+
+        try
+        {
+            using var client = await ConnectWithRetryAsync(port);
+            await using var stream = client.GetStream();
+            await AssertNoDataAsync(stream, TimeSpan.FromMilliseconds(250));
+
+            var frameReader = new ShineLabTcpFrameReader();
+            await SendMessageAsync(stream, new
+            {
+                strID = "cert-passive-001",
+                strMethod = "Certification",
+                equipmentCode = "SHA18I",
+                body = new { protocolVersion = "draft-1" }
+            });
+            using var certification = await ReadJsonAsync(stream, frameReader, TimeSpan.FromSeconds(3));
+            Assert.Equal("Certification", certification.RootElement.GetProperty("strMethod").GetString());
+            Assert.Equal("Success", certification.RootElement.GetProperty("body").GetProperty("result").GetString());
+
+            await SendMessageAsync(stream, new
+            {
+                strID = "status-passive-001",
+                strMethod = "Device",
+                equipmentCode = "SHA18I",
+                body = new { status = 0, stage = "Idle" }
+            });
+            await AssertNoDataAsync(stream, TimeSpan.FromMilliseconds(250));
+        }
+        finally
+        {
+            await server.StopAsync(CancellationToken.None);
+            server.Dispose();
+            connectionManager.Dispose();
+        }
+    }
+
+    [Fact]
     public async Task Client_can_certify_push_status_and_disconnect_without_serial_access()
     {
         var port = ReservePort();
@@ -200,6 +252,16 @@ public sealed class ShineLabTcpServerTests
         var frame = ShineLabTcpFrameCodec.Encode(message);
         await stream.WriteAsync(frame);
         await stream.FlushAsync();
+    }
+
+    private static async Task AssertNoDataAsync(NetworkStream stream, TimeSpan duration)
+    {
+        var deadline = DateTime.UtcNow + duration;
+        while (DateTime.UtcNow < deadline)
+        {
+            Assert.False(stream.DataAvailable, "The passive ShineLab server emitted an unsolicited frame.");
+            await Task.Delay(20);
+        }
     }
 
     private static async Task<JsonDocument> ReadJsonAsync(
