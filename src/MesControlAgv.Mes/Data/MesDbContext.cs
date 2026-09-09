@@ -481,6 +481,10 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.HasIndex(transaction => new { transaction.LotId, transaction.OccurredAtUtc });
             entity.HasIndex(transaction => new { transaction.SampleId, transaction.OccurredAtUtc });
             entity.HasIndex(transaction => new { transaction.ExperimentJobId, transaction.OccurredAtUtc });
+            entity.HasOne<MaterialOperationRecord>()
+                .WithMany()
+                .HasForeignKey(transaction => transaction.RequestId)
+                .OnDelete(DeleteBehavior.NoAction);
             entity.HasOne<MaterialLotRecord>()
                 .WithMany()
                 .HasForeignKey(transaction => transaction.LotId)
@@ -544,6 +548,10 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.HasIndex(binding => new { binding.ExperimentJobId, binding.Status });
             entity.HasIndex(binding => binding.SampleId);
             entity.HasIndex(binding => binding.LotId);
+            entity.HasOne<MaterialOperationRecord>()
+                .WithMany()
+                .HasForeignKey(binding => binding.RequestId)
+                .OnDelete(DeleteBehavior.NoAction);
             entity.HasOne<ExperimentJobRecord>()
                 .WithMany()
                 .HasForeignKey(binding => binding.ExperimentJobId)

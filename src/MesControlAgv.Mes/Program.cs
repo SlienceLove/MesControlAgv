@@ -905,6 +905,7 @@ static async Task EnsureMaterialManagementTablesAsync(MesDbContext database)
             CorrelationId TEXT NULL,
             DetailsJson TEXT NOT NULL,
             OccurredAtUtc TEXT NOT NULL,
+            FOREIGN KEY (RequestId) REFERENCES MaterialOperations(RequestId) ON DELETE NO ACTION,
             FOREIGN KEY (LotId) REFERENCES MaterialLots(LotId) ON DELETE NO ACTION,
             FOREIGN KEY (SampleId) REFERENCES SampleMaterials(SampleId) ON DELETE NO ACTION,
             FOREIGN KEY (FromLocationId) REFERENCES WarehouseLocations(LocationId) ON DELETE NO ACTION,
@@ -947,6 +948,7 @@ static async Task EnsureMaterialManagementTablesAsync(MesDbContext database)
             Reason TEXT NULL,
             CreatedAtUtc TEXT NOT NULL,
             UpdatedAtUtc TEXT NOT NULL,
+            FOREIGN KEY (RequestId) REFERENCES MaterialOperations(RequestId) ON DELETE NO ACTION,
             FOREIGN KEY (ExperimentJobId) REFERENCES ExperimentJobs(JobId) ON DELETE CASCADE,
             FOREIGN KEY (SampleId) REFERENCES SampleMaterials(SampleId) ON DELETE NO ACTION,
             FOREIGN KEY (LotId) REFERENCES MaterialLots(LotId) ON DELETE NO ACTION
