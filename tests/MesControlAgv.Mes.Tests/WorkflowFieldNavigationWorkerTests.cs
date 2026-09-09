@@ -456,7 +456,7 @@ public sealed class WorkflowFieldNavigationWorkerTests
     }
 
     [Fact]
-    public async Task Cancelled_one_click_move_attempts_control_release_once_even_when_unconfirmed()
+    public async Task Cancelled_one_click_move_does_not_release_control()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
@@ -528,7 +528,6 @@ public sealed class WorkflowFieldNavigationWorkerTests
         await dispatcher.ProcessAsync(CancellationToken.None);
         var acceptance = await repository.GetAsync(draftAcceptance.Id, CancellationToken.None);
         Assert.Equal(FieldNavigationAcceptanceStatuses.Moving, acceptance!.Status);
-        adapter.ReleaseControlException = new TimeoutException("release response unavailable");
         acceptance.Status = FieldNavigationAcceptanceStatuses.Cancelled;
         await repository.SaveWithAuditAsync(
             acceptance,
@@ -543,7 +542,7 @@ public sealed class WorkflowFieldNavigationWorkerTests
             (await workflows.GetExecutionAsync(execution.ExecutionId, CancellationToken.None))!.RuntimeStatus);
         Assert.Equal(WorkflowNodeExecutionStatus.Cancelled,
             Assert.Single(await workflows.ListNodeExecutionsAsync(execution.ExecutionId, CancellationToken.None)).Status);
-        Assert.Equal(1, adapter.ReleaseControlCalls);
+        Assert.Equal(0, adapter.ReleaseControlCalls);
     }
 
     [Theory]

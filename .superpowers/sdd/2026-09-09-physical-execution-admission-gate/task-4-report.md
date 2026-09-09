@@ -21,3 +21,21 @@ Concerns / handoff:
 
 - Full WPF-inclusive validation must be rerun after the unrelated local host releases `src/MesControlAgv.Wpf/bin/Debug/net8.0-windows/services/Mes` locks.
 - This commit is implementation-only and has not been pushed. Real field validation remains a separate, explicitly supervised phase; it must begin with read-only preflight and operator authorization.
+
+## Fix round 1 (2026-09-09)
+
+Review fixes:
+
+- `WorkflowFieldNavigationWorker` no longer invokes physical release on one-click batch cancellation; the cancellation test asserts `ReleaseControlCalls == 0`.
+- `ReleaseFinalMoveAsync` now requires `WorkflowStepCompletionOutcome.Succeeded`. Any other outcome is rejected before readiness/device processing and cannot write the gateway. The service test verifies Rejected status and `ReleaseCalls == 0`.
+
+Offline verification commands and actual output:
+
+- `dotnet test tests/MesControlAgv.Mes.Tests/MesControlAgv.Mes.Tests.csproj --no-restore --filter "FullyQualifiedName~PhysicalSafetyActionServiceTests|FullyQualifiedName~WorkflowFieldNavigationWorkerTests" --logger "console;verbosity=normal" -m:1`
+  - `测试运行成功。测试总数: 17 通过数: 17`
+- `dotnet test tests/MesControlAgv.Mes.Tests/MesControlAgv.Mes.Tests.csproj --no-restore --logger "console;verbosity=minimal" -m:1`
+  - `已通过! - 失败: 0，通过: 224，已跳过: 0，总计: 224`
+- `dotnet build src/MesControlAgv.Mes/MesControlAgv.Mes.csproj -c Release --no-restore -m:1`
+  - `已成功生成。0 个警告 0 个错误`
+
+No field IP/port was accessed, no real service was started, and no AGV/AUBO/Modbus/DI/DO write was sent. Existing unrelated WPF changes, artifacts, and user deletion items were preserved.

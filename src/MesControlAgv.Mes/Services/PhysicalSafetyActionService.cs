@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
+using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Entities;
@@ -255,10 +256,30 @@ public sealed class PhysicalSafetyActionService(
         string operatorName,
         long? deviceEpoch,
         string? supervisorInstanceId,
+        WorkflowStepCompletionOutcome moveOutcome,
         CancellationToken cancellationToken)
     {
         if (workflowRunId == Guid.Empty || workflowNodeExecutionId == Guid.Empty || workflowDeviceOperationId == Guid.Empty)
             throw new ArgumentException("Final Move release requires complete workflow correlation.");
+        if (moveOutcome != WorkflowStepCompletionOutcome.Succeeded)
+        {
+            return await SaveRejectedFinalMoveRejectionAsync(
+                DeterministicRequestId(workflowRunId, workflowNodeExecutionId, workflowDeviceOperationId),
+                Fingerprint(PhysicalSafetyActionTypes.AgvRelease, agvId, operatorName,
+                    "workflow_final_move_completed", workflowRunId, workflowNodeExecutionId,
+                    workflowDeviceOperationId, null, null),
+                PhysicalSafetyActionTypes.AgvRelease,
+                agvId,
+                operatorName,
+                "workflow_final_move_completed",
+                $"Final Move release requires a verified normal Move terminal outcome; received {moveOutcome}.",
+                cancellationToken,
+                workflowRunId,
+                workflowNodeExecutionId,
+                workflowDeviceOperationId,
+                deviceEpoch,
+                supervisorInstanceId);
+        }
         if (physicalReadiness is not { Enabled: true } readiness ||
             !readiness.IsCurrentAndReady(agvId, deviceEpoch, supervisorInstanceId, out _))
         {

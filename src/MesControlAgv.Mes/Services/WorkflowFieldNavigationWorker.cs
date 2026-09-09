@@ -690,7 +690,11 @@ public sealed class WorkflowFieldNavigationDispatcher(
             // Release before marking the run Completed. The active-run gate
             // therefore prevents a new physical batch from being admitted
             // while cleanup is in progress. A lost response is never replayed.
-            await TryReleaseBatchControlOnceAsync(workItem, acceptance, "completed its final Move node");
+            await TryReleaseBatchControlOnceAsync(
+                workItem,
+                acceptance,
+                WorkflowStepCompletionOutcome.Succeeded,
+                "completed its final Move node");
         }
 
         await CompleteAsync(
@@ -706,17 +710,8 @@ public sealed class WorkflowFieldNavigationDispatcher(
         FieldNavigationAcceptanceResponse acceptance,
         CancellationToken cancellationToken)
     {
-        // A cancelled one-click batch is terminal just like a completed final
-        // Move. Release the control lease once before persisting the terminal
-        // run state so a later batch cannot inherit it. Legacy/manual
-        // acceptances do not carry run-level PhysicalAuthorization and retain
-        // their existing operator-managed ownership behavior.
-        var run = await workflows.GetExecutionAsync(
-            workItem.NodeExecution.WorkflowRunId,
-            cancellationToken);
-        if (run?.PhysicalAuthorization is not null)
-            await TryReleaseBatchControlOnceAsync(workItem, acceptance, "was cancelled");
-
+        // Cancellation is not a verified, normal Move terminal state. It must
+        // never release physical AGV control.
         await CompleteAsync(
             workItem,
             WorkflowStepCompletionOutcome.Cancelled,
@@ -728,6 +723,7 @@ public sealed class WorkflowFieldNavigationDispatcher(
     private async Task TryReleaseBatchControlOnceAsync(
         WorkflowNodeExecutionWorkItem workItem,
         FieldNavigationAcceptanceResponse acceptance,
+        WorkflowStepCompletionOutcome moveOutcome,
         string terminalContext)
     {
         var timeout = options.ControlReleaseTimeout <= TimeSpan.Zero
@@ -751,6 +747,7 @@ public sealed class WorkflowFieldNavigationDispatcher(
                 acceptance.OperatorName ?? "workflow-worker",
                 acceptance.DeviceEpoch,
                 acceptance.ReadinessSupervisorInstanceId,
+                moveOutcome,
                 cleanup.Token);
             if (result.Status == PhysicalSafetyActionStatuses.Succeeded)
             {

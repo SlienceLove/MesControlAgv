@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
+using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Entities;
@@ -74,6 +75,36 @@ public sealed class PhysicalSafetyActionServiceTests
         Assert.Equal(first.Id, second.Id);
         Assert.Equal(first.Fingerprint, second.Fingerprint);
         Assert.Equal(1, gateway.ReleaseCalls);
+    }
+
+    [Fact]
+    public async Task Final_move_release_rejects_non_normal_move_outcome_without_gateway_write()
+    {
+        await using var database = CreateDatabase();
+        var gateway = new SafetyActionAgvGateway();
+        var readiness = new AlwaysReadyPhysicalReadinessState();
+        var service = new PhysicalSafetyActionService(
+            database, gateway, null, PhysicalProfile(), readiness);
+        var runId = Guid.NewGuid();
+        var nodeId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        var result = await service.ReleaseFinalMoveAsync(
+            runId,
+            nodeId,
+            operationId,
+            "AGV-01",
+            "operator-a",
+            1,
+            "supervisor-1",
+            WorkflowStepCompletionOutcome.Cancelled,
+            CancellationToken.None);
+
+        Assert.Equal(PhysicalSafetyActionStatuses.Rejected, result.Status);
+        Assert.Contains("verified normal Move terminal outcome", result.ResultSummary!);
+        Assert.Equal(0, gateway.ReleaseCalls);
+        Assert.Equal(PhysicalSafetyActionStatuses.Rejected,
+            (await database.PhysicalSafetyActions.SingleAsync()).Status);
     }
 
     [Fact]
@@ -214,5 +245,49 @@ public sealed class PhysicalSafetyActionServiceTests
                 AuboArmProgramOperationState.Stopped, AuboArmRuntimeState.Stopped,
                 "Stopped", "program.lua", 0, null, true, DateTimeOffset.UtcNow));
         }
+    }
+
+    private sealed class AlwaysReadyPhysicalReadinessState : IPhysicalReadinessState
+    {
+        public bool Enabled => true;
+
+        public PhysicalReadinessResponse GetSnapshot() => new()
+        {
+            Enabled = true,
+            SupervisorInstanceId = "supervisor-1",
+            Devices =
+            [
+                new PhysicalDeviceReadinessSnapshot
+                {
+                    DeviceId = "AGV-01",
+                    DeviceEpoch = 1,
+                    State = PhysicalDeviceReadinessState.Ready,
+                    RequiresReauthorization = false
+                }
+            ]
+        };
+
+        public bool TryGetDevice(string deviceId, out PhysicalDeviceReadinessSnapshot snapshot)
+        {
+            snapshot = GetSnapshot().Devices.Single();
+            return deviceId == "AGV-01";
+        }
+
+        public bool IsCurrentAndReady(string deviceId, long? expectedEpoch, out string? validationReason) =>
+            IsCurrentAndReady(deviceId, expectedEpoch, null, out validationReason);
+
+        public bool IsCurrentAndReady(
+            string deviceId,
+            long? expectedEpoch,
+            string? expectedSupervisorInstanceId,
+            out string? validationReason)
+        {
+            validationReason = null;
+            return deviceId == "AGV-01" &&
+                (!expectedEpoch.HasValue || expectedEpoch == 1) &&
+                (string.IsNullOrWhiteSpace(expectedSupervisorInstanceId) || expectedSupervisorInstanceId == "supervisor-1");
+        }
+
+        public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) => false;
     }
 }
