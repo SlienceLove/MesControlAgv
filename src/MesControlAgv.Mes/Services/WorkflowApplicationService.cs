@@ -9,6 +9,7 @@ using MesControlAgv.Domain.Workflows;
 using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Entities;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -625,18 +626,132 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
         ArgumentNullException.ThrowIfNull(request);
         cancellationToken.ThrowIfCancellationRequested();
 
-        if (request.DryRun || request.PhysicalAuthorization is null)
-            return await ExecuteCoreAsync(request, cancellationToken);
-
-        await PhysicalExecutionAdmissionGate.WaitAsync(cancellationToken);
         try
         {
-            return await ExecuteCoreAsync(request, cancellationToken);
+            if (request.DryRun || request.PhysicalAuthorization is null)
+                return await ExecuteCoreAsync(request, cancellationToken);
+
+            await PhysicalExecutionAdmissionGate.WaitAsync(cancellationToken);
+            try
+            {
+                return await ExecuteCoreAsync(request, cancellationToken);
+            }
+            finally
+            {
+                PhysicalExecutionAdmissionGate.Release();
+            }
         }
-        finally
+        catch (PhysicalExecutionAdmissionException exception)
         {
-            PhysicalExecutionAdmissionGate.Release();
+            return await PersistPhysicalAdmissionRejectionAsync(
+                request,
+                exception,
+                cancellationToken);
         }
+    }
+
+    private async Task<WorkflowExecutionResult> PersistPhysicalAdmissionRejectionAsync(
+        WorkflowExecutionRequest request,
+        PhysicalExecutionAdmissionException exception,
+        CancellationToken cancellationToken)
+    {
+        var result = CreateRejection(
+            request,
+            WorkflowExecutionRejectionCodes.PhysicalExecutionDisabled,
+            $"{exception.Code}: {exception.Detail}");
+
+        if (request.RequestId == Guid.Empty)
+        {
+            AddExecutionAudit(result.Audit);
+            await _database.SaveChangesAsync(cancellationToken);
+            return result;
+        }
+
+        var fingerprint = CreateFingerprint(request);
+        var prior = await _database.WorkflowExecutions
+            .AsNoTracking()
+            .SingleOrDefaultAsync(item => item.RequestId == request.RequestId, cancellationToken);
+        if (prior is not null)
+        {
+            if (StringComparer.Ordinal.Equals(prior.Fingerprint, fingerprint) ||
+                IsLegacyPhysicalFingerprintMatch(prior, request))
+            {
+                return WorkflowPersistence.DeserializeResult(prior.ResultJson) with
+                {
+                    IsIdempotentReplay = true
+                };
+            }
+
+            return await PersistRequestIdReusedAuditAsync(request, cancellationToken);
+        }
+
+        var executionRecord = await CreateExecutionRecordAsync(
+            request,
+            fingerprint,
+            result,
+            cancellationToken);
+        _database.WorkflowExecutions.Add(executionRecord);
+        AddExecutionAudit(result.Audit);
+        try
+        {
+            await _database.SaveChangesAsync(cancellationToken);
+            return result;
+        }
+        catch (DbUpdateException dbException) when (IsRequestIdUniqueConstraintViolation(dbException))
+        {
+            // Another MES request may have won the RequestId race. Re-read its
+            // durable result and apply the same idempotency contract as the
+            // normal execution path.
+            _database.ChangeTracker.Clear();
+            var concurrentlyPersisted = await _database.WorkflowExecutions
+                .AsNoTracking()
+                .SingleOrDefaultAsync(item => item.RequestId == request.RequestId, cancellationToken);
+            if (concurrentlyPersisted is null)
+            {
+                throw;
+            }
+
+            if (StringComparer.Ordinal.Equals(concurrentlyPersisted.Fingerprint, fingerprint) ||
+                IsLegacyPhysicalFingerprintMatch(concurrentlyPersisted, request))
+            {
+                return WorkflowPersistence.DeserializeResult(concurrentlyPersisted.ResultJson) with
+                {
+                    IsIdempotentReplay = true
+                };
+            }
+
+            return await PersistRequestIdReusedAuditAsync(request, cancellationToken);
+        }
+    }
+
+    private async Task<WorkflowExecutionResult> PersistRequestIdReusedAuditAsync(
+        WorkflowExecutionRequest request,
+        CancellationToken cancellationToken)
+    {
+        var reused = CreateRejection(
+            request,
+            WorkflowExecutionRejectionCodes.RequestIdReused,
+            "The request id has already been used for a different workflow execution payload.");
+        AddExecutionAudit(reused.Audit);
+        await _database.SaveChangesAsync(cancellationToken);
+        return reused;
+    }
+
+    private static bool IsRequestIdUniqueConstraintViolation(DbUpdateException exception)
+    {
+        for (var current = exception.InnerException; current is not null; current = current.InnerException)
+        {
+            if (current is SqliteException sqliteException &&
+                sqliteException.SqliteErrorCode == 19 &&
+                sqliteException.Message.Contains(
+                    "WorkflowExecutions.RequestId",
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private async Task<WorkflowExecutionResult> ExecuteCoreAsync(

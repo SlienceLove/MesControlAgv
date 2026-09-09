@@ -174,6 +174,63 @@ public sealed class WorkflowApiTests : IClassFixture<MesWebApplicationFactory>
         Assert.Equal("WorkflowExecutionRejected", result.Audit.EventType);
         Assert.Equal(WorkflowExecutionRejectionCodes.PhysicalExecutionDisabled, result.Audit.Code);
         Assert.Equal(Guid.Empty, result.Audit.ExecutionId);
+
+        var persisted = await _client.GetAsync(
+            $"/api/workflow-executions/by-request/{request.RequestId}");
+        Assert.Equal(HttpStatusCode.OK, persisted.StatusCode);
+        var persistedExecution = await persisted.Content.ReadFromJsonAsync<WorkflowExecutionSnapshot>();
+        Assert.NotNull(persistedExecution);
+        Assert.Equal(request.RequestId, persistedExecution!.RequestId);
+        Assert.Equal(Guid.Empty, persistedExecution.ExecutionId);
+        Assert.Equal(WorkflowRuntimeStatus.Rejected, persistedExecution.RuntimeStatus);
+        Assert.Equal(WorkflowExecutionRejectionCodes.PhysicalExecutionDisabled, persistedExecution.RejectionCode);
+        Assert.Contains(PhysicalReadinessReasonCodes.SupervisorDisabled, persistedExecution.RejectionReason, StringComparison.Ordinal);
+
+        var audits = await _client.GetFromJsonAsync<IReadOnlyList<WorkflowAuditResponse>>(
+            $"/api/workflows/{request.WorkflowId}/audits?version={request.Version}");
+        Assert.NotNull(audits);
+        var rejectedAudit = Assert.Single(audits!, audit =>
+            audit.EventType == "WorkflowExecutionRejected" &&
+            audit.RequestId == request.RequestId);
+        Assert.Equal(WorkflowExecutionStatus.Rejected.ToString(), rejectedAudit.Outcome);
+        Assert.Equal(WorkflowExecutionRejectionCodes.PhysicalExecutionDisabled, rejectedAudit.Code);
+        Assert.Null(rejectedAudit.ExecutionId);
+        Assert.Contains(PhysicalReadinessReasonCodes.SupervisorDisabled, rejectedAudit.Reason, StringComparison.Ordinal);
+
+        var replay = await _client.PostAsJsonAsync("/api/workflows/execute", request);
+        Assert.Equal(HttpStatusCode.Conflict, replay.StatusCode);
+        var replayJson = await replay.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("http-gate", replayJson, StringComparison.Ordinal);
+        var replayResult = JsonSerializer.Deserialize<WorkflowExecutionResult>(
+            replayJson,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(replayResult);
+        Assert.True(replayResult!.IsIdempotentReplay);
+        Assert.True(replayResult.IsRejected);
+        Assert.Equal(Guid.Empty, replayResult.ExecutionId);
+
+        var conflictingRequest = request with
+        {
+            PhysicalAuthorization = request.PhysicalAuthorization! with { PermitPrefix = "different-permit" }
+        };
+        var conflict = await _client.PostAsJsonAsync("/api/workflows/execute", conflictingRequest);
+        Assert.Equal(HttpStatusCode.Conflict, conflict.StatusCode);
+        var conflictJson = await conflict.Content.ReadAsStringAsync();
+        Assert.DoesNotContain("different-permit", conflictJson, StringComparison.Ordinal);
+        var conflictResult = JsonSerializer.Deserialize<WorkflowExecutionResult>(
+            conflictJson,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(conflictResult);
+        Assert.True(conflictResult!.IsRejected);
+        Assert.Equal(WorkflowExecutionRejectionCodes.RequestIdReused, conflictResult.RejectionCode);
+        Assert.Equal(Guid.Empty, conflictResult.ExecutionId);
+
+        var conflictAudits = await _client.GetFromJsonAsync<IReadOnlyList<WorkflowAuditResponse>>(
+            $"/api/workflows/{request.WorkflowId}/audits?version={request.Version}");
+        Assert.Contains(conflictAudits!, audit =>
+            audit.EventType == "WorkflowExecutionRejected" &&
+            audit.RequestId == request.RequestId &&
+            audit.Code == WorkflowExecutionRejectionCodes.RequestIdReused);
     }
 
     [Fact]
