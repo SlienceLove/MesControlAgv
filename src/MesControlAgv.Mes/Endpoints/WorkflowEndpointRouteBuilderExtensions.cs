@@ -166,11 +166,41 @@ public static class WorkflowEndpointRouteBuilderExtensions
             }
             catch (PhysicalExecutionAdmissionException exception)
             {
-                return Results.Conflict(new
+                var rejectionReason = $"{exception.Code}: {exception.Detail}";
+                var occurredAt = DateTimeOffset.UtcNow;
+                result = new WorkflowExecutionResult
                 {
-                    code = WorkflowExecutionRejectionCodes.PhysicalExecutionDisabled,
-                    detail = $"{exception.Code}: {exception.Detail}"
-                });
+                    Status = WorkflowExecutionStatus.Rejected,
+                    RequestId = request.RequestId,
+                    ExecutionId = Guid.Empty,
+                    WorkflowId = request.WorkflowId,
+                    Version = request.Version,
+                    RequestedAt = request.RequestedAt,
+                    DryRun = request.DryRun,
+                    RejectionCode = WorkflowExecutionRejectionCodes.PhysicalExecutionDisabled,
+                    RejectionReason = rejectionReason,
+                    Audit = new WorkflowExecutionAuditEntry
+                    {
+                        EventId = Guid.NewGuid(),
+                        EventType = "WorkflowExecutionRejected",
+                        Outcome = WorkflowExecutionStatus.Rejected.ToString(),
+                        Code = WorkflowExecutionRejectionCodes.PhysicalExecutionDisabled,
+                        Reason = rejectionReason,
+                        RequestId = request.RequestId,
+                        ExecutionId = Guid.Empty,
+                        WorkflowId = request.WorkflowId,
+                        Version = request.Version,
+                        RequestedBy = request.RequestedBy,
+                        CorrelationId = request.CorrelationId,
+                        OccurredAt = occurredAt,
+                        Details = new Dictionary<string, string?>
+                        {
+                            ["dryRun"] = request.DryRun.ToString()
+                        }
+                    }
+                };
+
+                return Results.Conflict(result);
             }
             if (result.IsAccepted)
             {
