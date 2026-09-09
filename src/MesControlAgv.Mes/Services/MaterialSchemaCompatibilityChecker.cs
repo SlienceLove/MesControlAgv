@@ -5,6 +5,74 @@ namespace MesControlAgv.Mes.Services;
 /// <summary>Validates legacy material rows before the compatibility triggers are installed.</summary>
 public static class MaterialSchemaCompatibilityChecker
 {
+    public static async Task<IReadOnlyList<string>> FindBarcodeConflictsAsync(
+        DbConnection connection,
+        CancellationToken cancellationToken = default)
+    {
+        var conflicts = new List<string>();
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText =
+                """
+                SELECT upper(Barcode), COUNT(*)
+                FROM SampleMaterials
+                GROUP BY upper(Barcode)
+                HAVING COUNT(*) > 1
+                ORDER BY upper(Barcode)
+                LIMIT 10;
+                """;
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                conflicts.Add($"SampleMaterials barcode '{reader.GetString(0)}' has {reader.GetInt64(1)} rows");
+        }
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText =
+                """
+                SELECT upper(Barcode), COUNT(*)
+                FROM MaterialLots
+                WHERE Barcode IS NOT NULL
+                GROUP BY upper(Barcode)
+                HAVING COUNT(*) > 1
+                ORDER BY upper(Barcode)
+                LIMIT 10;
+                """;
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                conflicts.Add($"MaterialLots barcode '{reader.GetString(0)}' has {reader.GetInt64(1)} rows");
+        }
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText =
+                """
+                SELECT upper(s.Barcode), s.SampleId, l.LotId
+                FROM SampleMaterials s
+                JOIN MaterialLots l ON l.Barcode IS NOT NULL AND upper(l.Barcode) = upper(s.Barcode)
+                ORDER BY upper(s.Barcode)
+                LIMIT 10;
+                """;
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                conflicts.Add(
+                    $"barcode '{reader.GetString(0)}' is used by SampleMaterials/{reader.GetString(1)} and MaterialLots/{reader.GetString(2)}");
+        }
+
+        return conflicts;
+    }
+
+    public static async Task EnsureNoBarcodeConflictsAsync(
+        DbConnection connection,
+        CancellationToken cancellationToken = default)
+    {
+        var conflicts = await FindBarcodeConflictsAsync(connection, cancellationToken);
+        if (conflicts.Count > 0)
+            throw new InvalidOperationException(
+                "Material schema contains case-insensitive barcode conflicts; resolve legacy data before startup: " +
+                string.Join("; ", conflicts));
+    }
+
     public static async Task<IReadOnlyList<string>> FindOrphanForeignKeysAsync(
         DbConnection connection,
         CancellationToken cancellationToken = default)

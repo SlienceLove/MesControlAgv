@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using MesControlAgv.Contracts.Materials;
+using MesControlAgv.Contracts.Experiments;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -78,6 +79,21 @@ public interface IMaterialManagementService
 
     Task<MaterialConsumeResult> ConsumeAsync(
         ConsumeExperimentMaterialsRequest request,
+        CancellationToken cancellationToken);
+
+    Task<MaterialReservationResult> ReserveForExperimentAsync(
+        Guid experimentJobId,
+        IReadOnlyList<ExperimentMaterialRequirement> requirements,
+        Guid requestId,
+        string actor,
+        string reason,
+        CancellationToken cancellationToken);
+
+    Task<MaterialReleaseResult> ReleaseForExperimentAsync(
+        Guid experimentJobId,
+        Guid requestId,
+        string actor,
+        string reason,
         CancellationToken cancellationToken);
 
     Task<IReadOnlyList<MaterialBinding>> ListBindingsAsync(
@@ -725,6 +741,92 @@ public sealed class MaterialManagementService : IMaterialManagementService
         return execution.Value with { IsIdempotentReplay = execution.IsReplay };
     }
 
+    public async Task<MaterialReservationResult> ReserveForExperimentAsync(
+        Guid experimentJobId,
+        IReadOnlyList<ExperimentMaterialRequirement> requirements,
+        Guid requestId,
+        string actor,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        var positiveRequirements = requirements
+            .Where(item => item.Quantity is > 0)
+            .ToArray();
+        if (positiveRequirements.Length == 0)
+        {
+            return new MaterialReservationResult
+            {
+                RequestId = requestId,
+                ExperimentJobId = experimentJobId
+            };
+        }
+
+        var existing = await _database.ExperimentJobMaterialBindings
+            .AsNoTracking()
+            .Where(item =>
+                item.ExperimentJobId == experimentJobId &&
+                item.Status == MaterialBindingStatus.Reserved.ToString())
+            .ToListAsync(cancellationToken);
+        if (existing.Count > 0)
+        {
+            return new MaterialReservationResult
+            {
+                RequestId = requestId,
+                ExperimentJobId = experimentJobId,
+                Bindings = existing.Select(ToBinding).ToList()
+            };
+        }
+
+        return await ReserveAsync(
+            new ReserveExperimentMaterialsRequest
+            {
+                RequestId = requestId,
+                ExperimentJobId = experimentJobId,
+                Actor = actor,
+                Reason = reason,
+                Requirements = positiveRequirements
+                    .Select(item => new MaterialReservationLine
+                    {
+                        MaterialCode = item.MaterialId,
+                        Quantity = item.Quantity!.Value,
+                        Unit = item.Unit
+                    })
+                    .ToArray()
+            },
+            cancellationToken);
+    }
+
+    public async Task<MaterialReleaseResult> ReleaseForExperimentAsync(
+        Guid experimentJobId,
+        Guid requestId,
+        string actor,
+        string reason,
+        CancellationToken cancellationToken)
+    {
+        var hasActiveBindings = await _database.ExperimentJobMaterialBindings.AnyAsync(
+            item => item.ExperimentJobId == experimentJobId &&
+                    item.Status == MaterialBindingStatus.Reserved.ToString(),
+            cancellationToken);
+        if (!hasActiveBindings)
+        {
+            return new MaterialReleaseResult
+            {
+                RequestId = requestId,
+                ExperimentJobId = experimentJobId
+            };
+        }
+
+        return await ReleaseAsync(
+            new ReleaseExperimentMaterialsRequest
+            {
+                RequestId = requestId,
+                ExperimentJobId = experimentJobId,
+                Actor = actor,
+                Reason = reason
+            },
+            cancellationToken);
+    }
+
     public async Task<IReadOnlyList<MaterialBinding>> ListBindingsAsync(
         Guid experimentJobId,
         CancellationToken cancellationToken)
@@ -1251,6 +1353,21 @@ public sealed class MaterialManagementService : IMaterialManagementService
                 cancellationToken);
             foreach (var allocation in allocations)
             {
+                var affected = await _database.InventoryBalances
+                    .Where(balance =>
+                        balance.BalanceId == allocation.Balance.BalanceId &&
+                        balance.OnHand - balance.Reserved >= allocation.Quantity)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(balance => balance.Reserved,
+                            balance => balance.Reserved + allocation.Quantity)
+                        .SetProperty(balance => balance.UpdatedAtUtc, now), cancellationToken);
+                if (affected != 1)
+                {
+                    throw Issue(
+                        MaterialIssueCodes.InventoryInsufficient,
+                        "可用库存已被其他请求占用，请重试。",
+                        StatusCodes.Status409Conflict);
+                }
                 allocation.Balance.Reserved += allocation.Quantity;
                 allocation.Balance.UpdatedAtUtc = now;
                 var binding = new ExperimentJobMaterialBindingRecord
@@ -1392,11 +1509,20 @@ public sealed class MaterialManagementService : IMaterialManagementService
                 .Where(lot => lotIds.Contains(lot.LotId))
                 .ToDictionaryAsync(lot => lot.LotId, cancellationToken);
             var selected = new List<ExperimentJobMaterialBindingRecord>();
+            var requestedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var requirement in request.Materials)
             {
                 ValidatePositive(requirement.Quantity);
                 var materialCode = Normalize(requirement.MaterialCode);
                 var lotCode = NormalizeOptional(requirement.LotCode);
+                var requestKey = materialCode + "\u001f" + (lotCode ?? string.Empty);
+                if (!requestedKeys.Add(requestKey))
+                {
+                    throw Issue(
+                        MaterialIssueCodes.BindingConflict,
+                        "同一物料批次不能在一次消耗请求中重复指定。",
+                        StatusCodes.Status409Conflict);
+                }
                 var matches = bindings.Where(binding =>
                     binding.LotId is not null &&
                     lots.TryGetValue(binding.LotId.Value, out var lot) &&

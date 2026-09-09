@@ -1051,6 +1051,11 @@ static async Task EnsureMaterialManagementSchemaCompatibilityAsync(
         await version.ExecuteNonQueryAsync();
     }
 
+    // Legacy databases may have been created before barcode uniqueness was
+    // enforced case-insensitively. Fail before installing triggers so startup
+    // is read-only and points operators at the conflicting rows.
+    await MaterialSchemaCompatibilityChecker.EnsureNoBarcodeConflictsAsync(connection);
+
     if (hadMaterialOperationsTable)
         await MaterialSchemaCompatibilityChecker.EnsureNoOrphanForeignKeysAsync(connection);
 

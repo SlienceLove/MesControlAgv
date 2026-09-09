@@ -380,6 +380,45 @@ public sealed class MaterialManagementPersistenceTests : IClassFixture<MesWebApp
     }
 
     [Fact]
+    public async Task Compatibility_checker_blocks_legacy_case_insensitive_barcode_conflicts()
+    {
+        await using var connection = new SqliteConnection("Data Source=:memory:");
+        await connection.OpenAsync();
+        var options = new DbContextOptionsBuilder<MesDbContext>().UseSqlite(connection).Options;
+        await using (var database = new MesDbContext(options))
+        {
+            await database.Database.EnsureCreatedAsync();
+            var now = DateTime.UtcNow;
+            database.SampleMaterials.AddRange(
+                new SampleMaterialRecord
+                {
+                    SampleId = Guid.NewGuid(),
+                    Barcode = "legacy-duplicate",
+                    SampleBatchId = "legacy-1",
+                    Status = "Available",
+                    CreatedAtUtc = now,
+                    UpdatedAtUtc = now
+                },
+                new SampleMaterialRecord
+                {
+                    SampleId = Guid.NewGuid(),
+                    Barcode = "LEGACY-DUPLICATE",
+                    SampleBatchId = "legacy-2",
+                    Status = "Available",
+                    CreatedAtUtc = now,
+                    UpdatedAtUtc = now
+                });
+            await database.SaveChangesAsync();
+        }
+
+        var conflicts = await MaterialSchemaCompatibilityChecker.FindBarcodeConflictsAsync(connection);
+        Assert.Contains(conflicts, item => item.Contains("SampleMaterials", StringComparison.Ordinal));
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => MaterialSchemaCompatibilityChecker.EnsureNoBarcodeConflictsAsync(connection));
+        Assert.Contains("case-insensitive barcode conflicts", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Barcode_triggers_reject_case_insensitive_duplicates_and_allow_null_lot_barcodes()
     {
         using var scope = _factory.Services.CreateScope();

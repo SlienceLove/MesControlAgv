@@ -29,7 +29,10 @@ public sealed class MaterialOperationCoordinator
         operationKind = operationKind.Trim();
         fingerprint = fingerprint.Trim();
 
-        await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken);
+        var ownsTransaction = database.Database.CurrentTransaction is null;
+        await using var transaction = ownsTransaction
+            ? await database.Database.BeginTransactionAsync(cancellationToken)
+            : null;
         var existing = await database.MaterialOperations
             .SingleOrDefaultAsync(operation => operation.RequestId == requestId, cancellationToken);
         if (existing is not null)
@@ -41,7 +44,8 @@ public sealed class MaterialOperationCoordinator
                     $"Material request '{requestId}' is not replayable because its outcome is '{existing.Outcome}'.");
             }
 
-            await transaction.RollbackAsync(cancellationToken);
+            if (transaction is not null)
+                await transaction.RollbackAsync(cancellationToken);
             return new MaterialOperationExecution<T>(
                 deserialize(existing.ResultJson),
                 IsReplay: true);
@@ -64,8 +68,10 @@ public sealed class MaterialOperationCoordinator
         }
         catch (DbUpdateException)
         {
+            if (!ownsTransaction)
+                throw;
             database.ChangeTracker.Clear();
-            await transaction.RollbackAsync(cancellationToken);
+            await transaction!.RollbackAsync(cancellationToken);
             await using var replayTransaction =
                 await database.Database.BeginTransactionAsync(cancellationToken);
             var concurrent = await database.MaterialOperations
@@ -91,20 +97,24 @@ public sealed class MaterialOperationCoordinator
             operation.Outcome = "Completed";
             operation.ResultJson = serialize(result);
             await database.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+            if (transaction is not null)
+                await transaction.CommitAsync(cancellationToken);
             return new MaterialOperationExecution<T>(result, IsReplay: false);
         }
         catch
         {
-            try
+            if (transaction is not null)
             {
-                await transaction.RollbackAsync(CancellationToken.None);
-            }
-            finally
-            {
-                // Do not leave Added/Modified entities from a rolled-back
-                // request in a scoped context that may be reused by a caller.
-                database.ChangeTracker.Clear();
+                try
+                {
+                    await transaction.RollbackAsync(CancellationToken.None);
+                }
+                finally
+                {
+                    // Do not leave Added/Modified entities from a rolled-back
+                    // request in a scoped context that may be reused by a caller.
+                    database.ChangeTracker.Clear();
+                }
             }
 
             throw;

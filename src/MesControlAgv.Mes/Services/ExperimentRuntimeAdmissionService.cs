@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts.Experiments;
+using MesControlAgv.Contracts.Materials;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Entities;
@@ -20,7 +21,8 @@ public sealed class ExperimentRuntimeAdmissionService(
     ExperimentResourceCatalog resourceCatalog,
     ExperimentSchedulingMutationGate mutationGate,
     ExperimentRuntimeLeaseLifecycle leaseLifecycle,
-    TimeProvider timeProvider) : IExperimentRuntimeAdmissionService
+    TimeProvider timeProvider,
+    IMaterialManagementService materials) : IExperimentRuntimeAdmissionService
 {
     private const string AdmittedEventType = "ExperimentJobAdmitted";
     private const string RejectedEventType = "ExperimentJobAdmissionRejected";
@@ -113,6 +115,15 @@ public sealed class ExperimentRuntimeAdmissionService(
                         "One or more requested resources already have an active runtime lease.",
                         signal.Resources),
                     cancellationToken);
+            }
+            catch
+            {
+                database.ChangeTracker.Clear();
+                await ReleaseMaterialAfterAdmissionFailureAsync(
+                    experimentJobId,
+                    metadata,
+                    CancellationToken.None);
+                throw;
             }
         }
         finally
@@ -405,6 +416,10 @@ public sealed class ExperimentRuntimeAdmissionService(
         AdmissionRejection rejection,
         CancellationToken cancellationToken)
     {
+        await ReleaseMaterialAfterAdmissionFailureAsync(
+            experimentJobId,
+            metadata,
+            cancellationToken);
         var (job, schedule) = await LoadProjectionAsync(experimentJobId, cancellationToken);
         var result = new ExperimentJobAdmissionResult
         {
@@ -430,6 +445,17 @@ public sealed class ExperimentRuntimeAdmissionService(
             throw;
         }
     }
+
+    private Task<MaterialReleaseResult> ReleaseMaterialAfterAdmissionFailureAsync(
+        Guid experimentJobId,
+        NormalizedMetadata metadata,
+        CancellationToken cancellationToken) =>
+        materials.ReleaseForExperimentAsync(
+            experimentJobId,
+            DeriveRequestId(metadata.RequestId, "material-release-admission-failure"),
+            metadata.Actor,
+            metadata.Reason,
+            cancellationToken);
 
     private ExperimentSchedulingAuditRecord AddAdmissionAudit(
         NormalizedMetadata metadata,
@@ -580,6 +606,12 @@ public sealed class ExperimentRuntimeAdmissionService(
             metadata.Reason
         });
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+    }
+
+    private static Guid DeriveRequestId(Guid source, string purpose)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(source.ToString("N") + "\u001f" + purpose));
+        return new Guid(bytes.AsSpan(0, 16));
     }
 
     private sealed record NormalizedMetadata(Guid RequestId, string Actor, string Reason);

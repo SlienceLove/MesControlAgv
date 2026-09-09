@@ -621,7 +621,8 @@ public sealed class ExperimentSchedulingCommandApiTests : IClassFixture<MesWebAp
             TimeProvider.System,
             profile,
             catalog,
-            new ExperimentSchedulingMutationGate());
+            new ExperimentSchedulingMutationGate(),
+            new MaterialManagementService(database, new MaterialOperationCoordinator()));
         var scheduled = await commandService.ScheduleJobAsync(
             jobId,
             new ScheduleExperimentJobRequest
@@ -704,16 +705,10 @@ public sealed class ExperimentSchedulingCommandApiTests : IClassFixture<MesWebAp
                 {
                     ["method"] = "anion"
                 },
-                MaterialRequirements =
-            [
-                new ExperimentMaterialRequirement
-                {
-                    MaterialId = "SAMPLE-TUBE",
-                    Name = "Sample tube",
-                    Quantity = 1,
-                    Unit = "piece"
-                }
-            ],
+                // Material reservation is covered by the material-management
+                // integration tests; these scheduling tests exercise resource
+                // lifecycle behavior without requiring inventory fixtures.
+                MaterialRequirements = [],
                 ResourceRequirements =
             [
                 new ExperimentResourceRequirement

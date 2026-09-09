@@ -18,7 +18,8 @@ public sealed class ExperimentSchedulingCommandService(
     TimeProvider timeProvider,
     ProfileConfiguration profile,
     ExperimentResourceCatalog resourceCatalog,
-    ExperimentSchedulingMutationGate mutationGate) : IExperimentSchedulingCommandService
+    ExperimentSchedulingMutationGate mutationGate,
+    IMaterialManagementService materials) : IExperimentSchedulingCommandService
 {
     public const string PlanValidatorVersion = "1.0";
 
@@ -576,6 +577,27 @@ public sealed class ExperimentSchedulingCommandService(
             }
         }
 
+        var materialRequirements = ExperimentSchedulingPersistence.Deserialize(
+            plan.MaterialRequirementsJson,
+            Array.Empty<ExperimentMaterialRequirement>())
+            .Where(item => item.Quantity is > 0)
+            .ToArray();
+        var materialRelease = await materials.ReleaseForExperimentAsync(
+            job.JobId,
+            DeriveRequestId(metadata.RequestId, "material-release-before-schedule"),
+            metadata.Actor,
+            metadata.Reason,
+            cancellationToken);
+        var materialReservation = blockingReasons.Count == 0
+            ? await materials.ReserveForExperimentAsync(
+                job.JobId,
+                materialRequirements,
+                DeriveRequestId(metadata.RequestId, "material-reserve"),
+                metadata.Actor,
+                metadata.Reason,
+                cancellationToken)
+            : null;
+
         var result = ExperimentSchedulingPersistence.MapScheduleEntry(
             entry,
             newReservations.Select(ExperimentSchedulingPersistence.MapReservation).ToArray());
@@ -597,7 +619,10 @@ public sealed class ExperimentSchedulingCommandService(
                 ["resourceKeys"] = FormatResourceKeys(resources),
                 ["blockingReasonCount"] = blockingReasons.Count.ToString(),
                 ["previousReservationCount"] = priorReservations.Count.ToString(),
-                ["previousResourceKeys"] = FormatResourceKeys(priorReservations)
+                ["previousResourceKeys"] = FormatResourceKeys(priorReservations),
+                ["materialRequirementCount"] = materialRequirements.Length.ToString(),
+                ["materialReleasedCount"] = materialRelease.ReleasedCount.ToString(),
+                ["materialReservedCount"] = materialReservation?.Bindings.Count.ToString() ?? "0"
             });
         await database.SaveChangesAsync(cancellationToken);
         return result;
@@ -639,6 +664,12 @@ public sealed class ExperimentSchedulingCommandService(
             "The scheduled job has no schedule entry.");
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var released = await ReleaseReservationsAsync(entry.ScheduleEntryId, now, cancellationToken);
+        var materialReleased = await materials.ReleaseForExperimentAsync(
+            job.JobId,
+            DeriveRequestId(metadata.RequestId, "material-release"),
+            metadata.Actor,
+            metadata.Reason,
+            cancellationToken);
         entry.Status = ScheduleEntryStatus.Draft.ToString();
         entry.RequestedResourcesJson = "[]";
         entry.BlockingReasonsJson = "[]";
@@ -660,7 +691,8 @@ public sealed class ExperimentSchedulingCommandService(
             details: new Dictionary<string, string?>
             {
                 ["releasedReservationCount"] = released.Count.ToString(),
-                ["releasedResourceKeys"] = FormatResourceKeys(released)
+                ["releasedResourceKeys"] = FormatResourceKeys(released),
+                ["releasedMaterialCount"] = materialReleased.ReleasedCount.ToString()
             });
         await database.SaveChangesAsync(cancellationToken);
         return result;
@@ -712,6 +744,12 @@ public sealed class ExperimentSchedulingCommandService(
             entry.BlockingReasonsJson = "[]";
             entry.UpdatedAtUtc = now;
         }
+        var materialReleased = await materials.ReleaseForExperimentAsync(
+            job.JobId,
+            DeriveRequestId(metadata.RequestId, "material-release"),
+            metadata.Actor,
+            metadata.Reason,
+            cancellationToken);
         job.Status = ExperimentJobStatus.Cancelled.ToString();
         job.CompletedAtUtc = now;
         job.UpdatedAtUtc = now;
@@ -731,7 +769,8 @@ public sealed class ExperimentSchedulingCommandService(
             {
                 ["previousStatus"] = status.ToString(),
                 ["releasedReservationCount"] = released.Count.ToString(),
-                ["releasedResourceKeys"] = FormatResourceKeys(released)
+                ["releasedResourceKeys"] = FormatResourceKeys(released),
+                ["releasedMaterialCount"] = materialReleased.ReleasedCount.ToString()
             });
         await database.SaveChangesAsync(cancellationToken);
         return result;
@@ -1423,14 +1462,34 @@ public sealed class ExperimentSchedulingCommandService(
         CancellationToken cancellationToken)
     {
         await mutationGate.EnterAsync(cancellationToken);
+        var transaction = database.Database.CurrentTransaction is null
+            ? await database.Database.BeginTransactionAsync(cancellationToken)
+            : null;
         try
         {
-            return await action();
+            var result = await action();
+            if (transaction is not null)
+                await transaction.CommitAsync(cancellationToken);
+            return result;
+        }
+        catch
+        {
+            if (transaction is not null)
+                await transaction.RollbackAsync(CancellationToken.None);
+            throw;
         }
         finally
         {
+            if (transaction is not null)
+                await transaction.DisposeAsync();
             mutationGate.Exit();
         }
+    }
+
+    private static Guid DeriveRequestId(Guid source, string purpose)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(source.ToString("N") + "\u001f" + purpose));
+        return new Guid(bytes.AsSpan(0, 16));
     }
 
     private sealed record NormalizedMetadata(Guid RequestId, string Actor, string Reason);
