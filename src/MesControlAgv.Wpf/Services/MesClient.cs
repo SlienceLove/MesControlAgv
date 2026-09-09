@@ -1,9 +1,11 @@
 ﻿using System.Net;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Globalization;
 using System.Text.Json;
 using MesControlAgv.Contracts;
 using MesControlAgv.Contracts.Experiments;
+using MesControlAgv.Contracts.Materials;
 using MesControlAgv.Contracts.Workflows;
 using ContractAgvSnapshot = MesControlAgv.Contracts.AgvSnapshotResponse;
 using ContractAgvFleetStatus = MesControlAgv.Contracts.AgvFleetStatusResponse;
@@ -33,6 +35,117 @@ public sealed class MesClient(HttpClient client) : IMesClient
             $"api/dashboard/kpi?date={date:yyyy-MM-dd}", cancellationToken)
             ?? throw new InvalidOperationException("MES returned no KPI dashboard.");
         return ToKpiDashboard(dashboard);
+    }
+
+    public async Task<IReadOnlyList<MaterialCatalogItem>> GetMaterialCatalogAsync(
+        MaterialKind? kind,
+        string? search,
+        CancellationToken cancellationToken)
+    {
+        var query = BuildMaterialQuery(("kind", kind is null or MaterialKind.Unknown ? null : kind.Value.ToString()), ("search", search));
+        return await client.GetFromJsonAsync<List<MaterialCatalogItem>>(
+            $"api/materials/catalog{query}", cancellationToken) ?? [];
+    }
+
+    public async Task<IReadOnlyList<WarehouseLocation>> GetMaterialLocationsAsync(
+        CancellationToken cancellationToken) =>
+        await client.GetFromJsonAsync<List<WarehouseLocation>>(
+            "api/materials/locations", cancellationToken) ?? [];
+
+    public async Task<IReadOnlyList<SampleMaterial>> GetSamplesAsync(
+        string? barcode,
+        SampleLifecycleStatus? status,
+        string? search,
+        CancellationToken cancellationToken)
+    {
+        var query = BuildMaterialQuery(
+            ("barcode", barcode),
+            ("status", status is null or SampleLifecycleStatus.Unknown ? null : status.Value.ToString()),
+            ("search", search));
+        return await client.GetFromJsonAsync<List<SampleMaterial>>(
+            $"api/materials/samples{query}", cancellationToken) ?? [];
+    }
+
+    public async Task<IReadOnlyList<MaterialLotInventory>> GetMaterialInventoryAsync(
+        string? materialCode,
+        string? lotCode,
+        string? locationCode,
+        bool includeQuarantined,
+        CancellationToken cancellationToken)
+    {
+        var query = BuildMaterialQuery(
+            ("materialCode", materialCode),
+            ("lotCode", lotCode),
+            ("locationCode", locationCode),
+            ("includeQuarantined", includeQuarantined ? "true" : null));
+        return await client.GetFromJsonAsync<List<MaterialLotInventory>>(
+            $"api/materials/inventory{query}", cancellationToken) ?? [];
+    }
+
+    public async Task<MaterialImportPreview> PreviewMaterialImportAsync(
+        MaterialImportRequest request,
+        CancellationToken cancellationToken) =>
+        await PostMaterialAsync<MaterialImportPreview>(
+            "api/materials/import/preview",
+            request,
+            cancellationToken);
+
+    public async Task<MaterialCommandResult<MaterialImportResult>> ImportMaterialsAsync(
+        MaterialImportRequest request,
+        CancellationToken cancellationToken) =>
+        await PostMaterialAsync<MaterialCommandResult<MaterialImportResult>>(
+            "api/materials/import",
+            request,
+            cancellationToken);
+
+    public async Task<MaterialScanResult> ScanMaterialAsync(
+        MaterialScanRequest request,
+        CancellationToken cancellationToken) =>
+        await PostMaterialAsync<MaterialScanResult>(
+            "api/materials/scan",
+            request,
+            cancellationToken);
+
+    public async Task<MaterialCommandResult<MaterialLotInventory>> ReceiveMaterialAsync(
+        ReceiveMaterialRequest request,
+        CancellationToken cancellationToken) =>
+        await PostMaterialAsync<MaterialCommandResult<MaterialLotInventory>>(
+            "api/materials/receive",
+            request,
+            cancellationToken);
+
+    public async Task<MaterialCommandResult<MaterialLotInventory>> MoveMaterialAsync(
+        MoveMaterialRequest request,
+        CancellationToken cancellationToken) =>
+        await PostMaterialAsync<MaterialCommandResult<MaterialLotInventory>>(
+            "api/materials/move",
+            request,
+            cancellationToken);
+
+    public async Task<MaterialCommandResult<MaterialLotInventory>> AdjustMaterialAsync(
+        AdjustMaterialRequest request,
+        CancellationToken cancellationToken) =>
+        await PostMaterialAsync<MaterialCommandResult<MaterialLotInventory>>(
+            "api/materials/adjust",
+            request,
+            cancellationToken);
+
+    public async Task<IReadOnlyList<MaterialTraceEvent>> TraceMaterialAsync(
+        string? barcode,
+        string? materialCode,
+        string? lotCode,
+        Guid? experimentJobId,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var query = BuildMaterialQuery(
+            ("barcode", barcode),
+            ("materialCode", materialCode),
+            ("lotCode", lotCode),
+            ("experimentJobId", experimentJobId?.ToString()),
+            ("limit", Math.Clamp(limit, 1, 500).ToString(CultureInfo.InvariantCulture)));
+        return await client.GetFromJsonAsync<List<MaterialTraceEvent>>(
+            $"api/materials/trace{query}", cancellationToken) ?? [];
     }
 
     public async Task<DashboardTaskDetail?> GetTaskDetailAsync(Guid taskId, CancellationToken cancellationToken)
@@ -1175,6 +1288,59 @@ public sealed class MesClient(HttpClient client) : IMesClient
             throw await CreateExperimentApiExceptionAsync(response, cancellationToken);
         return await response.Content.ReadFromJsonAsync<T>(cancellationToken)
             ?? throw new InvalidOperationException("MES returned no experiment scheduling result.");
+    }
+
+    private async Task<T> PostMaterialAsync<T>(
+        string path,
+        object body,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.PostAsJsonAsync(path, body, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw await CreateMaterialApiExceptionAsync(response, cancellationToken);
+        }
+
+        return await response.Content.ReadFromJsonAsync<T>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no material-management response.");
+    }
+
+    private static async Task<InvalidOperationException> CreateMaterialApiExceptionAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var document = await JsonDocument.ParseAsync(
+                await response.Content.ReadAsStreamAsync(cancellationToken),
+                cancellationToken: cancellationToken);
+            var body = document.RootElement;
+            var detail = body.TryGetProperty("detail", out var detailElement)
+                ? detailElement.GetString()
+                : null;
+            var code = body.TryGetProperty("code", out var codeElement)
+                ? codeElement.GetString()
+                : null;
+            var message = string.IsNullOrWhiteSpace(detail)
+                ? $"MES 物料操作失败（HTTP {(int)response.StatusCode}）。"
+                : detail;
+            if (!string.IsNullOrWhiteSpace(code)) message = $"[{code}] {message}";
+            return new InvalidOperationException(message);
+        }
+        catch (JsonException)
+        {
+            return new InvalidOperationException(
+                $"MES 物料操作失败（HTTP {(int)response.StatusCode}）。");
+        }
+    }
+
+    private static string BuildMaterialQuery(params (string Name, string? Value)[] values)
+    {
+        var parts = values
+            .Where(item => !string.IsNullOrWhiteSpace(item.Value))
+            .Select(item => $"{Uri.EscapeDataString(item.Name)}={Uri.EscapeDataString(item.Value!)}")
+            .ToArray();
+        return parts.Length == 0 ? string.Empty : $"?{string.Join("&", parts)}";
     }
 
     private static async Task<InvalidOperationException> CreateExperimentApiExceptionAsync(

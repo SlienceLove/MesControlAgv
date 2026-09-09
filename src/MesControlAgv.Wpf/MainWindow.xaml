@@ -141,6 +141,11 @@
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="KPI 看板" />
                                 </RadioButton>
+                                <RadioButton Tag="MaterialManagementTab"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="物料管理" />
+                                </RadioButton>
                                 <RadioButton Tag="ExperimentSchedulingTab"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
@@ -631,6 +636,9 @@
     <TabItem x:Name="MapDashboardTab" Header="地图视图" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
             <views:MapDashboardView x:Name="MapDashboardView" />
         </TabItem>
+    <TabItem x:Name="MaterialManagementTab" Header="物料管理" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <views:MaterialManagementView DataContext="{Binding Materials}" x:Name="MaterialManagementView" />
+    </TabItem>
                 </TabControl>
             </Border>
         </Grid>

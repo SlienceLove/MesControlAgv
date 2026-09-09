@@ -80,6 +80,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         ShineLabDeviceStatus = new ShineLabDeviceStatusViewModel(_mes);
         ShineLabTaskDispatch = new ShineLabTaskDispatchViewModel(_mes);
         ShineLabSequenceImport = new ShineLabSequenceImportViewModel();
+        Materials = new MaterialManagementViewModel(_mes);
         _modules = new ControlCenterViewModel(WorkflowEditor, ModuleRegistry);
         _modules.AgvCommunication.ConfigureRuntimeMode(effectiveRuntimeMode);
         DiagnosticAudit = diagnosticAudit ?? new OfflineDiagnosticAuditTrail();
@@ -89,6 +90,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         ObserveOfflineState("readiness", Readiness.OfflineState);
         ObserveOfflineState("batch-import", _modules.BatchImport.OfflineState);
         ObserveOfflineState("shinelab-import", ShineLabSequenceImport.OfflineState);
+        ObserveOfflineState("materials", Materials.OfflineState);
         DiagnosticAudit.Record(
             "startup",
             "configuration",
@@ -148,6 +150,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ShineLabDeviceStatusViewModel ShineLabDeviceStatus { get; }
     public ShineLabTaskDispatchViewModel ShineLabTaskDispatch { get; }
     public ShineLabSequenceImportViewModel ShineLabSequenceImport { get; }
+    public MaterialManagementViewModel Materials { get; }
     public StartupConfigurationReport StartupDiagnostics { get; }
     public OfflineDiagnosticAuditTrail DiagnosticAudit { get; }
     public DiagnosticsCenterViewModel Diagnostics { get; }
@@ -412,6 +415,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public async Task StartAsync()
     {
         await RefreshAsync();
+        await Materials.RefreshAsync(_shutdown.Token);
         await ShineLabTaskDispatch.RefreshTasksAsync();
         await Readiness.RefreshAsync(_shutdown.Token);
         // When MES is unavailable (for example while the field Ethernet is
@@ -1116,6 +1120,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         WorkflowEditor.Dispose();
         WorkflowRunMonitor.Dispose();
         AuboArm.Dispose();
+        Materials.Dispose();
         _refreshGate.Dispose();
         _actionGate.Dispose();
         _shutdown.Dispose();
