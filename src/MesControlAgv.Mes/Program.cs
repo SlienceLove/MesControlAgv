@@ -807,6 +807,13 @@ static async Task EnsureMaterialManagementTablesAsync(MesDbContext database)
         await connection.OpenAsync();
     }
 
+    var hadMaterialOperationsTable = false;
+    await using (var tableProbe = connection.CreateCommand())
+    {
+        tableProbe.CommandText = "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'MaterialOperations');";
+        hadMaterialOperationsTable = Convert.ToInt64(await tableProbe.ExecuteScalarAsync()) != 0;
+    }
+
     var tableStatements = new[]
     {
         """
@@ -1004,7 +1011,7 @@ static async Task EnsureMaterialManagementTablesAsync(MesDbContext database)
         await command.ExecuteNonQueryAsync();
     }
 
-    await EnsureMaterialManagementSchemaCompatibilityAsync(connection);
+    await EnsureMaterialManagementSchemaCompatibilityAsync(connection, hadMaterialOperationsTable);
 
     const string defaultLocationId = "00000000-0000-0000-0000-000000000001";
     await using var seed = connection.CreateCommand();
@@ -1028,7 +1035,8 @@ static async Task EnsureMaterialManagementTablesAsync(MesDbContext database)
 /// A future migration can rebuild the tables without changing this contract.
 /// </summary>
 static async Task EnsureMaterialManagementSchemaCompatibilityAsync(
-    System.Data.Common.DbConnection connection)
+    System.Data.Common.DbConnection connection,
+    bool hadMaterialOperationsTable)
 {
     await using (var pragma = connection.CreateCommand())
     {
@@ -1043,9 +1051,13 @@ static async Task EnsureMaterialManagementSchemaCompatibilityAsync(
         await version.ExecuteNonQueryAsync();
     }
 
+    if (hadMaterialOperationsTable)
+        await MaterialSchemaCompatibilityChecker.EnsureNoOrphanForeignKeysAsync(connection);
+
     // Preserve material audit rows created by the pre-operation-record build.
-    await using (var backfill = connection.CreateCommand())
+    if (!hadMaterialOperationsTable)
     {
+      await using var backfill = connection.CreateCommand();
         backfill.CommandText =
             """
             INSERT OR IGNORE INTO MaterialOperations
@@ -1066,7 +1078,6 @@ static async Task EnsureMaterialManagementSchemaCompatibilityAsync(
             """;
         await backfill.ExecuteNonQueryAsync();
     }
-
     await MaterialSchemaCompatibilityChecker.EnsureNoOrphanForeignKeysAsync(connection);
 
     var foreignKeys = new[]

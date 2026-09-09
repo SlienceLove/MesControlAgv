@@ -292,7 +292,7 @@ public sealed class MaterialManagementService : IMaterialManagementService
 
             var existing = await _database.SampleMaterials
                 .AsNoTracking()
-                .SingleOrDefaultAsync(sample => sample.Barcode == barcode, cancellationToken);
+                .SingleOrDefaultAsync(sample => sample.Barcode.ToUpper() == barcode, cancellationToken);
             if (existing is not null)
             {
                 if (!string.Equals(existing.SampleBatchId, batch, StringComparison.OrdinalIgnoreCase) ||
@@ -308,7 +308,7 @@ public sealed class MaterialManagementService : IMaterialManagementService
                 continue;
             }
 
-            if (await _database.MaterialLots.AsNoTracking().AnyAsync(lot => lot.Barcode == barcode, cancellationToken))
+            if (await _database.MaterialLots.AsNoTracking().AnyAsync(lot => lot.Barcode != null && lot.Barcode.ToUpper() == barcode, cancellationToken))
             {
                 issues.Add(ImportIssue(rowNumber, MaterialIssueCodes.BarcodeAlreadyExists, "條碼已被耗材批次使用。", nameof(row.Barcode)));
                 continue;
@@ -363,12 +363,12 @@ public sealed class MaterialManagementService : IMaterialManagementService
                     issues.Add(ImportIssue(rowNumber, MaterialIssueCodes.BarcodeAlreadyExists, "導入資料中存在跨類型重複條碼。", nameof(row.Barcode)));
                     continue;
                 }
-                if (await _database.SampleMaterials.AnyAsync(item => item.Barcode == lotBarcode, cancellationToken))
+                if (await _database.SampleMaterials.AnyAsync(item => item.Barcode.ToUpper() == lotBarcode, cancellationToken))
                 {
                     issues.Add(ImportIssue(rowNumber, MaterialIssueCodes.BarcodeAlreadyExists, "條碼已被樣品使用。", nameof(row.Barcode)));
                     continue;
                 }
-                if (await _database.MaterialLots.AnyAsync(item => item.Barcode == lotBarcode && !(item.MaterialCode == materialCode && item.LotCode == lotCode), cancellationToken))
+                if (await _database.MaterialLots.AnyAsync(item => item.Barcode != null && item.Barcode.ToUpper() == lotBarcode && !(item.MaterialCode.ToUpper() == materialCode && item.LotCode.ToUpper() == lotCode), cancellationToken))
                 {
                     issues.Add(ImportIssue(rowNumber, MaterialIssueCodes.BarcodeAlreadyExists, "條碼已被其他耗材批次使用。", nameof(row.Barcode)));
                     continue;
@@ -383,7 +383,14 @@ public sealed class MaterialManagementService : IMaterialManagementService
 
             var existingLot = await _database.MaterialLots
                 .AsNoTracking()
-                .SingleOrDefaultAsync(lot => lot.MaterialCode == materialCode && lot.LotCode == lotCode, cancellationToken);
+                .SingleOrDefaultAsync(lot => lot.MaterialCode.ToUpper() == materialCode && lot.LotCode.ToUpper() == lotCode, cancellationToken);
+            var existingCatalog = await _database.MaterialCatalog.AsNoTracking()
+                .SingleOrDefaultAsync(item => item.MaterialCode.ToUpper() == materialCode, cancellationToken);
+            if (existingCatalog is not null && !existingCatalog.IsEnabled)
+            {
+                issues.Add(ImportIssue(rowNumber, MaterialIssueCodes.MaterialDisabled, "物料已停用，不能导入库存。", nameof(row.MaterialCode)));
+                continue;
+            }
             if (existingLot is not null)
             {
                 if (existingLot.IsQuarantined)
@@ -569,9 +576,21 @@ public sealed class MaterialManagementService : IMaterialManagementService
             .Take(limit)
             .ToListAsync(cancellationToken);
 
-        var scans = await _database.BarcodeScanEvents
-            .AsNoTracking()
-            .Where(item => normalizedBarcode == null || item.NormalizedCode == normalizedBarcode)
+        var scanQuery = _database.BarcodeScanEvents.AsNoTracking().AsQueryable();
+        if (normalizedBarcode is not null)
+            scanQuery = scanQuery.Where(item => item.NormalizedCode.ToUpper() == normalizedBarcode);
+        if (experimentJobId is not null)
+            scanQuery = scanQuery.Where(_ => false);
+        if (normalizedMaterial is not null || normalizedLot is not null)
+        {
+            scanQuery = scanQuery.Where(item =>
+                item.LotId != null && _database.MaterialLots.Any(lot => lot.LotId == item.LotId &&
+                    (normalizedMaterial == null || lot.MaterialCode.ToUpper() == normalizedMaterial) &&
+                    (normalizedLot == null || lot.LotCode.ToUpper() == normalizedLot)) ||
+                item.SampleId != null && _database.SampleMaterials.Any(sample => sample.SampleId == item.SampleId &&
+                    (normalizedMaterial == null || sample.MaterialCode != null && sample.MaterialCode.ToUpper() == normalizedMaterial)));
+        }
+        var scans = await scanQuery
             .OrderByDescending(item => item.OccurredAtUtc)
             .Take(limit)
             .ToListAsync(cancellationToken);
@@ -863,17 +882,24 @@ public sealed class MaterialManagementService : IMaterialManagementService
         CancellationToken cancellationToken)
     {
         var normalizedCode = Normalize(rawCode);
-        var sample = await _database.SampleMaterials
-            .SingleOrDefaultAsync(item => item.Barcode == normalizedCode, cancellationToken);
-        var lot = await _database.MaterialLots
-            .SingleOrDefaultAsync(item => item.Barcode == normalizedCode || item.LotCode == normalizedCode, cancellationToken);
+        var samples = await _database.SampleMaterials
+            .Where(item => item.Barcode.ToUpper() == normalizedCode)
+            .Take(2)
+            .ToListAsync(cancellationToken);
+        var lots = await _database.MaterialLots
+            .Where(item => item.Barcode != null && item.Barcode.ToUpper() == normalizedCode || item.LotCode.ToUpper() == normalizedCode)
+            .Take(3)
+            .ToListAsync(cancellationToken);
+        var duplicate = samples.Count > 1 || lots.Count > 1 || samples.Count > 0 && lots.Count > 0;
+        var sample = samples.Count == 1 ? samples[0] : null;
+        var lot = lots.Count == 1 ? lots[0] : null;
         var requestedKind = request.Kind;
         var actualKind = sample is not null ? MaterialScanKind.Sample : lot is not null ? MaterialScanKind.ConsumableLot : MaterialScanKind.Unknown;
         var issueCode = (string?)null;
         var message = (string?)null;
         var resolved = true;
 
-        if (sample is not null && lot is not null)
+        if (duplicate)
         {
             resolved = false;
             issueCode = MaterialIssueCodes.BarcodeAlreadyExists;
@@ -1649,9 +1675,12 @@ public sealed class MaterialManagementService : IMaterialManagementService
                           join location in _database.WarehouseLocations.AsNoTracking()
                               on balance.LocationId equals location.LocationId
                           where balance.LotId == lotId
-                          select new { balance, location }).ToListAsync(cancellationToken);
-        return rows.OrderByDescending(item => item.balance.OnHand)
+                          select new { balance, location })
+            .OrderByDescending(item => (double)item.balance.OnHand)
             .ThenBy(item => item.location.LocationCode)
+            .Take(256)
+            .ToListAsync(cancellationToken);
+        return rows
             .Select(item => item.location)
             .FirstOrDefault();
     }
@@ -1660,9 +1689,11 @@ public sealed class MaterialManagementService : IMaterialManagementService
         Guid lotId,
         CancellationToken cancellationToken)
     {
-        var rows = await _database.InventoryBalances.AsNoTracking()
-            .Where(balance => balance.LotId == lotId).ToListAsync(cancellationToken);
-        return rows.OrderByDescending(balance => balance.OnHand).FirstOrDefault();
+        return await _database.InventoryBalances.AsNoTracking()
+            .Where(balance => balance.LotId == lotId)
+            .OrderByDescending(balance => (double)balance.OnHand)
+            .Take(256)
+            .FirstOrDefaultAsync(cancellationToken);
     }
 
     private async Task<MaterialLotInventory> ProjectInventoryAsync(
@@ -1896,7 +1927,7 @@ public sealed class MaterialManagementService : IMaterialManagementService
         }
 
         if (await _database.MaterialLots.AnyAsync(
-                item => item.Barcode == normalized && (currentLotId == null || item.LotId != currentLotId),
+                item => item.Barcode != null && item.Barcode.ToUpper() == normalized && (currentLotId == null || item.LotId != currentLotId),
                 cancellationToken))
         {
             throw Issue(MaterialIssueCodes.LotAlreadyExists, "耗材条码已被其他批次使用。", StatusCodes.Status409Conflict);
@@ -1907,7 +1938,7 @@ public sealed class MaterialManagementService : IMaterialManagementService
     {
         if (string.IsNullOrWhiteSpace(barcode)) return;
         var normalized = Normalize(barcode);
-        if (await _database.SampleMaterials.AnyAsync(item => item.Barcode == normalized, cancellationToken) ||
+        if (await _database.SampleMaterials.AnyAsync(item => item.Barcode.ToUpper() == normalized, cancellationToken) ||
             _database.ChangeTracker.Entries<SampleMaterialRecord>().Any(entry => string.Equals(entry.Entity.Barcode, normalized, StringComparison.OrdinalIgnoreCase)))
             throw Issue(MaterialIssueCodes.BarcodeAlreadyExists, "條碼已被樣品使用。", StatusCodes.Status409Conflict);
     }

@@ -365,14 +365,17 @@ public sealed class MaterialManagementPersistenceTests : IClassFixture<MesWebApp
         }
         await using (var command = connection.CreateCommand())
         {
-            command.CommandText = "PRAGMA foreign_keys=OFF; INSERT INTO MaterialLots (LotId, MaterialId, MaterialCode, LotCode, IsQuarantined, CreatedAtUtc, UpdatedAtUtc) VALUES ($lot, $material, 'ORPHAN', 'ORPHAN', 0, $now, $now); PRAGMA foreign_keys=ON;";
+            command.CommandText = "PRAGMA foreign_keys=OFF; INSERT INTO MaterialLots (LotId, MaterialId, MaterialCode, LotCode, IsQuarantined, CreatedAtUtc, UpdatedAtUtc) VALUES ($lot, $material, 'ORPHAN', 'ORPHAN', 0, $now, $now); INSERT INTO InventoryTransactions (Id, RequestId, LineKey, TransactionKind, Actor, DetailsJson, OccurredAtUtc) VALUES ($tx, $request, 'orphan', 'Adjustment', 'test', '{}', $now); PRAGMA foreign_keys=ON;";
             command.Parameters.Add(new SqliteParameter("$lot", Guid.NewGuid().ToString().ToUpperInvariant()));
             command.Parameters.Add(new SqliteParameter("$material", Guid.NewGuid().ToString().ToUpperInvariant()));
+            command.Parameters.Add(new SqliteParameter("$tx", Guid.NewGuid().ToString().ToUpperInvariant()));
+            command.Parameters.Add(new SqliteParameter("$request", Guid.NewGuid().ToString().ToUpperInvariant()));
             command.Parameters.Add(new SqliteParameter("$now", DateTime.UtcNow.ToString("O")));
             await command.ExecuteNonQueryAsync();
         }
         var orphans = await MaterialSchemaCompatibilityChecker.FindOrphanForeignKeysAsync(connection);
         Assert.Contains(orphans, item => item.StartsWith("MaterialLots.MaterialId", StringComparison.Ordinal));
+        Assert.Contains(orphans, item => item.StartsWith("InventoryTransactions.RequestId", StringComparison.Ordinal));
         await Assert.ThrowsAsync<InvalidOperationException>(() => MaterialSchemaCompatibilityChecker.EnsureNoOrphanForeignKeysAsync(connection));
     }
 
