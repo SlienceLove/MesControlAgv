@@ -39,3 +39,15 @@ Offline verification commands and actual output:
   - `已成功生成。0 个警告 0 个错误`
 
 No field IP/port was accessed, no real service was started, and no AGV/AUBO/Modbus/DI/DO write was sent. Existing unrelated WPF changes, artifacts, and user deletion items were preserved.
+
+### Fix round 1 verification rerun (2026-09-09)
+
+Command:
+
+`dotnet test tests/MesControlAgv.Mes.Tests/MesControlAgv.Mes.Tests.csproj --no-restore --filter "FullyQualifiedName~PhysicalSafetyActionServiceTests|FullyQualifiedName~WorkflowFieldNavigationWorkerTests" --logger "console;verbosity=normal" -m:1`
+
+Actual result:
+
+`测试运行成功。测试总数: 17；通过数: 17；失败数: 0。总时间: 2.7949 秒。`
+
+The rerun remained offline and used only local fakes/SQLite; no field IP/port was accessed and no real device/service or AGV/AUBO/Modbus/DI/DO write was used.
