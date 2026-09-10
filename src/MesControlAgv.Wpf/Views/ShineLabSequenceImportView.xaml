@@ -20,18 +20,18 @@
 
         <Grid Margin="0,0,0,12">
             <StackPanel>
-                <TextBlock FontSize="22" FontWeight="SemiBold" Text="离子色谱样品任务导入" />
+                <TextBlock FontSize="22" FontWeight="SemiBold" Text="离子色谱直连任务导入" />
                 <TextBlock Margin="0,4,0,0" Foreground="Gray" TextWrapping="Wrap"
-                           Text="解析 ShineLab 样品序列，导入前执行字段校验；控制电脑只接受追加语义，运行仍需现场人工确认。" />
+                           Text="解析 CSV/XLSX 样品序列，生成下游协议 Config/Command 预览，并支持选中一条样品执行 Config 预检。" />
                 <WrapPanel Margin="0,10,0,0">
                 <Button Height="34" Padding="14,0" Click="ImportShineLabSequence_Click" Content="选择样品任务文件" />
-                <Button x:Name="SubmitButton" Height="34" Margin="8,0,0,0" Padding="14,0" Command="{Binding ShineLabSequenceImport.SubmitCommand}" Content="导入到 ShineLab" />
+                <Button x:Name="SubmitButton" Height="34" Margin="8,0,0,0" Padding="14,0" Visibility="Collapsed" Command="{Binding ShineLabSequenceImport.SubmitCommand}" Content="导入到 ShineLab" />
                 <Button Height="34" Margin="8,0,0,0" Padding="14,0" Command="{Binding ShineLabSequenceImport.ClearCommand}" Content="清空" />
                 </WrapPanel>
             </StackPanel>
         </Grid>
 
-        <Grid Grid.Row="1" Margin="0,0,0,12">
+        <Grid Grid.Row="1" Margin="0,0,0,12" Visibility="Collapsed">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="220" />
@@ -63,6 +63,8 @@
                 <ColumnDefinition Width="*" MinWidth="0" />
                 <ColumnDefinition Width="320" MinWidth="0" />
             </Grid.ColumnDefinitions>
+            <TabControl Grid.Row="0" Grid.Column="0" MinWidth="0">
+                <TabItem Header="旧共享目录导入" Visibility="Collapsed">
             <DataGrid x:Name="SampleTaskGrid" Grid.Row="0" Grid.Column="0" MinWidth="0"
                       AutoGenerateColumns="False" IsReadOnly="True"
                       SelectedItem="{Binding ShineLabSequenceImport.SelectedSampleTask, Mode=TwoWay}"
@@ -77,10 +79,32 @@
                     <DataGridTextColumn Header="色谱方法" Width="2*" MinWidth="120" Binding="{Binding ChromatographyMethod}" />
                 </DataGrid.Columns>
             </DataGrid>
+                </TabItem>
+                <TabItem Header="直连 TCP 任务" IsSelected="True">
+                    <DataGrid x:Name="DirectTaskGrid" MinWidth="0"
+                              AutoGenerateColumns="False" IsReadOnly="True"
+                              SelectedItem="{Binding ShineLabSequenceImport.SelectedDirectTask, Mode=TwoWay}"
+                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                              ScrollViewer.VerticalScrollBarVisibility="Auto"
+                              ItemsSource="{Binding ShineLabSequenceImport.DirectTasks}" HeadersVisibility="Column">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="#" Width="48" Binding="{Binding DisplayIndex}" />
+                            <DataGridTextColumn Header="sampleID" Width="1.2*" MinWidth="120" Binding="{Binding SampleId}" />
+                            <DataGridTextColumn Header="sampleName" Width="1.4*" MinWidth="120" Binding="{Binding SampleName}" />
+                            <DataGridTextColumn Header="type/code" Width="1.0*" MinWidth="90" Binding="{Binding SampleType}" />
+                            <DataGridTextColumn Header="position" Width="0.8*" MinWidth="70" Binding="{Binding Position}" />
+                            <DataGridTextColumn Header="channel" Width="0.7*" MinWidth="64" Binding="{Binding Channel}" />
+                            <DataGridTextColumn Header="method" Width="2.0*" MinWidth="160" Binding="{Binding Methods}" />
+                            <DataGridTextColumn Header="injectionVolume" Width="1.2*" MinWidth="110" Binding="{Binding InjectionVolume}" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </TabItem>
+            </TabControl>
             <ScrollViewer x:Name="SequenceDetailsScrollViewer" Grid.Row="0" Grid.Column="1"
                           Margin="12,0,0,0" MinWidth="0"
                           VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel>
+                    <StackPanel Visibility="Collapsed">
                     <Border Padding="12" Background="#F6F8FA"
                             BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
                         <StackPanel>
@@ -98,6 +122,30 @@
                     <TextBlock Margin="0,4,0,0" Text="{Binding ShineLabSequenceImport.BatchId}" />
                     <TextBlock Margin="0,12,0,0" Foreground="Gray" Text="控制电脑回执" />
                     <TextBlock Margin="0,4,0,0" Text="{Binding ShineLabSequenceImport.ReceiptStatusText}" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Border Margin="0,16,0,0" Padding="10" Background="#FFF8E1"
+                            BorderBrush="#E0B84C" BorderThickness="1" CornerRadius="6">
+                        <StackPanel>
+                            <TextBlock FontWeight="SemiBold" Text="直连 TCP 协议预览" />
+                            <TextBlock Margin="0,4,0,0" Foreground="#805A00" Text="{Binding ShineLabSequenceImport.DirectPreviewStatus}" TextWrapping="Wrap" />
+                            <CheckBox Margin="0,10,0,0" IsChecked="{Binding ShineLabSequenceImport.AllowSingleConfigPreflight}"
+                                      Content="已确认仪器空闲、样品位、通道和方法，仅发送选中样品的 Config" />
+                            <Button x:Name="SingleConfigPreflightButton" Height="32" Margin="0,8,0,0" Padding="12,0"
+                                    Command="{Binding ShineLabSequenceImport.SendSingleConfigPreflightCommand}"
+                                    Content="执行单条 Config 预检（不启动）" />
+                            <TextBlock Margin="0,8,0,0" Foreground="#805A00"
+                                       Text="{Binding ShineLabSequenceImport.DirectPreflightStatus}" TextWrapping="Wrap" />
+                            <TextBlock Margin="0,10,0,0" FontWeight="SemiBold" Text="直连解析问题" />
+                            <ListBox Height="90" Margin="0,4,0,0" ItemsSource="{Binding ShineLabSequenceImport.DirectIssues}" />
+                            <TextBlock Margin="0,10,0,0" FontWeight="SemiBold" Text="选中样品的 Config + Command JSON（只读参考）" />
+                            <TextBox x:Name="DirectProtocolPreviewTextBox" Height="220" Margin="0,4,0,0" IsReadOnly="True" AcceptsReturn="True"
+                                     HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                                     FontFamily="Consolas" FontSize="11" TextWrapping="NoWrap"
+                                     Text="{Binding ShineLabSequenceImport.DirectProtocolPreview, Mode=OneWay}" />
+                            <TextBlock Margin="0,8,0,0" Foreground="#A63A2B" TextWrapping="Wrap"
+                                       Text="加载文件只生成预览；只有点击上方预检按钮才发送单条 Config，绝不自动发送 Command。" />
+                        </StackPanel>
+                    </Border>
                     <TextBlock Margin="0,12,0,0" Foreground="#A63A2B" TextWrapping="Wrap"
                                Text="“运行”不由 MES 触发，需现场人工在 ShineLab 上确认后启动。" />
                 </StackPanel>

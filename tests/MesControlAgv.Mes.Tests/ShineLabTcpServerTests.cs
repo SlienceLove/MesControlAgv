@@ -311,6 +311,99 @@ public sealed class ShineLabTcpServerTests
         }
     }
 
+    [Fact]
+    public async Task Line_json_single_config_preflight_emits_protocol_fields_and_accepts_success_response()
+    {
+        var port = ReservePort();
+        var options = Options.Create(new ShineLabTcpOptions
+        {
+            Enabled = true,
+            ListenAddress = "127.0.0.1",
+            Port = port,
+            StaleAfterSeconds = 10,
+            CommandTimeoutMs = 3000,
+            SendCertificationOnConnect = false
+        });
+        var hub = new ShineLabStatusHub(options);
+        var connectionManager = new ShineLabConnectionManager();
+        var commands = new ShineLabCommandService(connectionManager, options);
+        var server = new ShineLabTcpServer(options, hub, connectionManager, NullLogger<ShineLabTcpServer>.Instance);
+        await server.StartAsync(CancellationToken.None);
+
+        try
+        {
+            using var client = await ConnectWithRetryAsync(port);
+            await using var stream = client.GetStream();
+            var bind = "{\"strID\":\"bind-config-001\",\"strMethod\":\"BindModule\",\"equipmentCode\":\"STN61_01\",\"strCode\":\"\",\"body\":{\"chan\":\"A\"}}\n";
+            await stream.WriteAsync(Encoding.UTF8.GetBytes(bind));
+            await stream.FlushAsync();
+
+            var registrationDeadline = DateTime.UtcNow.AddSeconds(2);
+            while (connectionManager.GetSnapshot().WireFormat != ShineLabWireFormat.LineJson &&
+                   DateTime.UtcNow < registrationDeadline)
+            {
+                await Task.Delay(20);
+            }
+            Assert.Equal(ShineLabWireFormat.LineJson, connectionManager.GetSnapshot().WireFormat);
+
+            var configTask = commands.SendConfigAsync(
+                "STN61_01",
+                new ShineLabConfigRequest(
+                    "task-config-check-001",
+                    [
+                        new ShineLabSampleData(
+                            "LOCAL-STD-001", "标准测试样", "1", 1, "1", "A",
+                            "AS18-M01", "IC-P01", "Normal", 25m, "uL")
+                    ],
+                    "AS18-M01",
+                    "IC-P01",
+                    "Normal"),
+                CancellationToken.None);
+
+            var reader = new ShineLabWireReader();
+            using var config = await ReadWireJsonAsync(stream, reader, TimeSpan.FromSeconds(3));
+            var root = config.RootElement;
+            Assert.Equal("Config", root.GetProperty("strMethod").GetString());
+            Assert.Equal("STN61_01", root.GetProperty("equipmentCode").GetString());
+            var body = root.GetProperty("body");
+            Assert.Equal("task-config-check-001", body.GetProperty("task_uuid").GetString());
+            Assert.Equal("A", body.GetProperty("chan").GetString());
+            var sample = body.GetProperty("sampleData")[0];
+            Assert.Equal("LOCAL-STD-001", sample.GetProperty("sampleID").GetString());
+            Assert.Equal(1, sample.GetProperty("type").GetInt32());
+            Assert.Equal(1, sample.GetProperty("position").GetInt32());
+            Assert.Equal("1", sample.GetProperty("mPos").GetString());
+            Assert.Equal("A", sample.GetProperty("Channel").GetString());
+            Assert.Equal("AS18-M01", sample.GetProperty("instrumentMethod").GetString());
+            Assert.Equal("IC-P01", sample.GetProperty("processingMethod").GetString());
+            Assert.Equal(25m, sample.GetProperty("injectionVolume").GetDecimal());
+            Assert.Equal("uL", sample.GetProperty("injectionVolumeUnit").GetString());
+            Assert.False(root.TryGetProperty("command", out _));
+
+            var strId = root.GetProperty("strID").GetString();
+            var response = JsonSerializer.Serialize(new
+            {
+                strID = strId,
+                strMethod = "Config",
+                equipmentCode = "STN61_01",
+                body = new { result = "Success", msg = "accepted" }
+            }) + "\n";
+            await stream.WriteAsync(Encoding.UTF8.GetBytes(response));
+            await stream.FlushAsync();
+
+            var result = await configTask;
+            Assert.True(result.Success);
+            Assert.Equal("accepted", result.Message);
+            Assert.False(stream.DataAvailable, "Config preflight must not emit a Command frame.");
+        }
+        finally
+        {
+            await server.StopAsync(CancellationToken.None);
+            server.Dispose();
+            connectionManager.Dispose();
+        }
+    }
+
     private static int ReservePort()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);

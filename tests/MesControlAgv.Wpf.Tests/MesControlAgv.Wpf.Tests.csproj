@@ -25,4 +25,10 @@
     <ProjectReference Include="..\..\src\MesControlAgv.Wpf\MesControlAgv.Wpf.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="..\fixtures\shinelab-direct-injection-standard.csv"
+          Link="fixtures\shinelab-direct-injection-standard.csv"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

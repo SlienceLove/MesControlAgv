@@ -1,0 +1,3 @@
+sampleID,sampleName,sampleType,sampleLevel,processMethod,clearCalibration,cycleCount,injectionVolume,injectionVolumeUnit,position,mPos,channel,instrumentMethod,processingMethod,detectionMethod,blank,chromatographyMethod
+LOCAL-STD-001,标准测试样,标准样,1,阴离子标准法,否,1,25,uL,1,1,A,AS18-M01,IC-P01,Normal,否,阴离子常规
+LOCAL-BLANK-001,空白测试样,空白样,1,阴离子标准法,否,1,25,uL,2,2,A,AS18-M01,IC-P01,Normal,是,阴离子常规

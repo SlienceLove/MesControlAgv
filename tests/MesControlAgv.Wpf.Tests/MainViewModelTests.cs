@@ -416,6 +416,7 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
     public int GetRuntimeSettingsCallCount { get; private set; }
     public IonChromatographyControlCenterStatusResponse? IonChromatographyStatus { get; set; }
     public IReadOnlyList<ShineLabDeviceStatusResponse> ShineLabDeviceStatuses { get; set; } = [];
+    public Exception? ShineLabDeviceStatusException { get; set; }
     public SampleWorkstationDashboardSnapshot? SampleWorkstationSnapshot { get; set; }
     public TaskCompletionSource<SampleWorkstationDashboardSnapshot?>? SampleWorkstationSnapshotGate { get; set; }
     public string? LastSampleWorkstationDeviceId { get; private set; }
@@ -423,6 +424,9 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
     public ShineLabConfigRequest? LastShineLabConfig { get; private set; }
     public ShineLabCommandRequest? LastShineLabCommand { get; private set; }
     public ShineLabTaskCreateRequest? LastShineLabTaskCreate { get; private set; }
+    public int ShineLabTaskCreateCallCount { get; private set; }
+    public string? LastConfiguredShineLabTaskUuid { get; private set; }
+    public Exception? ShineLabConfigureException { get; set; }
     public ShineLabTaskResponse? LastShineLabTaskResult { get; set; }
     public IReadOnlyList<ShineLabTaskResponse> ShineLabTasks { get; set; } = [];
     public (string FromStationId, string ToStationId, IReadOnlyCollection<string>? BlockedStations)? LastPlanRequest { get; private set; }
@@ -486,7 +490,9 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
         string instrumentId,
         CancellationToken cancellationToken) => Task.FromResult(IonChromatographyStatus);
     public Task<IReadOnlyList<ShineLabDeviceStatusResponse>> GetShineLabDeviceStatusesAsync(
-        CancellationToken cancellationToken) => Task.FromResult(ShineLabDeviceStatuses);
+        CancellationToken cancellationToken) => ShineLabDeviceStatusException is { } exception
+            ? Task.FromException<IReadOnlyList<ShineLabDeviceStatusResponse>>(exception)
+            : Task.FromResult(ShineLabDeviceStatuses);
     public Task<SampleWorkstationDashboardSnapshot?> GetSampleWorkstationSnapshotAsync(
         string deviceId,
         CancellationToken cancellationToken)
@@ -520,12 +526,18 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
         CancellationToken cancellationToken)
     {
         LastShineLabTaskCreate = request;
+        ShineLabTaskCreateCallCount++;
         return Task.FromResult(LastShineLabTaskResult ?? TaskResponse(request.TaskUuid, "Created", "Created"));
     }
     public Task<ShineLabTaskResponse> ConfigureShineLabTaskAsync(
         string taskUuid,
-        CancellationToken cancellationToken) =>
-        Task.FromResult(LastShineLabTaskResult ?? TaskResponse(taskUuid, "Configured", "Configured"));
+        CancellationToken cancellationToken)
+    {
+        LastConfiguredShineLabTaskUuid = taskUuid;
+        return ShineLabConfigureException is { } exception
+            ? Task.FromException<ShineLabTaskResponse>(exception)
+            : Task.FromResult(LastShineLabTaskResult ?? TaskResponse(taskUuid, "Configured", "Configured"));
+    }
     public Task<ShineLabTaskResponse> SendShineLabTaskCommandAsync(
         string taskUuid,
         ShineLabCommandRequest request,

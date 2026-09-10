@@ -79,7 +79,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         IonChromatography = new IonChromatographyViewModel(_mes);
         ShineLabDeviceStatus = new ShineLabDeviceStatusViewModel(_mes);
         ShineLabTaskDispatch = new ShineLabTaskDispatchViewModel(_mes);
-        ShineLabSequenceImport = new ShineLabSequenceImportViewModel();
+        ShineLabSequenceImport = new ShineLabSequenceImportViewModel(mes: _mes);
         _modules = new ControlCenterViewModel(WorkflowEditor, ModuleRegistry);
         _modules.AgvCommunication.ConfigureRuntimeMode(effectiveRuntimeMode);
         DiagnosticAudit = diagnosticAudit ?? new OfflineDiagnosticAuditTrail();
