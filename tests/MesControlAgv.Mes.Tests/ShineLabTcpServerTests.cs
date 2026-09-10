@@ -579,6 +579,104 @@ public sealed class ShineLabTcpServerTests
         }
     }
 
+    [Fact]
+    public async Task Fallback_equipment_code_registers_an_unidentified_field_client()
+    {
+        var port = ReservePort();
+        var options = Options.Create(new ShineLabTcpOptions
+        {
+            Enabled = true,
+            ListenAddress = "127.0.0.1",
+            Port = port,
+            StaleAfterSeconds = 30,
+            SendCertificationOnConnect = false,
+            FallbackEquipmentCode = "STN61_01"
+        });
+        var hub = new ShineLabStatusHub(options);
+        var connectionManager = new ShineLabConnectionManager();
+        var server = new ShineLabTcpServer(options, hub, connectionManager, NullLogger<ShineLabTcpServer>.Instance);
+        await server.StartAsync(CancellationToken.None);
+
+        try
+        {
+            using var client = await ConnectWithRetryAsync(port);
+            await using var stream = client.GetStream();
+
+            // Byte-for-byte shape captured from 192.168.10.108.
+            var certification = "{\"strID\":\"7503733687394111488\",\"strMethod\":\"Certification\",\"equipmentCode\":\"\",\"strCode\":\"\",\"body\":{}}\n";
+            await stream.WriteAsync(Encoding.UTF8.GetBytes(certification));
+            await stream.FlushAsync();
+            using var response = await ReadWireJsonAsync(
+                stream,
+                new ShineLabWireReader(),
+                TimeSpan.FromSeconds(3));
+            Assert.Equal("Success", response.RootElement.GetProperty("body").GetProperty("result").GetString());
+            // The reply echoes what the client sent; the fallback is a MES-side
+            // attribution, not something we assert back onto the wire.
+            Assert.Equal(string.Empty, response.RootElement.GetProperty("equipmentCode").GetString());
+
+            var update = "{\"strID\":\"7503733688270721024\",\"strMethod\":\"UpdateInfo\",\"equipmentCode\":\"\",\"strCode\":\"\",\"body\":{\"status\":99}}\n";
+            await stream.WriteAsync(Encoding.UTF8.GetBytes(update));
+            await stream.FlushAsync();
+
+            // Certification alone already marks the device online, so wait for the
+            // UpdateInfo status instead or the assertions race the second frame.
+            var deadline = DateTime.UtcNow.AddSeconds(3);
+            while (hub.GetStatus("STN61_01")?.Status != 99 && DateTime.UtcNow < deadline)
+                await Task.Delay(20);
+
+            Assert.True(hub.GetStatus("STN61_01")?.Online);
+            // status 99 is not an established code, so it must not read as Idle.
+            Assert.Equal(99, hub.GetStatus("STN61_01")?.Status);
+            Assert.Equal("Unknown(99)", hub.GetStatus("STN61_01")?.State);
+            Assert.Equal("STN61_01", connectionManager.GetSnapshot().EquipmentCode);
+            Assert.Equal(ShineLabWireFormat.LineJson, connectionManager.GetSnapshot().WireFormat);
+        }
+        finally
+        {
+            await server.StopAsync(CancellationToken.None);
+            server.Dispose();
+            connectionManager.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task Without_a_fallback_an_unidentified_client_stays_unregistered()
+    {
+        var port = ReservePort();
+        var options = Options.Create(new ShineLabTcpOptions
+        {
+            Enabled = true,
+            ListenAddress = "127.0.0.1",
+            Port = port,
+            StaleAfterSeconds = 30,
+            SendCertificationOnConnect = false
+        });
+        var hub = new ShineLabStatusHub(options);
+        var connectionManager = new ShineLabConnectionManager();
+        var server = new ShineLabTcpServer(options, hub, connectionManager, NullLogger<ShineLabTcpServer>.Instance);
+        await server.StartAsync(CancellationToken.None);
+
+        try
+        {
+            using var client = await ConnectWithRetryAsync(port);
+            await using var stream = client.GetStream();
+            var update = "{\"strID\":\"unattributed-001\",\"strMethod\":\"UpdateInfo\",\"equipmentCode\":\"\",\"strCode\":\"\",\"body\":{\"status\":99}}\n";
+            await stream.WriteAsync(Encoding.UTF8.GetBytes(update));
+            await stream.FlushAsync();
+
+            await AssertNoDataAsync(stream, TimeSpan.FromMilliseconds(300));
+            Assert.Empty(hub.GetStatuses());
+            Assert.False(connectionManager.GetSnapshot().Connected);
+        }
+        finally
+        {
+            await server.StopAsync(CancellationToken.None);
+            server.Dispose();
+            connectionManager.Dispose();
+        }
+    }
+
     private static int ReservePort()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);

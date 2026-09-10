@@ -108,6 +108,7 @@ public sealed class ShineLabTcpServer(
             await using var stream = client.GetStream();
             var invalidFrameCount = 0;
             var unidentifiedFrameCount = 0;
+            var loggedFallback = false;
 
             if (_options.SendCertificationOnConnect)
             {
@@ -208,7 +209,16 @@ public sealed class ShineLabTcpServer(
                     var isCertification = message.StrMethod.Equals(
                         "Certification",
                         StringComparison.OrdinalIgnoreCase);
-                    if (string.IsNullOrWhiteSpace(message.EquipmentCode))
+                    var effectiveCode = message.EquipmentCode?.Trim() ?? string.Empty;
+                    var usedFallback = false;
+                    if (effectiveCode.Length == 0 &&
+                        !string.IsNullOrWhiteSpace(_options.FallbackEquipmentCode))
+                    {
+                        effectiveCode = _options.FallbackEquipmentCode.Trim();
+                        usedFallback = true;
+                    }
+
+                    if (effectiveCode.Length == 0)
                     {
                         if (isCertification)
                         {
@@ -258,7 +268,16 @@ public sealed class ShineLabTcpServer(
                     }
 
                     unidentifiedFrameCount = 0;
-                    equipmentCode = message.EquipmentCode.Trim();
+                    if (usedFallback && !loggedFallback)
+                    {
+                        loggedFallback = true;
+                        logger.LogWarning(
+                            "Attributing unidentified ShineLab frames on connection {ConnectionId} to configured fallback equipment code {EquipmentCode}. This is a stand-in for a client that does not populate equipmentCode; it assumes a single instrument on this listener.",
+                            connectionId,
+                            effectiveCode);
+                    }
+
+                    equipmentCode = effectiveCode;
                     connectionManager.Register(equipmentCode, connectionId, wireFrame.Format, stream);
                     var isCommandResponse = connectionManager.TryCompleteResponse(
                         message.StrId,

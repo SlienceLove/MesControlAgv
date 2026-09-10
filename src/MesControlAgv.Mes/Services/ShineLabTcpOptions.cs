@@ -22,4 +22,12 @@ public sealed class ShineLabTcpOptions
     /// </summary>
     public bool SendCertificationOnConnect { get; set; }
     public string ServerEquipmentCode { get; set; } = "SHDC-IRAY-C";
+    /// <summary>
+    /// Stand-in identity for a deployed YhLoop client that sends every frame
+    /// with an empty equipmentCode.  Disabled by default: enabling it asserts
+    /// that exactly one instrument reaches this listener, because every
+    /// unidentified frame is attributed to this code.  Remove it once the
+    /// vendor client populates equipmentCode itself.
+    /// </summary>
+    public string FallbackEquipmentCode { get; set; } = string.Empty;
 }

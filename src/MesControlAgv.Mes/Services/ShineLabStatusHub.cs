@@ -169,11 +169,16 @@ public sealed class ShineLabStatusHub(IOptions<ShineLabTcpOptions> configuredOpt
             state.AlarmCode = null;
             state.AlarmMessage = null;
         }
+        // Only 0/1/2 are established codes. Anything else — the field client
+        // currently reports 99 — must not fall through to "Idle": an operator
+        // would read that as "ready for a sample" when the code is in fact
+        // unexplained.
         state.State = state.Status switch
         {
             1 => "Running",
             2 => "Error",
-            _ => string.IsNullOrWhiteSpace(state.Stage) ? "Idle" : state.Stage!
+            0 => string.IsNullOrWhiteSpace(state.Stage) ? "Idle" : state.Stage!,
+            _ => string.IsNullOrWhiteSpace(state.Stage) ? $"Unknown({state.Status})" : state.Stage!
         };
     }
 
