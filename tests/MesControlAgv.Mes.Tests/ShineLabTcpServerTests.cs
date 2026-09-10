@@ -312,6 +312,122 @@ public sealed class ShineLabTcpServerTests
     }
 
     [Fact]
+    public async Task Field_blank_certification_is_replied_and_can_be_followed_by_identified_heart()
+    {
+        var port = ReservePort();
+        var options = Options.Create(new ShineLabTcpOptions
+        {
+            Enabled = true,
+            ListenAddress = "127.0.0.1",
+            Port = port,
+            StaleAfterSeconds = 3,
+            SendCertificationOnConnect = false
+        });
+        var hub = new ShineLabStatusHub(options);
+        var connectionManager = new ShineLabConnectionManager();
+        var server = new ShineLabTcpServer(options, hub, connectionManager, NullLogger<ShineLabTcpServer>.Instance);
+        await server.StartAsync(CancellationToken.None);
+
+        try
+        {
+            using var client = await ConnectWithRetryAsync(port);
+            await using var stream = client.GetStream();
+            var reader = new ShineLabWireReader();
+            var certification = "{\"strID\":\"field-cert-blank-001\",\"strMethod\":\"Certification\",\"equipmentCode\":\"\",\"strCode\":\"\",\"body\":{}}\n";
+            await stream.WriteAsync(Encoding.UTF8.GetBytes(certification));
+            await stream.FlushAsync();
+
+            using var response = await ReadWireJsonAsync(stream, reader, TimeSpan.FromSeconds(3));
+            var root = response.RootElement;
+            Assert.Equal("field-cert-blank-001", root.GetProperty("strID").GetString());
+            Assert.Equal("Certification", root.GetProperty("strMethod").GetString());
+            Assert.Equal(string.Empty, root.GetProperty("equipmentCode").GetString());
+            Assert.Equal("Success", root.GetProperty("body").GetProperty("result").GetString());
+            Assert.False(connectionManager.GetSnapshot().Connected);
+            Assert.Empty(hub.GetStatuses());
+
+            var heart = "{\"strID\":\"field-heart-after-cert-001\",\"strMethod\":\"Heart\",\"equipmentCode\":\"STN61_01\",\"strCode\":\"\",\"body\":{\"type\":\"ping\"}}\n";
+            await stream.WriteAsync(Encoding.UTF8.GetBytes(heart));
+            await stream.FlushAsync();
+
+            var deadline = DateTime.UtcNow.AddSeconds(2);
+            while (hub.GetStatus("STN61_01")?.Online != true && DateTime.UtcNow < deadline)
+                await Task.Delay(20);
+
+            Assert.True(hub.GetStatus("STN61_01")?.Online);
+            Assert.Equal("STN61_01", connectionManager.GetSnapshot().EquipmentCode);
+            Assert.Equal(ShineLabWireFormat.LineJson, connectionManager.GetSnapshot().WireFormat);
+        }
+        finally
+        {
+            await server.StopAsync(CancellationToken.None);
+            server.Dispose();
+            connectionManager.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task Provisional_blank_certification_connection_does_not_evict_identified_heart_connection()
+    {
+        var port = ReservePort();
+        var options = Options.Create(new ShineLabTcpOptions
+        {
+            Enabled = true,
+            ListenAddress = "127.0.0.1",
+            Port = port,
+            StaleAfterSeconds = 3,
+            SendCertificationOnConnect = false
+        });
+        var hub = new ShineLabStatusHub(options);
+        var connectionManager = new ShineLabConnectionManager();
+        var server = new ShineLabTcpServer(options, hub, connectionManager, NullLogger<ShineLabTcpServer>.Instance);
+        await server.StartAsync(CancellationToken.None);
+
+        try
+        {
+            using var deviceClient = await ConnectWithRetryAsync(port);
+            await using var deviceStream = deviceClient.GetStream();
+            var firstHeart = "{\"strID\":\"field-heart-primary-001\",\"strMethod\":\"Heart\",\"equipmentCode\":\"STN61_01\",\"strCode\":\"\",\"body\":{\"type\":\"ping\"}}\n";
+            await deviceStream.WriteAsync(Encoding.UTF8.GetBytes(firstHeart));
+            await deviceStream.FlushAsync();
+
+            var registrationDeadline = DateTime.UtcNow.AddSeconds(2);
+            while (hub.GetStatus("STN61_01")?.Online != true && DateTime.UtcNow < registrationDeadline)
+                await Task.Delay(20);
+            var firstSeen = Assert.IsType<DateTimeOffset>(hub.GetStatus("STN61_01")?.LastSeenAtUtc);
+
+            using var certificationClient = await ConnectWithRetryAsync(port);
+            await using var certificationStream = certificationClient.GetStream();
+            var certification = "{\"strID\":\"field-cert-secondary-001\",\"strMethod\":\"Certification\",\"equipmentCode\":\"\",\"strCode\":\"\",\"body\":{}}\n";
+            await certificationStream.WriteAsync(Encoding.UTF8.GetBytes(certification));
+            await certificationStream.FlushAsync();
+            using var response = await ReadWireJsonAsync(
+                certificationStream,
+                new ShineLabWireReader(),
+                TimeSpan.FromSeconds(3));
+            Assert.Equal("Success", response.RootElement.GetProperty("body").GetProperty("result").GetString());
+
+            await Task.Delay(30);
+            var secondHeart = "{\"strID\":\"field-heart-primary-002\",\"strMethod\":\"Heart\",\"equipmentCode\":\"STN61_01\",\"strCode\":\"\",\"body\":{\"type\":\"ping\"}}\n";
+            await deviceStream.WriteAsync(Encoding.UTF8.GetBytes(secondHeart));
+            await deviceStream.FlushAsync();
+
+            var refreshDeadline = DateTime.UtcNow.AddSeconds(2);
+            while (hub.GetStatus("STN61_01")?.LastSeenAtUtc <= firstSeen && DateTime.UtcNow < refreshDeadline)
+                await Task.Delay(20);
+
+            Assert.True(hub.GetStatus("STN61_01")?.LastSeenAtUtc > firstSeen);
+            Assert.Equal("STN61_01", connectionManager.GetSnapshot().EquipmentCode);
+        }
+        finally
+        {
+            await server.StopAsync(CancellationToken.None);
+            server.Dispose();
+            connectionManager.Dispose();
+        }
+    }
+
+    [Fact]
     public async Task Line_json_single_config_preflight_emits_protocol_fields_and_accepts_success_response()
     {
         var port = ReservePort();
@@ -395,6 +511,74 @@ public sealed class ShineLabTcpServerTests
             Assert.True(result.Success);
             Assert.Equal("accepted", result.Message);
             Assert.False(stream.DataAvailable, "Config preflight must not emit a Command frame.");
+        }
+        finally
+        {
+            await server.StopAsync(CancellationToken.None);
+            server.Dispose();
+            connectionManager.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task Sustained_blank_equipment_code_frames_are_rate_limited_and_close_the_connection()
+    {
+        var port = ReservePort();
+        var options = Options.Create(new ShineLabTcpOptions
+        {
+            Enabled = true,
+            ListenAddress = "127.0.0.1",
+            Port = port,
+            // Long enough that only the blank-code limit can end the connection.
+            StaleAfterSeconds = 30,
+            SendCertificationOnConnect = false
+        });
+        var hub = new ShineLabStatusHub(options);
+        var connectionManager = new ShineLabConnectionManager();
+        var server = new ShineLabTcpServer(options, hub, connectionManager, NullLogger<ShineLabTcpServer>.Instance);
+        await server.StartAsync(CancellationToken.None);
+
+        try
+        {
+            using var client = await ConnectWithRetryAsync(port);
+            await using var stream = client.GetStream();
+
+            // Structurally valid frames, so the invalid-frame counter is reset on
+            // every iteration; only a dedicated counter can bound this peer.
+            for (var index = 0; index < 16; index++)
+            {
+                var heart =
+                    $"{{\"strID\":\"blank-heart-{index:D3}\",\"strMethod\":\"Heart\",\"equipmentCode\":\"\",\"strCode\":\"\",\"body\":{{\"type\":\"ping\"}}}}\n";
+                try
+                {
+                    await stream.WriteAsync(Encoding.UTF8.GetBytes(heart));
+                    await stream.FlushAsync();
+                }
+                catch (IOException)
+                {
+                    break;
+                }
+
+                await Task.Delay(10);
+            }
+
+            // The server may close gracefully (0-byte read) or the socket may be
+            // reset; both prove the peer was disconnected rather than allowed to
+            // hold the connection open indefinitely.
+            var buffer = new byte[64];
+            using var readTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            var closed = false;
+            try
+            {
+                closed = await stream.ReadAsync(buffer, readTimeout.Token) == 0;
+            }
+            catch (Exception exception) when (exception is IOException or SocketException)
+            {
+                closed = true;
+            }
+
+            Assert.True(closed, "Blank-equipment-code frames must not keep the connection alive.");
+            Assert.Null(hub.GetStatus(string.Empty));
         }
         finally
         {

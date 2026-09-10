@@ -28,9 +28,7 @@ public sealed class ShineLabTcpServer(
     private const int InvalidFrameLimit = 8;
     private readonly ShineLabTcpOptions _options = configuredOptions.Value;
     private readonly ConcurrentDictionary<Task, byte> _clients = new();
-    private readonly object _activeClientSync = new();
     private TcpListener? _listener;
-    private TcpClient? _activeClient;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -55,11 +53,12 @@ public sealed class ShineLabTcpServer(
             {
                 var client = await _listener.AcceptTcpClientAsync(stoppingToken);
                 client.NoDelay = true;
-                ReplaceActiveClient(client);
+                var connectionId = Guid.NewGuid().ToString("N");
                 logger.LogInformation(
-                    "Accepted ShineLab TCP client {RemoteEndPoint}.",
-                    client.Client.RemoteEndPoint);
-                var task = HandleClientAsync(client, stoppingToken);
+                    "Accepted ShineLab TCP client {RemoteEndPoint} as connection {ConnectionId}.",
+                    client.Client.RemoteEndPoint,
+                    connectionId);
+                var task = HandleClientAsync(client, connectionId, stoppingToken);
                 _clients.TryAdd(task, 0);
                 _ = task.ContinueWith(
                     completed => _clients.TryRemove(completed, out _),
@@ -76,12 +75,6 @@ public sealed class ShineLabTcpServer(
         }
         finally
         {
-            lock (_activeClientSync)
-            {
-                _activeClient?.Dispose();
-                _activeClient = null;
-            }
-
             _listener.Stop();
             _listener = null;
             try
@@ -95,19 +88,24 @@ public sealed class ShineLabTcpServer(
         }
     }
 
-    private async Task HandleClientAsync(TcpClient client, CancellationToken stoppingToken)
+    private async Task HandleClientAsync(
+        TcpClient client,
+        string connectionId,
+        CancellationToken stoppingToken)
     {
         string? equipmentCode = null;
-        var connectionId = Guid.NewGuid().ToString("N");
         using var clientTimeout = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         clientTimeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _options.StaleAfterSeconds)));
         var buffer = ArrayPool<byte>.Shared.Rent(Math.Max(1024, _options.ReadBufferBytes));
+        var wireReader = new ShineLabWireReader();
+        var readCount = 0;
+        long receivedBytes = 0;
 
         try
         {
             await using var stream = client.GetStream();
-            var wireReader = new ShineLabWireReader();
             var invalidFrameCount = 0;
+            var unidentifiedFrameCount = 0;
 
             if (_options.SendCertificationOnConnect)
             {
@@ -119,7 +117,34 @@ public sealed class ShineLabTcpServer(
             while (!stoppingToken.IsCancellationRequested)
             {
                 var read = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), clientTimeout.Token);
-                if (read == 0) break;
+                if (read == 0)
+                {
+                    logger.LogInformation(
+                        "ShineLab peer closed connection {ConnectionId} after {ReadCount} reads/{ReceivedBytes} bytes; detected format {WireFormat}.",
+                        connectionId,
+                        readCount,
+                        receivedBytes,
+                        wireReader.Format);
+                    break;
+                }
+
+                readCount++;
+                receivedBytes += read;
+                if (readCount == 1)
+                {
+                    logger.LogInformation(
+                        "Received first ShineLab TCP payload on connection {ConnectionId}; {Summary}",
+                        connectionId,
+                        FrameSummary(buffer.AsSpan(0, read)));
+                }
+                else
+                {
+                    logger.LogDebug(
+                        "Received ShineLab TCP payload #{ReadCount} on connection {ConnectionId}; {Summary}",
+                        readCount,
+                        connectionId,
+                        FrameSummary(buffer.AsSpan(0, read)));
+                }
 
                 wireReader.Append(buffer.AsSpan(0, read));
                 while (true)
@@ -170,7 +195,6 @@ public sealed class ShineLabTcpServer(
 
                     invalidFrameCount = 0;
                     clientTimeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _options.StaleAfterSeconds)));
-                    equipmentCode = message.EquipmentCode;
                     logger.LogDebug(
                         "Received ShineLab {WireFormat} frame {Method}/{StrId} from {EquipmentCode}; {Summary}",
                         wireFrame.Format,
@@ -179,38 +203,74 @@ public sealed class ShineLabTcpServer(
                         message.EquipmentCode,
                         FrameSummary(wireFrame.RawBytes));
 
-                    connectionManager.Register(message.EquipmentCode, connectionId, wireFrame.Format, stream);
+                    var isCertification = message.StrMethod.Equals(
+                        "Certification",
+                        StringComparison.OrdinalIgnoreCase);
+                    if (string.IsNullOrWhiteSpace(message.EquipmentCode))
+                    {
+                        if (isCertification)
+                        {
+                            await ReplyToCertificationAsync(
+                                stream,
+                                message,
+                                wireFrame.Format,
+                                clientTimeout.Token);
+                            logger.LogInformation(
+                                "Replied to provisional ShineLab Certification {StrId} with an empty equipment code on connection {ConnectionId} using {WireFormat} framing.",
+                                message.StrId,
+                                connectionId,
+                                wireFrame.Format);
+                            continue;
+                        }
+
+                        // Counted separately from invalidFrameCount: these frames
+                        // are structurally valid, so the reset above would clear
+                        // the counter on every iteration and the limit would
+                        // never be reached.
+                        unidentifiedFrameCount++;
+                        logger.LogWarning(
+                            "Ignored ShineLab {Method}/{StrId} with an empty equipment code on connection {ConnectionId} ({UnidentifiedFrameCount}/{Limit}).",
+                            message.StrMethod,
+                            message.StrId,
+                            connectionId,
+                            unidentifiedFrameCount,
+                            InvalidFrameLimit);
+                        if (unidentifiedFrameCount >= InvalidFrameLimit)
+                            throw new InvalidDataException("Too many ShineLab messages without an equipment code.");
+                        continue;
+                    }
+
+                    unidentifiedFrameCount = 0;
+                    equipmentCode = message.EquipmentCode.Trim();
+                    connectionManager.Register(equipmentCode, connectionId, wireFrame.Format, stream);
                     var isCommandResponse = connectionManager.TryCompleteResponse(
                         message.StrId,
                         message.StrMethod,
-                        message.EquipmentCode,
+                        equipmentCode,
                         message.Body);
-                    statusHub.Apply(message.StrId, message.StrMethod, message.EquipmentCode, message.Body, connectionId);
+                    statusHub.Apply(message.StrId, message.StrMethod, equipmentCode, message.Body, connectionId);
                     if (scopeFactory is not null && IsTaskEventMethod(message.StrMethod))
                     {
                         using var scope = scopeFactory.CreateScope();
                         var tasks = scope.ServiceProvider.GetRequiredService<ShineLabTaskService>();
                         await tasks.ApplyPushAsync(
                             message.StrMethod,
-                            message.EquipmentCode,
+                            equipmentCode,
                             message.Body,
                             stoppingToken);
                     }
 
-                    if (message.StrMethod.Equals("Certification", StringComparison.OrdinalIgnoreCase))
+                    if (isCertification)
                     {
-                        var response = new
-                        {
-                            strID = message.StrId,
-                            strMethod = message.StrMethod,
-                            equipmentCode = message.EquipmentCode,
-                            body = new { result = "Success", msg = "" }
-                        };
-                        await SendJsonAsync(stream, response, wireFrame.Format, clientTimeout.Token);
+                        await ReplyToCertificationAsync(
+                            stream,
+                            message,
+                            wireFrame.Format,
+                            clientTimeout.Token);
                         logger.LogInformation(
                             "Replied to ShineLab Certification {StrId} for {EquipmentCode} using {WireFormat} framing.",
                             message.StrId,
-                            message.EquipmentCode,
+                            equipmentCode,
                             wireFrame.Format);
                     }
                     else if (isCommandResponse)
@@ -226,9 +286,12 @@ public sealed class ShineLabTcpServer(
         catch (OperationCanceledException)
         {
             logger.LogInformation(
-                "ShineLab client connection {ConnectionId} timed out after {TimeoutSeconds}s without a complete message.",
+                "ShineLab client connection {ConnectionId} timed out after {TimeoutSeconds}s without a complete message; observed {ReadCount} reads/{ReceivedBytes} bytes and format {WireFormat}.",
                 connectionId,
-                _options.StaleAfterSeconds);
+                _options.StaleAfterSeconds,
+                readCount,
+                receivedBytes,
+                wireReader.Format);
         }
         catch (InvalidDataException exception)
         {
@@ -246,21 +309,22 @@ public sealed class ShineLabTcpServer(
         {
             logger.LogDebug(exception, "ShineLab TCP connection {ConnectionId} was replaced or disposed.", connectionId);
         }
+        catch (Exception exception)
+        {
+            logger.LogError(
+                exception,
+                "Unexpected ShineLab TCP failure on connection {ConnectionId} after {ReadCount} reads/{ReceivedBytes} bytes; detected format {WireFormat}.",
+                connectionId,
+                readCount,
+                receivedBytes,
+                wireReader.Format);
+        }
         finally
         {
             ArrayPool<byte>.Shared.Return(buffer);
             connectionManager.Unregister(connectionId);
             statusHub.MarkDisconnected(equipmentCode, connectionId);
             client.Dispose();
-        }
-    }
-
-    private void ReplaceActiveClient(TcpClient client)
-    {
-        lock (_activeClientSync)
-        {
-            _activeClient?.Dispose();
-            _activeClient = client;
         }
     }
 
@@ -275,6 +339,23 @@ public sealed class ShineLabTcpServer(
         await stream.WriteAsync(frame, cancellationToken);
         await stream.FlushAsync(cancellationToken);
     }
+
+    private static Task ReplyToCertificationAsync(
+        Stream stream,
+        ShineLabMessage message,
+        ShineLabWireFormat wireFormat,
+        CancellationToken cancellationToken) =>
+        SendJsonAsync(
+            stream,
+            new
+            {
+                strID = message.StrId,
+                strMethod = message.StrMethod,
+                equipmentCode = message.EquipmentCode,
+                body = new { result = "Success", msg = "" }
+            },
+            wireFormat,
+            cancellationToken);
 
     private static bool TryParse(string json, out ShineLabMessage message, out string error)
     {

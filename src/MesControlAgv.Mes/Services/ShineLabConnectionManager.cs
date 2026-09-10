@@ -27,15 +27,17 @@ public sealed record ShineLabConnectionSnapshot(
     ShineLabWireFormat WireFormat = ShineLabWireFormat.Unknown);
 
 /// <summary>
-/// Owns the current ShineLab TCP connection and correlates command responses
-/// by strID.  The server remains the only writer; WPF/MES callers never touch
-/// the underlying socket or serial transport.
+/// Owns the live ShineLab TCP connections and correlates command responses by
+/// strID.  Connections are keyed by equipmentCode so that a second device — or
+/// an unrelated auxiliary connection from the same control PC — never evicts an
+/// already identified one.  The server remains the only writer; WPF/MES callers
+/// never touch the underlying socket or serial transport.
 /// </summary>
 public sealed class ShineLabConnectionManager : IDisposable
 {
     private readonly object _sync = new();
-    private readonly Dictionary<string, TaskCompletionSource<ShineLabCommandResult>> _pending = new(StringComparer.Ordinal);
-    private Connection? _connection;
+    private readonly Dictionary<string, PendingCommand> _pending = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Connection> _connections = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
 
     public void Register(
@@ -57,31 +59,40 @@ public sealed class ShineLabConnectionManager : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionId);
         ArgumentNullException.ThrowIfNull(stream);
 
-        Connection? previous;
+        Connection? replaced = null;
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            previous = _connection;
-            _connection = previous is not null && previous.ConnectionId == connectionId
-                ? previous with
+            _connections.TryGetValue(equipmentCode, out var previous);
+            if (previous is not null && previous.ConnectionId == connectionId)
+            {
+                _connections[equipmentCode] = previous with
                 {
                     EquipmentCode = equipmentCode,
                     WireFormat = wireFormat == ShineLabWireFormat.Unknown ? previous.WireFormat : wireFormat,
                     Stream = stream
-                }
-                : new Connection(
+                };
+            }
+            else
+            {
+                // Only the entry for this equipmentCode is replaced. A reconnect
+                // from one device must not disturb any other device's socket or
+                // its in-flight commands.
+                replaced = previous;
+                _connections[equipmentCode] = new Connection(
                     equipmentCode,
                     connectionId,
                     DateTimeOffset.UtcNow,
                     wireFormat,
                     stream,
                     new SemaphoreSlim(1, 1));
+            }
         }
 
-        if (previous is not null && previous.ConnectionId != connectionId)
+        if (replaced is not null)
         {
-            CompletePendingForConnection(previous.ConnectionId, new IOException("ShineLab connection was replaced."));
-            previous.WriteGate.Dispose();
+            CompletePendingForConnection(replaced.ConnectionId, new IOException("ShineLab connection was replaced."));
+            replaced.WriteGate.Dispose();
         }
     }
 
@@ -91,11 +102,14 @@ public sealed class ShineLabConnectionManager : IDisposable
         Connection? removed = null;
         lock (_sync)
         {
-            if (_connection?.ConnectionId == connectionId)
+            foreach (var entry in _connections)
             {
-                removed = _connection;
-                _connection = null;
+                if (entry.Value.ConnectionId != connectionId) continue;
+                removed = entry.Value;
+                break;
             }
+
+            if (removed is not null) _connections.Remove(removed.EquipmentCode);
         }
 
         if (removed is not null)
@@ -105,20 +119,53 @@ public sealed class ShineLabConnectionManager : IDisposable
         }
     }
 
+    /// <summary>
+    /// Returns the most recently established connection, or a disconnected
+    /// snapshot when none is registered.  Prefer <see cref="GetSnapshot(string)"/>
+    /// when a specific device is meant; this overload exists for callers that
+    /// predate multi-device support.
+    /// </summary>
     public ShineLabConnectionSnapshot GetSnapshot()
     {
         lock (_sync)
         {
-            return _connection is null
-                ? new(false, null, null, null, ShineLabWireFormat.Unknown)
-                : new(
-                    true,
-                    _connection.EquipmentCode,
-                    _connection.ConnectedAtUtc,
-                    _connection.ConnectionId,
-                    _connection.WireFormat);
+            Connection? newest = null;
+            foreach (var connection in _connections.Values)
+            {
+                if (newest is null || connection.ConnectedAtUtc >= newest.ConnectedAtUtc)
+                    newest = connection;
+            }
+
+            return Describe(newest);
         }
     }
+
+    public ShineLabConnectionSnapshot GetSnapshot(string equipmentCode)
+    {
+        if (string.IsNullOrWhiteSpace(equipmentCode)) return Describe(null);
+        lock (_sync)
+        {
+            return Describe(_connections.GetValueOrDefault(equipmentCode));
+        }
+    }
+
+    public IReadOnlyList<ShineLabConnectionSnapshot> GetSnapshots()
+    {
+        lock (_sync)
+        {
+            return _connections.Values.Select(Describe).ToList();
+        }
+    }
+
+    private static ShineLabConnectionSnapshot Describe(Connection? connection) =>
+        connection is null
+            ? new(false, null, null, null, ShineLabWireFormat.Unknown)
+            : new(
+                true,
+                connection.EquipmentCode,
+                connection.ConnectedAtUtc,
+                connection.ConnectionId,
+                connection.WireFormat);
 
     public bool TryCompleteResponse(
         string strId,
@@ -140,7 +187,8 @@ public sealed class ShineLabConnectionManager : IDisposable
         TaskCompletionSource<ShineLabCommandResult>? completion;
         lock (_sync)
         {
-            if (!_pending.Remove(strId, out completion)) return false;
+            if (!_pending.Remove(strId, out var pending)) return false;
+            completion = pending.Completion;
         }
 
         completion.TrySetResult(new(strId, strMethod, equipmentCode, result, message, body));
@@ -164,13 +212,11 @@ public sealed class ShineLabConnectionManager : IDisposable
         lock (_sync)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            connection = _connection is not null &&
-                        string.Equals(_connection.EquipmentCode, equipmentCode, StringComparison.OrdinalIgnoreCase)
-                ? _connection
-                : throw new ShineLabNotConnectedException(equipmentCode);
+            connection = _connections.GetValueOrDefault(equipmentCode)
+                ?? throw new ShineLabNotConnectedException(equipmentCode);
             if (connection.WireFormat == ShineLabWireFormat.Unknown)
                 throw new InvalidOperationException("ShineLab wire format has not been identified yet.");
-            _pending[strId] = completion;
+            _pending[strId] = new PendingCommand(completion, connection.ConnectionId);
         }
 
         try
@@ -212,32 +258,45 @@ public sealed class ShineLabConnectionManager : IDisposable
 
     private void CompletePendingForConnection(string connectionId, Exception exception)
     {
-        List<TaskCompletionSource<ShineLabCommandResult>> completions;
+        List<TaskCompletionSource<ShineLabCommandResult>> completions = [];
         lock (_sync)
         {
-            completions = _pending.Values.ToList();
-            _pending.Clear();
+            // Only this connection's commands are failed. Commands in flight on
+            // another device's connection stay pending.
+            foreach (var strId in _pending
+                         .Where(entry => entry.Value.ConnectionId == connectionId)
+                         .Select(entry => entry.Key)
+                         .ToList())
+            {
+                completions.Add(_pending[strId].Completion);
+                _pending.Remove(strId);
+            }
         }
         foreach (var completion in completions) completion.TrySetException(exception);
     }
 
     public void Dispose()
     {
-        Connection? connection;
+        List<Connection> connections;
+        List<TaskCompletionSource<ShineLabCommandResult>> completions;
         lock (_sync)
         {
             if (_disposed) return;
             _disposed = true;
-            connection = _connection;
-            _connection = null;
+            connections = _connections.Values.ToList();
+            _connections.Clear();
+            completions = _pending.Values.Select(pending => pending.Completion).ToList();
+            _pending.Clear();
         }
 
-        if (connection is not null)
-        {
-            CompletePendingForConnection(connection.ConnectionId, new ObjectDisposedException(nameof(ShineLabConnectionManager)));
-            connection.WriteGate.Dispose();
-        }
+        foreach (var completion in completions)
+            completion.TrySetException(new ObjectDisposedException(nameof(ShineLabConnectionManager)));
+        foreach (var connection in connections) connection.WriteGate.Dispose();
     }
+
+    private sealed record PendingCommand(
+        TaskCompletionSource<ShineLabCommandResult> Completion,
+        string ConnectionId);
 
     private sealed record Connection(
         string EquipmentCode,
