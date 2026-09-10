@@ -23,7 +23,8 @@ public sealed record ShineLabConnectionSnapshot(
     bool Connected,
     string? EquipmentCode,
     DateTimeOffset? ConnectedAtUtc,
-    string? ConnectionId);
+    string? ConnectionId,
+    ShineLabWireFormat WireFormat = ShineLabWireFormat.Unknown);
 
 /// <summary>
 /// Owns the current ShineLab TCP connection and correlates command responses
@@ -41,6 +42,16 @@ public sealed class ShineLabConnectionManager : IDisposable
         string equipmentCode,
         string connectionId,
         Stream stream)
+        // Preserve the pre-wire-detection API contract: callers that manually
+        // register a stream historically used the native 55AA framing. The
+        // TCP server uses the overload below and supplies the detected format.
+        => Register(equipmentCode, connectionId, ShineLabWireFormat.Native55Aa, stream);
+
+    public void Register(
+        string equipmentCode,
+        string connectionId,
+        ShineLabWireFormat wireFormat,
+        Stream stream)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(equipmentCode);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionId);
@@ -52,8 +63,19 @@ public sealed class ShineLabConnectionManager : IDisposable
             ObjectDisposedException.ThrowIf(_disposed, this);
             previous = _connection;
             _connection = previous is not null && previous.ConnectionId == connectionId
-                ? previous with { EquipmentCode = equipmentCode, Stream = stream }
-                : new Connection(equipmentCode, connectionId, DateTimeOffset.UtcNow, stream, new SemaphoreSlim(1, 1));
+                ? previous with
+                {
+                    EquipmentCode = equipmentCode,
+                    WireFormat = wireFormat == ShineLabWireFormat.Unknown ? previous.WireFormat : wireFormat,
+                    Stream = stream
+                }
+                : new Connection(
+                    equipmentCode,
+                    connectionId,
+                    DateTimeOffset.UtcNow,
+                    wireFormat,
+                    stream,
+                    new SemaphoreSlim(1, 1));
         }
 
         if (previous is not null && previous.ConnectionId != connectionId)
@@ -88,8 +110,13 @@ public sealed class ShineLabConnectionManager : IDisposable
         lock (_sync)
         {
             return _connection is null
-                ? new(false, null, null, null)
-                : new(true, _connection.EquipmentCode, _connection.ConnectedAtUtc, _connection.ConnectionId);
+                ? new(false, null, null, null, ShineLabWireFormat.Unknown)
+                : new(
+                    true,
+                    _connection.EquipmentCode,
+                    _connection.ConnectedAtUtc,
+                    _connection.ConnectionId,
+                    _connection.WireFormat);
         }
     }
 
@@ -141,6 +168,8 @@ public sealed class ShineLabConnectionManager : IDisposable
                         string.Equals(_connection.EquipmentCode, equipmentCode, StringComparison.OrdinalIgnoreCase)
                 ? _connection
                 : throw new ShineLabNotConnectedException(equipmentCode);
+            if (connection.WireFormat == ShineLabWireFormat.Unknown)
+                throw new InvalidOperationException("ShineLab wire format has not been identified yet.");
             _pending[strId] = completion;
         }
 
@@ -156,7 +185,9 @@ public sealed class ShineLabConnectionManager : IDisposable
                     equipmentCode = connection.EquipmentCode,
                     body
                 };
-                var frame = ShineLabTcpFrameCodec.Encode(message);
+                var frame = ShineLabWireCodec.EncodeJson(
+                    JsonSerializer.Serialize(message),
+                    connection.WireFormat);
                 await connection.Stream.WriteAsync(frame, cancellationToken);
                 await connection.Stream.FlushAsync(cancellationToken);
             }
@@ -212,6 +243,7 @@ public sealed class ShineLabConnectionManager : IDisposable
         string EquipmentCode,
         string ConnectionId,
         DateTimeOffset ConnectedAtUtc,
+        ShineLabWireFormat WireFormat,
         Stream Stream,
         SemaphoreSlim WriteGate);
 }

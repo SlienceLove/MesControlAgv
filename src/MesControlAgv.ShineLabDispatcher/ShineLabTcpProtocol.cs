@@ -5,13 +5,15 @@ using MesControlAgv.Contracts;
 
 namespace MesControlAgv.ShineLabDispatcher;
 
-/// <summary>ShineLab native 55AA-framed TCP message.</summary>
+/// <summary>ShineLab TCP message independent of the selected wire framing.</summary>
 public sealed record ShineLabTcpMessage(
     string StrID, string StrMethod, string EquipmentCode, JsonElement Body);
 
 public static class ShineLabTcpCodec
 {
-    public static byte[] Encode(ShineLabTcpMessage message)
+    public static byte[] Encode(
+        ShineLabTcpMessage message,
+        ShineLabWireFormat wireFormat = ShineLabWireFormat.Native55Aa)
     {
         ArgumentNullException.ThrowIfNull(message);
         var value = new
@@ -21,19 +23,35 @@ public static class ShineLabTcpCodec
             equipmentCode = message.EquipmentCode,
             body = message.Body
         };
-        return ShineLabTcpFrameCodec.Encode(value);
+        return ShineLabWireCodec.EncodeJson(JsonSerializer.Serialize(value), wireFormat);
     }
 
-    public static ShineLabTcpMessage Decode(ReadOnlySpan<byte> frame)
+    public static ShineLabTcpMessage Decode(
+        ReadOnlySpan<byte> frame,
+        ShineLabWireFormat wireFormat = ShineLabWireFormat.Native55Aa)
     {
-        if (!ShineLabTcpFrameCodec.TryDecodeJson(frame, out var json, out var error))
-            throw new InvalidDataException(error);
+        string json;
+        if (wireFormat == ShineLabWireFormat.Native55Aa)
+        {
+            if (!ShineLabTcpFrameCodec.TryDecodeJson(frame, out json, out var nativeError))
+                throw new InvalidDataException(nativeError);
+        }
+        else
+        {
+            var line = frame.ToArray();
+            if (line.Length > 0 && line[^1] == (byte)'\n') line = line[..^1];
+            if (line.Length > 0 && line[^1] == (byte)'\r') line = line[..^1];
+            var wireFrame = new ShineLabWireFrame(ShineLabWireFormat.LineJson, frame.ToArray(), line);
+            if (!ShineLabWireCodec.TryDecodeJson(wireFrame, out json, out var lineError))
+                throw new InvalidDataException(lineError);
+        }
+
         using var document = JsonDocument.Parse(json);
         return Parse(document.RootElement);
     }
 
-    /// <summary>Legacy fixture decoder; never used for a real TCP stream.</summary>
-    [Obsolete("Use Decode(ReadOnlySpan<byte>) for native ShineLab frames.")]
+    /// <summary>Line-delimited JSON fixture decoder.</summary>
+    [Obsolete("Use Decode(ReadOnlySpan<byte>, ShineLabWireFormat) for wire-aware decoding.")]
     public static ShineLabTcpMessage DecodeLegacyLine(string line)
     {
         using var document = JsonDocument.Parse(line);
@@ -49,7 +67,8 @@ public static class ShineLabTcpCodec
 
 /// <summary>
 /// MES-side client retained for explicitly opted-in diagnostic use. Real
-/// traffic uses the same native frame codec as the central server.
+/// traffic keeps the historical native 55AA framing by default; callers that
+/// have identified a YhLoop line-JSON peer can opt into LineJson explicitly.
 /// </summary>
 public sealed class ShineLabTcpClient
 {
@@ -58,7 +77,11 @@ public sealed class ShineLabTcpClient
     public ShineLabTcpClient(Func<ShineLabTcpMessage, CancellationToken, Task<ShineLabTcpMessage>> transport) =>
         _transport = transport ?? throw new ArgumentNullException(nameof(transport));
 
-    public static ShineLabTcpClient Real(string host, int port, bool allowReal = false)
+    public static ShineLabTcpClient Real(
+        string host,
+        int port,
+        bool allowReal = false,
+        ShineLabWireFormat wireFormat = ShineLabWireFormat.Native55Aa)
     {
         if (!allowReal)
             throw new InvalidOperationException("Real ShineLab TCP calls require allowReal=true.");
@@ -68,10 +91,10 @@ public sealed class ShineLabTcpClient
             using var tcp = new TcpClient();
             await tcp.ConnectAsync(host, port, cancellationToken);
             await using var stream = tcp.GetStream();
-            await stream.WriteAsync(ShineLabTcpCodec.Encode(message), cancellationToken);
+            await stream.WriteAsync(ShineLabTcpCodec.Encode(message, wireFormat), cancellationToken);
             await stream.FlushAsync(cancellationToken);
-            var frame = await ReadFrameAsync(stream, cancellationToken);
-            return ShineLabTcpCodec.Decode(frame);
+            var frame = await ReadFrameAsync(stream, cancellationToken, wireFormat);
+            return ShineLabTcpCodec.Decode(frame, wireFormat);
         });
     }
 
@@ -80,9 +103,12 @@ public sealed class ShineLabTcpClient
         CancellationToken cancellationToken = default) =>
         _transport(message, cancellationToken);
 
-    private static async Task<byte[]> ReadFrameAsync(Stream stream, CancellationToken cancellationToken)
+    private static async Task<byte[]> ReadFrameAsync(
+        Stream stream,
+        CancellationToken cancellationToken,
+        ShineLabWireFormat wireFormat)
     {
-        var reader = new ShineLabTcpFrameReader();
+        var reader = new ShineLabWireReader();
         var buffer = new byte[4096];
         while (true)
         {
@@ -90,7 +116,11 @@ public sealed class ShineLabTcpClient
             if (status == ShineLabFrameReadStatus.InvalidFrame)
                 throw new InvalidDataException(error);
             if (status == ShineLabFrameReadStatus.FrameReady)
-                return frame;
+            {
+                if (wireFormat != ShineLabWireFormat.Unknown && frame.Format != wireFormat)
+                    throw new InvalidDataException($"Expected {wireFormat} but received {frame.Format}.");
+                return frame.RawBytes;
+            }
 
             var read = await stream.ReadAsync(buffer.AsMemory(), cancellationToken);
             if (read == 0)

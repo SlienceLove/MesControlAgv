@@ -2,8 +2,8 @@ namespace MesControlAgv.Mes.Services;
 
 /// <summary>
 /// Central-side listener for the resident ShineLab TCP client.  Serial
-/// communication remains entirely inside ShineLab; this service only receives
-/// native 55AA-framed JSON status/events.
+/// communication remains entirely inside ShineLab; this service receives the
+/// deployed LF-delimited YhLoop JSON and retains bounded 55AA compatibility.
 /// </summary>
 public sealed class ShineLabTcpOptions
 {

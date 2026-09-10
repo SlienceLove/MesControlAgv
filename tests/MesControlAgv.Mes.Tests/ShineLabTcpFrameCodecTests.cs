@@ -115,4 +115,93 @@ public sealed class ShineLabTcpFrameCodecTests
         var exception = Assert.Throws<ArgumentOutOfRangeException>(() => ShineLabTcpFrameCodec.EncodeJson(json));
         Assert.Contains("UTF-8 bytes", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void Line_reader_handles_split_heart_and_multiple_json_lines()
+    {
+        const string first = "{\"strID\":\"h1\",\"strMethod\":\"Heart\",\"equipmentCode\":\"STN61_01\",\"body\":{\"type\":\"ping\"}}";
+        const string second = "{\"strID\":\"b1\",\"strMethod\":\"BindModule\",\"equipmentCode\":\"STN61_01\",\"strCode\":\"\",\"body\":{\"chan\":\"\"}}";
+        var bytes = Encoding.UTF8.GetBytes(first + "\n" + second + "\n");
+        var reader = new ShineLabWireReader();
+
+        for (var index = 0; index < bytes.Length; index++)
+            reader.Append(bytes.AsSpan(index, 1));
+
+        Assert.Equal(ShineLabFrameReadStatus.FrameReady, reader.TryRead(out var firstFrame, out var firstError));
+        Assert.Null(firstError);
+        Assert.Equal(ShineLabWireFormat.LineJson, firstFrame.Format);
+        Assert.Equal(first, Encoding.UTF8.GetString(firstFrame.JsonBytes));
+        Assert.Equal(ShineLabFrameReadStatus.FrameReady, reader.TryRead(out var secondFrame, out var secondError));
+        Assert.Null(secondError);
+        Assert.Equal(second, Encoding.UTF8.GetString(secondFrame.JsonBytes));
+        Assert.Equal(ShineLabFrameReadStatus.NeedMoreData, reader.TryRead(out _, out _));
+    }
+
+    [Fact]
+    public void Line_codec_appends_lf_and_strips_optional_cr_before_decode()
+    {
+        const string json = "{\"strMethod\":\"Heart\"}";
+        var encoded = ShineLabWireCodec.EncodeJson(json, ShineLabWireFormat.LineJson);
+        Assert.Equal((byte)'\n', encoded[^1]);
+
+        var reader = new ShineLabWireReader();
+        reader.Append(encoded[..^1]);
+        reader.Append(new byte[] { (byte)'\r', (byte)'\n' });
+        Assert.Equal(ShineLabFrameReadStatus.FrameReady, reader.TryRead(out var frame, out var error));
+        Assert.Null(error);
+        Assert.True(ShineLabWireCodec.TryDecodeJson(frame, out var decoded, out var decodeError), decodeError);
+        Assert.Equal(json, decoded);
+    }
+
+    [Fact]
+    public void Wire_reader_keeps_native_55aa_compatibility()
+    {
+        var native = ShineLabTcpFrameCodec.EncodeJson("{\"strMethod\":\"Certification\"}");
+        var reader = new ShineLabWireReader();
+        reader.Append(native);
+
+        Assert.Equal(ShineLabFrameReadStatus.FrameReady, reader.TryRead(out var frame, out var error));
+        Assert.Null(error);
+        Assert.Equal(ShineLabWireFormat.Native55Aa, reader.Format);
+        Assert.True(ShineLabWireCodec.TryDecodeJson(frame, out var json, out var decodeError), decodeError);
+        Assert.Equal("{\"strMethod\":\"Certification\"}", json);
+    }
+
+    [Fact]
+    public void Unknown_wire_bytes_are_rejected_without_emitting_data()
+    {
+        var reader = new ShineLabWireReader();
+        reader.Append(new byte[] { 0x01, 0x02, 0x03 });
+
+        Assert.Equal(ShineLabFrameReadStatus.InvalidFrame, reader.TryRead(out _, out var error));
+        Assert.Contains("format", error, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(ShineLabWireFormat.Unknown, reader.Format);
+    }
+
+    [Fact]
+    public void Line_reader_rejects_an_oversized_line_and_recovers_on_the_next_frame()
+    {
+        var reader = new ShineLabWireReader();
+        var oversized = Encoding.UTF8.GetBytes("{" + new string('x', ShineLabWireCodec.MaxLineBytes) + "\n");
+        reader.Append(oversized);
+
+        Assert.Equal(ShineLabFrameReadStatus.InvalidFrame, reader.TryRead(out _, out var error));
+        Assert.Contains("exceed", error, StringComparison.OrdinalIgnoreCase);
+
+        reader.Append(Encoding.UTF8.GetBytes("{\"strMethod\":\"Heart\"}\n"));
+        Assert.Equal(ShineLabFrameReadStatus.FrameReady, reader.TryRead(out var frame, out var recoveryError));
+        Assert.Null(recoveryError);
+        Assert.Equal(ShineLabWireFormat.LineJson, frame.Format);
+    }
+
+    [Fact]
+    public void Wire_reader_rejects_an_unbounded_detection_prefix()
+    {
+        var reader = new ShineLabWireReader();
+        reader.Append(new byte[ShineLabWireCodec.MaxDetectionBytes + 1]);
+
+        Assert.Equal(ShineLabFrameReadStatus.InvalidFrame, reader.TryRead(out _, out var error));
+        Assert.Contains("detection", error, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(ShineLabWireFormat.Unknown, reader.Format);
+    }
 }

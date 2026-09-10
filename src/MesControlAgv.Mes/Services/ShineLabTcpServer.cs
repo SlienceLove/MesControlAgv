@@ -14,8 +14,9 @@ namespace MesControlAgv.Mes.Services;
 
 /// <summary>
 /// Receives the long-lived connection initiated by the resident ShineLab
-/// process. ShineLab's native transport is a 55 AA length-framed JSON stream;
-/// this service never opens a laboratory serial port.
+/// process. The deployed YhLoop client uses LF-delimited JSON; a bounded
+/// 55AA reader remains available for compatible clients. This service never
+/// opens a laboratory serial port.
 /// </summary>
 public sealed class ShineLabTcpServer(
     IOptions<ShineLabTcpOptions> configuredOptions,
@@ -43,7 +44,10 @@ public sealed class ShineLabTcpServer(
         var address = ResolveAddress(_options.ListenAddress);
         _listener = new TcpListener(address, _options.Port);
         _listener.Start();
-        logger.LogInformation("ShineLab TCP server listening on {Address}:{Port} using native 55AA framing.", address, _options.Port);
+        logger.LogInformation(
+            "ShineLab TCP server listening on {Address}:{Port} with automatic LF-JSON/55AA framing detection.",
+            address,
+            _options.Port);
 
         try
         {
@@ -102,22 +106,14 @@ public sealed class ShineLabTcpServer(
         try
         {
             await using var stream = client.GetStream();
-            var frameReader = new ShineLabTcpFrameReader();
+            var wireReader = new ShineLabWireReader();
             var invalidFrameCount = 0;
 
             if (_options.SendCertificationOnConnect)
             {
-                var probe = new
-                {
-                    strID = $"mes-cert-probe-{Guid.NewGuid():N}",
-                    strMethod = "Certification",
-                    equipmentCode = _options.ServerEquipmentCode,
-                    body = new { chan = "A" }
-                };
-                await SendJsonAsync(stream, probe, clientTimeout.Token);
-                logger.LogInformation(
-                    "Sent diagnostic native Certification probe to ShineLab client as {EquipmentCode}.",
-                    _options.ServerEquipmentCode);
+                logger.LogWarning(
+                    "Suppressed diagnostic Certification probe on {ConnectionId}; wire format is unknown until the client sends data.",
+                    connectionId);
             }
 
             while (!stoppingToken.IsCancellationRequested)
@@ -125,10 +121,10 @@ public sealed class ShineLabTcpServer(
                 var read = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), clientTimeout.Token);
                 if (read == 0) break;
 
-                frameReader.Append(buffer.AsSpan(0, read));
+                wireReader.Append(buffer.AsSpan(0, read));
                 while (true)
                 {
-                    var frameStatus = frameReader.TryRead(out var frame, out var frameError);
+                    var frameStatus = wireReader.TryRead(out var wireFrame, out var frameError);
                     if (frameStatus == ShineLabFrameReadStatus.NeedMoreData)
                         break;
 
@@ -144,14 +140,15 @@ public sealed class ShineLabTcpServer(
                         continue;
                     }
 
-                    if (!ShineLabTcpFrameCodec.TryDecodeJson(frame, out var json, out var decodeError))
+                    if (!ShineLabWireCodec.TryDecodeJson(wireFrame, out var json, out var decodeError))
                     {
                         invalidFrameCount++;
                         logger.LogWarning(
-                            "Ignored undecodable ShineLab frame on connection {ConnectionId}: {Error}; {Summary}",
+                            "Ignored undecodable ShineLab {WireFormat} frame on connection {ConnectionId}: {Error}; {Summary}",
+                            wireFrame.Format,
                             connectionId,
                             decodeError,
-                            FrameSummary(frame));
+                            FrameSummary(wireFrame.RawBytes));
                         if (invalidFrameCount >= InvalidFrameLimit)
                             throw new InvalidDataException("Too many undecodable ShineLab frames on one connection.");
                         continue;
@@ -161,10 +158,11 @@ public sealed class ShineLabTcpServer(
                     {
                         invalidFrameCount++;
                         logger.LogWarning(
-                            "Ignored malformed ShineLab JSON on connection {ConnectionId}: {Error}; {Summary}",
+                            "Ignored malformed ShineLab {WireFormat} JSON on connection {ConnectionId}: {Error}; {Summary}",
+                            wireFrame.Format,
                             connectionId,
                             parseError,
-                            FrameSummary(frame));
+                            FrameSummary(wireFrame.RawBytes));
                         if (invalidFrameCount >= InvalidFrameLimit)
                             throw new InvalidDataException("Too many malformed ShineLab messages on one connection.");
                         continue;
@@ -174,13 +172,14 @@ public sealed class ShineLabTcpServer(
                     clientTimeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _options.StaleAfterSeconds)));
                     equipmentCode = message.EquipmentCode;
                     logger.LogDebug(
-                        "Received ShineLab frame {Method}/{StrId} from {EquipmentCode}; {Summary}",
+                        "Received ShineLab {WireFormat} frame {Method}/{StrId} from {EquipmentCode}; {Summary}",
+                        wireFrame.Format,
                         message.StrMethod,
                         message.StrId,
                         message.EquipmentCode,
-                        FrameSummary(frame));
+                        FrameSummary(wireFrame.RawBytes));
 
-                    connectionManager.Register(message.EquipmentCode, connectionId, stream);
+                    connectionManager.Register(message.EquipmentCode, connectionId, wireFrame.Format, stream);
                     var isCommandResponse = connectionManager.TryCompleteResponse(
                         message.StrId,
                         message.StrMethod,
@@ -207,11 +206,12 @@ public sealed class ShineLabTcpServer(
                             equipmentCode = message.EquipmentCode,
                             body = new { result = "Success", msg = "" }
                         };
-                        await SendJsonAsync(stream, response, clientTimeout.Token);
+                        await SendJsonAsync(stream, response, wireFrame.Format, clientTimeout.Token);
                         logger.LogInformation(
-                            "Replied to ShineLab Certification {StrId} for {EquipmentCode} using native framing.",
+                            "Replied to ShineLab Certification {StrId} for {EquipmentCode} using {WireFormat} framing.",
                             message.StrId,
-                            message.EquipmentCode);
+                            message.EquipmentCode,
+                            wireFrame.Format);
                     }
                     else if (isCommandResponse)
                     {
@@ -264,9 +264,14 @@ public sealed class ShineLabTcpServer(
         }
     }
 
-    private static async Task SendJsonAsync(Stream stream, object message, CancellationToken cancellationToken)
+    private static async Task SendJsonAsync(
+        Stream stream,
+        object message,
+        ShineLabWireFormat wireFormat,
+        CancellationToken cancellationToken)
     {
-        var frame = ShineLabTcpFrameCodec.Encode(message);
+        var json = JsonSerializer.Serialize(message);
+        var frame = ShineLabWireCodec.EncodeJson(json, wireFormat);
         await stream.WriteAsync(frame, cancellationToken);
         await stream.FlushAsync(cancellationToken);
     }
@@ -280,10 +285,14 @@ public sealed class ShineLabTcpServer(
             var strId = ReadRequiredString(root, "strID");
             var strMethod = ReadRequiredString(root, "strMethod");
             var equipmentCode = ReadRequiredString(root, "equipmentCode");
+            var strCode = root.TryGetProperty("strCode", out var strCodeElement) &&
+                          strCodeElement.ValueKind == JsonValueKind.String
+                ? strCodeElement.GetString()
+                : null;
             var body = root.TryGetProperty("body", out var bodyElement)
                 ? bodyElement.Clone()
                 : JsonSerializer.SerializeToElement(new { });
-            message = new ShineLabMessage(strId, strMethod, equipmentCode, body);
+            message = new ShineLabMessage(strId, strMethod, equipmentCode, strCode, body);
             error = string.Empty;
             return true;
         }
@@ -324,5 +333,6 @@ public sealed class ShineLabTcpServer(
         string StrId,
         string StrMethod,
         string EquipmentCode,
+        string? StrCode,
         JsonElement Body);
 }

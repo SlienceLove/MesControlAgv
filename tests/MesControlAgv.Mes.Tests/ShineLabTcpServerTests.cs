@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using System.Text.Json;
 using MesControlAgv.Contracts;
 using MesControlAgv.Mes.Services;
@@ -215,6 +216,101 @@ public sealed class ShineLabTcpServerTests
         }
     }
 
+    [Fact]
+    public async Task Line_json_client_can_send_heart_and_bind_module_without_server_response()
+    {
+        var port = ReservePort();
+        var options = Options.Create(new ShineLabTcpOptions
+        {
+            Enabled = true,
+            ListenAddress = "127.0.0.1",
+            Port = port,
+            StaleAfterSeconds = 2,
+            SendCertificationOnConnect = false
+        });
+        var hub = new ShineLabStatusHub(options);
+        var connectionManager = new ShineLabConnectionManager();
+        var server = new ShineLabTcpServer(options, hub, connectionManager, NullLogger<ShineLabTcpServer>.Instance);
+        await server.StartAsync(CancellationToken.None);
+
+        try
+        {
+            using var client = await ConnectWithRetryAsync(port);
+            await using var stream = client.GetStream();
+            var heart = "{\"strID\":\"heart-001\",\"strMethod\":\"Heart\",\"equipmentCode\":\"STN61_01\",\"strCode\":\"\",\"body\":{\"type\":\"ping\",\"time\":\"110947000\"}}\n";
+            var bind = "{\"strID\":\"bind-001\",\"strMethod\":\"BindModule\",\"equipmentCode\":\"STN61_01\",\"strCode\":\"\",\"body\":{\"chan\":\"\"}}\n";
+            var bytes = Encoding.UTF8.GetBytes(heart + bind);
+            await stream.WriteAsync(bytes);
+            await stream.FlushAsync();
+
+            ShineLabDeviceStatusResponse? status = null;
+            var deadline = DateTime.UtcNow.AddSeconds(2);
+            do
+            {
+                status = hub.GetStatus("STN61_01");
+                if (status?.Online == true && status.Channel == string.Empty) break;
+                await Task.Delay(20);
+            }
+            while (DateTime.UtcNow < deadline);
+
+            Assert.NotNull(status);
+            Assert.True(status.Online);
+            Assert.Equal("Connected", status.State);
+            Assert.Equal(string.Empty, status.Channel);
+            Assert.Equal(ShineLabWireFormat.LineJson, connectionManager.GetSnapshot().WireFormat);
+            Assert.False(stream.DataAvailable, "Heart/BindModule must not cause an unsolicited response.");
+        }
+        finally
+        {
+            await server.StopAsync(CancellationToken.None);
+            server.Dispose();
+            connectionManager.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task Line_json_certification_is_replied_with_line_json_only_after_request()
+    {
+        var port = ReservePort();
+        var options = Options.Create(new ShineLabTcpOptions
+        {
+            Enabled = true,
+            ListenAddress = "127.0.0.1",
+            Port = port,
+            StaleAfterSeconds = 2,
+            SendCertificationOnConnect = false
+        });
+        var hub = new ShineLabStatusHub(options);
+        var connectionManager = new ShineLabConnectionManager();
+        var server = new ShineLabTcpServer(options, hub, connectionManager, NullLogger<ShineLabTcpServer>.Instance);
+        await server.StartAsync(CancellationToken.None);
+
+        try
+        {
+            using var client = await ConnectWithRetryAsync(port);
+            await using var stream = client.GetStream();
+            var reader = new ShineLabWireReader();
+            var request = "{\"strID\":\"cert-line-001\",\"strMethod\":\"Certification\",\"equipmentCode\":\"STN61_01\",\"strCode\":\"\",\"body\":{}}\n";
+            await stream.WriteAsync(Encoding.UTF8.GetBytes(request));
+            await stream.FlushAsync();
+
+            using var response = await ReadWireJsonAsync(stream, reader, TimeSpan.FromSeconds(3));
+            var root = response.RootElement;
+            Assert.Equal("cert-line-001", root.GetProperty("strID").GetString());
+            Assert.Equal("Certification", root.GetProperty("strMethod").GetString());
+            Assert.Equal("STN61_01", root.GetProperty("equipmentCode").GetString());
+            Assert.Equal("Success", root.GetProperty("body").GetProperty("result").GetString());
+            Assert.Equal(ShineLabWireFormat.LineJson, connectionManager.GetSnapshot().WireFormat);
+            Assert.False(stream.DataAvailable);
+        }
+        finally
+        {
+            await server.StopAsync(CancellationToken.None);
+            server.Dispose();
+            connectionManager.Dispose();
+        }
+    }
+
     private static int ReservePort()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -284,6 +380,29 @@ public sealed class ShineLabTcpServerTests
             var read = await stream.ReadAsync(buffer).AsTask().WaitAsync(timeout);
             if (read == 0) throw new EndOfStreamException("ShineLab test peer closed before a frame was received.");
             frameReader.Append(buffer.AsSpan(0, read));
+        }
+    }
+
+    private static async Task<JsonDocument> ReadWireJsonAsync(
+        Stream stream,
+        ShineLabWireReader wireReader,
+        TimeSpan timeout)
+    {
+        var buffer = new byte[1024];
+        while (true)
+        {
+            var status = wireReader.TryRead(out var frame, out var frameError);
+            if (status == ShineLabFrameReadStatus.InvalidFrame)
+                throw new InvalidDataException(frameError);
+            if (status == ShineLabFrameReadStatus.FrameReady)
+            {
+                Assert.True(ShineLabWireCodec.TryDecodeJson(frame, out var json, out var decodeError), decodeError);
+                return JsonDocument.Parse(json);
+            }
+
+            var read = await stream.ReadAsync(buffer).AsTask().WaitAsync(timeout);
+            if (read == 0) throw new EndOfStreamException("ShineLab test peer closed before a wire frame was received.");
+            wireReader.Append(buffer.AsSpan(0, read));
         }
     }
 }

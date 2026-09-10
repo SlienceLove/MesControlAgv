@@ -41,6 +41,17 @@ public sealed class ShineLabStatusHub(IOptions<ShineLabTcpOptions> configuredOpt
 
             switch (method)
             {
+                case "Heart":
+                case "BindModule":
+                    // A heartbeat/bind proves the TCP peer is reachable, but it
+                    // does not carry the instrument's operational status. Keep
+                    // a previously reported state while making a newly seen
+                    // device visibly connected instead of showing Offline.
+                    ApplyCommonTaskFields(state, body);
+                    if (state.State.Equals("Offline", StringComparison.OrdinalIgnoreCase))
+                        state.State = "Connected";
+                    break;
+
                 case "Certification":
                     state.State = "Connected";
                     state.Status = 0;
