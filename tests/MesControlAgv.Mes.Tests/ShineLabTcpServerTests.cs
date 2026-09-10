@@ -521,7 +521,7 @@ public sealed class ShineLabTcpServerTests
     }
 
     [Fact]
-    public async Task Sustained_blank_equipment_code_frames_are_rate_limited_and_close_the_connection()
+    public async Task Sustained_blank_equipment_code_frames_keep_the_connection_and_stay_unregistered()
     {
         var port = ReservePort();
         var options = Options.Create(new ShineLabTcpOptions
@@ -529,7 +529,6 @@ public sealed class ShineLabTcpServerTests
             Enabled = true,
             ListenAddress = "127.0.0.1",
             Port = port,
-            // Long enough that only the blank-code limit can end the connection.
             StaleAfterSeconds = 30,
             SendCertificationOnConnect = false
         });
@@ -543,42 +542,34 @@ public sealed class ShineLabTcpServerTests
             using var client = await ConnectWithRetryAsync(port);
             await using var stream = client.GetStream();
 
-            // Structurally valid frames, so the invalid-frame counter is reset on
-            // every iteration; only a dedicated counter can bound this peer.
-            for (var index = 0; index < 16; index++)
+            // Reproduces 192.168.10.108: the deployed YhLoop client pushes
+            // UpdateInfo with an empty equipmentCode indefinitely. Disconnecting
+            // such a peer produced a reconnect loop in the field, so the server
+            // must stay attached and simply not register the device.
+            for (var index = 0; index < 24; index++)
             {
-                var heart =
-                    $"{{\"strID\":\"blank-heart-{index:D3}\",\"strMethod\":\"Heart\",\"equipmentCode\":\"\",\"strCode\":\"\",\"body\":{{\"type\":\"ping\"}}}}\n";
-                try
-                {
-                    await stream.WriteAsync(Encoding.UTF8.GetBytes(heart));
-                    await stream.FlushAsync();
-                }
-                catch (IOException)
-                {
-                    break;
-                }
-
-                await Task.Delay(10);
+                var update =
+                    $"{{\"strID\":\"blank-update-{index:D3}\",\"strMethod\":\"UpdateInfo\",\"equipmentCode\":\"\",\"strCode\":\"\",\"body\":{{\"status\":0}}}}\n";
+                await stream.WriteAsync(Encoding.UTF8.GetBytes(update));
+                await stream.FlushAsync();
+                await Task.Delay(5);
             }
 
-            // The server may close gracefully (0-byte read) or the socket may be
-            // reset; both prove the peer was disconnected rather than allowed to
-            // hold the connection open indefinitely.
-            var buffer = new byte[64];
-            using var readTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            var closed = false;
-            try
-            {
-                closed = await stream.ReadAsync(buffer, readTimeout.Token) == 0;
-            }
-            catch (Exception exception) when (exception is IOException or SocketException)
-            {
-                closed = true;
-            }
+            await AssertNoDataAsync(stream, TimeSpan.FromMilliseconds(300));
+            Assert.True(client.Connected);
+            Assert.Empty(hub.GetStatuses());
+            Assert.False(connectionManager.GetSnapshot().Connected);
 
-            Assert.True(closed, "Blank-equipment-code frames must not keep the connection alive.");
-            Assert.Null(hub.GetStatus(string.Empty));
+            // A later frame that does carry a code must still register normally.
+            var identified =
+                "{\"strID\":\"identified-001\",\"strMethod\":\"UpdateInfo\",\"equipmentCode\":\"STN61_01\",\"strCode\":\"\",\"body\":{\"status\":0}}\n";
+            await stream.WriteAsync(Encoding.UTF8.GetBytes(identified));
+            await stream.FlushAsync();
+
+            var deadline = DateTime.UtcNow.AddSeconds(2);
+            while (!connectionManager.GetSnapshot().Connected && DateTime.UtcNow < deadline)
+                await Task.Delay(20);
+            Assert.Equal("STN61_01", connectionManager.GetSnapshot().EquipmentCode);
         }
         finally
         {

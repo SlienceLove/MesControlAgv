@@ -26,6 +26,8 @@ public sealed class ShineLabTcpServer(
     IServiceScopeFactory? scopeFactory = null) : BackgroundService
 {
     private const int InvalidFrameLimit = 8;
+    private const int UnidentifiedSampleLimit = 5;
+    private const int UnidentifiedLogInterval = 200;
     private readonly ShineLabTcpOptions _options = configuredOptions.Value;
     private readonly ConcurrentDictionary<Task, byte> _clients = new();
     private TcpListener? _listener;
@@ -223,20 +225,35 @@ public sealed class ShineLabTcpServer(
                             continue;
                         }
 
-                        // Counted separately from invalidFrameCount: these frames
-                        // are structurally valid, so the reset above would clear
-                        // the counter on every iteration and the limit would
-                        // never be reached.
+                        // The deployed YhLoop client sends every frame — including
+                        // UpdateInfo — with an empty equipmentCode, so this is the
+                        // normal field path, not a protocol violation. Dropping the
+                        // connection here only produced a reconnect loop. Keep the
+                        // peer attached and capture the payload verbatim: the first
+                        // few frames are the evidence needed to decide how the
+                        // device should be identified.
                         unidentifiedFrameCount++;
-                        logger.LogWarning(
-                            "Ignored ShineLab {Method}/{StrId} with an empty equipment code on connection {ConnectionId} ({UnidentifiedFrameCount}/{Limit}).",
-                            message.StrMethod,
-                            message.StrId,
-                            connectionId,
-                            unidentifiedFrameCount,
-                            InvalidFrameLimit);
-                        if (unidentifiedFrameCount >= InvalidFrameLimit)
-                            throw new InvalidDataException("Too many ShineLab messages without an equipment code.");
+                        if (unidentifiedFrameCount <= UnidentifiedSampleLimit)
+                        {
+                            logger.LogInformation(
+                                "ShineLab {Method}/{StrId} arrived without an equipment code on connection {ConnectionId}; sample {Sample}/{SampleLimit} payload: {Json}",
+                                message.StrMethod,
+                                message.StrId,
+                                connectionId,
+                                unidentifiedFrameCount,
+                                UnidentifiedSampleLimit,
+                                json);
+                        }
+                        else if (unidentifiedFrameCount % UnidentifiedLogInterval == 0)
+                        {
+                            logger.LogWarning(
+                                "Ignored {UnidentifiedFrameCount} ShineLab frames without an equipment code on connection {ConnectionId}; latest {Method}/{StrId}.",
+                                unidentifiedFrameCount,
+                                connectionId,
+                                message.StrMethod,
+                                message.StrId);
+                        }
+
                         continue;
                     }
 
