@@ -209,8 +209,11 @@ public sealed class SampleWorkstationReadOnlyDriver(
 
         if (spec.SupportsPaging)
         {
-            if (!string.IsNullOrWhiteSpace(query.StartDate)) values["StartTime"] = query.StartDate.Trim();
-            if (!string.IsNullOrWhiteSpace(query.EndDate)) values["EndTime"] = query.EndDate.Trim();
+            // The vendor WCF endpoint expects both date keys even when the
+            // caller requests an unbounded range; omitting them returns code
+            // 201 ("无数据") on the real workstation.
+            values["StartTime"] = query.StartDate?.Trim() ?? string.Empty;
+            values["EndTime"] = query.EndDate?.Trim() ?? string.Empty;
             values["StartNo"] = query.StartNo.ToString(CultureInfo.InvariantCulture);
             values["RecordNum"] = query.RecordNum.ToString(CultureInfo.InvariantCulture);
         }
