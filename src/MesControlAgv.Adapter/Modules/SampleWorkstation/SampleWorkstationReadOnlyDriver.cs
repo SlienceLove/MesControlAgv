@@ -47,7 +47,7 @@ public sealed class SampleWorkstationReadOnlyDriver(
             "GetInstrumentStatus",
             new Dictionary<string, string?> { ["EquipmentNo"] = options.EquipmentNo },
             cancellationToken);
-        if (response.Data.ValueKind != JsonValueKind.Number || !response.Data.TryGetInt32(out var rawState))
+        if (!TryReadInt32(response.Data, out var rawState))
             throw new SampleWorkstationProtocolException("Instrument status Data must be an integer.");
 
         var state = rawState switch
@@ -78,8 +78,7 @@ public sealed class SampleWorkstationReadOnlyDriver(
             "GetErrorInformation",
             new Dictionary<string, string?> { ["EquipmentNo"] = options.EquipmentNo },
             cancellationToken);
-        var errorCode = response.Data.ValueKind == JsonValueKind.Number
-            && response.Data.TryGetInt32(out var parsedCode)
+        var errorCode = TryReadInt32(response.Data, out var parsedCode)
             ? parsedCode
             : (int?)null;
         string? description = null;
@@ -289,6 +288,17 @@ public sealed class SampleWorkstationReadOnlyDriver(
         "任务完成" => SampleWorkstationTaskState.Completed,
         _ => SampleWorkstationTaskState.Unknown
     };
+
+    private static bool TryReadInt32(JsonElement element, out int value)
+    {
+        if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out value))
+            return true;
+        if (element.ValueKind == JsonValueKind.String
+            && int.TryParse(element.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value))
+            return true;
+        value = default;
+        return false;
+    }
 
     private static bool TryDescribeError(int code, out string? description)
     {
