@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace MesControlAgv.Contracts;
@@ -21,6 +22,28 @@ public enum SampleWorkstationTaskState
     Waiting,
     Running,
     Completed
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum SampleWorkstationProtocolOperation
+{
+    WorkflowList,
+    WorkflowDetails,
+    ExperimentalTaskTemplate,
+    WorkflowTemplate,
+    MaterialTypeList,
+    MaterialTypeParameterList,
+    MaterialTypeParameterDetails,
+    MaterialTemplate,
+    PlatformLayoutList,
+    PlatformLayoutDetails,
+    PlatformLayoutTemplate,
+    TrajectoryParameterList,
+    TrajectoryParameterDetails,
+    TrajectoryParameterTemplate,
+    SolventParameterList,
+    SolventParameterDetails,
+    SolventParameterTemplate
 }
 
 public sealed record SampleWorkstationStatusResponse(
@@ -65,6 +88,20 @@ public sealed record SampleWorkstationTaskStateResponse(
     string TaskNo,
     SampleWorkstationTaskState State,
     string RawState,
+    DateTimeOffset ObservedAtUtc);
+
+public sealed record SampleWorkstationProtocolReadQuery(
+    string? Key = null,
+    string? StartDate = null,
+    string? EndDate = null,
+    int StartNo = 1,
+    int RecordNum = 50);
+
+public sealed record SampleWorkstationProtocolResponse(
+    string DeviceId,
+    SampleWorkstationProtocolOperation Operation,
+    int Code,
+    JsonElement Data,
     DateTimeOffset ObservedAtUtc);
 
 public sealed record SampleWorkstationTaskQuery(

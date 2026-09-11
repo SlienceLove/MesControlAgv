@@ -126,6 +126,38 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
                 () => reader.GetTaskStateAsync(deviceId, taskNo, cancellationToken),
                 cancellationToken));
 
+        endpoints.MapGet("/api/workstations/{deviceId}/protocol/{operation}", async (
+            string deviceId,
+            string operation,
+            string? key,
+            string? startDate,
+            string? endDate,
+            int? startNo,
+            int? recordNum,
+            ISampleWorkstationReader reader,
+            CancellationToken cancellationToken) =>
+            await ExecuteWorkstationReadAsync(
+                () =>
+                {
+                    if (!Enum.TryParse<SampleWorkstationProtocolOperation>(operation, true, out var parsed)
+                        || !Enum.IsDefined(parsed))
+                    {
+                        throw new ArgumentException($"Unsupported sample workstation operation '{operation}'.");
+                    }
+
+                    return reader.GetProtocolReadAsync(
+                        deviceId,
+                        parsed,
+                        new SampleWorkstationProtocolReadQuery(
+                            key,
+                            startDate,
+                            endDate,
+                            startNo ?? 1,
+                            recordNum ?? 50),
+                        cancellationToken);
+                },
+                cancellationToken));
+
         endpoints.MapGet("/api/agv", async (
             IAgvGateway adapter,
             CancellationToken cancellationToken) =>

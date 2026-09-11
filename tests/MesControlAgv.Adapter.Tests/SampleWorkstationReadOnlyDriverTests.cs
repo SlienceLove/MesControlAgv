@@ -78,6 +78,41 @@ public sealed class SampleWorkstationReadOnlyDriverTests
     }
 
     [Fact]
+    public async Task Protocol_read_maps_solvent_list_and_keeps_vendor_data()
+    {
+        var handler = new StubHttpHandler("""{"Code":"200","Data":[{"LiquidCode":"WATER"}]}""");
+        var driver = CreateDriver(handler);
+
+        var response = await driver.GetProtocolReadAsync(
+            "SAMPLE-WORKSTATION-01",
+            SampleWorkstationProtocolOperation.SolventParameterList,
+            new SampleWorkstationProtocolReadQuery("", "2026-08-11", "2026-08-12", 2, 10),
+            CancellationToken.None);
+
+        Assert.Equal(200, response.Code);
+        Assert.Equal("WATER", response.Data[0].GetProperty("LiquidCode").GetString());
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Equal("/Service/GetSolventParameterList", request.Uri.AbsolutePath);
+        Assert.Contains("StartTime=2026-08-11", request.Uri.Query, StringComparison.Ordinal);
+        Assert.Contains("EndTime=2026-08-12", request.Uri.Query, StringComparison.Ordinal);
+        Assert.Contains("StartNo=2", request.Uri.Query, StringComparison.Ordinal);
+        Assert.Contains("RecordNum=10", request.Uri.Query, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Protocol_read_requires_a_key_for_detail_operations()
+    {
+        var driver = CreateDriver(new StubHttpHandler());
+
+        await Assert.ThrowsAsync<ArgumentException>(() => driver.GetProtocolReadAsync(
+            "SAMPLE-WORKSTATION-01",
+            SampleWorkstationProtocolOperation.SolventParameterDetails,
+            new SampleWorkstationProtocolReadQuery(),
+            CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Vendor_business_failure_and_invalid_task_data_fail_closed()
     {
         var businessFailure = CreateDriver(new StubHttpHandler("""{"Code":500,"Data":"失败"}"""));

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
 using Microsoft.AspNetCore.Hosting;
@@ -26,10 +27,13 @@ public sealed class SampleWorkstationApiTests(MesWebApplicationFactory factory)
             "/api/workstations/SAMPLE-WORKSTATION-01/tasks?state=Waiting&startNo=1&recordNum=20");
         var taskState = await client.GetFromJsonAsync<SampleWorkstationTaskStateResponse>(
             "/api/workstations/SAMPLE-WORKSTATION-01/tasks/TASK-01/state");
+        var protocol = await client.GetFromJsonAsync<SampleWorkstationProtocolResponse>(
+            "/api/workstations/SAMPLE-WORKSTATION-01/protocol/SolventParameterList?startNo=1&recordNum=10");
 
         Assert.Equal(SampleWorkstationDeviceState.Idle, status!.State);
         Assert.Single(tasks!);
         Assert.Equal(SampleWorkstationTaskState.Waiting, taskState!.State);
+        Assert.Equal(SampleWorkstationProtocolOperation.SolventParameterList, protocol!.Operation);
         Assert.Equal("Waiting", reader.LastQuery?.State);
         Assert.Equal(20, reader.LastQuery?.RecordNum);
         Assert.All(reader.Calls, call => Assert.Equal("SAMPLE-WORKSTATION-01", call.DeviceId));
@@ -47,6 +51,20 @@ public sealed class SampleWorkstationApiTests(MesWebApplicationFactory factory)
             content: null);
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Empty(reader.Calls);
+    }
+
+    [Fact]
+    public async Task Protocol_route_rejects_unknown_operation_without_calling_reader()
+    {
+        var reader = new StubReader();
+        using var configuredFactory = ConfigureReader(reader);
+        using var client = configuredFactory.CreateClient();
+
+        var response = await client.GetAsync(
+            "/api/workstations/SAMPLE-WORKSTATION-01/protocol/NotARealOperation");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Empty(reader.Calls);
     }
 
@@ -122,6 +140,22 @@ public sealed class SampleWorkstationApiTests(MesWebApplicationFactory factory)
             Calls.Add(("state", deviceId));
             return Result(new SampleWorkstationTaskStateResponse(
                 deviceId, taskNo, SampleWorkstationTaskState.Waiting, "等待运行", ObservedAt));
+        }
+
+        public Task<SampleWorkstationProtocolResponse> GetProtocolReadAsync(
+            string deviceId,
+            SampleWorkstationProtocolOperation operation,
+            SampleWorkstationProtocolReadQuery query,
+            CancellationToken cancellationToken)
+        {
+            Calls.Add((operation.ToString(), deviceId));
+            using var document = JsonDocument.Parse("[{\"LiquidCode\":\"WATER\"}]");
+            return Result(new SampleWorkstationProtocolResponse(
+                deviceId,
+                operation,
+                200,
+                document.RootElement.Clone(),
+                ObservedAt));
         }
 
         private Task<T> Result<T>(T value) =>

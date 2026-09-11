@@ -121,6 +121,38 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
                 EnsureWorkstation(policy.EnsureReadEnabled(deviceId));
                 return await driver.GetTaskStateAsync(deviceId, taskNo, cancellationToken);
             }));
+
+        endpoints.MapGet("/api/workstations/{deviceId}/protocol/{operation}", async (
+            string deviceId,
+            string operation,
+            string? key,
+            string? startDate,
+            string? endDate,
+            int? startNo,
+            int? recordNum,
+            ISampleWorkstationDriver driver,
+            DeviceOperationPolicy policy,
+            CancellationToken cancellationToken) =>
+            await ExecuteAsync(async () =>
+            {
+                EnsureWorkstation(policy.EnsureReadEnabled(deviceId));
+                if (!Enum.TryParse<SampleWorkstationProtocolOperation>(operation, true, out var parsed)
+                    || !Enum.IsDefined(parsed))
+                {
+                    throw new ArgumentException($"Unsupported sample workstation operation '{operation}'.");
+                }
+
+                return await driver.GetProtocolReadAsync(
+                    deviceId,
+                    parsed,
+                    new SampleWorkstationProtocolReadQuery(
+                        key,
+                        startDate,
+                        endDate,
+                        startNo ?? 1,
+                        recordNum ?? 50),
+                    cancellationToken);
+            }));
     }
 
     private static void EnsureWorkstation(DeviceAdapterRegistration device)

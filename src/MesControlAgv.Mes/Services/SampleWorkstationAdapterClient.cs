@@ -57,6 +57,26 @@ public sealed class SampleWorkstationAdapterClient(HttpClient client) : ISampleW
             $"api/workstations/{EscapeRequired(deviceId, nameof(deviceId))}/tasks/{EscapeRequired(taskNo, nameof(taskNo))}/state",
             cancellationToken);
 
+    public Task<SampleWorkstationProtocolResponse> GetProtocolReadAsync(
+        string deviceId,
+        SampleWorkstationProtocolOperation operation,
+        SampleWorkstationProtocolReadQuery query,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        var path = QueryHelpers.AddQueryString(
+            $"api/workstations/{EscapeRequired(deviceId, nameof(deviceId))}/protocol/{operation}",
+            new Dictionary<string, string?>
+            {
+                ["key"] = query.Key,
+                ["startDate"] = query.StartDate,
+                ["endDate"] = query.EndDate,
+                ["startNo"] = query.StartNo.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["recordNum"] = query.RecordNum.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            });
+        return GetAsync<SampleWorkstationProtocolResponse>(path, cancellationToken);
+    }
+
     private async Task<T> GetAsync<T>(string path, CancellationToken cancellationToken)
     {
         using var response = await client.GetAsync(path, cancellationToken);

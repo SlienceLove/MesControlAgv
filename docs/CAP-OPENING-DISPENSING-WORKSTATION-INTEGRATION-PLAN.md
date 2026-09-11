@@ -288,7 +288,8 @@ Adapter 多设备模块基础和首个工作站 HTTP 模块已经完成：
 - 设备目录公开 `Enabled` 和 `ControlEnabled`；工作站默认均为 `false`。
 - 启用工作站时必须配置 `EquipmentNo`、绝对 HTTP(S) `BaseUrl` 和有界请求超时。
 - 当前构建强制 `ControlEnabled=false`；配置为 `true` 会导致 Adapter 启动失败。
-- Adapter 仅实现状态、错误、任务列表、任务详情和任务状态五类 GET 路由。
+- Adapter 保留状态、错误、任务列表、任务详情和任务状态五类规范化 GET 路由，并增加固定操作映射的协议只读路由：`GET /api/workstations/{deviceId}/protocol/{operation}`。
+- 协议只读操作覆盖工作流、物料类型、平台布局、移液参数、溶剂参数及实验/参数模板查询；目录和模板 `Data` 暂按原始 JSON 返回，便于现场核对真实响应。
 - MES 已提供相同规范化只读路由，WPF 和其他业务调用方无需接触厂家地址。
 - 厂家 `Code`、变化的 `Data` 类型、未知状态和错误示例冲突均采用失败关闭或显式 `Unknown` 处理。
 - 没有实现 `Init`、`ArmAvoidance`、任务创建、启动、导入、删除、原始厂家请求或任意 POST 命令。

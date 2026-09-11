@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using MesControlAgv.Contracts;
 using MesControlAgv.Mes.Services;
 
@@ -17,7 +18,13 @@ public sealed class SampleWorkstationAdapterClientTests
             JsonContent.Create<IReadOnlyList<SampleWorkstationTaskSummaryResponse>>(
             [
                 new(1, "TASK-01", "task", SampleWorkstationTaskState.Waiting, "等待运行", "2026-08-17 10:00:00", null)
-            ]));
+            ]),
+            JsonContent.Create(new SampleWorkstationProtocolResponse(
+                "SAMPLE-WORKSTATION-01",
+                SampleWorkstationProtocolOperation.SolventParameterList,
+                200,
+                JsonDocument.Parse("[{\"LiquidCode\":\"WATER\"}]").RootElement.Clone(),
+                observedAt)));
         using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://adapter.local/") };
         var client = new SampleWorkstationAdapterClient(httpClient);
 
@@ -26,13 +33,22 @@ public sealed class SampleWorkstationAdapterClientTests
             "SAMPLE-WORKSTATION-01",
             new SampleWorkstationTaskQuery("Waiting", StartNo: 1, RecordNum: 20),
             CancellationToken.None);
+        var protocol = await client.GetProtocolReadAsync(
+            "SAMPLE-WORKSTATION-01",
+            SampleWorkstationProtocolOperation.SolventParameterList,
+            new SampleWorkstationProtocolReadQuery(StartDate: "2026-08-11", RecordNum: 10),
+            CancellationToken.None);
 
         Assert.Equal(SampleWorkstationDeviceState.Idle, status.State);
         Assert.Single(tasks);
+        Assert.Equal("WATER", protocol.Data[0].GetProperty("LiquidCode").GetString());
         Assert.Equal("/api/workstations/SAMPLE-WORKSTATION-01/status", handler.Requests[0].RequestUri!.AbsolutePath);
         Assert.Equal("/api/workstations/SAMPLE-WORKSTATION-01/tasks", handler.Requests[1].RequestUri!.AbsolutePath);
+        Assert.Equal("/api/workstations/SAMPLE-WORKSTATION-01/protocol/SolventParameterList", handler.Requests[2].RequestUri!.AbsolutePath);
         Assert.Contains("state=Waiting", handler.Requests[1].RequestUri!.Query, StringComparison.Ordinal);
         Assert.Contains("recordNum=20", handler.Requests[1].RequestUri!.Query, StringComparison.Ordinal);
+        Assert.Contains("startDate=2026-08-11", handler.Requests[2].RequestUri!.Query, StringComparison.Ordinal);
+        Assert.Contains("recordNum=10", handler.Requests[2].RequestUri!.Query, StringComparison.Ordinal);
         Assert.All(handler.Requests, request =>
         {
             Assert.Equal(HttpMethod.Get, request.Method);

@@ -16,6 +16,28 @@ public sealed class SampleWorkstationReadOnlyDriver(
         PropertyNameCaseInsensitive = true
     };
 
+    private static readonly IReadOnlyDictionary<SampleWorkstationProtocolOperation, ProtocolOperationSpec>
+        ProtocolOperations = new Dictionary<SampleWorkstationProtocolOperation, ProtocolOperationSpec>
+        {
+            [SampleWorkstationProtocolOperation.WorkflowList] = new("GetWorkFlowList"),
+            [SampleWorkstationProtocolOperation.WorkflowDetails] = new("GetWorkFlowDetails", "WorkflowNo", true),
+            [SampleWorkstationProtocolOperation.ExperimentalTaskTemplate] = new("GetExperimentalTaskTemplate", "TaskNo"),
+            [SampleWorkstationProtocolOperation.WorkflowTemplate] = new("GetWorkFlowTemplate", "WorkflowNo"),
+            [SampleWorkstationProtocolOperation.MaterialTypeList] = new("GetMaterialTypeList"),
+            [SampleWorkstationProtocolOperation.MaterialTypeParameterList] = new("GetMaterialTypeParameterList"),
+            [SampleWorkstationProtocolOperation.MaterialTypeParameterDetails] = new("GetMaterialTypeParameterDetails", "MaterialTypeParCode", true),
+            [SampleWorkstationProtocolOperation.MaterialTemplate] = new("GeMaterialTemplate"),
+            [SampleWorkstationProtocolOperation.PlatformLayoutList] = new("GetPlatformLayoutList"),
+            [SampleWorkstationProtocolOperation.PlatformLayoutDetails] = new("GetPlatformLayoutDetails", "PlatformLayoutNo", true),
+            [SampleWorkstationProtocolOperation.PlatformLayoutTemplate] = new("GetPlatformLayoutTemplate"),
+            [SampleWorkstationProtocolOperation.TrajectoryParameterList] = new("GetTrajectoryParameterList"),
+            [SampleWorkstationProtocolOperation.TrajectoryParameterDetails] = new("GetTrajectoryParameterDetails", "TrajectoryTaskNo", true),
+            [SampleWorkstationProtocolOperation.TrajectoryParameterTemplate] = new("GetTrajectoryParameterTemplate"),
+            [SampleWorkstationProtocolOperation.SolventParameterList] = new("GetSolventParameterList", null, false, true),
+            [SampleWorkstationProtocolOperation.SolventParameterDetails] = new("GetSolventParameterDetails", "LiquidCode", true),
+            [SampleWorkstationProtocolOperation.SolventParameterTemplate] = new("GetSolventParameterTemplate")
+        };
+
     public async Task<SampleWorkstationStatusResponse> GetStatusAsync(
         string deviceId,
         CancellationToken cancellationToken)
@@ -153,6 +175,50 @@ public sealed class SampleWorkstationReadOnlyDriver(
             timeProvider.GetUtcNow());
     }
 
+    public async Task<SampleWorkstationProtocolResponse> GetProtocolReadAsync(
+        string deviceId,
+        SampleWorkstationProtocolOperation operation,
+        SampleWorkstationProtocolReadQuery query,
+        CancellationToken cancellationToken)
+    {
+        EnsureDeviceId(deviceId);
+        ArgumentNullException.ThrowIfNull(query);
+        if (!ProtocolOperations.TryGetValue(operation, out var spec))
+            throw new ArgumentException($"Unsupported sample workstation operation '{operation}'.", nameof(operation));
+
+        var response = await vendor.GetAsync(
+            spec.Path,
+            BuildProtocolQuery(spec, query),
+            cancellationToken);
+        return new SampleWorkstationProtocolResponse(
+            options.DeviceId,
+            operation,
+            response.Code,
+            response.Data,
+            timeProvider.GetUtcNow());
+    }
+
+    private static Dictionary<string, string?> BuildProtocolQuery(
+        ProtocolOperationSpec spec,
+        SampleWorkstationProtocolReadQuery query)
+    {
+        var values = new Dictionary<string, string?>();
+        if (spec.KeyParameter is not null && !string.IsNullOrWhiteSpace(query.Key))
+            values[spec.KeyParameter] = query.Key.Trim();
+        else if (spec.KeyRequired)
+            throw new ArgumentException($"Key is required for '{spec.Path}'.", nameof(query));
+
+        if (spec.SupportsPaging)
+        {
+            if (!string.IsNullOrWhiteSpace(query.StartDate)) values["StartTime"] = query.StartDate.Trim();
+            if (!string.IsNullOrWhiteSpace(query.EndDate)) values["EndTime"] = query.EndDate.Trim();
+            values["StartNo"] = query.StartNo.ToString(CultureInfo.InvariantCulture);
+            values["RecordNum"] = query.RecordNum.ToString(CultureInfo.InvariantCulture);
+        }
+
+        return values;
+    }
+
     private static SampleWorkstationTaskSummaryResponse ToSummary(VendorTaskSummary task)
     {
         var taskNo = RequireVendorValue(task.TaskNo, "TaskNo");
@@ -279,4 +345,10 @@ public sealed class SampleWorkstationReadOnlyDriver(
         string? OperatorAccount,
         string? MakeTime,
         string? Remark);
+
+    private sealed record ProtocolOperationSpec(
+        string Path,
+        string? KeyParameter = null,
+        bool KeyRequired = false,
+        bool SupportsPaging = false);
 }

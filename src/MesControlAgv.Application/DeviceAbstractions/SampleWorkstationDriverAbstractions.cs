@@ -30,6 +30,12 @@ public interface ISampleWorkstationReader
         string deviceId,
         string taskNo,
         CancellationToken cancellationToken);
+
+    Task<SampleWorkstationProtocolResponse> GetProtocolReadAsync(
+        string deviceId,
+        SampleWorkstationProtocolOperation operation,
+        SampleWorkstationProtocolReadQuery query,
+        CancellationToken cancellationToken);
 }
 
 public interface ISampleWorkstationDriver : ISampleWorkstationReader;
