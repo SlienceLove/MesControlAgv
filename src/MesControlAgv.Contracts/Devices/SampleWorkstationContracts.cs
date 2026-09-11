@@ -25,6 +25,13 @@ public enum SampleWorkstationTaskState
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter))]
+public enum SampleWorkstationCommandOperation
+{
+    Initialize,
+    StartTask
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter))]
 public enum SampleWorkstationProtocolOperation
 {
     WorkflowList,
@@ -88,6 +95,13 @@ public sealed record SampleWorkstationTaskStateResponse(
     string TaskNo,
     SampleWorkstationTaskState State,
     string RawState,
+    DateTimeOffset ObservedAtUtc);
+
+public sealed record SampleWorkstationCommandResponse(
+    string DeviceId,
+    SampleWorkstationCommandOperation Operation,
+    int Code,
+    JsonElement Data,
     DateTimeOffset ObservedAtUtc);
 
 public sealed record SampleWorkstationProtocolReadQuery(

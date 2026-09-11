@@ -6,8 +6,24 @@ using Microsoft.AspNetCore.WebUtilities;
 
 namespace MesControlAgv.Mes.Services;
 
-public sealed class SampleWorkstationAdapterClient(HttpClient client) : ISampleWorkstationReader
+public sealed class SampleWorkstationAdapterClient(HttpClient client)
+    : ISampleWorkstationReader, ISampleWorkstationController
 {
+    public Task<SampleWorkstationCommandResponse> InitializeAsync(
+        string deviceId,
+        CancellationToken cancellationToken) =>
+        PostAsync<SampleWorkstationCommandResponse>(
+            $"api/workstations/{EscapeRequired(deviceId, nameof(deviceId))}/initialize",
+            cancellationToken);
+
+    public Task<SampleWorkstationCommandResponse> StartTaskAsync(
+        string deviceId,
+        string taskNo,
+        CancellationToken cancellationToken) =>
+        PostAsync<SampleWorkstationCommandResponse>(
+            $"api/workstations/{EscapeRequired(deviceId, nameof(deviceId))}/tasks/{EscapeRequired(taskNo, nameof(taskNo))}/start",
+            cancellationToken);
+
     public Task<SampleWorkstationStatusResponse> GetStatusAsync(
         string deviceId,
         CancellationToken cancellationToken) =>
@@ -77,9 +93,20 @@ public sealed class SampleWorkstationAdapterClient(HttpClient client) : ISampleW
         return GetAsync<SampleWorkstationProtocolResponse>(path, cancellationToken);
     }
 
-    private async Task<T> GetAsync<T>(string path, CancellationToken cancellationToken)
+    private Task<T> GetAsync<T>(string path, CancellationToken cancellationToken) =>
+        SendAsync<T>(HttpMethod.Get, path, content: null, cancellationToken);
+
+    private Task<T> PostAsync<T>(string path, CancellationToken cancellationToken) =>
+        SendAsync<T>(HttpMethod.Post, path, content: null, cancellationToken);
+
+    private async Task<T> SendAsync<T>(
+        HttpMethod method,
+        string path,
+        HttpContent? content,
+        CancellationToken cancellationToken)
     {
-        using var response = await client.GetAsync(path, cancellationToken);
+        using var request = new HttpRequestMessage(method, path) { Content = content };
+        using var response = await client.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             var detail = await TryReadDetailAsync(response, cancellationToken);

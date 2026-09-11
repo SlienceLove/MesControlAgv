@@ -6,7 +6,7 @@ using MesControlAgv.Contracts;
 
 namespace MesControlAgv.Adapter.Modules.SampleWorkstation;
 
-public sealed class SampleWorkstationReadOnlyDriver(
+public sealed class SampleWorkstationDriver(
     VendorSampleWorkstationHttpClient vendor,
     SampleWorkstationOptions options,
     TimeProvider timeProvider) : ISampleWorkstationDriver
@@ -37,6 +37,29 @@ public sealed class SampleWorkstationReadOnlyDriver(
             [SampleWorkstationProtocolOperation.SolventParameterDetails] = new("GetSolventParameterDetails", "LiquidCode", true),
             [SampleWorkstationProtocolOperation.SolventParameterTemplate] = new("GetSolventParameterTemplate")
         };
+
+    public async Task<SampleWorkstationCommandResponse> InitializeAsync(
+        string deviceId,
+        CancellationToken cancellationToken)
+    {
+        EnsureDeviceId(deviceId);
+        var response = await vendor.ExecuteCommandAsync("Init", query: null, cancellationToken);
+        return ToCommandResponse(deviceId, SampleWorkstationCommandOperation.Initialize, response);
+    }
+
+    public async Task<SampleWorkstationCommandResponse> StartTaskAsync(
+        string deviceId,
+        string taskNo,
+        CancellationToken cancellationToken)
+    {
+        EnsureDeviceId(deviceId);
+        taskNo = RequireTaskNo(taskNo);
+        var response = await vendor.ExecuteCommandAsync(
+            "StartExperiment",
+            new Dictionary<string, string?> { ["TaskNo"] = taskNo },
+            cancellationToken);
+        return ToCommandResponse(deviceId, SampleWorkstationCommandOperation.StartTask, response);
+    }
 
     public async Task<SampleWorkstationStatusResponse> GetStatusAsync(
         string deviceId,
@@ -302,6 +325,12 @@ public sealed class SampleWorkstationReadOnlyDriver(
         value = default;
         return false;
     }
+
+    private SampleWorkstationCommandResponse ToCommandResponse(
+        string deviceId,
+        SampleWorkstationCommandOperation operation,
+        VendorSampleWorkstationResponse response) =>
+        new(deviceId, operation, response.Code, response.Data, timeProvider.GetUtcNow());
 
     private static bool TryDescribeError(int code, out string? description)
     {

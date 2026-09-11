@@ -6,7 +6,7 @@ using Microsoft.Extensions.Configuration;
 
 namespace MesControlAgv.Adapter.Tests;
 
-public sealed class SampleWorkstationReadOnlyDriverTests
+public sealed class SampleWorkstationDriverTests
 {
     [Theory]
     [InlineData(0, SampleWorkstationDeviceState.Idle, true)]
@@ -133,6 +133,28 @@ public sealed class SampleWorkstationReadOnlyDriverTests
     }
 
     [Fact]
+    public async Task Control_commands_map_to_documented_vendor_get_routes()
+    {
+        var handler = new StubHttpHandler(
+            """{"Code":200,"Data":"设备初始化请求"}""",
+            """{"Code":200,"Data":"开始实验"}""");
+        var driver = CreateDriver(handler);
+
+        var initialized = await driver.InitializeAsync("SAMPLE-WORKSTATION-01", CancellationToken.None);
+        var started = await driver.StartTaskAsync(
+            "SAMPLE-WORKSTATION-01",
+            "TASK-01",
+            CancellationToken.None);
+
+        Assert.Equal(SampleWorkstationCommandOperation.Initialize, initialized.Operation);
+        Assert.Equal(SampleWorkstationCommandOperation.StartTask, started.Operation);
+        Assert.Equal("/Service/Init", handler.Requests[0].Uri.AbsolutePath);
+        Assert.Equal("/Service/StartExperiment", handler.Requests[1].Uri.AbsolutePath);
+        Assert.Contains("TaskNo=TASK-01", handler.Requests[1].Uri.Query, StringComparison.Ordinal);
+        Assert.All(handler.Requests, request => Assert.Equal(HttpMethod.Get, request.Method));
+    }
+
+    [Fact]
     public async Task Vendor_business_failure_and_invalid_task_data_fail_closed()
     {
         var businessFailure = CreateDriver(new StubHttpHandler("""{"Code":500,"Data":"失败"}"""));
@@ -148,12 +170,21 @@ public sealed class SampleWorkstationReadOnlyDriverTests
     }
 
     [Fact]
-    public void Options_reject_control_enablement_and_enabled_device_without_equipment_number()
+    public void Options_require_enabled_device_and_equipment_number_for_control()
     {
-        var control = new ConfigurationBuilder()
+        var validControl = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Devices:SampleWorkstation:ControlEnabled"] = "true"
+                ["Devices:SampleWorkstation:Enabled"] = "true",
+                ["Devices:SampleWorkstation:ControlEnabled"] = "true",
+                ["Devices:SampleWorkstation:EquipmentNo"] = "EQ-01"
+            })
+            .Build();
+        var controlWithoutDevice = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Devices:SampleWorkstation:ControlEnabled"] = "true",
+                ["Devices:SampleWorkstation:EquipmentNo"] = "EQ-01"
             })
             .Build();
         var missingEquipment = new ConfigurationBuilder()
@@ -163,24 +194,21 @@ public sealed class SampleWorkstationReadOnlyDriverTests
             })
             .Build();
 
+        Assert.True(SampleWorkstationOptions.BindAndValidate(validControl).ControlEnabled);
         Assert.Throws<InvalidOperationException>(() =>
-        {
-            _ = SampleWorkstationOptions.BindAndValidate(control);
-        });
+            SampleWorkstationOptions.BindAndValidate(controlWithoutDevice));
         Assert.Throws<InvalidOperationException>(() =>
-        {
-            _ = SampleWorkstationOptions.BindAndValidate(missingEquipment);
-        });
+            SampleWorkstationOptions.BindAndValidate(missingEquipment));
     }
 
-    private static SampleWorkstationReadOnlyDriver CreateDriver(StubHttpHandler handler)
+    private static SampleWorkstationDriver CreateDriver(StubHttpHandler handler)
     {
         var client = new HttpClient(handler)
         {
             BaseAddress = new Uri("http://workstation.test/Service/")
         };
         var vendor = new VendorSampleWorkstationHttpClient(client);
-        return new SampleWorkstationReadOnlyDriver(
+        return new SampleWorkstationDriver(
             vendor,
             new SampleWorkstationOptions
             {

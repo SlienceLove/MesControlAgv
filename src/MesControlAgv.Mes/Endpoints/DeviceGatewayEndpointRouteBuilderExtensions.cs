@@ -87,6 +87,23 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
                 () => reader.GetErrorsAsync(deviceId, cancellationToken),
                 cancellationToken));
 
+        endpoints.MapPost("/api/workstations/{deviceId}/initialize", async (
+            string deviceId,
+            ISampleWorkstationController controller,
+            CancellationToken cancellationToken) =>
+            await ExecuteWorkstationReadAsync(
+                () => controller.InitializeAsync(deviceId, cancellationToken),
+                cancellationToken));
+
+        endpoints.MapPost("/api/workstations/{deviceId}/tasks/{taskNo}/start", async (
+            string deviceId,
+            string taskNo,
+            ISampleWorkstationController controller,
+            CancellationToken cancellationToken) =>
+            await ExecuteWorkstationReadAsync(
+                () => controller.StartTaskAsync(deviceId, taskNo, cancellationToken),
+                cancellationToken));
+
         endpoints.MapGet("/api/workstations/{deviceId}/tasks", async (
             string deviceId,
             string? state,
@@ -749,6 +766,12 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
         catch (AdapterHttpException exception) when (exception.ResponseStatusCode == HttpStatusCode.BadRequest)
         {
             return Results.BadRequest(new { detail = exception.Detail });
+        }
+        catch (AdapterHttpException exception) when (exception.ResponseStatusCode == HttpStatusCode.Forbidden)
+        {
+            return Results.Problem(
+                exception.Detail,
+                statusCode: StatusCodes.Status403Forbidden);
         }
         catch (AdapterHttpException exception) when (
             exception.ResponseStatusCode is

@@ -11,7 +11,7 @@ namespace MesControlAgv.Adapter.Modules.SampleWorkstation;
 public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
 {
     public const string ModuleId = "sample-workstation";
-    public const string DriverId = "vendor-http-read-only";
+    public const string DriverId = "vendor-http";
 
     public DeviceAdapterModuleDescriptor Descriptor { get; } = new(
         ModuleId,
@@ -44,7 +44,7 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
             client.BaseAddress = new Uri(options.BaseUrl, UriKind.Absolute);
             client.Timeout = TimeSpan.FromMilliseconds(options.RequestTimeoutMs);
         });
-        services.AddScoped<ISampleWorkstationDriver, SampleWorkstationReadOnlyDriver>();
+        services.AddScoped<ISampleWorkstationDriver, SampleWorkstationDriver>();
     }
 
     public Task InitializeAsync(IServiceProvider services, CancellationToken cancellationToken) =>
@@ -72,6 +72,29 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
             {
                 EnsureWorkstation(policy.EnsureReadEnabled(deviceId));
                 return await driver.GetErrorsAsync(deviceId, cancellationToken);
+            }));
+
+        endpoints.MapPost("/api/workstations/{deviceId}/initialize", async (
+            string deviceId,
+            ISampleWorkstationDriver driver,
+            DeviceOperationPolicy policy,
+            CancellationToken cancellationToken) =>
+            await ExecuteAsync(async () =>
+            {
+                EnsureWorkstation(policy.EnsureControlEnabled(deviceId));
+                return await driver.InitializeAsync(deviceId, cancellationToken);
+            }));
+
+        endpoints.MapPost("/api/workstations/{deviceId}/tasks/{taskNo}/start", async (
+            string deviceId,
+            string taskNo,
+            ISampleWorkstationDriver driver,
+            DeviceOperationPolicy policy,
+            CancellationToken cancellationToken) =>
+            await ExecuteAsync(async () =>
+            {
+                EnsureWorkstation(policy.EnsureControlEnabled(deviceId));
+                return await driver.StartTaskAsync(deviceId, taskNo, cancellationToken);
             }));
 
         endpoints.MapGet("/api/workstations/{deviceId}/tasks", async (
@@ -170,6 +193,10 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
         catch (DeviceDisabledException exception)
         {
             return Results.Problem(exception.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+        catch (DeviceControlDisabledException exception)
+        {
+            return Results.Problem(exception.Message, statusCode: StatusCodes.Status403Forbidden);
         }
         catch (KeyNotFoundException exception)
         {

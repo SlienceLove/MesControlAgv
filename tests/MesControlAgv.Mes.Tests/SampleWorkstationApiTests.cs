@@ -40,18 +40,23 @@ public sealed class SampleWorkstationApiTests(MesWebApplicationFactory factory)
     }
 
     [Fact]
-    public async Task Workstation_api_has_no_mutating_route()
+    public async Task Control_endpoints_proxy_normalized_commands()
     {
         var reader = new StubReader();
-        using var configuredFactory = ConfigureReader(reader);
+        var controller = new StubController();
+        using var configuredFactory = ConfigureReader(reader, controller);
         using var client = configuredFactory.CreateClient();
 
-        var response = await client.PostAsync(
+        var initialize = await client.PostAsync(
+            "/api/workstations/SAMPLE-WORKSTATION-01/initialize",
+            content: null);
+        var start = await client.PostAsync(
             "/api/workstations/SAMPLE-WORKSTATION-01/tasks/TASK-01/start",
             content: null);
 
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
-        Assert.Empty(reader.Calls);
+        Assert.Equal(HttpStatusCode.OK, initialize.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, start.StatusCode);
+        Assert.Equal(["initialize", "start:TASK-01"], controller.Calls);
     }
 
     [Fact]
@@ -80,12 +85,57 @@ public sealed class SampleWorkstationApiTests(MesWebApplicationFactory factory)
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
     }
 
-    private WebApplicationFactory<Program> ConfigureReader(ISampleWorkstationReader reader) =>
+    private WebApplicationFactory<Program> ConfigureReader(
+        ISampleWorkstationReader reader,
+        ISampleWorkstationController? controller = null) =>
         factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<ISampleWorkstationReader>();
             services.AddSingleton(reader);
+            if (controller is not null)
+            {
+                services.RemoveAll<ISampleWorkstationController>();
+                services.AddSingleton(controller);
+            }
         }));
+
+    private sealed class StubController : ISampleWorkstationController
+    {
+        private static readonly DateTimeOffset ObservedAt =
+            new(2026, 9, 11, 8, 0, 0, TimeSpan.Zero);
+
+        public List<string> Calls { get; } = [];
+
+        public Task<SampleWorkstationCommandResponse> InitializeAsync(
+            string deviceId,
+            CancellationToken cancellationToken)
+        {
+            Calls.Add("initialize");
+            return Task.FromResult(Response(deviceId, SampleWorkstationCommandOperation.Initialize));
+        }
+
+        public Task<SampleWorkstationCommandResponse> StartTaskAsync(
+            string deviceId,
+            string taskNo,
+            CancellationToken cancellationToken)
+        {
+            Calls.Add($"start:{taskNo}");
+            return Task.FromResult(Response(deviceId, SampleWorkstationCommandOperation.StartTask));
+        }
+
+        private static SampleWorkstationCommandResponse Response(
+            string deviceId,
+            SampleWorkstationCommandOperation operation)
+        {
+            using var document = JsonDocument.Parse("\"ok\"");
+            return new SampleWorkstationCommandResponse(
+                deviceId,
+                operation,
+                200,
+                document.RootElement.Clone(),
+                ObservedAt);
+        }
+    }
 
     private sealed class StubReader(Exception? exception = null) : ISampleWorkstationReader
     {

@@ -22,11 +22,8 @@ public sealed record SampleWorkstationOptions
             throw new InvalidOperationException($"{SectionName}:RequestTimeoutMs must be between 100 and 60000.");
         if (options.MaximumPageSize is < 1 or > 500)
             throw new InvalidOperationException($"{SectionName}:MaximumPageSize must be between 1 and 500.");
-        if (options.ControlEnabled)
-        {
-            throw new InvalidOperationException(
-                $"{SectionName}:ControlEnabled must remain false while the workstation module is read-only.");
-        }
+        if (options.ControlEnabled && !options.Enabled)
+            throw new InvalidOperationException($"{SectionName}:Enabled must be true before ControlEnabled can be enabled.");
 
         if (!Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out var baseUri)
             || (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps))

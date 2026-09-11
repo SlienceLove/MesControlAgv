@@ -38,4 +38,16 @@ public interface ISampleWorkstationReader
         CancellationToken cancellationToken);
 }
 
-public interface ISampleWorkstationDriver : ISampleWorkstationReader;
+public interface ISampleWorkstationController
+{
+    Task<SampleWorkstationCommandResponse> InitializeAsync(
+        string deviceId,
+        CancellationToken cancellationToken);
+
+    Task<SampleWorkstationCommandResponse> StartTaskAsync(
+        string deviceId,
+        string taskNo,
+        CancellationToken cancellationToken);
+}
+
+public interface ISampleWorkstationDriver : ISampleWorkstationReader, ISampleWorkstationController;

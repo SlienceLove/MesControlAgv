@@ -70,6 +70,36 @@ public sealed class SampleWorkstationAdapterClientTests
         Assert.Equal("device disabled", exception.Detail);
     }
 
+    [Fact]
+    public async Task Control_methods_use_normalized_adapter_post_routes()
+    {
+        var observedAt = new DateTimeOffset(2026, 9, 11, 8, 0, 0, TimeSpan.Zero);
+        var handler = new RecordingHandler(
+            JsonContent.Create(new SampleWorkstationCommandResponse(
+                "SAMPLE-WORKSTATION-01",
+                SampleWorkstationCommandOperation.Initialize,
+                200,
+                JsonDocument.Parse("\"设备初始化请求\"").RootElement.Clone(),
+                observedAt)),
+            JsonContent.Create(new SampleWorkstationCommandResponse(
+                "SAMPLE-WORKSTATION-01",
+                SampleWorkstationCommandOperation.StartTask,
+                200,
+                JsonDocument.Parse("\"开始实验\"").RootElement.Clone(),
+                observedAt)));
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://adapter.local/") };
+        var client = new SampleWorkstationAdapterClient(httpClient);
+
+        _ = await client.InitializeAsync("SAMPLE-WORKSTATION-01", CancellationToken.None);
+        _ = await client.StartTaskAsync("SAMPLE-WORKSTATION-01", "TASK-01", CancellationToken.None);
+
+        Assert.Equal(HttpMethod.Post, handler.Requests[0].Method);
+        Assert.Equal("/api/workstations/SAMPLE-WORKSTATION-01/initialize", handler.Requests[0].RequestUri!.AbsolutePath);
+        Assert.Equal(HttpMethod.Post, handler.Requests[1].Method);
+        Assert.Equal("/api/workstations/SAMPLE-WORKSTATION-01/tasks/TASK-01/start", handler.Requests[1].RequestUri!.AbsolutePath);
+        Assert.All(handler.Requests, request => Assert.Null(request.Content));
+    }
+
     private sealed class RecordingHandler : HttpMessageHandler
     {
         private readonly Queue<(HttpContent Content, HttpStatusCode Status)> _responses;

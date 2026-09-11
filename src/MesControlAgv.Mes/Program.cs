@@ -78,6 +78,9 @@ builder.Services.AddSingleton<WorkflowFieldNavigationRetryState>();
 builder.Services.AddHttpClient<ISampleWorkstationReader, SampleWorkstationAdapterClient>(client =>
     client.BaseAddress = new Uri(
         builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5041/"));
+builder.Services.AddHttpClient<ISampleWorkstationController, SampleWorkstationAdapterClient>(client =>
+    client.BaseAddress = new Uri(
+        builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5041/"));
 builder.Services.AddHttpClient<IIonChromatographyStatusReader, IonChromatographyGatewayClient>(client =>
     client.BaseAddress = new Uri(
         builder.Configuration["IonChromatographyGateway:BaseUrl"] ?? "http://127.0.0.1:5190/"));
