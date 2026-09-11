@@ -167,6 +167,12 @@ public sealed partial class WorkflowApplicationService
                 .SingleOrDefaultAsync(item => item.OperationId == operationId, cancellationToken);
         if (device is null)
         {
+            var idempotencyKey = operationId.ToString("N");
+            var duplicate = await _database.WorkflowDeviceOperations.AnyAsync(
+                item => item.IdempotencyKey == idempotencyKey && item.OperationId != operationId,
+                cancellationToken);
+            if (duplicate)
+                throw new InvalidOperationException($"Duplicate device operation idempotency key: {idempotencyKey}");
             var request = WorkflowPersistence.DeserializeRequest(run.RequestJson);
             device = new WorkflowDeviceOperationRecord
             {
@@ -177,7 +183,7 @@ public sealed partial class WorkflowApplicationService
                 Attempt = node.Attempt,
                 CapabilityId = ResolveDeviceCapability(step),
                 DeviceId = ResolveDeviceId(step),
-                IdempotencyKey = operationId.ToString("N"),
+                IdempotencyKey = idempotencyKey,
                 CorrelationId = ResolveDeviceOperationCorrelation(
                     request.CorrelationId,
                     run.ExecutionId,
@@ -262,8 +268,6 @@ public sealed partial class WorkflowApplicationService
             device.UnknownReason = completion.UnknownReason?.ToString();
             device.RawResponseSummaryJson = string.IsNullOrWhiteSpace(completion.RawResponseSummary)
                 ? null : completion.RawResponseSummary.Length > 8192 ? completion.RawResponseSummary[..8192] : completion.RawResponseSummary;
-            device.ResultFileReference = node.ResultFileReference;
-            device.UnknownReason = completion.UnknownReason;
             device.LastError = node.LastError;
             device.CompletedAtUtc = completion.Outcome == WorkflowStepCompletionOutcome.Unknown ? null : now;
             device.ReconciledAtUtc = now;
@@ -383,7 +387,8 @@ public sealed partial class WorkflowApplicationService
         ResultSummary = WorkflowPersistence.DeserializeDetails(record.ResultSummaryJson),
         VendorTaskId = record.VendorTaskId,
         ResultFileReference = record.ResultFileReference,
-        UnknownReason = record.UnknownReason,
+        UnknownReason = Enum.TryParse<MesControlAgv.Contracts.Devices.UnknownReason>(record.UnknownReason, true, out var unknownReason)
+            ? unknownReason : null,
         RawResponseSummary = record.RawResponseSummaryJson,
         RequestedAt = AsOffset(record.RequestedAtUtc),
         CompletedAt = AsNullableOffset(record.CompletedAtUtc),

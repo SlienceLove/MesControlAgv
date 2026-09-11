@@ -30,3 +30,11 @@ MES 项目构建受正在运行的 .NET Host 锁定输出 DLL，出现 MSB3021/M
 - 补齐厂家任务号和长度受限原始响应摘要的完成请求、落库及快照映射。
 
 复核验证：`dotnet build src/MesControlAgv.Contracts/MesControlAgv.Contracts.csproj --no-restore --nologo` 成功，0 警告、0 错误。
+
+## 编译破坏修正
+
+- 删除重复及错误类型赋值；旧 UnknownReason 通过 `Enum.TryParse` 受控映射。
+- 增加 RawResponseSummary 快照字段，补齐 VendorTaskId/原始响应落库。
+- 写入前检查幂等键冲突并拒绝不同 OperationId 的重复键。
+
+验证：Contracts 构建成功；MES 使用 `--no-restore -p:BuildProjectReferences=false` 仍因运行中 .NET Host (PID 33372) 锁定 Contracts/Application/Domain DLL，MSB3021/MSB3027，非源码编译诊断。

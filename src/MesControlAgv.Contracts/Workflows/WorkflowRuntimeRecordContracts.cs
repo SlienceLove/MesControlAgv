@@ -103,6 +103,7 @@ public sealed record WorkflowDeviceOperationSnapshot
     public string? VendorTaskId { get; init; }
     public string? ResultFileReference { get; init; }
     public UnknownReason? UnknownReason { get; init; }
+    public string? RawResponseSummary { get; init; }
     public DateTimeOffset RequestedAt { get; init; }
     public DateTimeOffset? CompletedAt { get; init; }
     public DateTimeOffset? ReconciledAt { get; init; }
