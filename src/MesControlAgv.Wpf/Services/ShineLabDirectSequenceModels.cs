@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using MesControlAgv.Contracts;
 
@@ -63,33 +64,29 @@ public static class ShineLabDirectProtocolPreview
         if (tasks.Count == 0) throw new ArgumentException("At least one direct task is required.", nameof(tasks));
 
         var first = tasks[0];
+        var configRequest = new ShineLabConfigRequest(
+            taskUuid,
+            tasks.Select(task => new ShineLabSampleData(
+                task.SampleId,
+                task.SampleName,
+                task.SampleTypeCode.ToString(CultureInfo.InvariantCulture),
+                task.Position,
+                task.MPos,
+                task.Channel,
+                task.InstrumentMethod,
+                task.ProcessingMethod,
+                task.DetectionMethod,
+                task.InjectionVolume,
+                task.InjectionVolumeUnit)).ToArray(),
+            first.InstrumentMethod,
+            first.ProcessingMethod,
+            first.DetectionMethod);
         var config = new
         {
             strID = configStrId,
             strMethod = "Config",
             equipmentCode,
-            body = new
-            {
-                task_uuid = taskUuid,
-                chan = first.Channel,
-                sampleData = tasks.Select(task => new
-                {
-                    sampleID = task.SampleId,
-                    sampleName = task.SampleName,
-                    type = task.SampleTypeCode,
-                    position = task.Position,
-                    mPos = task.MPos,
-                    Channel = task.Channel,
-                    instrumentMethod = task.InstrumentMethod,
-                    processingMethod = task.ProcessingMethod,
-                    detectionMethod = task.DetectionMethod,
-                    injectionVolume = task.InjectionVolume,
-                    injectionVolumeUnit = task.InjectionVolumeUnit
-                }).ToArray(),
-                instrumentMethod = first.InstrumentMethod,
-                processingMethod = first.ProcessingMethod,
-                detectionMethod = first.DetectionMethod
-            }
+            body = ShineLabConfigPayloadBuilder.Build(configRequest)
         };
 
         var commandRequest = new ShineLabCommandRequest(

@@ -108,6 +108,10 @@ public sealed class ShineLabSequenceImportViewModelTests : IDisposable
 
         using var preview = JsonDocument.Parse(viewModel.DirectProtocolPreview);
         Assert.Equal("Config", preview.RootElement.GetProperty("config").GetProperty("strMethod").GetString());
+        var configBody = preview.RootElement.GetProperty("config").GetProperty("body");
+        Assert.Equal(2, configBody.EnumerateObject().Count());
+        Assert.DoesNotContain(configBody.EnumerateObject(), property => property.NameEquals("task_uuid"));
+        Assert.Equal(6, configBody.GetProperty("sampleData")[0].EnumerateObject().Count());
         Assert.Equal(0, preview.RootElement.GetProperty("command").GetProperty("body").GetProperty("action").GetInt32());
     }
 

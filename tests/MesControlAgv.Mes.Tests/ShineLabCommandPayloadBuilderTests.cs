@@ -8,6 +8,45 @@ namespace MesControlAgv.Mes.Tests;
 
 public sealed class ShineLabCommandPayloadBuilderTests
 {
+    [Fact]
+    public void Builds_the_strict_rike_config_body_without_local_metadata()
+    {
+        var request = new ShineLabConfigRequest(
+            "task-config-001",
+            [
+                new ShineLabSampleData(
+                    "S-01", "标准样", "1", 1, "1", "A",
+                    "AS18-M01", "IC-P01", "Normal", 25m, "uL")
+            ],
+            "AS18-M01",
+            "IC-P01",
+            "Normal");
+
+        var body = ShineLabConfigPayloadBuilder.Build(request);
+
+        Assert.Equal(2, body.EnumerateObject().Count());
+        Assert.Equal("A", body.GetProperty("chan").GetString());
+        var sample = Assert.Single(body.GetProperty("sampleData").EnumerateArray());
+        Assert.Equal(6, sample.EnumerateObject().Count());
+        Assert.Equal("S-01", sample.GetProperty("sampleID").GetString());
+        Assert.Equal("标准样", sample.GetProperty("sampleName").GetString());
+        Assert.Equal(1, sample.GetProperty("type").GetInt32());
+        Assert.Equal(1, sample.GetProperty("position").GetInt32());
+        Assert.Equal("1", sample.GetProperty("mPos").GetString());
+        Assert.Equal("A", sample.GetProperty("Channel").GetString());
+        Assert.DoesNotContain(sample.EnumerateObject(), property =>
+            property.NameEquals("instrumentMethod") ||
+            property.NameEquals("processingMethod") ||
+            property.NameEquals("detectionMethod") ||
+            property.NameEquals("injectionVolume") ||
+            property.NameEquals("injectionVolumeUnit"));
+        Assert.DoesNotContain(body.EnumerateObject(), property =>
+            property.NameEquals("task_uuid") ||
+            property.NameEquals("instrumentMethod") ||
+            property.NameEquals("processingMethod") ||
+            property.NameEquals("detectionMethod"));
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(2)]

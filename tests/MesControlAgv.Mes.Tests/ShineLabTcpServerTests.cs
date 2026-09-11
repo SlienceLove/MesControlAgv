@@ -482,18 +482,20 @@ public sealed class ShineLabTcpServerTests
             Assert.Equal("Config", root.GetProperty("strMethod").GetString());
             Assert.Equal("STN61_01", root.GetProperty("equipmentCode").GetString());
             var body = root.GetProperty("body");
-            Assert.Equal("task-config-check-001", body.GetProperty("task_uuid").GetString());
             Assert.Equal("A", body.GetProperty("chan").GetString());
+            Assert.Equal(2, body.EnumerateObject().Count());
             var sample = body.GetProperty("sampleData")[0];
+            Assert.Equal(6, sample.EnumerateObject().Count());
             Assert.Equal("LOCAL-STD-001", sample.GetProperty("sampleID").GetString());
             Assert.Equal(1, sample.GetProperty("type").GetInt32());
             Assert.Equal(1, sample.GetProperty("position").GetInt32());
             Assert.Equal("1", sample.GetProperty("mPos").GetString());
             Assert.Equal("A", sample.GetProperty("Channel").GetString());
-            Assert.Equal("AS18-M01", sample.GetProperty("instrumentMethod").GetString());
-            Assert.Equal("IC-P01", sample.GetProperty("processingMethod").GetString());
-            Assert.Equal(25m, sample.GetProperty("injectionVolume").GetDecimal());
-            Assert.Equal("uL", sample.GetProperty("injectionVolumeUnit").GetString());
+            Assert.DoesNotContain(body.EnumerateObject(), property =>
+                property.NameEquals("task_uuid") ||
+                property.NameEquals("instrumentMethod") ||
+                property.NameEquals("processingMethod") ||
+                property.NameEquals("detectionMethod"));
             Assert.False(root.TryGetProperty("command", out _));
 
             var strId = root.GetProperty("strID").GetString();
