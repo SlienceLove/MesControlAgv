@@ -141,6 +141,35 @@ public sealed class CicD160PlusControlledWriteSessionTests
     }
 
     [Fact]
+    public async Task RewriteCurrentValueOnce_DurableOperationIdRejectsDuplicateWithoutSecondWrite()
+    {
+        var transport = new FakeControlledTransport();
+        var session = CreateSession(transport);
+        var operationId = Guid.NewGuid();
+
+        await session.RewriteCurrentValueOnceAsync(operationId, new CicD160PlusSetPumpFlow(0.700m), CancellationToken.None);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            session.RewriteCurrentValueOnceAsync(operationId, new CicD160PlusSetPumpFlow(0.700m), CancellationToken.None));
+
+        Assert.Equal(1, transport.WriteCalls);
+    }
+
+    [Fact]
+    public async Task RewriteCurrentValueOnce_DurableMalformedEchoIsUnknownAndNeverRetried()
+    {
+        var transport = new FakeControlledTransport { WriteResponse = [0x01, 0x06] };
+        var session = CreateSession(transport);
+        var operationId = Guid.NewGuid();
+
+        await Assert.ThrowsAsync<CicD160PlusWriteOutcomeUnknownException>(() =>
+            session.RewriteCurrentValueOnceAsync(operationId, new CicD160PlusSetPumpFlow(0.700m), CancellationToken.None));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            session.RewriteCurrentValueOnceAsync(operationId, new CicD160PlusSetPumpFlow(0.700m), CancellationToken.None));
+
+        Assert.Equal(1, transport.WriteCalls);
+    }
+
+    [Fact]
     public async Task RewriteCurrentValueOnce_ExplicitUnknownOutcomeIsNeverRetried()
     {
         var expected = new CicD160PlusWriteOutcomeUnknownException("transport outcome unknown");

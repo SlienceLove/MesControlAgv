@@ -28,7 +28,11 @@ public sealed record CicD160PlusControlledWriteResult(
     string WriteRequestHex,
     string WriteResponseHex,
     DateTimeOffset CompletedAtUtc,
-    IReadOnlyList<ModbusReadEvidence> ReadEvidence);
+    IReadOnlyList<ModbusReadEvidence> ReadEvidence)
+{
+    /// <summary>Durable MES operation correlation, when invoked through the controlled overload.</summary>
+    public Guid OperationId { get; init; }
+}
 
 /// <summary>
 /// Executes one exact current-value rewrite after a fail-closed raw-state
@@ -40,6 +44,8 @@ public sealed class CicD160PlusControlledWriteSession
     private readonly CicD160PlusOfflineWritePolicy _policy;
     private readonly string _expectedObservedIdentifier;
     private readonly byte _slaveAddress;
+    private readonly SemaphoreSlim _writeGate = new(1, 1);
+    private readonly HashSet<Guid> _attemptedOperations = [];
 
     public CicD160PlusControlledWriteSession(
         ICicD160PlusControlledWriteTransport transport,
@@ -61,6 +67,31 @@ public sealed class CicD160PlusControlledWriteSession
     public async Task<CicD160PlusControlledWriteResult> RewriteCurrentValueOnceAsync(
         CicD160PlusWriteCommand command,
         CancellationToken cancellationToken)
+        => await RewriteCurrentValueCoreAsync(Guid.NewGuid(), command, cancellationToken, unknownOnMalformed: false);
+
+    /// <summary>Executes a mutation at most once for the supplied durable operation id.</summary>
+    public async Task<CicD160PlusControlledWriteResult> RewriteCurrentValueOnceAsync(
+        Guid operationId,
+        CicD160PlusWriteCommand command,
+        CancellationToken cancellationToken)
+    {
+        if (operationId == Guid.Empty) throw new ArgumentException("A durable operation id is required.", nameof(operationId));
+        ArgumentNullException.ThrowIfNull(command);
+        await _writeGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (!_attemptedOperations.Add(operationId))
+                throw new InvalidOperationException($"D160+ operation {operationId:N} has already attempted a physical write; reconcile instead of retrying.");
+            return await RewriteCurrentValueCoreAsync(operationId, command, cancellationToken, unknownOnMalformed: true);
+        }
+        finally { _writeGate.Release(); }
+    }
+
+    private async Task<CicD160PlusControlledWriteResult> RewriteCurrentValueCoreAsync(
+        Guid operationId,
+        CicD160PlusWriteCommand command,
+        CancellationToken cancellationToken,
+        bool unknownOnMalformed)
     {
         var frame = CicD160PlusOfflineWriteCodec.BuildFrame(command, _policy, _slaveAddress);
         EnsureCurrentValueRewriteOperation(frame.Operation);
@@ -85,7 +116,17 @@ public sealed class CicD160PlusControlledWriteSession
                 exception);
         }
 
-        CicD160PlusOfflineWriteCodec.ValidateEcho(response, frame);
+        try
+        {
+            CicD160PlusOfflineWriteCodec.ValidateEcho(response, frame);
+        }
+        catch (Exception exception) when (exception is FormatException or InvalidOperationException or ArgumentException)
+        {
+            if (!unknownOnMalformed) throw;
+            throw new CicD160PlusWriteOutcomeUnknownException(
+                "The D160+ write response was incomplete or malformed. Do not retry automatically; reconcile the device manually.",
+                exception);
+        }
 
         CicD160PlusSafetyState readback;
         try
@@ -107,9 +148,18 @@ public sealed class CicD160PlusControlledWriteSession
             preflight,
             readback,
             Convert.ToHexString(frame.Bytes.Span),
-            Convert.ToHexString(response),
+            BoundedHex(response),
             DateTimeOffset.UtcNow,
-            evidence);
+            evidence)
+        { OperationId = operationId };
+    }
+
+    private static string BoundedHex(ReadOnlySpan<byte> payload)
+    {
+        const int maxBytes = 128;
+        var bounded = payload.Length <= maxBytes ? payload : payload[..maxBytes];
+        var value = Convert.ToHexString(bounded);
+        return payload.Length <= maxBytes ? value : value + $"…(+{payload.Length - maxBytes} bytes)";
     }
 
     private async Task<CicD160PlusSafetyState> ReadSafetyStateAsync(
