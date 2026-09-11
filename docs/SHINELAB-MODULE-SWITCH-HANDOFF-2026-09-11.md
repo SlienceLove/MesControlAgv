@@ -154,3 +154,37 @@ Config 参数及 `SampleFinish`、`TaskFinish`、`TaskError`、`Result` 上报�
 锐克模块必须先完成：通讯稳定、身份/状态可重复解析、只读回放通过、厂商
 确认 Config/Command 和结果上报格式。之后才安排单条进样预检，再决定是否恢复
 批量任务联调。
+
+### 2026-09-11 Config 空位配置试发结果（暂停）
+
+现场连接确认如下：AQ 控制电脑 `192.168.10.108:60066` 已连接中控
+`192.168.10.11:5500`，客户端首包识别为 LF-JSON，握手设备编码为
+`STN61_01`，状态为 Connected/Idle，当前无活动任务。
+
+按厂家截图结构试发一条空位 `Config`，本地任务号为
+`rike-config-20260911-100409932`。实际下发 body 仅包含：
+
+```json
+{
+  "chan": "A",
+  "sampleData": [
+    {
+      "sampleID": "1",
+      "sampleName": "样品名称1",
+      "type": 1,
+      "position": 1,
+      "mPos": "1",
+      "Channel": "A"
+    }
+  ]
+}
+```
+
+10 秒内未收到 AQ 可关联的 Config 回包，MES 返回 `503 Service Unavailable`
+（`The operation has timed out.`），任务状态记为 `Unknown/ConfigOutcomeUnknown`。
+TCP 连接仍保持建立，设备仍为 Idle，未发送 `Command action=0`，也未自动重试。
+
+在厂家确认以下事项前暂停锐克模块后续下发：`strID` 是否必须采用固定格式或
+固定值 `08-osc-00099-W`；实际设备编码应为 `STN61_01` 还是示例中的 `Ge`；
+Config 是否还要求 `strCode`、方法/体积字段；以及成功/失败回包的完整字段和
+重复请求语义。
