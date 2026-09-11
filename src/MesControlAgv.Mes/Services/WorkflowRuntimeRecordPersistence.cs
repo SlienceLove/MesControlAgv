@@ -240,6 +240,7 @@ public sealed partial class WorkflowApplicationService
         };
         node.OutputJson = WorkflowPersistence.Serialize(outputs);
         node.LastError = string.IsNullOrWhiteSpace(completion.Error) ? null : completion.Error.Trim();
+        node.ResultFileReference = completion.Outputs?.GetValueOrDefault("resultFileReference");
         node.CompletedAtUtc = completion.Outcome == WorkflowStepCompletionOutcome.Unknown ? null : now;
         node.UpdatedAtUtc = now;
 
@@ -254,6 +255,8 @@ public sealed partial class WorkflowApplicationService
                 _ => throw new ArgumentOutOfRangeException(nameof(completion))
             };
             device.ResultSummaryJson = WorkflowPersistence.Serialize(outputs);
+            device.ResultFileReference = node.ResultFileReference;
+            device.UnknownReason = completion.UnknownReason;
             device.LastError = node.LastError;
             device.CompletedAtUtc = completion.Outcome == WorkflowStepCompletionOutcome.Unknown ? null : now;
             device.ReconciledAtUtc = now;
@@ -371,6 +374,9 @@ public sealed partial class WorkflowApplicationService
             : WorkflowDeviceOperationStatus.Unknown,
         RequestSummary = WorkflowPersistence.DeserializeDetails(record.RequestSummaryJson),
         ResultSummary = WorkflowPersistence.DeserializeDetails(record.ResultSummaryJson),
+        VendorTaskId = record.VendorTaskId,
+        ResultFileReference = record.ResultFileReference,
+        UnknownReason = record.UnknownReason,
         RequestedAt = AsOffset(record.RequestedAtUtc),
         CompletedAt = AsNullableOffset(record.CompletedAtUtc),
         ReconciledAt = AsNullableOffset(record.ReconciledAtUtc),

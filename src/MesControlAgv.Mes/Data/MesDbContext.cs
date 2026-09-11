@@ -114,6 +114,7 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.Property(execution => execution.Status).HasMaxLength(32);
             entity.Property(execution => execution.InputJson).HasMaxLength(65535);
             entity.Property(execution => execution.OutputJson).HasMaxLength(65535);
+            entity.Property(execution => execution.ResultFileReference).HasMaxLength(1024);
             entity.Property(execution => execution.LastError).HasMaxLength(2048);
             entity.HasIndex(execution => new { execution.WorkflowRunId, execution.CreatedAtUtc });
             entity.HasIndex(execution => execution.StepRequestId).IsUnique();
@@ -130,9 +131,13 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.Property(operation => operation.Status).HasMaxLength(32);
             entity.Property(operation => operation.RequestSummaryJson).HasMaxLength(8192);
             entity.Property(operation => operation.ResultSummaryJson).HasMaxLength(8192);
+            entity.Property(operation => operation.VendorTaskId).HasMaxLength(256);
+            entity.Property(operation => operation.ResultFileReference).HasMaxLength(1024);
+            entity.Property(operation => operation.UnknownReason).HasMaxLength(64);
             entity.Property(operation => operation.LastError).HasMaxLength(2048);
             entity.HasIndex(operation => new { operation.WorkflowRunId, operation.RequestedAtUtc });
             entity.HasIndex(operation => operation.NodeExecutionId);
+            entity.HasIndex(operation => operation.IdempotencyKey).IsUnique();
         });
 
         modelBuilder.Entity<WorkflowAuditRecord>(entity =>

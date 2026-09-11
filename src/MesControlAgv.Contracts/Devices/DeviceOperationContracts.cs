@@ -1,0 +1,39 @@
+namespace MesControlAgv.Contracts.Devices;
+
+public enum UnknownReason
+{
+    Timeout, DisconnectedAfterWrite, IncompleteResponse, MissingVendorTaskId,
+    MissingResult, IdentityMismatch, ProtocolPending, ManualReconciliationRequired
+}
+
+public enum DeviceOperationLifecycle
+{
+    Queued, Preparing, StartPending, Running, AcquiringResult, Completed,
+    Failed, Cancelled, Unknown, ManualInterventionRequired
+}
+
+public sealed record DeviceOperationRequest
+{
+    public Guid OperationId { get; init; } = Guid.NewGuid();
+    public Guid RunId { get; init; }
+    public Guid NodeExecutionId { get; init; }
+    public string DeviceId { get; init; } = string.Empty;
+    public string CapabilityId { get; init; } = string.Empty;
+    public string IdempotencyKey { get; init; } = string.Empty;
+    public IReadOnlyDictionary<string, string?> Parameters { get; init; } =
+        new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed record DeviceOperationResult
+{
+    public Guid OperationId { get; init; }
+    public DeviceOperationLifecycle Status { get; init; }
+    public UnknownReason? UnknownReason { get; init; }
+    public string? VendorTaskId { get; init; }
+    public string? ResultFileReference { get; init; }
+    public IReadOnlyDictionary<string, string?> Result { get; init; } =
+        new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+    public string? Error { get; init; }
+    public bool CanRetry => Status is not DeviceOperationLifecycle.Unknown and
+        not DeviceOperationLifecycle.ManualInterventionRequired;
+}

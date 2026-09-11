@@ -26,6 +26,8 @@ public sealed class WorkflowNodeExecutionRecord
 
     public string OutputJson { get; set; } = "{}";
 
+    public string? ResultFileReference { get; set; }
+
     public DateTime? StartedAtUtc { get; set; }
 
     public DateTime? CompletedAtUtc { get; set; }

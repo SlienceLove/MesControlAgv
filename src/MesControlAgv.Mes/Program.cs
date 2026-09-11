@@ -165,6 +165,7 @@ using (var scope = app.Services.CreateScope())
     await database.Database.EnsureCreatedAsync();
     await EnsureTaskColumnsAsync(database);
     await EnsureWorkflowTablesAsync(database);
+    await EnsureWorkflowOperationColumnsAsync(database);
     await EnsureExperimentSchedulingTablesAsync(database);
     await EnsureFieldNavigationAcceptanceTablesAsync(database);
     await EnsureShineLabTablesAsync(database);
@@ -450,6 +451,7 @@ static async Task EnsureWorkflowTablesAsync(MesDbContext database)
             Status TEXT NOT NULL,
             InputJson TEXT NOT NULL,
             OutputJson TEXT NOT NULL,
+            ResultFileReference TEXT NULL,
             StartedAtUtc TEXT NULL,
             CompletedAtUtc TEXT NULL,
             LastError TEXT NULL,
@@ -471,6 +473,9 @@ static async Task EnsureWorkflowTablesAsync(MesDbContext database)
             Status TEXT NOT NULL,
             RequestSummaryJson TEXT NOT NULL,
             ResultSummaryJson TEXT NOT NULL,
+            VendorTaskId TEXT NULL,
+            ResultFileReference TEXT NULL,
+            UnknownReason TEXT NULL,
             RequestedAtUtc TEXT NOT NULL,
             CompletedAtUtc TEXT NULL,
             ReconciledAtUtc TEXT NULL,
@@ -521,6 +526,7 @@ static async Task EnsureWorkflowTablesAsync(MesDbContext database)
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_WorkflowNodeExecutions_WorkflowRunId_NodeId_Attempt ON WorkflowNodeExecutions (WorkflowRunId, NodeId, Attempt);",
         "CREATE INDEX IF NOT EXISTS IX_WorkflowDeviceOperations_WorkflowRunId_RequestedAtUtc ON WorkflowDeviceOperations (WorkflowRunId, RequestedAtUtc);",
         "CREATE INDEX IF NOT EXISTS IX_WorkflowDeviceOperations_NodeExecutionId ON WorkflowDeviceOperations (NodeExecutionId);",
+        "CREATE INDEX IF NOT EXISTS IX_WorkflowDeviceOperations_IdempotencyKey ON WorkflowDeviceOperations (IdempotencyKey);",
         "CREATE INDEX IF NOT EXISTS IX_WorkflowRuntimeInteractions_WorkflowRunId_InteractionType_Status_ReceivedAtUtc ON WorkflowRuntimeInteractions (WorkflowRunId, InteractionType, Status, ReceivedAtUtc);",
         "CREATE INDEX IF NOT EXISTS IX_WorkflowRuntimeInteractions_WorkflowRunId_SignalName_CorrelationValue_Status ON WorkflowRuntimeInteractions (WorkflowRunId, SignalName, CorrelationValue, Status);",
         "CREATE INDEX IF NOT EXISTS IX_WorkflowAudits_WorkflowId_Version_OccurredAtUtc ON WorkflowAudits (WorkflowId, Version, OccurredAtUtc);",
@@ -539,6 +545,32 @@ static async Task EnsureWorkflowTablesAsync(MesDbContext database)
     runtimeIndex.CommandText =
         "CREATE INDEX IF NOT EXISTS IX_WorkflowExecutions_RuntimeStatus_UpdatedAtUtc ON WorkflowExecutions (RuntimeStatus, UpdatedAtUtc);";
     await runtimeIndex.ExecuteNonQueryAsync();
+}
+
+static async Task EnsureWorkflowOperationColumnsAsync(MesDbContext database)
+{
+    var connection = database.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) await connection.OpenAsync();
+    foreach (var (table, definitions) in new[]
+    {
+        ("WorkflowDeviceOperations", new[] { ("VendorTaskId", "TEXT NULL"), ("ResultFileReference", "TEXT NULL"), ("UnknownReason", "TEXT NULL") }),
+        ("WorkflowNodeExecutions", new[] { ("ResultFileReference", "TEXT NULL") })
+    })
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA table_info({table});";
+        var columns = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync()) columns.Add(reader.GetString(1));
+        await reader.CloseAsync();
+        foreach (var definition in definitions)
+        {
+            if (columns.Contains(definition.Item1)) continue;
+            await using var alter = connection.CreateCommand();
+            alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {definition.Item1} {definition.Item2};";
+            await alter.ExecuteNonQueryAsync();
+        }
+    }
 }
 
 static async Task EnsureWorkflowExecutionColumnsAsync(System.Data.Common.DbConnection connection)

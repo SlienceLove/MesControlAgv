@@ -21,10 +21,15 @@ public enum WorkflowNodeExecutionStatus
 /// <summary>Normalized lifecycle of an external device operation.</summary>
 public enum WorkflowDeviceOperationStatus
 {
+    Queued,
+    Preparing,
+    StartPending,
     Prepared,
     Accepted,
     Running,
+    AcquiringResult,
     Succeeded,
+    Completed,
     Rejected,
     Failed,
     Cancelled,
@@ -78,6 +83,9 @@ public sealed record WorkflowDeviceOperationSnapshot
         new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyDictionary<string, string?> ResultSummary { get; init; } =
         new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+    public string? VendorTaskId { get; init; }
+    public string? ResultFileReference { get; init; }
+    public string? UnknownReason { get; init; }
     public DateTimeOffset RequestedAt { get; init; }
     public DateTimeOffset? CompletedAt { get; init; }
     public DateTimeOffset? ReconciledAt { get; init; }
@@ -123,6 +131,8 @@ public sealed record WorkflowNodeExecutionCompletionRequest
     public Guid? DeviceOperationId { get; init; }
     public WorkflowStepCompletionOutcome Outcome { get; init; }
     public string? Error { get; init; }
+    public string? UnknownReason { get; init; }
     public IReadOnlyDictionary<string, string?> Outputs { get; init; } =
         new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+    public string? ResultFileReference { get; init; }
 }
