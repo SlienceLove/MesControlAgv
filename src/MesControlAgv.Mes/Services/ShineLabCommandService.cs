@@ -65,19 +65,7 @@ public sealed class ShineLabCommandService(
     {
         ValidateEquipment(equipmentCode);
         ArgumentNullException.ThrowIfNull(request);
-        if (string.IsNullOrWhiteSpace(request.TaskUuid))
-            throw new ArgumentException("TaskUuid is required.", nameof(request));
-
-        var body = JsonSerializer.SerializeToElement(new
-        {
-            task_uuid = request.TaskUuid,
-            chan = request.Channel,
-            action = request.Action,
-            sampleID = request.SampleId,
-            sampleName = request.SampleName,
-            detectionMethod = request.DetectionMethod,
-            cleanTime = request.CleanTime
-        });
+        var body = ShineLabCommandPayloadBuilder.Build(request);
         var result = await connectionManager.SendAsync(
             equipmentCode,
             "Command",

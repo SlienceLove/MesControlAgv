@@ -68,7 +68,16 @@ public sealed class ShineLabDirectSequenceParserTests
         Assert.Equal(1, root.GetProperty("config").GetProperty("body").GetProperty("sampleData").GetArrayLength());
         Assert.Equal(1, root.GetProperty("config").GetProperty("body").GetProperty("sampleData")[0].GetProperty("type").GetInt32());
         Assert.Equal("Command", root.GetProperty("command").GetProperty("strMethod").GetString());
-        Assert.Equal(0, root.GetProperty("command").GetProperty("body").GetProperty("action").GetInt32());
+        var commandBody = root.GetProperty("command").GetProperty("body");
+        Assert.Equal(2, commandBody.EnumerateObject().Count());
+        Assert.Equal("A", commandBody.GetProperty("chan").GetString());
+        Assert.Equal(0, commandBody.GetProperty("action").GetInt32());
+        Assert.DoesNotContain(commandBody.EnumerateObject(), property =>
+            property.NameEquals("task_uuid") ||
+            property.NameEquals("sampleID") ||
+            property.NameEquals("sampleName") ||
+            property.NameEquals("detectionMethod") ||
+            property.NameEquals("cleanTime"));
     }
 
     [Fact]

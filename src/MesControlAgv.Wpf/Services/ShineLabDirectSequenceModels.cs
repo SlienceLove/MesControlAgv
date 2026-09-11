@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MesControlAgv.Contracts;
 
 namespace MesControlAgv.Wpf.Services;
 
@@ -91,21 +92,19 @@ public static class ShineLabDirectProtocolPreview
             }
         };
 
+        var commandRequest = new ShineLabCommandRequest(
+            taskUuid,
+            commandAction,
+            SampleId: first.SampleId,
+            SampleName: first.SampleName,
+            Channel: first.Channel,
+            DetectionMethod: first.DetectionMethod);
         var command = new
         {
             strID = commandStrId,
             strMethod = "Command",
             equipmentCode,
-            body = new
-            {
-                task_uuid = taskUuid,
-                chan = first.Channel,
-                action = commandAction,
-                sampleID = first.SampleId,
-                sampleName = first.SampleName,
-                detectionMethod = first.DetectionMethod,
-                cleanTime = (string?)null
-            }
+            body = ShineLabCommandPayloadBuilder.Build(commandRequest)
         };
 
         return JsonSerializer.Serialize(new { config, command }, new JsonSerializerOptions
