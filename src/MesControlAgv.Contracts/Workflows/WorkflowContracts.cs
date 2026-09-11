@@ -362,7 +362,9 @@ public sealed record WorkflowStepCompletionRequest
     public Guid TransportOperationId { get; init; }
     public WorkflowStepCompletionOutcome Outcome { get; init; }
     public string? Error { get; init; }
-    public string? UnknownReason { get; init; }
+    public MesControlAgv.Contracts.Devices.UnknownReason? UnknownReason { get; init; }
+    public string? VendorTaskId { get; init; }
+    public string? RawResponseSummary { get; init; }
     public IReadOnlyDictionary<string, string?> Outputs { get; init; } =
         new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
 }

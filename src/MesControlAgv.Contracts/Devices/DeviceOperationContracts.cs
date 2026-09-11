@@ -22,6 +22,26 @@ public sealed record DeviceOperationRequest
     public string IdempotencyKey { get; init; } = string.Empty;
     public IReadOnlyDictionary<string, string?> Parameters { get; init; } =
         new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+    public bool IsValid(out string error)
+    {
+        if (OperationId == Guid.Empty || RunId == Guid.Empty || NodeExecutionId == Guid.Empty) { error = "Operation and correlation ids are required."; return false; }
+        if (string.IsNullOrWhiteSpace(DeviceId)) { error = "DeviceId is required."; return false; }
+        if (string.IsNullOrWhiteSpace(IdempotencyKey)) { error = "IdempotencyKey is required."; return false; }
+        error = string.Empty; return true;
+    }
+}
+
+public enum ManualReconciliationDecision { Confirmed, Rejected, Cancelled }
+public sealed record DeviceOperationReconciliationRequest
+{
+    public Guid OperationId { get; init; }
+    public Guid RunId { get; init; }
+    public string DeviceId { get; init; } = string.Empty;
+    public string Actor { get; init; } = string.Empty;
+    public ManualReconciliationDecision Decision { get; init; }
+    public string Comment { get; init; } = string.Empty;
+    public string? VendorTaskId { get; init; }
+    public string? CorrelationId { get; init; }
 }
 
 public sealed record DeviceOperationResult

@@ -29,6 +29,7 @@ public sealed class WorkflowDeviceOperationRecord
     public string? VendorTaskId { get; set; }
     public string? ResultFileReference { get; set; }
     public string? UnknownReason { get; set; }
+    public string? RawResponseSummaryJson { get; set; }
 
     public DateTime RequestedAtUtc { get; set; }
 

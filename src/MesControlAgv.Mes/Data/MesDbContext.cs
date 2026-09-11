@@ -134,6 +134,7 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.Property(operation => operation.VendorTaskId).HasMaxLength(256);
             entity.Property(operation => operation.ResultFileReference).HasMaxLength(1024);
             entity.Property(operation => operation.UnknownReason).HasMaxLength(64);
+            entity.Property(operation => operation.RawResponseSummaryJson).HasMaxLength(8192);
             entity.Property(operation => operation.LastError).HasMaxLength(2048);
             entity.HasIndex(operation => new { operation.WorkflowRunId, operation.RequestedAtUtc });
             entity.HasIndex(operation => operation.NodeExecutionId);

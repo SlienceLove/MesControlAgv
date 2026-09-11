@@ -476,6 +476,7 @@ static async Task EnsureWorkflowTablesAsync(MesDbContext database)
             VendorTaskId TEXT NULL,
             ResultFileReference TEXT NULL,
             UnknownReason TEXT NULL,
+            RawResponseSummaryJson TEXT NULL,
             RequestedAtUtc TEXT NOT NULL,
             CompletedAtUtc TEXT NULL,
             ReconciledAtUtc TEXT NULL,
@@ -526,7 +527,6 @@ static async Task EnsureWorkflowTablesAsync(MesDbContext database)
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_WorkflowNodeExecutions_WorkflowRunId_NodeId_Attempt ON WorkflowNodeExecutions (WorkflowRunId, NodeId, Attempt);",
         "CREATE INDEX IF NOT EXISTS IX_WorkflowDeviceOperations_WorkflowRunId_RequestedAtUtc ON WorkflowDeviceOperations (WorkflowRunId, RequestedAtUtc);",
         "CREATE INDEX IF NOT EXISTS IX_WorkflowDeviceOperations_NodeExecutionId ON WorkflowDeviceOperations (NodeExecutionId);",
-        "CREATE INDEX IF NOT EXISTS IX_WorkflowDeviceOperations_IdempotencyKey ON WorkflowDeviceOperations (IdempotencyKey);",
         "CREATE INDEX IF NOT EXISTS IX_WorkflowRuntimeInteractions_WorkflowRunId_InteractionType_Status_ReceivedAtUtc ON WorkflowRuntimeInteractions (WorkflowRunId, InteractionType, Status, ReceivedAtUtc);",
         "CREATE INDEX IF NOT EXISTS IX_WorkflowRuntimeInteractions_WorkflowRunId_SignalName_CorrelationValue_Status ON WorkflowRuntimeInteractions (WorkflowRunId, SignalName, CorrelationValue, Status);",
         "CREATE INDEX IF NOT EXISTS IX_WorkflowAudits_WorkflowId_Version_OccurredAtUtc ON WorkflowAudits (WorkflowId, Version, OccurredAtUtc);",
@@ -541,6 +541,16 @@ static async Task EnsureWorkflowTablesAsync(MesDbContext database)
     }
 
     await EnsureWorkflowExecutionColumnsAsync(connection);
+    try
+    {
+        await using var idempotencyIndex = connection.CreateCommand();
+        idempotencyIndex.CommandText = "CREATE UNIQUE INDEX IF NOT EXISTS IX_WorkflowDeviceOperations_IdempotencyKey ON WorkflowDeviceOperations (IdempotencyKey) WHERE IdempotencyKey IS NOT NULL AND IdempotencyKey <> '';";
+        await idempotencyIndex.ExecuteNonQueryAsync();
+    }
+    catch (Microsoft.Data.Sqlite.SqliteException)
+    {
+        // Legacy duplicate keys are retained for auditability; new writes must validate uniqueness in the service.
+    }
     await using var runtimeIndex = connection.CreateCommand();
     runtimeIndex.CommandText =
         "CREATE INDEX IF NOT EXISTS IX_WorkflowExecutions_RuntimeStatus_UpdatedAtUtc ON WorkflowExecutions (RuntimeStatus, UpdatedAtUtc);";
@@ -553,7 +563,7 @@ static async Task EnsureWorkflowOperationColumnsAsync(MesDbContext database)
     if (connection.State != System.Data.ConnectionState.Open) await connection.OpenAsync();
     foreach (var (table, definitions) in new[]
     {
-        ("WorkflowDeviceOperations", new[] { ("VendorTaskId", "TEXT NULL"), ("ResultFileReference", "TEXT NULL"), ("UnknownReason", "TEXT NULL") }),
+        ("WorkflowDeviceOperations", new[] { ("VendorTaskId", "TEXT NULL"), ("ResultFileReference", "TEXT NULL"), ("UnknownReason", "TEXT NULL"), ("RawResponseSummaryJson", "TEXT NULL") }),
         ("WorkflowNodeExecutions", new[] { ("ResultFileReference", "TEXT NULL") })
     })
     {

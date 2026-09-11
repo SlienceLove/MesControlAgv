@@ -204,6 +204,8 @@ public sealed partial class WorkflowApplicationService
         DateTime now,
         CancellationToken cancellationToken)
     {
+        if (completion.Outcome == WorkflowStepCompletionOutcome.Unknown && completion.UnknownReason is null)
+            throw new ArgumentException("Unknown outcome requires a controlled UnknownReason.", nameof(completion));
         var node = await GetOrCreateNodeExecutionRecordAsync(
             run,
             completedStep,
@@ -255,6 +257,11 @@ public sealed partial class WorkflowApplicationService
                 _ => throw new ArgumentOutOfRangeException(nameof(completion))
             };
             device.ResultSummaryJson = WorkflowPersistence.Serialize(outputs);
+            device.VendorTaskId = completion.VendorTaskId;
+            device.ResultFileReference = node.ResultFileReference;
+            device.UnknownReason = completion.UnknownReason?.ToString();
+            device.RawResponseSummaryJson = string.IsNullOrWhiteSpace(completion.RawResponseSummary)
+                ? null : completion.RawResponseSummary.Length > 8192 ? completion.RawResponseSummary[..8192] : completion.RawResponseSummary;
             device.ResultFileReference = node.ResultFileReference;
             device.UnknownReason = completion.UnknownReason;
             device.LastError = node.LastError;
@@ -377,6 +384,7 @@ public sealed partial class WorkflowApplicationService
         VendorTaskId = record.VendorTaskId,
         ResultFileReference = record.ResultFileReference,
         UnknownReason = record.UnknownReason,
+        RawResponseSummary = record.RawResponseSummaryJson,
         RequestedAt = AsOffset(record.RequestedAtUtc),
         CompletedAt = AsNullableOffset(record.CompletedAtUtc),
         ReconciledAt = AsNullableOffset(record.ReconciledAtUtc),

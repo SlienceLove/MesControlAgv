@@ -1,3 +1,4 @@
+using MesControlAgv.Contracts.Devices;
 namespace MesControlAgv.Contracts.Workflows;
 
 /// <summary>Durable lifecycle of one node attempt within a pinned workflow run.</summary>
@@ -34,6 +35,22 @@ public enum WorkflowDeviceOperationStatus
     Failed,
     Cancelled,
     Unknown
+}
+
+public static class WorkflowDeviceOperationStatusMapping
+{
+    public static DeviceOperationLifecycle ToLifecycle(this WorkflowDeviceOperationStatus status) => status switch
+    {
+        WorkflowDeviceOperationStatus.Queued => DeviceOperationLifecycle.Queued,
+        WorkflowDeviceOperationStatus.Preparing or WorkflowDeviceOperationStatus.Prepared => DeviceOperationLifecycle.Preparing,
+        WorkflowDeviceOperationStatus.StartPending or WorkflowDeviceOperationStatus.Accepted => DeviceOperationLifecycle.StartPending,
+        WorkflowDeviceOperationStatus.Running => DeviceOperationLifecycle.Running,
+        WorkflowDeviceOperationStatus.AcquiringResult => DeviceOperationLifecycle.AcquiringResult,
+        WorkflowDeviceOperationStatus.Succeeded or WorkflowDeviceOperationStatus.Completed => DeviceOperationLifecycle.Completed,
+        WorkflowDeviceOperationStatus.Failed or WorkflowDeviceOperationStatus.Rejected => DeviceOperationLifecycle.Failed,
+        WorkflowDeviceOperationStatus.Cancelled => DeviceOperationLifecycle.Cancelled,
+        _ => DeviceOperationLifecycle.Unknown
+    };
 }
 
 /// <summary>
@@ -85,7 +102,7 @@ public sealed record WorkflowDeviceOperationSnapshot
         new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
     public string? VendorTaskId { get; init; }
     public string? ResultFileReference { get; init; }
-    public string? UnknownReason { get; init; }
+    public UnknownReason? UnknownReason { get; init; }
     public DateTimeOffset RequestedAt { get; init; }
     public DateTimeOffset? CompletedAt { get; init; }
     public DateTimeOffset? ReconciledAt { get; init; }
@@ -131,7 +148,9 @@ public sealed record WorkflowNodeExecutionCompletionRequest
     public Guid? DeviceOperationId { get; init; }
     public WorkflowStepCompletionOutcome Outcome { get; init; }
     public string? Error { get; init; }
-    public string? UnknownReason { get; init; }
+    public UnknownReason? UnknownReason { get; init; }
+    public string? VendorTaskId { get; init; }
+    public string? RawResponseSummary { get; init; }
     public IReadOnlyDictionary<string, string?> Outputs { get; init; } =
         new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
     public string? ResultFileReference { get; init; }
