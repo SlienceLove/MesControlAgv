@@ -22,5 +22,14 @@ public sealed class CicD160PlusOptionsTests
         options.Devices["CIC-D160-02"].ControlEnabled = false;
         options.Devices["CIC-D160-02"].ProtocolStatus = "ready";
         Assert.False(options.HasValidPendingDeviceGates());
+
+        Assert.False(CicD160PlusOptions.ValidatePhysicalAcceptanceDevices(new(), true));
+        Assert.True(CicD160PlusOptions.ValidatePhysicalAcceptanceDevices(new(), false));
+        options.Devices["CIC-D160-02"].ProtocolStatus = "protocol_pending";
+        options.Devices["CIC-D160-03"] = new() { DeviceId = "CIC-D160-03" };
+        Assert.False(CicD160PlusOptions.ValidatePhysicalAcceptanceDevices(options, true));
+        options.Devices.Remove("CIC-D160-03");
+        options.Devices["CIC-D160-02"].DeviceId = "CIC-D160-X";
+        Assert.False(CicD160PlusOptions.ValidatePhysicalAcceptanceDevices(options, true));
     }
 }

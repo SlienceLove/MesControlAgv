@@ -12,7 +12,9 @@ builder.Services.AddOptions<CicD160PlusOptions>()
     .Validate(options => options.SlaveAddress > 0, "SlaveAddress must be between 1 and 255.")
     .Validate(options => string.Equals(options.ProtocolStatus, "protocol_pending", StringComparison.Ordinal), "ProtocolStatus must remain protocol_pending until the vendor module is approved.")
     .Validate(options => !options.ControlEnabled, "ControlEnabled must remain false while the vendor module is pending.")
-    .Validate(options => options.Devices.Count == 0 || options.HasValidPendingDeviceGates(), "Physical acceptance must configure exactly CIC-D160-01 and CIC-D160-02 as independently identified, protocol_pending, read-only devices.")
+    .Validate(options => CicD160PlusOptions.ValidatePhysicalAcceptanceDevices(
+        options,
+        builder.Environment.IsEnvironment(CicD160PlusOptions.PhysicalAcceptanceEnvironmentName)), "Physical acceptance must configure exactly CIC-D160-01 and CIC-D160-02 as independently identified, protocol_pending, read-only devices.")
     .ValidateOnStart();
 builder.Services.AddSingleton<IReadOnlyModbusTransport, SerialReadOnlyModbusTransport>();
 builder.Services.AddSingleton<CicD160PlusReadOnlyDriver>();

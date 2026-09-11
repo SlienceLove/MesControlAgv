@@ -3,6 +3,7 @@ namespace MesControlAgv.InstrumentGateway;
 public sealed class CicD160PlusOptions
 {
     public const string SectionName = "IonChromatography";
+    public const string PhysicalAcceptanceEnvironmentName = "PhysicalAcceptance";
 
     public bool Enabled { get; set; }
     public string InstrumentId { get; set; } = "CIC-D160-01";
@@ -27,6 +28,9 @@ public sealed class CicD160PlusOptions
             string.Equals(pair.Key, pair.Value.DeviceId, StringComparison.OrdinalIgnoreCase)
             && string.Equals(pair.Value.ProtocolStatus, "protocol_pending", StringComparison.Ordinal)
             && !pair.Value.ControlEnabled);
+
+    public static bool ValidatePhysicalAcceptanceDevices(CicD160PlusOptions options, bool physicalAcceptance) =>
+        !physicalAcceptance || options.HasValidPendingDeviceGates();
 }
 
 public sealed class CicD160PlusDeviceGate
