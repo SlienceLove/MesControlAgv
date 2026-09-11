@@ -58,6 +58,13 @@ public sealed class SampleWorkstationDriver(
             "StartExperiment",
             new Dictionary<string, string?> { ["TaskNo"] = taskNo },
             cancellationToken);
+        if (response.Data.ValueKind == JsonValueKind.String
+            && string.Equals(response.Data.GetString()?.Trim(), "启动失败", StringComparison.Ordinal))
+        {
+            throw new SampleWorkstationProtocolException(
+                $"Sample workstation rejected task '{taskNo}' start: 启动失败");
+        }
+
         return ToCommandResponse(deviceId, SampleWorkstationCommandOperation.StartTask, response);
     }
 

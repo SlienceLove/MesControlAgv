@@ -155,6 +155,18 @@ public sealed class SampleWorkstationDriverTests
     }
 
     [Fact]
+    public async Task Start_failure_text_is_not_reported_as_a_successful_command()
+    {
+        var driver = CreateDriver(new StubHttpHandler(
+            """{"Code":200,"Data":"启动失败"}"""));
+
+        var exception = await Assert.ThrowsAsync<SampleWorkstationProtocolException>(() =>
+            driver.StartTaskAsync("SAMPLE-WORKSTATION-01", "TASK-01", CancellationToken.None));
+
+        Assert.Contains("启动失败", exception.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Vendor_business_failure_and_invalid_task_data_fail_closed()
     {
         var businessFailure = CreateDriver(new StubHttpHandler("""{"Code":500,"Data":"失败"}"""));
