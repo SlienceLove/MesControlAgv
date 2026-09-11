@@ -17,4 +17,22 @@ public sealed class CicD160PlusOptions
     public string StopBits { get; set; } = "One";
     public int TimeoutMs { get; set; } = 3000;
     public byte SlaveAddress { get; set; } = 1;
+    public Dictionary<string, CicD160PlusDeviceGate> Devices { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public bool HasValidPendingDeviceGates() =>
+        Devices.Count == 2
+        && new HashSet<string>(Devices.Keys, StringComparer.OrdinalIgnoreCase)
+            .SetEquals(new[] { "CIC-D160-01", "CIC-D160-02" })
+        && Devices.All(pair =>
+            string.Equals(pair.Key, pair.Value.DeviceId, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(pair.Value.ProtocolStatus, "protocol_pending", StringComparison.Ordinal)
+            && !pair.Value.ControlEnabled);
+}
+
+public sealed class CicD160PlusDeviceGate
+{
+    public string DeviceId { get; set; } = string.Empty;
+    public bool Enabled { get; set; }
+    public string ProtocolStatus { get; set; } = "protocol_pending";
+    public bool ControlEnabled { get; set; }
 }
