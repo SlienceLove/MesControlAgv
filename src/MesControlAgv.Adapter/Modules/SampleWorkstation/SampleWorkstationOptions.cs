@@ -11,7 +11,7 @@ public sealed record SampleWorkstationOptions
     public string BaseUrl { get; init; } = "http://127.0.0.1:8082/Service/";
     public bool Enabled { get; init; }
     public bool ControlEnabled { get; init; }
-    public int RequestTimeoutMs { get; init; } = 3000;
+    public int RequestTimeoutMs { get; init; } = 20000;
     public int MaximumPageSize { get; init; } = 100;
 
     public static SampleWorkstationOptions BindAndValidate(IConfiguration configuration)

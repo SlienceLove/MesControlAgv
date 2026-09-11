@@ -194,7 +194,9 @@ public sealed class SampleWorkstationDriverTests
             })
             .Build();
 
-        Assert.True(SampleWorkstationOptions.BindAndValidate(validControl).ControlEnabled);
+        var options = SampleWorkstationOptions.BindAndValidate(validControl);
+        Assert.True(options.ControlEnabled);
+        Assert.Equal(20000, options.RequestTimeoutMs);
         Assert.Throws<InvalidOperationException>(() =>
             SampleWorkstationOptions.BindAndValidate(controlWithoutDevice));
         Assert.Throws<InvalidOperationException>(() =>
