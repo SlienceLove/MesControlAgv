@@ -35,7 +35,19 @@ public sealed class VendorSampleWorkstationHttpClient(HttpClient client)
         }
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        JsonDocument document;
+        try
+        {
+            document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        }
+        catch (JsonException exception)
+        {
+            throw new SampleWorkstationProtocolException(
+                $"Sample workstation returned an empty or invalid JSON payload: {exception.Message}");
+        }
+
+        using (document)
+        {
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object
             || !TryGetProperty(root, "Code", out var codeElement)
@@ -57,7 +69,8 @@ public sealed class VendorSampleWorkstationHttpClient(HttpClient client)
                     : $"Sample workstation returned business code {code}: {detail.Trim()}");
         }
 
-        return new VendorSampleWorkstationResponse(code, dataElement.Clone());
+            return new VendorSampleWorkstationResponse(code, dataElement.Clone());
+        }
     }
 
     private static bool TryReadCode(JsonElement element, out int code)

@@ -76,7 +76,7 @@ public sealed record SampleWorkstationTaskDetailsResponse(
     string TaskName,
     SampleWorkstationTaskState State,
     string RawState,
-    string RequestTime,
+    string? RequestTime,
     string? ProductionTime,
     string? CompletionTime,
     string OperatorAccount,

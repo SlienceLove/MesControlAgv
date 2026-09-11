@@ -38,7 +38,7 @@ public sealed class SampleWorkstationReadOnlyDriverTests
     {
         var handler = new StubHttpHandler(
             """{"Code":200,"Data":[{"R_No":16,"TaskNo":"20260811-1","TaskName":"测试1","State":"任务完成 ","MakeTime":"2026-08-11 14:41:37","Remark":"完成"}]}""",
-            """{"Code":200,"Data":[{"R_No":16,"TaskNo":"20260811-1","TaskName":"测试1","State":"任务完成 ","RequestTime":"2026-08-11 14:00:00","ProductionTime":"2026-08-11 14:01:00","CompletionTime":"2026-08-11 14:41:00","OperatorAccount":"operator","MakeTime":"2026-08-11 14:41:37","Remark":"完成"}]}""",
+            """{"Code":200,"Data":[{"R_No":16,"TaskNo":"20260811-1","TaskName":"测试1","State":"任务完成 ","RequestTime":null,"ProductionTime":"2026-08-11 14:01:00","CompletionTime":"2026-08-11 14:41:00","OperatorAccount":"operator","MakeTime":"2026-08-11 14:41:37","Remark":"完成"}]}""",
             """{"Code":200,"Data":"正在运行 "}""");
         var driver = CreateDriver(handler);
 
@@ -59,6 +59,7 @@ public sealed class SampleWorkstationReadOnlyDriverTests
         Assert.Equal(SampleWorkstationTaskState.Completed, task.State);
         Assert.Equal("任务完成", task.RawState);
         Assert.Equal("operator", details.OperatorAccount);
+        Assert.Null(details.RequestTime);
         Assert.Equal(SampleWorkstationTaskState.Running, state.State);
         Assert.Contains("State=%E4%BB%BB%E5%8A%A1%E5%AE%8C%E6%88%90", handler.Requests[0].Uri.Query, StringComparison.Ordinal);
         Assert.Contains("RecordNum=20", handler.Requests[0].Uri.Query, StringComparison.Ordinal);
@@ -75,6 +76,25 @@ public sealed class SampleWorkstationReadOnlyDriverTests
         Assert.False(error.Recognized);
         Assert.Null(error.ErrorCode);
         Assert.Equal("UndocumentedVendorErrorPayload", error.Description);
+    }
+
+    [Fact]
+    public async Task Material_parameter_list_preserves_required_empty_date_keys()
+    {
+        var handler = new StubHttpHandler("""{"Code":200,"Data":[]}""");
+        var driver = CreateDriver(handler);
+
+        _ = await driver.GetProtocolReadAsync(
+            "SAMPLE-WORKSTATION-01",
+            SampleWorkstationProtocolOperation.MaterialTypeParameterList,
+            new SampleWorkstationProtocolReadQuery(StartNo: 1, RecordNum: 5),
+            CancellationToken.None);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Contains("StartTime=", request.Uri.Query, StringComparison.Ordinal);
+        Assert.Contains("EndTime=", request.Uri.Query, StringComparison.Ordinal);
+        Assert.Contains("StartNo=1", request.Uri.Query, StringComparison.Ordinal);
+        Assert.Contains("RecordNum=5", request.Uri.Query, StringComparison.Ordinal);
     }
 
     [Fact]
