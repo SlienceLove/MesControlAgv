@@ -7,7 +7,7 @@
 | 类别 | 系统 ID | 当前协议/状态 | 必须由现场补齐的输入 |
 | --- | --- | --- | --- |
 | AGV | `AGV-01` | `vendor-tcp`；默认 `read-only-preflight` | 控制器真实主机、最新 map/version/MD5、站点和有向边、设备 epoch、操作员与安全监护人授权 |
-| AUBO 机械臂 | `ARM-01` | WebSocket JSON-RPC `192.168.1.102:9012`；受控开关默认关闭 | 控制器地址确认、设备 epoch、批准的程序目录和白名单、现场启停授权 |
+| AUBO 机械臂 | 业务类别：AUBO；系统 ID：`ARM-01` | WebSocket JSON-RPC `192.168.1.102:9012`；受控开关默认关闭 | 控制器地址确认、设备 epoch、批准的程序目录和白名单、现场启停授权 |
 | 开盖分液 | `SAMPLE-WORKSTATION-01` | HTTP `/Service/`；端口以现场确认值为准（文档出现 `8082`/`8808` 两种值） | `EquipmentNo`、真实 BaseUrl/端口、认证/防火墙要求、厂家版本及各 POST 返回样例 |
 | 离子色谱 1 | `CIC-D160-01` | D160+ 只读观测；`protocol_pending` | 厂家模块、正式 `equipmentCode/strCode`、序列号、连接会话、Config/Command/停止语义、结果文件关联 |
 | 离子色谱 2 | `CIC-D160-02` | D160+ 只读观测；`protocol_pending` | 同上，必须单独提供，不得复用 01 的身份或任务号 |

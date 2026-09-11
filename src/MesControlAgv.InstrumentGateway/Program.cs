@@ -10,6 +10,8 @@ builder.Services.AddOptions<CicD160PlusOptions>()
     .Validate(options => options.DataBits is >= 5 and <= 8, "DataBits must be between 5 and 8.")
     .Validate(options => options.TimeoutMs > 0, "TimeoutMs must be positive.")
     .Validate(options => options.SlaveAddress > 0, "SlaveAddress must be between 1 and 255.")
+    .Validate(options => string.Equals(options.ProtocolStatus, "protocol_pending", StringComparison.Ordinal), "ProtocolStatus must remain protocol_pending until the vendor module is approved.")
+    .Validate(options => !options.ControlEnabled, "ControlEnabled must remain false while the vendor module is pending.")
     .ValidateOnStart();
 builder.Services.AddSingleton<IReadOnlyModbusTransport, SerialReadOnlyModbusTransport>();
 builder.Services.AddSingleton<CicD160PlusReadOnlyDriver>();
@@ -39,6 +41,8 @@ app.MapMethods("/health", [HttpMethods.Get, HttpMethods.Head], (IOptions<CicD160
         service = "instrument-gateway",
         status = options.Enabled ? "ready" : "disabled",
         mode = "read-only",
+        protocolStatus = options.ProtocolStatus,
+        controlEnabled = options.ControlEnabled,
         options.InstrumentId,
         options.Model,
         options.ComPort
