@@ -2,12 +2,22 @@ using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
+using MesControlAgv.Contracts;
 
 namespace MesControlAgv.Adapter.Modules.SampleWorkstation;
 
 public sealed record VendorSampleWorkstationResponse(int Code, JsonElement Data);
 
-public sealed class SampleWorkstationProtocolException(string message) : InvalidOperationException(message);
+public sealed class SampleWorkstationProtocolException(
+    string message,
+    string errorCode = SampleWorkstationErrorCodes.InvalidPayload,
+    int? vendorCode = null,
+    JsonElement? vendorData = null) : InvalidOperationException(message)
+{
+    public string ErrorCode { get; } = errorCode;
+    public int? VendorCode { get; } = vendorCode;
+    public JsonElement? VendorData { get; } = vendorData?.Clone();
+}
 
 public sealed class VendorSampleWorkstationHttpClient(HttpClient client)
 {
@@ -48,7 +58,8 @@ public sealed class VendorSampleWorkstationHttpClient(HttpClient client)
         request.Headers.CacheControl = new CacheControlHeaderValue { NoCache = true, NoStore = true };
         using var response = await client.SendAsync(
             request,
-            HttpCompletionOption.ResponseHeadersRead,
+            // Include response-body reads in HttpClient.Timeout (the WCF start handshake is ~16s).
+            HttpCompletionOption.ResponseContentRead,
             cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -90,7 +101,8 @@ public sealed class VendorSampleWorkstationHttpClient(HttpClient client)
                 throw new SampleWorkstationProtocolException(
                     string.IsNullOrWhiteSpace(detail)
                         ? $"Sample workstation returned business code {code}."
-                        : $"Sample workstation returned business code {code}: {detail.Trim()}");
+                        : $"Sample workstation returned business code {code}: {detail.Trim()}",
+                    SampleWorkstationErrorCodes.VendorFailure, code, dataElement);
             }
 
             return new VendorSampleWorkstationResponse(code, dataElement.Clone());

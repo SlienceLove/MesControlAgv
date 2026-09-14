@@ -43,7 +43,7 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
         {
             client.BaseAddress = new Uri(options.BaseUrl, UriKind.Absolute);
             client.Timeout = TimeSpan.FromMilliseconds(options.RequestTimeoutMs);
-        });
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         services.AddScoped<ISampleWorkstationDriver, SampleWorkstationDriver>();
     }
 
@@ -52,6 +52,10 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
 
     public void MapEndpoints(IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapGet("/api/workstations/{deviceId}/capabilities", async (
+            string deviceId, ISampleWorkstationDriver driver, CancellationToken cancellationToken) =>
+            await ExecuteAsync(() => driver.GetCapabilitiesAsync(deviceId, cancellationToken)));
+
         endpoints.MapGet("/api/workstations/{deviceId}/status", async (
             string deviceId,
             ISampleWorkstationDriver driver,
@@ -83,7 +87,7 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
             {
                 EnsureWorkstation(policy.EnsureControlEnabled(deviceId));
                 return await driver.InitializeAsync(deviceId, cancellationToken);
-            }));
+            }, isCommand: true));
 
         endpoints.MapPost("/api/workstations/{deviceId}/tasks/{taskNo}/start", async (
             string deviceId,
@@ -95,7 +99,7 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
             {
                 EnsureWorkstation(policy.EnsureControlEnabled(deviceId));
                 return await driver.StartTaskAsync(deviceId, taskNo, cancellationToken);
-            }));
+            }, isCommand: true));
 
         endpoints.MapGet("/api/workstations/{deviceId}/tasks", async (
             string deviceId,
@@ -184,7 +188,7 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
             throw new KeyNotFoundException($"Adapter device '{device.DeviceId}' is not a sample workstation.");
     }
 
-    private static async Task<IResult> ExecuteAsync<T>(Func<Task<T>> action)
+    private static async Task<IResult> ExecuteAsync<T>(Func<Task<T>> action, bool isCommand = false)
     {
         try
         {
@@ -192,31 +196,49 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
         }
         catch (DeviceDisabledException exception)
         {
-            return Results.Problem(exception.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+            return Problem(503, SampleWorkstationErrorCodes.Disabled, exception.Message);
         }
         catch (DeviceControlDisabledException exception)
         {
-            return Results.Problem(exception.Message, statusCode: StatusCodes.Status403Forbidden);
+            return Problem(403, SampleWorkstationErrorCodes.ControlDisabled, exception.Message);
         }
         catch (KeyNotFoundException exception)
         {
-            return Results.NotFound(new { detail = exception.Message });
+            return Problem(404, SampleWorkstationErrorCodes.NotFound, exception.Message);
         }
         catch (ArgumentException exception)
         {
-            return Results.BadRequest(new { detail = exception.Message });
+            return Problem(400, SampleWorkstationErrorCodes.InvalidRequest, exception.Message);
         }
         catch (SampleWorkstationProtocolException exception)
         {
-            return Results.Problem(exception.Message, statusCode: StatusCodes.Status502BadGateway);
+            return Problem(exception.ErrorCode == SampleWorkstationErrorCodes.UnsupportedOperation ? 501 : 502,
+                exception.ErrorCode, exception.Message, isCommand, exception.VendorCode, exception.VendorData);
         }
         catch (HttpRequestException exception)
         {
-            return Results.Problem(exception.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
+            return Problem(exception.StatusCode == System.Net.HttpStatusCode.NotFound ? 502 : 503,
+                exception.StatusCode == System.Net.HttpStatusCode.NotFound
+                    ? SampleWorkstationErrorCodes.UnsupportedOperation : SampleWorkstationErrorCodes.Unavailable,
+                exception.Message, isCommand);
         }
-        catch (TaskCanceledException exception)
+        catch (OperationCanceledException exception)
         {
-            return Results.Problem(exception.Message, statusCode: StatusCodes.Status504GatewayTimeout);
+            return Problem(504, SampleWorkstationErrorCodes.Timeout, exception.Message, isCommand);
+        }
+        catch (System.Text.Json.JsonException exception)
+        {
+            return Problem(502, SampleWorkstationErrorCodes.InvalidPayload, exception.Message, isCommand);
         }
     }
+
+    private static IResult Problem(int status, string code, string detail, bool outcomeUnknown = false,
+        int? vendorCode = null, System.Text.Json.JsonElement? vendorData = null) =>
+        Results.Problem(detail, statusCode: status, extensions: new Dictionary<string, object?>
+        {
+            ["errorCode"] = code,
+            ["outcomeUnknown"] = outcomeUnknown,
+            ["vendorCode"] = vendorCode,
+            ["vendorData"] = vendorData
+        });
 }

@@ -87,19 +87,19 @@ public sealed class SampleWorkstationApiTests(MesWebApplicationFactory factory)
 
     private WebApplicationFactory<Program> ConfigureReader(
         ISampleWorkstationReader reader,
-        ISampleWorkstationController? controller = null) =>
+        ISampleWorkstationCommands? controller = null) =>
         factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<ISampleWorkstationReader>();
             services.AddSingleton(reader);
             if (controller is not null)
             {
-                services.RemoveAll<ISampleWorkstationController>();
+                services.RemoveAll<ISampleWorkstationCommands>();
                 services.AddSingleton(controller);
             }
         }));
 
-    private sealed class StubController : ISampleWorkstationController
+    private sealed class StubController : ISampleWorkstationCommands
     {
         private static readonly DateTimeOffset ObservedAt =
             new(2026, 9, 11, 8, 0, 0, TimeSpan.Zero);

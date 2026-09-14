@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
 using Microsoft.AspNetCore.WebUtilities;
@@ -7,8 +8,13 @@ using Microsoft.AspNetCore.WebUtilities;
 namespace MesControlAgv.Mes.Services;
 
 public sealed class SampleWorkstationAdapterClient(HttpClient client)
-    : ISampleWorkstationReader, ISampleWorkstationController
+    : ISampleWorkstationReader, ISampleWorkstationCommands, ISampleWorkstationCapabilityReader
 {
+    public Task<SampleWorkstationCapabilitiesResponse> GetCapabilitiesAsync(
+        string deviceId, CancellationToken cancellationToken) =>
+        GetAsync<SampleWorkstationCapabilitiesResponse>(
+            $"api/workstations/{EscapeRequired(deviceId, nameof(deviceId))}/capabilities", cancellationToken);
+
     public Task<SampleWorkstationCommandResponse> InitializeAsync(
         string deviceId,
         CancellationToken cancellationToken) =>
@@ -109,8 +115,13 @@ public sealed class SampleWorkstationAdapterClient(HttpClient client)
         using var response = await client.SendAsync(request, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            var detail = await TryReadDetailAsync(response, cancellationToken);
-            throw new AdapterHttpException(response.StatusCode, detail);
+            var problem = await TryReadProblemAsync(response, cancellationToken);
+            throw new SampleWorkstationGatewayException(
+                (int)response.StatusCode,
+                problem?.ErrorCode ?? SampleWorkstationErrorCodes.Unavailable,
+                problem?.Detail ?? "The sample workstation Adapter returned an error.",
+                problem?.OutcomeUnknown ?? method == HttpMethod.Post,
+                problem?.VendorCode, problem?.VendorData);
         }
 
         return await response.Content.ReadFromJsonAsync<T>(cancellationToken)
@@ -122,14 +133,14 @@ public sealed class SampleWorkstationAdapterClient(HttpClient client)
             ? throw new ArgumentException("A non-empty value is required.", parameterName)
             : Uri.EscapeDataString(value.Trim());
 
-    private static async Task<string?> TryReadDetailAsync(
+    private static async Task<ProblemDetail?> TryReadProblemAsync(
         HttpResponseMessage response,
         CancellationToken cancellationToken)
     {
         try
         {
             var problem = await response.Content.ReadFromJsonAsync<ProblemDetail>(cancellationToken);
-            return problem?.Detail;
+            return problem;
         }
         catch (Exception exception) when (exception is HttpRequestException or System.Text.Json.JsonException)
         {
@@ -137,5 +148,6 @@ public sealed class SampleWorkstationAdapterClient(HttpClient client)
         }
     }
 
-    private sealed record ProblemDetail(string? Detail);
+    private sealed record ProblemDetail(
+        string? Detail, string? ErrorCode, bool? OutcomeUnknown, int? VendorCode, JsonElement? VendorData);
 }

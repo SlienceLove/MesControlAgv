@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using MesControlAgv.Adapter.Modules.SampleWorkstation;
+using MesControlAgv.Adapter.Modules;
 using MesControlAgv.Contracts;
 using Microsoft.Extensions.Configuration;
 
@@ -136,9 +137,9 @@ public sealed class SampleWorkstationDriverTests
     public async Task Control_commands_map_to_documented_vendor_get_routes()
     {
         var handler = new StubHttpHandler(
-            """{"Code":200,"Data":"设备初始化请求"}""",
-            """{"Code":200,"Data":"开始实验"}""");
-        var driver = CreateDriver(handler);
+            """{"Code":200,"Data":"正在进行初始化"}""",
+            """{"Code":200,"Data":"启动成功"}""");
+        var driver = CreateDriver(handler, controlEnabled: true);
 
         var initialized = await driver.InitializeAsync("SAMPLE-WORKSTATION-01", CancellationToken.None);
         var started = await driver.StartTaskAsync(
@@ -148,6 +149,9 @@ public sealed class SampleWorkstationDriverTests
 
         Assert.Equal(SampleWorkstationCommandOperation.Initialize, initialized.Operation);
         Assert.Equal(SampleWorkstationCommandOperation.StartTask, started.Operation);
+        Assert.True(initialized.Acknowledged);
+        Assert.True(started.Acknowledged);
+        Assert.Equal("TASK-01", started.TaskNo);
         Assert.Equal("/Service/Init", handler.Requests[0].Uri.AbsolutePath);
         Assert.Equal("/Service/StartExperiment", handler.Requests[1].Uri.AbsolutePath);
         Assert.Contains("TaskNo=TASK-01", handler.Requests[1].Uri.Query, StringComparison.Ordinal);
@@ -158,12 +162,85 @@ public sealed class SampleWorkstationDriverTests
     public async Task Start_failure_text_is_not_reported_as_a_successful_command()
     {
         var driver = CreateDriver(new StubHttpHandler(
-            """{"Code":200,"Data":"启动失败"}"""));
+            """{"Code":200,"Data":"启动失败"}"""), controlEnabled: true);
 
         var exception = await Assert.ThrowsAsync<SampleWorkstationProtocolException>(() =>
             driver.StartTaskAsync("SAMPLE-WORKSTATION-01", "TASK-01", CancellationToken.None));
 
         Assert.Contains("启动失败", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(SampleWorkstationErrorCodes.CommandUnconfirmed, exception.ErrorCode);
+        Assert.Equal(200, exception.VendorCode);
+        Assert.Equal("启动失败", exception.VendorData!.Value.GetString());
+    }
+
+    [Theory]
+    [InlineData("null")]
+    [InlineData("true")]
+    [InlineData("\"unexpected\"")]
+    public async Task Code_200_without_known_command_acknowledgement_remains_unconfirmed(string data)
+    {
+        var handler = new StubHttpHandler($$"""{"Code":200,"Data":{{data}}}""");
+        var driver = CreateDriver(handler, controlEnabled: true);
+        var exception = await Assert.ThrowsAsync<SampleWorkstationProtocolException>(() =>
+            driver.StartTaskAsync("SAMPLE-WORKSTATION-01", "TASK-01", CancellationToken.None));
+        Assert.Equal(SampleWorkstationErrorCodes.CommandUnconfirmed, exception.ErrorCode);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Direct_driver_calls_cannot_bypass_control_switch()
+    {
+        var handler = new StubHttpHandler();
+        var driver = CreateDriver(handler);
+        await Assert.ThrowsAsync<DeviceControlDisabledException>(() =>
+            driver.InitializeAsync("SAMPLE-WORKSTATION-01", CancellationToken.None));
+        await Assert.ThrowsAsync<DeviceControlDisabledException>(() =>
+            driver.StartTaskAsync("SAMPLE-WORKSTATION-01", "TASK-01", CancellationToken.None));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Capabilities_are_offline_metadata_and_do_not_advertise_missing_vendor_apis_or_import()
+    {
+        var handler = new StubHttpHandler();
+        var driver = CreateDriver(handler);
+        var capabilities = await driver.GetCapabilitiesAsync("SAMPLE-WORKSTATION-01", CancellationToken.None);
+        Assert.Equal("AdapterConfiguration", capabilities.Source);
+        Assert.Empty(capabilities.Commands);
+        Assert.False(capabilities.TaskImportSupported);
+        Assert.DoesNotContain(SampleWorkstationProtocolOperation.WorkflowList, capabilities.ProtocolReads);
+        Assert.Contains(SampleWorkstationProtocolOperation.SolventParameterList, capabilities.ProtocolReads);
+        var exception = await Assert.ThrowsAsync<SampleWorkstationProtocolException>(() => driver.GetProtocolReadAsync(
+            "SAMPLE-WORKSTATION-01", SampleWorkstationProtocolOperation.WorkflowList, new(), CancellationToken.None));
+        Assert.Equal(SampleWorkstationErrorCodes.UnsupportedOperation, exception.ErrorCode);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(0, 5, null, null)]
+    [InlineData(1, 101, null, null)]
+    [InlineData(1, 5, "bad-date", null)]
+    [InlineData(1, 5, "2026-09-14", "2026-09-01")]
+    public async Task Protocol_paging_validates_parameters_before_sending(int start, int count, string? from, string? to)
+    {
+        var handler = new StubHttpHandler();
+        var driver = CreateDriver(handler);
+        await Assert.ThrowsAnyAsync<ArgumentException>(() => driver.GetProtocolReadAsync(
+            "SAMPLE-WORKSTATION-01", SampleWorkstationProtocolOperation.MaterialTypeParameterList,
+            new(StartDate: from, EndDate: to, StartNo: start, RecordNum: count), CancellationToken.None));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("\"0\"", 0, true)]
+    [InlineData("99", 99, false)]
+    public async Task Error_codes_keep_numeric_strings_and_unknown_raw_values(string data, int expected, bool recognized)
+    {
+        var driver = CreateDriver(new StubHttpHandler($$"""{"Code":200,"Data":{{data}}}"""));
+        var response = await driver.GetErrorsAsync("SAMPLE-WORKSTATION-01", CancellationToken.None);
+        Assert.Equal(expected, response.ErrorCode);
+        Assert.Equal(recognized, response.Recognized);
+        Assert.Equal(data, response.RawData!.Value.GetRawText());
     }
 
     [Fact]
@@ -215,7 +292,7 @@ public sealed class SampleWorkstationDriverTests
             SampleWorkstationOptions.BindAndValidate(missingEquipment));
     }
 
-    private static SampleWorkstationDriver CreateDriver(StubHttpHandler handler)
+    private static SampleWorkstationDriver CreateDriver(StubHttpHandler handler, bool controlEnabled = false)
     {
         var client = new HttpClient(handler)
         {
@@ -227,6 +304,7 @@ public sealed class SampleWorkstationDriverTests
             new SampleWorkstationOptions
             {
                 Enabled = true,
+                ControlEnabled = controlEnabled,
                 DeviceId = "SAMPLE-WORKSTATION-01",
                 EquipmentNo = "EQ-01",
                 BaseUrl = client.BaseAddress.ToString()

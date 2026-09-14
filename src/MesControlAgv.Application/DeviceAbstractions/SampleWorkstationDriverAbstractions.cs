@@ -38,7 +38,8 @@ public interface ISampleWorkstationReader
         CancellationToken cancellationToken);
 }
 
-public interface ISampleWorkstationController
+// Deliberately separate from the central workflow's richer operation controller.
+public interface ISampleWorkstationCommands
 {
     Task<SampleWorkstationCommandResponse> InitializeAsync(
         string deviceId,
@@ -50,4 +51,22 @@ public interface ISampleWorkstationController
         CancellationToken cancellationToken);
 }
 
-public interface ISampleWorkstationDriver : ISampleWorkstationReader, ISampleWorkstationController;
+public interface ISampleWorkstationCapabilityReader
+{
+    Task<SampleWorkstationCapabilitiesResponse> GetCapabilitiesAsync(
+        string deviceId, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Future task-table import port. The caller owns the readable stream.
+/// No implementation/HTTP import route is registered until the vendor format is confirmed.
+/// Import creates tasks only; it must not start them.
+/// </summary>
+public interface ISampleWorkstationTaskImporter
+{
+    Task<SampleWorkstationTaskImportResponse> ImportTasksAsync(
+        string deviceId, string fileName, Stream content, CancellationToken cancellationToken);
+}
+
+public interface ISampleWorkstationDriver
+    : ISampleWorkstationReader, ISampleWorkstationCommands, ISampleWorkstationCapabilityReader;

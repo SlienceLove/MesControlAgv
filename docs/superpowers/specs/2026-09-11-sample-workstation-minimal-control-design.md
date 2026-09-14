@@ -4,6 +4,8 @@
 状态：已实现，待真实设备命令验证
 目标分支：`feature/sample-workstation-http-readonly`
 
+2026-09-14 接入准备更新：最小命令端口已命名为 `ISampleWorkstationCommands`，以免与中控主工作区已有的较完整控制器重名；新增配置能力查询、结构化错误透传及独立注册/路由。下文保留原设计背景，当前实现和合并注意事项以 [中控接入说明](../../SAMPLE-WORKSTATION-CENTRAL-INTEGRATION.md) 为准。
+
 ## 1. 目标
 
 在已经完成的真实设备只读链路上增加最小控制闭环：初始化工作站、启动一个已经存在的任务，并继续使用现有任务状态接口观察执行结果。同时为后续“上传厂家任务表并一键创建任务”保留稳定扩展点；在厂家任务表格式未确认前，不猜测 Excel 字段或实现文件解析。
@@ -35,7 +37,7 @@ GET /api/workstations/{deviceId}/tasks/{taskNo}/state
 
 ## 3. 代码边界与数据流
 
-在现有 `ISampleWorkstationReader` 之外增加 `ISampleWorkstationController`，提供 `InitializeAsync` 和 `StartTaskAsync`。实际驱动同时实现读取和控制接口；设备控制仍由现有 `DeviceOperationPolicy.EnsureControlEnabled` 判断，配置只需要已有的 `Enabled` 和 `ControlEnabled` 两个开关。
+在现有 `ISampleWorkstationReader` 之外增加 `ISampleWorkstationCommands`，提供 `InitializeAsync` 和 `StartTaskAsync`。实际驱动同时实现读取和控制接口；设备控制仍由现有 `DeviceOperationPolicy.EnsureControlEnabled` 判断，配置只需要已有的 `Enabled` 和 `ControlEnabled` 两个开关。
 
 `VendorSampleWorkstationHttpClient` 增加一个共用的请求执行方法。该方法支持厂家定义的 GET 命令，并复用已经验证的 `{ Code, Data }` 解析逻辑。初始化和启动返回统一的 `SampleWorkstationCommandResponse`，包含设备 ID、操作名、厂家业务码、原始 `Data` 和响应时间。
 
@@ -100,4 +102,4 @@ file=<厂家任务表>
 - Adapter 测试 244 项通过，MES 工作站测试 7 项通过；
 - 全解决方案构建通过，0 个警告、0 个错误。
 - 现场 DLL 显示 `StartExperiment` 最多等待约 15 秒才返回，工作站请求超时已调整为 20 秒。
-- 厂家可能以 `Code=200, Data="启动失败"` 表示命令未生效；驱动将该响应规范化为启动失败。
+- 厂家可能以 `Code=200, Data="启动失败"` 表示未收到主程序启动确认；驱动将该响应规范化为命令未确认，不据此保证未执行，也不自动重发。

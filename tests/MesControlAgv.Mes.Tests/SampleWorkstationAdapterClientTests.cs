@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using MesControlAgv.Contracts;
+using MesControlAgv.Application;
 using MesControlAgv.Mes.Services;
 
 namespace MesControlAgv.Mes.Tests;
@@ -63,11 +64,11 @@ public sealed class SampleWorkstationAdapterClientTests
         using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://adapter.local/") };
         var client = new SampleWorkstationAdapterClient(httpClient);
 
-        var exception = await Assert.ThrowsAsync<AdapterHttpException>(() =>
+        var exception = await Assert.ThrowsAsync<SampleWorkstationGatewayException>(() =>
             client.GetStatusAsync("SAMPLE-WORKSTATION-01", CancellationToken.None));
 
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, exception.ResponseStatusCode);
-        Assert.Equal("device disabled", exception.Detail);
+        Assert.Equal(503, exception.StatusCode);
+        Assert.Equal("device disabled", exception.Message);
     }
 
     [Fact]

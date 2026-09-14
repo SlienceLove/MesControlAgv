@@ -42,9 +42,9 @@ public sealed class SampleWorkstationDriver(
         string deviceId,
         CancellationToken cancellationToken)
     {
-        EnsureDeviceId(deviceId);
+        EnsureControlEnabled(deviceId);
         var response = await vendor.ExecuteCommandAsync("Init", query: null, cancellationToken);
-        return ToCommandResponse(deviceId, SampleWorkstationCommandOperation.Initialize, response);
+        return ToCommandResponse(SampleWorkstationCommandOperation.Initialize, response);
     }
 
     public async Task<SampleWorkstationCommandResponse> StartTaskAsync(
@@ -52,7 +52,7 @@ public sealed class SampleWorkstationDriver(
         string taskNo,
         CancellationToken cancellationToken)
     {
-        EnsureDeviceId(deviceId);
+        EnsureControlEnabled(deviceId);
         taskNo = RequireTaskNo(taskNo);
         var response = await vendor.ExecuteCommandAsync(
             "StartExperiment",
@@ -62,10 +62,24 @@ public sealed class SampleWorkstationDriver(
             && string.Equals(response.Data.GetString()?.Trim(), "启动失败", StringComparison.Ordinal))
         {
             throw new SampleWorkstationProtocolException(
-                $"Sample workstation rejected task '{taskNo}' start: 启动失败");
+                $"Sample workstation did not confirm task '{taskNo}' start: 启动失败",
+                SampleWorkstationErrorCodes.CommandUnconfirmed, response.Code, response.Data);
         }
 
-        return ToCommandResponse(deviceId, SampleWorkstationCommandOperation.StartTask, response);
+        return ToCommandResponse(SampleWorkstationCommandOperation.StartTask, response, taskNo);
+    }
+
+    public Task<SampleWorkstationCapabilitiesResponse> GetCapabilitiesAsync(
+        string deviceId, CancellationToken cancellationToken)
+    {
+        EnsureDeviceId(deviceId, requireEnabled: false);
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(new SampleWorkstationCapabilitiesResponse(
+            options.DeviceId, options.Enabled, options.ControlEnabled, false,
+            options.Enabled && options.ControlEnabled
+                ? Enum.GetValues<SampleWorkstationCommandOperation>() : [],
+            options.Enabled
+                ? ProtocolOperations.Keys.Except(options.UnsupportedProtocolOperations).ToArray() : []));
     }
 
     public async Task<SampleWorkstationStatusResponse> GetStatusAsync(
@@ -120,13 +134,13 @@ public sealed class SampleWorkstationDriver(
                 errorCode,
                 description!,
                 true,
-                timeProvider.GetUtcNow())
+                timeProvider.GetUtcNow()) { RawData = response.Data }
             : new SampleWorkstationErrorResponse(
                 options.DeviceId,
-                null,
+                errorCode,
                 "UndocumentedVendorErrorPayload",
                 false,
-                timeProvider.GetUtcNow());
+                timeProvider.GetUtcNow()) { RawData = response.Data };
     }
 
     public async Task<IReadOnlyList<SampleWorkstationTaskSummaryResponse>> GetTasksAsync(
@@ -214,6 +228,14 @@ public sealed class SampleWorkstationDriver(
         ArgumentNullException.ThrowIfNull(query);
         if (!ProtocolOperations.TryGetValue(operation, out var spec))
             throw new ArgumentException($"Unsupported sample workstation operation '{operation}'.", nameof(operation));
+        if (options.UnsupportedProtocolOperations.Contains(operation))
+            throw new SampleWorkstationProtocolException(
+                $"Operation '{operation}' is unavailable in the configured workstation version.",
+                SampleWorkstationErrorCodes.UnsupportedOperation);
+        if (spec.SupportsPaging)
+            ValidateQuery(new SampleWorkstationTaskQuery(
+                StartDate: query.StartDate, EndDate: query.EndDate,
+                StartNo: query.StartNo, RecordNum: query.RecordNum));
 
         var response = await vendor.GetAsync(
             spec.Path,
@@ -334,10 +356,24 @@ public sealed class SampleWorkstationDriver(
     }
 
     private SampleWorkstationCommandResponse ToCommandResponse(
-        string deviceId,
         SampleWorkstationCommandOperation operation,
-        VendorSampleWorkstationResponse response) =>
-        new(deviceId, operation, response.Code, response.Data, timeProvider.GetUtcNow());
+        VendorSampleWorkstationResponse response,
+        string? taskNo = null)
+    {
+        var text = response.Data.ValueKind == JsonValueKind.String ? response.Data.GetString()?.Trim() : null;
+        var acknowledged = operation == SampleWorkstationCommandOperation.StartTask
+            ? text == "启动成功"
+            : text is "正在进行初始化" or "初始化成功";
+        if (!acknowledged)
+            throw new SampleWorkstationProtocolException(
+                "The workstation returned no recognized command acknowledgement; query state before taking further action.",
+                SampleWorkstationErrorCodes.CommandUnconfirmed, response.Code, response.Data);
+        return new(options.DeviceId, operation, response.Code, response.Data, timeProvider.GetUtcNow())
+        {
+            TaskNo = taskNo,
+            Acknowledged = true
+        };
+    }
 
     private static bool TryDescribeError(int code, out string? description)
     {
@@ -356,10 +392,19 @@ public sealed class SampleWorkstationDriver(
         return description is not null;
     }
 
-    private void EnsureDeviceId(string deviceId)
+    private void EnsureDeviceId(string deviceId, bool requireEnabled = true)
     {
         if (!string.Equals(deviceId?.Trim(), options.DeviceId, StringComparison.OrdinalIgnoreCase))
             throw new KeyNotFoundException($"Sample workstation '{deviceId}' is not configured.");
+        if (requireEnabled && !options.Enabled)
+            throw new DeviceDisabledException(options.DeviceId);
+    }
+
+    private void EnsureControlEnabled(string deviceId)
+    {
+        EnsureDeviceId(deviceId);
+        if (!options.ControlEnabled)
+            throw new DeviceControlDisabledException(options.DeviceId);
     }
 
     private static string RequireTaskNo(string taskNo) =>

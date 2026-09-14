@@ -75,12 +75,7 @@ builder.Services.AddSingleton(new WorkflowPhysicalBatchAdmissionGate(
         ? $"{PhysicalReadinessReasonCodes.SupervisorDisabled}: MES 启动时未启用物理就绪监督器，因此拒绝一键现场执行。"
         : "physical_execution_workers_disabled: MES 启动时未同时启用现场导航、自动许可和 AUBO worker，因此拒绝一键现场执行。"));
 builder.Services.AddSingleton<WorkflowFieldNavigationRetryState>();
-builder.Services.AddHttpClient<ISampleWorkstationReader, SampleWorkstationAdapterClient>(client =>
-    client.BaseAddress = new Uri(
-        builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5041/"));
-builder.Services.AddHttpClient<ISampleWorkstationController, SampleWorkstationAdapterClient>(client =>
-    client.BaseAddress = new Uri(
-        builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5041/"));
+builder.Services.AddSampleWorkstationGateway(builder.Configuration);
 builder.Services.AddHttpClient<IIonChromatographyStatusReader, IonChromatographyGatewayClient>(client =>
     client.BaseAddress = new Uri(
         builder.Configuration["IonChromatographyGateway:BaseUrl"] ?? "http://127.0.0.1:5190/"));
