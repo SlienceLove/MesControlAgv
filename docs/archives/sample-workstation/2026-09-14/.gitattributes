@@ -1,0 +1,2 @@
+*.log -text whitespace=trailing-space,space-before-tab,cr-at-eol
+tool-observations.json -text
