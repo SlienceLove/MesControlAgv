@@ -135,6 +135,31 @@ public sealed class MesClient(HttpClient client) : IMesClient
             tasks.Error);
     }
 
+    public async Task<SampleWorkstationCommandResponse> StartSampleWorkstationTestTaskAsync(
+        string deviceId,
+        string taskNo,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(taskNo);
+        var path =
+            $"api/workstations/{Uri.EscapeDataString(deviceId)}/tasks/{Uri.EscapeDataString(taskNo)}/start";
+
+        using var response = await client.PostAsync(path, content: null, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var problem = await TryReadProblemDetailAsync(response.Content, cancellationToken);
+            throw new SampleWorkstationTestStartException(
+                string.IsNullOrWhiteSpace(problem?.Detail)
+                    ? $"MES rejected the sample workstation start request (HTTP {(int)response.StatusCode})."
+                    : problem.Detail,
+                problem?.OutcomeUnknown ?? true);
+        }
+
+        return await response.Content.ReadFromJsonAsync<SampleWorkstationCommandResponse>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no sample workstation start result.");
+    }
+
     private async Task<WorkstationSectionResult<T>> ReadWorkstationSectionAsync<T>(
         string path,
         CancellationToken cancellationToken)
@@ -167,6 +192,35 @@ public sealed class MesClient(HttpClient client) : IMesClient
     }
 
     private sealed record WorkstationSectionResult<T>(T? Value, string? Error);
+
+    private static async Task<WorkstationProblemDetail?> TryReadProblemDetailAsync(
+        HttpContent content,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var payload = await content.ReadFromJsonAsync<JsonElement>(cancellationToken);
+            if (payload.ValueKind != JsonValueKind.Object) return null;
+            var detail = payload.TryGetProperty("detail", out var detailElement)
+                ? detailElement.GetString()
+                : null;
+            bool? outcomeUnknown = payload.TryGetProperty("outcomeUnknown", out var outcomeElement)
+                ? outcomeElement.ValueKind switch
+                {
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    _ => null
+                }
+                : null;
+            return new WorkstationProblemDetail(detail, outcomeUnknown);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private sealed record WorkstationProblemDetail(string? Detail, bool? OutcomeUnknown);
 
     public async Task<ShineLabCommandResponse> SendShineLabConfigAsync(
         string equipmentCode,

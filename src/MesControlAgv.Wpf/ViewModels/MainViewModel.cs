@@ -53,7 +53,8 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         WorkflowStore? workflowStore = null,
         StartupConfigurationReport? startupConfiguration = null,
         OfflineDiagnosticAuditTrail? diagnosticAudit = null,
-        bool physicalBatchExecutionEnabled = false)
+        bool physicalBatchExecutionEnabled = false,
+        bool sampleWorkstationTestControlEnabled = false)
     {
         _mes = mes;
         _simulator = simulator;
@@ -77,7 +78,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         Readiness = new ReadinessViewModel(_mes, mapLayoutSource);
         AuboArm = new AuboArmControlViewModel(_mes, effectiveRuntimeMode);
         IonChromatography = new IonChromatographyViewModel(_mes);
-        ShineLabDeviceStatus = new ShineLabDeviceStatusViewModel(_mes);
+        ShineLabDeviceStatus = new ShineLabDeviceStatusViewModel(
+            _mes,
+            sampleWorkstationTestControlEnabled: sampleWorkstationTestControlEnabled);
         ShineLabTaskDispatch = new ShineLabTaskDispatchViewModel(_mes);
         ShineLabSequenceImport = new ShineLabSequenceImportViewModel(mes: _mes);
         _modules = new ControlCenterViewModel(WorkflowEditor, ModuleRegistry);
@@ -1116,6 +1119,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         WorkflowEditor.Dispose();
         WorkflowRunMonitor.Dispose();
         AuboArm.Dispose();
+        ShineLabDeviceStatus.Dispose();
         _refreshGate.Dispose();
         _actionGate.Dispose();
         _shutdown.Dispose();

@@ -2,15 +2,29 @@
 
 新会话先读 [2026-09-14 交接文件](SAMPLE-WORKSTATION-HANDOFF-2026-09-14.md)。本轮原始证据见 [归档目录](archives/sample-workstation/2026-09-14/README.md)。
 
+2026-09-15 最新进度：16:32 使用 `DLHWorkstation_1625.exe` 再次完整验证正常路径，设备 Idle→Running→Idle、任务 Completed→Running→Completed、返回码 0→3→0，现场顶部运行提示与接口同步并在完成后清除。隔离分支已增加 WPF 默认隐藏的联调测试入口；正式运行仍由后续完整工作流调度。冷启动初始化、异常终态和任务空时间字段仍需跟踪。详见 [0915 诊断记录](diagnostics/2026-09-15-workstation-init-only.md) 与 [WPF 联调入口设计](superpowers/specs/2026-09-15-sample-workstation-wpf-test-control-design.md)。下文 09-14 内容保留为历史基线，以本段最新进展为准。
+
 日期：2026-09-14。范围：最小通讯模块的接入准备，不包含本次主工作区合并、工作流自动执行或真实设备启动。
 
 ## 当前结论
 
 现场 HTTP 读取和命令往返已经打通。2026-09-14 下午的 `DLHWorkstation_Beta.exe` 已修复此前发现的空执行入口、任务未加入列表及定时器恢复问题；经远程任务打开、人工确认和录码、当前页面手动启动后，用户已确认真实设备正在执行。此前问题保留在 [历史诊断](diagnostics/2026-09-14-workstation-remote-start.md)。
 
-16:30 的人工确认运行，以及 16:44 的远程直接运行，均已观察到任务 Running→Completed、厂家返回码 3→0。16:44 轮次用户明确确认“没有任何点击就开始执行”，16:47 厂家直读和 MES/Adapter 均回传完成，本轮仅发送一次请求，厂端不再二次确认的行为已验证。运行期间设备总状态仍错误返回 Idle / 0，任务时间字段仍为 null；中控 UI 的确认/取消入口及批量任务导入不属于此次已验收范围。详见 [最新联调记录](diagnostics/2026-09-14-workstation-latest-confirmation.md)，历史过程见 [Beta 记录](diagnostics/2026-09-14-workstation-beta-field-checkpoint.md)。
+16:30 的人工确认运行，以及 16:44 的远程直接运行，均已观察到任务 Running→Completed、厂家返回码 3→0。16:44 轮次用户明确确认“没有任何点击就开始执行”，16:47 厂家直读和 MES/Adapter 均回传完成，本轮仅发送一次请求，厂端不再二次确认的行为已验证。运行中设备总状态曾错误返回 Idle/0；该问题已在 09-15 的 13:24 和 16:32 两轮正常任务中验证修复。任务时间字段仍为 null，批量任务导入尚未接入。
 
-最新约定：由中控在发请求前二次确认。确认后发送一次启动请求，厂家直接执行；用户取消则中控不发送请求。不再要求厂家为中控的发令前取消新增取消回传。厂端直接执行已在现场通过上述单次验证，中控入口接入仍需后续验证，本轮没有修改中控界面代码。厂家下一项优先修复是设备总状态：运行时返回 1，结束后返回 0；不要仅凭当前错误的 Idle 返回值允许下一次发令。
+最新约定：由中控在发请求前二次确认。确认后发送一次启动请求，厂家直接执行；用户取消则中控不发送请求。不再要求厂家为中控的发令前取消新增取消回传。手动停止功能尚未规划，本阶段不实现、不测试，也不要求厂家新增停止接口。
+
+## WPF 默认隐藏的联调测试入口
+
+现有“仪器状态 → 开盖分液”页面保留只读状态和任务列表，并增加默认隐藏的联调区。只有启动 WPF 进程前设置以下环境变量，控制区才显示：
+
+```powershell
+$env:WPF_ENABLE_SAMPLE_WORKSTATION_TEST_CONTROL='true'
+```
+
+控制区只允许选择厂家已经存在的任务，经 WPF 二次确认后启动一次。取消确认不发送请求；确认后不自动重发。界面把 `Acknowledged=true` 显示为“设备已接收”，随后每 2 秒读取状态，必须先看到本轮 Running 证据，再以任务 Completed、设备 Idle/0、结果码0三项一致判定完成。观察最长 10 分钟，超时或关闭界面只停止本地观察，不停止设备。
+
+该入口不提供初始化、建任务、轨迹、导入、暂停或停止。它只用于当前 WPF→MES→Adapter→真机链路测试，后续完整实验通过正式工作流节点和 MES worker 执行；正式工作流不调用 WPF 测试按钮。
 
 ## 模块边界
 
@@ -133,7 +147,7 @@ MES 与 Adapter 路径相同，前缀为 `/api/workstations/{deviceId}`：
 
 ## 与当前主工作区的衔接
 
-代码在隔离分支 `feature/sample-workstation-http-readonly`，未合并到 `feature/wpf-ui-layout-optimization`。
+代码在隔离分支 `feature/sample-workstation-http-readonly`，已包含默认隐藏的 WPF 联调入口，但未合并到 `feature/wpf-ui-layout-optimization`。
 
 主工作区已有签名不同的 `ISampleWorkstationController`、`WorkflowSampleWorkstationWorker`、`SampleWorkstationControlledDriver` 等未提交工作。这里将最小命令端口命名为 `ISampleWorkstationCommands`，避免同名冲突；但不代表整个分支可无冲突覆盖。
 
@@ -142,7 +156,8 @@ MES 与 Adapter 路径相同，前缀为 `/api/workstations/{deviceId}`：
 1. 按新增成员合并 Contracts/Application，保留主工作区已有操作请求、工作流控制器和任务管理契约。
 2. 将本模块的厂家响应判定、错误透传和超时处理整合进主工作区实际使用的驱动；不要让两套驱动同时注册同一路由。
 3. 保留一个 `SampleWorkstationAdapterClient` 和一套服务/路由注册，将两边接口实现合并。工作流通过现有协调层调用最小命令端口，不绕开原有操作管理，也不要在重试循环中反复启动任务。
-4. 编译中控、MES、Adapter，运行两边工作站测试；厂家修复后再人工验证一次启动到完成的真实闭环。
+4. 保留 WPF 测试入口为默认隐藏的诊断能力；正式工作流通过现有协调层执行，不复用 UI 按钮。
+5. 编译中控、MES、Adapter，运行两边工作站测试；真机 WPF 验收仅在现场另行授权后发送一次任务。
 
 ## 任务表扩展
 
@@ -158,4 +173,4 @@ dotnet build MesControlAgv.sln --no-restore
 
 模块测试仅启动本机临时 HTTP 主机，厂家及 Adapter 上游均为内存响应替身；不访问真实设备。覆盖独立注册/路由、开关、命令确认、错误透传、超时与响应体停滞、禁用能力、配置覆盖及不重试。
 
-本次验证结果：Adapter 全量 270/270 通过（其中工作站 38 项）；MES 工作站 14/14 通过；解决方案构建通过，0 警告、0 错误。MES 全量为 288 通过、16 失败，保留原有工作流 `UnknownReason` 问题，没有在本次工作站优化中修改。单独复核 `WorkflowSimulatorDispatcherTests.Dispatcher_marks_an_ambiguous_dispatch_unknown_and_never_retries_it` 仍在 `WorkflowRuntimeRecordPersistence.cs:214` 抛出 `Unknown outcome requires a controlled UnknownReason`，该逻辑及相应测试未改动。
+本次 WPF 联调入口验证结果：工作站相关 WPF 测试 25/25 通过；排除一个已确认无关的既有根目录用例后，WPF 测试 441/441 通过。若包含该用例则为 441/442，唯一失败是既有 `ShineLabHandoffRehearsalTests` 在链接工作区无法识别仓库根目录。解决方案构建通过，0 警告、0 错误。此前 Adapter 全量 270/270、MES 工作站 14/14 的基线保持不变。本轮自动验证没有启动本地服务，也没有访问真机。

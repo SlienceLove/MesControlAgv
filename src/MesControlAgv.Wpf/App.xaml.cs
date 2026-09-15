@@ -123,6 +123,10 @@ public partial class App : Application
             var workflowStore = string.IsNullOrWhiteSpace(workflowStorePath)
                 ? null
                 : new WorkflowStore(workflowStorePath);
+            var sampleWorkstationTestControlEnabled = string.Equals(
+                Environment.GetEnvironmentVariable("WPF_ENABLE_SAMPLE_WORKSTATION_TEST_CONTROL"),
+                "true",
+                StringComparison.OrdinalIgnoreCase);
             _viewModel = new MainViewModel(
                 mesClient,
                 simulatorClient,
@@ -134,7 +138,8 @@ public partial class App : Application
                     string.Equals(
                         Environment.GetEnvironmentVariable("WPF_ENABLE_PHYSICAL_BATCH"),
                         "true",
-                        StringComparison.OrdinalIgnoreCase));
+                        StringComparison.OrdinalIgnoreCase),
+                sampleWorkstationTestControlEnabled: sampleWorkstationTestControlEnabled);
             var window = new MainWindow { DataContext = _viewModel };
             window.Closed += (_, _) =>
             {

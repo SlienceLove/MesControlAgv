@@ -28,7 +28,7 @@ public sealed record ShineLabSubdeviceStatusRow(
 /// while the opening/dispensing page consumes the normalized workstation
 /// read-only contract.
 /// </summary>
-public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged
+public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDisposable
 {
     public const string IonChromatographyInstrument = "离子色谱";
     public const string SampleWorkstationInstrument = "开盖分液";
@@ -36,24 +36,54 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged
 
     private readonly IMesClient _mes;
     private readonly string _sampleWorkstationDeviceId;
+    private readonly bool _sampleWorkstationTestControlEnabled;
+    private readonly ISampleWorkstationTestConfirmation _sampleWorkstationTestConfirmation;
+    private readonly TimeSpan _workstationObservationInterval;
+    private readonly TimeSpan _workstationObservationTimeout;
+    private readonly int _maximumObservationPolls;
     private ShineLabDeviceStatusResponse? _selectedDevice;
     private ShineLabSubdeviceStatusRow? _selectedSubdevice;
+    private SampleWorkstationTaskSummaryResponse? _selectedWorkstationTask;
     private SampleWorkstationDashboardSnapshot? _sampleWorkstationSnapshot;
+    private CancellationTokenSource? _workstationObservationCancellation;
     private string _connectionStatus = "尚未读取";
     private string _message = "等待 ShineLab TCP Client 推送状态...";
+    private string _workstationTestControlMessage = "请选择已有任务进行联调测试。";
     private bool _isRefreshing;
+    private bool _isWorkstationTestBusy;
+    private bool _disposed;
     private string _selectedInstrument = IonChromatographyInstrument;
     private long _refreshVersion;
 
     public ShineLabDeviceStatusViewModel(
         IMesClient mes,
-        string sampleWorkstationDeviceId = DefaultSampleWorkstationDeviceId)
+        string sampleWorkstationDeviceId = DefaultSampleWorkstationDeviceId,
+        bool sampleWorkstationTestControlEnabled = false,
+        ISampleWorkstationTestConfirmation? sampleWorkstationTestConfirmation = null,
+        TimeSpan? workstationObservationInterval = null,
+        TimeSpan? workstationObservationTimeout = null,
+        int maximumObservationPolls = 300)
     {
+        if (maximumObservationPolls <= 0)
+            throw new ArgumentOutOfRangeException(nameof(maximumObservationPolls));
         _mes = mes;
         _sampleWorkstationDeviceId = string.IsNullOrWhiteSpace(sampleWorkstationDeviceId)
             ? DefaultSampleWorkstationDeviceId
             : sampleWorkstationDeviceId.Trim();
+        _sampleWorkstationTestControlEnabled = sampleWorkstationTestControlEnabled;
+        _sampleWorkstationTestConfirmation = sampleWorkstationTestConfirmation
+            ?? MessageBoxSampleWorkstationTestConfirmation.Instance;
+        _workstationObservationInterval = workstationObservationInterval ?? TimeSpan.FromSeconds(2);
+        if (_workstationObservationInterval < TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(workstationObservationInterval));
+        _workstationObservationTimeout = workstationObservationTimeout ?? TimeSpan.FromMinutes(10);
+        if (_workstationObservationTimeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(workstationObservationTimeout));
+        _maximumObservationPolls = maximumObservationPolls;
         RefreshCommand = new AsyncCommand(() => RefreshAsync(), () => !IsRefreshing);
+        StartWorkstationTestTaskCommand = new AsyncCommand(
+            () => StartSelectedWorkstationTestTaskAsync(),
+            CanStartSelectedWorkstationTestTask);
     }
 
     /// <summary>All ShineLab responses received from MES.</summary>
@@ -88,8 +118,14 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged
                 SelectedDevice = Devices.FirstOrDefault();
             }
 
+            if (!IsSampleWorkstationSelected)
+            {
+                _workstationObservationCancellation?.Cancel();
+            }
+
             OnPropertyChanged(nameof(IsIonChromatographySelected));
             OnPropertyChanged(nameof(IsSampleWorkstationSelected));
+            OnPropertyChanged(nameof(IsWorkstationTestControlVisible));
             OnPropertyChanged(nameof(VisibleDevices));
             OnPropertyChanged(nameof(VisibleIonSubdevices));
             OnPropertyChanged(nameof(InstrumentTitle));
@@ -101,6 +137,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged
                 ? "已切换到离子色谱，请刷新子设备状态。"
                 : "已切换到开盖分液，请刷新工作站只读状态。";
             RaiseWorkstationProperties();
+            RaiseWorkstationTestCommandCanExecuteChanged();
         }
     }
 
@@ -128,6 +165,8 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged
         IsIonChromatographySelected ? IonSubdevices : Array.Empty<ShineLabSubdeviceStatusRow>();
 
     public ICommand RefreshCommand { get; }
+
+    public ICommand StartWorkstationTestTaskCommand { get; }
 
     public ShineLabDeviceStatusResponse? SelectedDevice
     {
@@ -190,6 +229,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged
         {
             if (!SetField(ref _isRefreshing, value)) return;
             (RefreshCommand as AsyncCommand)?.RaiseCanExecuteChanged();
+            RaiseWorkstationTestCommandCanExecuteChanged();
         }
     }
 
@@ -221,10 +261,40 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged
             : $"{SelectedDevice.AlarmCode ?? "ALARM"}: {SelectedDevice.AlarmMessage}";
     public string SelectedLastSeen => SelectedDevice?.LastSeenAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "-";
 
-    // Opening/dispensing workstation projection.  These properties are
-    // intentionally read-only: no initialize/start/import/delete commands are
-    // exposed in this first protocol phase.
+    // Opening/dispensing workstation projection. Normal deployments remain
+    // read-only; a configuration-gated test entry can start an existing task.
     public string SampleWorkstationDeviceId => _sampleWorkstationDeviceId;
+    public bool IsWorkstationTestControlVisible =>
+        _sampleWorkstationTestControlEnabled && IsSampleWorkstationSelected;
+    public bool IsWorkstationTestBusy
+    {
+        get => _isWorkstationTestBusy;
+        private set
+        {
+            if (!SetField(ref _isWorkstationTestBusy, value)) return;
+            RaiseWorkstationTestCommandCanExecuteChanged();
+        }
+    }
+    public SampleWorkstationTaskSummaryResponse? SelectedWorkstationTask
+    {
+        get => _selectedWorkstationTask;
+        set
+        {
+            if (!SetField(ref _selectedWorkstationTask, value)) return;
+            OnPropertyChanged(nameof(SelectedWorkstationTaskNo));
+            OnPropertyChanged(nameof(SelectedWorkstationTaskState));
+            RaiseWorkstationTestCommandCanExecuteChanged();
+        }
+    }
+    public string SelectedWorkstationTaskNo => SelectedWorkstationTask?.TaskNo ?? "未选择";
+    public string SelectedWorkstationTaskState => SelectedWorkstationTask is { } task
+        ? FormatWorkstationTaskState(task.State, task.RawState)
+        : "-";
+    public string WorkstationTestControlMessage
+    {
+        get => _workstationTestControlMessage;
+        private set => SetField(ref _workstationTestControlMessage, value);
+    }
     public SampleWorkstationDashboardSnapshot? SampleWorkstationSnapshot => _sampleWorkstationSnapshot;
     public SampleWorkstationStatusResponse? WorkstationStatus => _sampleWorkstationSnapshot?.Status;
     public SampleWorkstationErrorResponse? WorkstationErrorResponse => _sampleWorkstationSnapshot?.Error;
@@ -254,7 +324,9 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged
     public string WorkstationAvailabilityMessage => _sampleWorkstationSnapshot is null
         ? "MES 未启用或暂时无法读取开盖分液只读接口。"
         : string.IsNullOrWhiteSpace(WorkstationReadErrors)
-            ? "仅展示只读状态，不提供初始化、启动、任务导入或删除操作。"
+            ? IsWorkstationTestControlVisible
+                ? "联调测试入口已启用；仅可二次确认后启动已有任务。"
+                : "仅展示只读状态，不提供初始化、启动、任务导入或删除操作。"
             : $"只读接口部分不可用：{WorkstationReadErrors}";
     public string WorkstationReadErrors => _sampleWorkstationSnapshot is null
         ? string.Empty
@@ -276,6 +348,123 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged
         : "暂无任务";
     public string WorkstationLatestTaskTime => LatestWorkstationTask?.MakeTime ?? "-";
     public string WorkstationLatestTaskRemark => LatestWorkstationTask?.Remark ?? "-";
+
+    public async Task StartSelectedWorkstationTestTaskAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var selected = SelectedWorkstationTask;
+        if (!CanStartSelectedWorkstationTestTask() || selected is null)
+        {
+            WorkstationTestControlMessage = "请先刷新状态并选择可启动的已有任务。";
+            return;
+        }
+
+        if (!_sampleWorkstationTestConfirmation.Confirm(
+                "确认启动开盖分液测试任务",
+                $"设备：{_sampleWorkstationDeviceId}\n任务：{selected.TaskNo}\n当前状态：{SelectedWorkstationTaskState}\n\n确认后只发送一次启动请求，是否继续？"))
+        {
+            WorkstationTestControlMessage = "已取消，未发送请求。";
+            return;
+        }
+
+        IsWorkstationTestBusy = true;
+        SampleWorkstationCommandResponse response;
+        try
+        {
+            response = await _mes.StartSampleWorkstationTestTaskAsync(
+                _sampleWorkstationDeviceId,
+                selected.TaskNo,
+                cancellationToken);
+        }
+        catch (SampleWorkstationTestStartException exception) when (!exception.OutcomeUnknown)
+        {
+            WorkstationTestControlMessage = $"启动请求失败：{exception.Message}；未自动重试。";
+            IsWorkstationTestBusy = false;
+            return;
+        }
+        catch (Exception exception)
+        {
+            WorkstationTestControlMessage =
+                $"启动结果不明确，请刷新状态并现场核对：{exception.Message}";
+            IsWorkstationTestBusy = false;
+            return;
+        }
+
+        if (!response.Acknowledged)
+        {
+            WorkstationTestControlMessage = "设备未确认启动请求；未自动重试。";
+            IsWorkstationTestBusy = false;
+            return;
+        }
+
+        if (_disposed)
+        {
+            _isWorkstationTestBusy = false;
+            return;
+        }
+
+        WorkstationTestControlMessage = "设备已接收启动请求，正在等待运行状态。";
+        _workstationObservationCancellation?.Cancel();
+        var manualCancellation = new CancellationTokenSource();
+        using var timeoutCancellation = new CancellationTokenSource(
+            _workstationObservationTimeout,
+            TimeProvider.System);
+        using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken,
+            manualCancellation.Token,
+            timeoutCancellation.Token);
+        _workstationObservationCancellation = manualCancellation;
+        try
+        {
+            await ObserveWorkstationTestTaskAsync(
+                selected.TaskNo,
+                linkedCancellation.Token);
+        }
+        catch (OperationCanceledException) when (
+            timeoutCancellation.IsCancellationRequested
+            && !manualCancellation.IsCancellationRequested
+            && !cancellationToken.IsCancellationRequested)
+        {
+            if (!_disposed)
+            {
+                WorkstationTestControlMessage =
+                    "终态尚未确认，设备可能仍在运行；请刷新状态并现场核对。";
+            }
+        }
+        catch (OperationCanceledException) when (
+            manualCancellation.IsCancellationRequested
+            || cancellationToken.IsCancellationRequested)
+        {
+            if (!_disposed)
+            {
+                WorkstationTestControlMessage = "已停止本地状态观察；设备任务未被停止。";
+            }
+        }
+        catch (Exception exception)
+        {
+            if (!_disposed)
+            {
+                WorkstationTestControlMessage =
+                    $"状态读取失败；启动请求已确认，请刷新并现场核对：{exception.Message}";
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_workstationObservationCancellation, manualCancellation))
+            {
+                _workstationObservationCancellation = null;
+            }
+            manualCancellation.Dispose();
+            if (_disposed)
+            {
+                _isWorkstationTestBusy = false;
+            }
+            else
+            {
+                IsWorkstationTestBusy = false;
+            }
+        }
+    }
 
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
@@ -366,17 +555,8 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged
             _sampleWorkstationDeviceId,
             cancellationToken);
         if (!IsRefreshCurrent(SampleWorkstationInstrument, refreshVersion)) return;
-        _sampleWorkstationSnapshot = snapshot;
-        WorkstationTasks.Clear();
-        if (snapshot?.Tasks is { } tasks)
-        {
-            foreach (var task in tasks.OrderByDescending(item => item.RecordNumber))
-            {
-                WorkstationTasks.Add(task);
-            }
-        }
+        ApplyWorkstationSnapshot(snapshot);
 
-        RaiseWorkstationProperties();
         ConnectionStatus = WorkstationConnectionStatus;
         Message = snapshot is null
             ? "MES 未启用或暂时无法读取开盖分液只读接口。"
@@ -384,6 +564,125 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged
                 ? $"已读取开盖分液状态与 {WorkstationTasks.Count} 条任务，最后查询：{DateTime.Now:HH:mm:ss}"
                 : $"已读取开盖分液可用数据，部分接口异常：{WorkstationReadErrors}";
     }
+
+    private SampleWorkstationDashboardSnapshot? ApplyWorkstationSnapshot(
+        SampleWorkstationDashboardSnapshot? snapshot,
+        string? preferredTaskNo = null)
+    {
+        var selectedTaskNo = preferredTaskNo ?? SelectedWorkstationTask?.TaskNo;
+        var previous = _sampleWorkstationSnapshot;
+        var effective = snapshot;
+        if (snapshot is null && previous is not null)
+        {
+            effective = previous with
+            {
+                StatusReadError = "工作站快照响应为空",
+                ErrorReadError = "工作站快照响应为空",
+                TasksReadError = "工作站快照响应为空"
+            };
+        }
+        else if (snapshot is not null && previous is not null)
+        {
+            effective = snapshot with
+            {
+                Status = string.IsNullOrWhiteSpace(snapshot.StatusReadError)
+                    ? snapshot.Status
+                    : previous.Status,
+                Error = string.IsNullOrWhiteSpace(snapshot.ErrorReadError)
+                    ? snapshot.Error
+                    : previous.Error,
+                Tasks = string.IsNullOrWhiteSpace(snapshot.TasksReadError)
+                    ? snapshot.Tasks
+                    : previous.Tasks
+            };
+        }
+
+        _sampleWorkstationSnapshot = effective;
+        WorkstationTasks.Clear();
+        if (effective?.Tasks is { } tasks)
+        {
+            foreach (var task in tasks.OrderByDescending(item => item.RecordNumber))
+            {
+                WorkstationTasks.Add(task);
+            }
+        }
+
+        SelectedWorkstationTask = selectedTaskNo is null
+            ? null
+            : WorkstationTasks.FirstOrDefault(task => string.Equals(
+                task.TaskNo,
+                selectedTaskNo,
+                StringComparison.Ordinal));
+        RaiseWorkstationProperties();
+        RaiseWorkstationTestCommandCanExecuteChanged();
+        return effective;
+    }
+
+    private async Task ObserveWorkstationTestTaskAsync(
+        string taskNo,
+        CancellationToken cancellationToken)
+    {
+        var observedRunning = false;
+        for (var poll = 0; poll < _maximumObservationPolls; poll++)
+        {
+            if (poll > 0 && _workstationObservationInterval > TimeSpan.Zero)
+            {
+                await Task.Delay(_workstationObservationInterval, cancellationToken);
+            }
+
+            var receivedSnapshot = await _mes.GetSampleWorkstationSnapshotAsync(
+                _sampleWorkstationDeviceId,
+                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            var snapshot = ApplyWorkstationSnapshot(receivedSnapshot, taskNo);
+            var task = snapshot?.Tasks.FirstOrDefault(item => string.Equals(
+                item.TaskNo,
+                taskNo,
+                StringComparison.Ordinal));
+
+            observedRunning |= snapshot?.Status?.State == SampleWorkstationDeviceState.Running
+                || snapshot?.Error?.ErrorCode == 3
+                || task?.State == SampleWorkstationTaskState.Running;
+
+            if (observedRunning &&
+                string.IsNullOrWhiteSpace(snapshot?.StatusReadError) &&
+                string.IsNullOrWhiteSpace(snapshot?.ErrorReadError) &&
+                string.IsNullOrWhiteSpace(snapshot?.TasksReadError) &&
+                snapshot?.Status is { State: SampleWorkstationDeviceState.Idle, RawState: 0 } &&
+                snapshot.Error?.ErrorCode == 0 &&
+                task?.State == SampleWorkstationTaskState.Completed)
+            {
+                WorkstationTestControlMessage = "任务完成";
+                return;
+            }
+
+            WorkstationTestControlMessage = observedRunning
+                ? "任务正在运行，正在等待完成。"
+                : "设备已接收启动请求，正在等待运行状态。";
+        }
+
+        WorkstationTestControlMessage =
+            "终态尚未确认，设备可能仍在运行；请刷新状态并现场核对。";
+    }
+
+    private bool CanStartSelectedWorkstationTestTask() =>
+        !_disposed
+        && IsWorkstationTestControlVisible
+        && !IsRefreshing
+        && !IsWorkstationTestBusy
+        && string.IsNullOrWhiteSpace(_sampleWorkstationSnapshot?.StatusReadError)
+        && string.IsNullOrWhiteSpace(_sampleWorkstationSnapshot?.ErrorReadError)
+        && string.IsNullOrWhiteSpace(_sampleWorkstationSnapshot?.TasksReadError)
+        && SelectedWorkstationTask is { State: not SampleWorkstationTaskState.Running }
+        && WorkstationStatus is
+        {
+            Online: true,
+            State: SampleWorkstationDeviceState.Idle,
+            RawState: 0
+        };
+
+    private void RaiseWorkstationTestCommandCanExecuteChanged() =>
+        (StartWorkstationTestTaskCommand as AsyncCommand)?.RaiseCanExecuteChanged();
 
     private bool IsRefreshCurrent(string instrument, long refreshVersion) =>
         refreshVersion == Volatile.Read(ref _refreshVersion)
@@ -417,7 +716,8 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged
             nameof(WorkstationObservedAt), nameof(WorkstationAvailabilityMessage), nameof(WorkstationReadErrors),
             nameof(WorkstationTaskCount),
             nameof(LatestWorkstationTask), nameof(WorkstationLatestTaskNo), nameof(WorkstationLatestTaskName),
-            nameof(WorkstationLatestTaskState), nameof(WorkstationLatestTaskTime), nameof(WorkstationLatestTaskRemark)
+            nameof(WorkstationLatestTaskState), nameof(WorkstationLatestTaskTime), nameof(WorkstationLatestTaskRemark),
+            nameof(SelectedWorkstationTaskNo), nameof(SelectedWorkstationTaskState)
         }) OnPropertyChanged(name);
     }
 
@@ -495,6 +795,13 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged
 
     private void OnPropertyChanged(string? propertyName) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _workstationObservationCancellation?.Cancel();
+        _isWorkstationTestBusy = false;
+    }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 }

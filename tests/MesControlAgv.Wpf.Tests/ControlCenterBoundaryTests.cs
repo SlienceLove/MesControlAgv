@@ -65,6 +65,41 @@ public sealed class ControlCenterBoundaryTests
         Assert.Equal("本地模拟器在线", row.ConnectionStatusDisplay);
     }
 
+    [Fact]
+    public void Workstation_test_panel_is_configuration_gated_and_exposes_only_start()
+    {
+        var root = FindRepositoryRoot();
+        var xaml = File.ReadAllText(Path.Combine(
+            root,
+            "src",
+            "MesControlAgv.Wpf",
+            "Views",
+            "ShineLabDeviceStatusView.xaml"));
+
+        Assert.Contains("IsWorkstationTestControlVisible", xaml, StringComparison.Ordinal);
+        Assert.Contains("SelectedWorkstationTask", xaml, StringComparison.Ordinal);
+        Assert.Contains("StartWorkstationTestTaskCommand", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("停止测试任务", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("初始化工作站", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("InitializeWorkstation", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("ImportWorkstation", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("PauseWorkstation", xaml, StringComparison.Ordinal);
+        Assert.DoesNotContain("StopWorkstation", xaml, StringComparison.Ordinal);
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        for (var directory = new DirectoryInfo(AppContext.BaseDirectory);
+             directory is not null;
+             directory = directory.Parent)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "MesControlAgv.sln")))
+                return directory.FullName;
+        }
+
+        throw new DirectoryNotFoundException("未找到包含 MesControlAgv.sln 的仓库根目录。");
+    }
+
     private sealed class TestModule(ControlCenterModuleDescriptor descriptor) : IControlCenterModule
     {
         public ControlCenterModuleDescriptor Descriptor { get; } = descriptor;

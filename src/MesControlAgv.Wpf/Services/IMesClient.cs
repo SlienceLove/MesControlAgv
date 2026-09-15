@@ -80,6 +80,14 @@ public sealed record SampleWorkstationDashboardSnapshot(
     string? ErrorReadError = null,
     string? TasksReadError = null);
 
+public sealed class SampleWorkstationTestStartException(
+    string message,
+    bool outcomeUnknown)
+    : InvalidOperationException(message)
+{
+    public bool OutcomeUnknown { get; } = outcomeUnknown;
+}
+
 public sealed record DashboardWorkflowNextStep(
     Guid StepRequestId,
     Guid ExecutionId,
@@ -125,6 +133,12 @@ public interface IMesClient
         string deviceId,
         CancellationToken cancellationToken) =>
         Task.FromResult<SampleWorkstationDashboardSnapshot?>(null);
+    Task<SampleWorkstationCommandResponse> StartSampleWorkstationTestTaskAsync(
+        string deviceId,
+        string taskNo,
+        CancellationToken cancellationToken) =>
+        Task.FromException<SampleWorkstationCommandResponse>(
+            new NotSupportedException("Sample workstation test control is not supported by this MES client."));
     Task<ShineLabCommandResponse> SendShineLabConfigAsync(
         string equipmentCode,
         ShineLabConfigRequest request,
