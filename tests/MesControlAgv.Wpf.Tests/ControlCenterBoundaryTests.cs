@@ -12,13 +12,14 @@ public sealed class ControlCenterBoundaryTests
     {
         var registry = ControlCenterModuleRegistry.CreateStandard();
 
-        Assert.Equal(5, registry.Modules.Count);
+        Assert.Equal(6, registry.Modules.Count);
         Assert.Equal(
             new[]
             {
                 ControlCenterModuleIds.TaskMonitor,
                 ControlCenterModuleIds.AgvCommunication,
                 ControlCenterModuleIds.BatchImport,
+                ControlCenterModuleIds.SampleManagement,
                 ControlCenterModuleIds.KpiDashboard,
                 ControlCenterModuleIds.WorkflowDesigner
             },

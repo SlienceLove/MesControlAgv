@@ -8,6 +8,7 @@ public static class ControlCenterModuleIds
     public const string TaskMonitor = "task-monitor";
     public const string AgvCommunication = "agv-communication";
     public const string BatchImport = "batch-import";
+    public const string SampleManagement = "sample-management";
     public const string KpiDashboard = "kpi-dashboard";
     public const string WorkflowDesigner = "workflow-designer";
 }
@@ -227,6 +228,12 @@ public sealed class ControlCenterModuleRegistry
             30,
             Registrations: new ControlCenterModuleRegistrations(
                 viewModels: [new(ControlCenterModuleIds.BatchImport, typeof(BatchImportViewModel), 30)]))));
+        registry.Register(new StandardControlCenterModule(new(
+            ControlCenterModuleIds.SampleManagement,
+            "样品管理",
+            35,
+            Registrations: new ControlCenterModuleRegistrations(
+                viewModels: [new(ControlCenterModuleIds.SampleManagement, typeof(SampleManagementViewModel), 35)]))));
         registry.Register(new StandardControlCenterModule(new(
             ControlCenterModuleIds.KpiDashboard,
             "KPI 看板",

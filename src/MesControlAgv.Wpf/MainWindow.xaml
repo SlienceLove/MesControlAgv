@@ -147,6 +147,7 @@
                                     <TextBlock Text="任务排程" />
                                 </RadioButton>
                                 <RadioButton Tag="InstrumentTaskImportTab" Style="{StaticResource NavigationRadioButtonStyle}" Click="NavigationButton_Click"><TextBlock Text="仪器任务导入" /></RadioButton>
+                                <RadioButton Tag="SampleManagementTab" Style="{StaticResource NavigationRadioButtonStyle}" Click="NavigationButton_Click"><TextBlock Text="样品管理" /></RadioButton>
                                 <RadioButton Tag="MapDashboardTab"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
@@ -411,6 +412,9 @@
     </TabItem>
     <TabItem x:Name="InstrumentTaskImportTab" Header="仪器任务导入" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:InstrumentTaskImportView />
+    </TabItem>
+    <TabItem x:Name="SampleManagementTab" Header="样品管理" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <views:SampleManagementView DataContext="{Binding Samples}" />
     </TabItem>
     <TabItem x:Name="BatchTaskImportTab" Visibility="Collapsed" Header="批量任务导入" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:BatchTaskImportView x:Name="BatchTaskImportView" />

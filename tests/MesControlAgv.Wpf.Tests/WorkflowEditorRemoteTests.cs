@@ -168,11 +168,25 @@ public sealed class WorkflowEditorRemoteTests
         Assert.False(editor.ExecutePhysicalBatchCommand.CanExecute(null));
     }
 
-    [Fact]
-    public async Task Published_standard_material_workflow_can_submit_one_physical_batch_authorization()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Published_standard_material_workflow_can_submit_one_physical_batch_authorization(bool homing)
     {
         using var fixture = new TempWorkflowFile();
-        var client = new WorkflowEditorClientStub(CreateStandardMaterialContractWorkflow());
+        var definition = CreateStandardMaterialContractWorkflow();
+        if (homing)
+            definition = definition with
+            {
+                Nodes = definition.Nodes.Select(node => node.Type == ContractWorkflowNodeType.RobotProgram
+                    ? node with { Configuration = new Dictionary<string, string?>
+                        {
+                            [MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.DeviceId] = "ARM-01",
+                            [MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.ProgramName] = "回原点.pro"
+                        } }
+                    : node).ToArray()
+            };
+        var client = new WorkflowEditorClientStub(definition);
         var editor = new WorkflowEditorViewModel(
             new WorkflowStore(fixture.Path),
             client,
@@ -190,7 +204,9 @@ public sealed class WorkflowEditorRemoteTests
         editor.PhysicalBatchOperatorName = "admin";
         editor.PhysicalBatchSafetyObserverName = "admin";
         editor.PhysicalBatchPermitPrefix = "material-test";
-        editor.PhysicalBatchPermitMinutes = "60";
+        editor.PhysicalBatchPermitMinutes = "30";
+        Assert.False(editor.ExecutePhysicalBatchCommand.CanExecute(null));
+        editor.PhysicalBatchPermitMinutes = "31";
         Assert.True(editor.ExecutePhysicalBatchCommand.CanExecute(null));
 
         editor.ExecutePhysicalBatchCommand.Execute(null);
@@ -203,7 +219,7 @@ public sealed class WorkflowEditorRemoteTests
         Assert.Equal("admin", request.PhysicalAuthorization.OperatorName);
         Assert.Equal("admin", request.PhysicalAuthorization.SafetyObserverName);
         Assert.Equal("material-test", request.PhysicalAuthorization.PermitPrefix);
-        Assert.True(request.PhysicalAuthorization.ExpiresAtUtc > DateTimeOffset.UtcNow);
+        Assert.True(request.PhysicalAuthorization.ExpiresAtUtc > DateTimeOffset.UtcNow.AddMinutes(30));
         Assert.Contains("现场批量流程已受理", editor.Message, StringComparison.Ordinal);
 
         var programNode = editor.SelectedWorkflow!.Nodes

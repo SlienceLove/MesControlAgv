@@ -6,7 +6,7 @@ using MesControlAgv.Contracts;
 
 namespace MesControlAgv.Mes.Services;
 
-public sealed class AdapterHttpException(HttpStatusCode responseStatusCode, string? detail)
+public class AdapterHttpException(HttpStatusCode responseStatusCode, string? detail)
     : HttpRequestException(BuildMessage(responseStatusCode, detail), null, responseStatusCode)
 {
     public HttpStatusCode ResponseStatusCode { get; } = responseStatusCode;
@@ -18,8 +18,17 @@ public sealed class AdapterHttpException(HttpStatusCode responseStatusCode, stri
             : $"Adapter returned HTTP {(int)statusCode} ({statusCode}): {detail}";
 }
 
-public sealed class AdapterClient(HttpClient client) : IAgvGateway, IPathAwareAgvGateway, IFleetAwareAgvGateway, IAdapterRuntimeIdentityGateway, IPhysicalPreflightAgvGateway, IPhysicalAgvControlGateway, IFieldNavigationAcceptanceGateway
+public sealed class AdapterClient(HttpClient client) : IAgvGateway, IPathAwareAgvGateway, IFleetAwareAgvGateway, IAdapterRuntimeIdentityGateway, IPhysicalPreflightAgvGateway, IPhysicalAgvControlGateway, IFieldNavigationAcceptanceGateway, IFieldNavigationManualClosureGateway
 {
+    public async Task<FieldNavigationManualClosureResult> CloseUnconfirmedNavigationAsync(
+        Guid acceptanceId, FieldNavigationManualCloseCommand command, CancellationToken cancellationToken)
+    {
+        using var response = await client.PostAsJsonAsync(
+            $"field-navigation-acceptances/{acceptanceId}/manual-close", command, cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<FieldNavigationManualClosureResult>(cancellationToken)
+            ?? throw new InvalidOperationException("Adapter returned no manual disposition.");
+    }
     public async Task<AgvTaskResponse> DispatchAsync(Guid operationId, string targetStationId, CancellationToken cancellationToken)
         => await DispatchAsync(operationId, null, targetStationId, cancellationToken);
 

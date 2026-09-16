@@ -2,6 +2,12 @@ using MesControlAgv.Contracts;
 
 namespace MesControlAgv.Application;
 
+public interface IFieldNavigationManualClosureGateway
+{
+    Task<FieldNavigationManualClosureResult> CloseUnconfirmedNavigationAsync(
+        Guid acceptanceId, FieldNavigationManualCloseCommand command, CancellationToken cancellationToken);
+}
+
 /// <summary>
 /// Isolated use cases for a one-time, physically supervised navigation
 /// acceptance. It is intentionally separate from normal transport tasks.

@@ -156,7 +156,7 @@ public sealed partial class WorkflowApplicationService
         node.LastError = null;
         node.UpdatedAtUtc = now;
 
-        if (step.NodeType is not (WorkflowNodeType.Move or WorkflowNodeType.RobotProgram))
+        if (!IsDeviceStep(step))
         {
             return (node, null);
         }
@@ -219,7 +219,7 @@ public sealed partial class WorkflowApplicationService
             now,
             cancellationToken);
         WorkflowDeviceOperationRecord? device = null;
-        if (completedStep.NodeType is WorkflowNodeType.Move or WorkflowNodeType.RobotProgram)
+        if (IsDeviceStep(completedStep))
         {
             (_, device) = await EnsureClaimRuntimeRecordsAsync(
                 run,
@@ -502,13 +502,26 @@ public sealed partial class WorkflowApplicationService
         ["stepRequestId"] = step.StepRequestId.ToString(),
         ["targetStation"] = step.TargetStation,
         ["deviceId"] = ResolveDeviceId(step),
-        ["programName"] = ResolveProgramName(step)
+        ["programName"] = ResolveProgramName(step),
+        ["templateVersion"] = ResolveTemplateVersion(step)
     };
+
+    private static bool IsDeviceStep(WorkflowNextStepRequest step) =>
+        step.NodeType is WorkflowNodeType.Move or WorkflowNodeType.RobotProgram ||
+        string.Equals(
+            step.NodeTypeId,
+            WorkflowGraphNodeTypeIds.SampleWorkstationExecuteTemplate,
+            StringComparison.OrdinalIgnoreCase);
 
     private static string ResolveDeviceCapability(WorkflowNextStepRequest step) =>
         step.NodeType == WorkflowNodeType.RobotProgram
             ? WorkflowCapabilityIds.RobotExecuteProgram
-            : WorkflowCapabilityIds.AgvNavigateToStation;
+            : string.Equals(
+                step.NodeTypeId,
+                WorkflowGraphNodeTypeIds.SampleWorkstationExecuteTemplate,
+                StringComparison.OrdinalIgnoreCase)
+                ? WorkflowCapabilityIds.SampleWorkstationExecute
+                : WorkflowCapabilityIds.AgvNavigateToStation;
 
     private static string? ResolveDeviceId(WorkflowNextStepRequest step) =>
         step.Parameters.TryGetValue(WorkflowNodeConfigurationKeys.DeviceId, out var value) &&
@@ -518,6 +531,12 @@ public sealed partial class WorkflowApplicationService
 
     private static string? ResolveProgramName(WorkflowNextStepRequest step) =>
         step.Parameters.TryGetValue(WorkflowNodeConfigurationKeys.ProgramName, out var value) &&
+        !string.IsNullOrWhiteSpace(value)
+            ? value.Trim()
+            : null;
+
+    private static string? ResolveTemplateVersion(WorkflowNextStepRequest step) =>
+        step.Parameters.TryGetValue(WorkflowNodeConfigurationKeys.TemplateVersion, out var value) &&
         !string.IsNullOrWhiteSpace(value)
             ? value.Trim()
             : null;

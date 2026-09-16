@@ -1,6 +1,8 @@
 using System.Net;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
+using MesControlAgv.Contracts.Devices;
+using MesControlAgv.Contracts.Samples;
 using MesControlAgv.Mes.Services;
 using Microsoft.AspNetCore.Routing;
 
@@ -124,6 +126,76 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
             CancellationToken cancellationToken) =>
             await ExecuteWorkstationReadAsync(
                 () => reader.GetTaskStateAsync(deviceId, taskNo, cancellationToken),
+                cancellationToken));
+
+        endpoints.MapPost("/api/workstations/{deviceId}/initialize", async (
+            string deviceId,
+            SampleWorkstationOperationRequest request,
+            ISampleWorkstationController controller,
+            PhysicalExecutionAdmissionPolicy admissionPolicy,
+            CancellationToken cancellationToken) =>
+            await ExecuteWorkstationCommandAsync(
+                deviceId,
+                request,
+                () =>
+                {
+                    admissionPolicy.RejectUnboundPhysicalWrite("sample-workstation.initialize");
+                    return controller.InitializeAsync(deviceId, request, cancellationToken);
+                },
+                cancellationToken));
+
+        endpoints.MapPost("/api/workstations/{deviceId}/tasks", async (
+            string deviceId,
+            SampleWorkstationTaskCreateRequest request,
+            ISampleWorkstationController controller,
+            PhysicalExecutionAdmissionPolicy admissionPolicy,
+            CancellationToken cancellationToken) =>
+            await ExecuteWorkstationCommandAsync(
+                deviceId,
+                request,
+                () =>
+                {
+                    admissionPolicy.RejectUnboundPhysicalWrite("sample-workstation.create-task");
+                    return controller.CreateTaskAsync(deviceId, request, cancellationToken);
+                },
+                cancellationToken));
+
+        endpoints.MapPost("/api/workstations/{deviceId}/tasks/{taskNo}/trajectory", async (
+            string deviceId,
+            string taskNo,
+            SampleWorkstationTrajectoryRequest request,
+            ISampleWorkstationController controller,
+            PhysicalExecutionAdmissionPolicy admissionPolicy,
+            CancellationToken cancellationToken) =>
+            await ExecuteWorkstationCommandAsync(
+                deviceId,
+                request,
+                () =>
+                {
+                    admissionPolicy.RejectUnboundPhysicalWrite("sample-workstation.trajectory");
+                    if (!string.Equals(request.TaskNo?.Trim(), taskNo?.Trim(), StringComparison.Ordinal))
+                        throw new ArgumentException("Route task number and request TaskNo must match.");
+                    return controller.AddTrajectoryAsync(deviceId, request, cancellationToken);
+                },
+                cancellationToken));
+
+        endpoints.MapPost("/api/workstations/{deviceId}/tasks/{taskNo}/start", async (
+            string deviceId,
+            string taskNo,
+            SampleWorkstationStartRequest request,
+            ISampleWorkstationController controller,
+            PhysicalExecutionAdmissionPolicy admissionPolicy,
+            CancellationToken cancellationToken) =>
+            await ExecuteWorkstationCommandAsync(
+                deviceId,
+                request,
+                () =>
+                {
+                    admissionPolicy.RejectUnboundPhysicalWrite("sample-workstation.start");
+                    if (!string.Equals(request.TaskNo?.Trim(), taskNo?.Trim(), StringComparison.Ordinal))
+                        throw new ArgumentException("Route task number and request TaskNo must match.");
+                    return controller.StartExperimentAsync(deviceId, request, cancellationToken);
+                },
                 cancellationToken));
 
         endpoints.MapGet("/api/agv", async (
@@ -538,6 +610,22 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
         }
         catch (AdapterHttpException exception)
         {
+            if (exception is SampleWorkstationAdapterUnknownException unknown)
+            {
+                return Results.Json(
+                    new
+                    {
+                        detail = unknown.Detail ?? unknown.Message,
+                        state = DeviceOperationLifecycle.Unknown,
+                        unknownReason = unknown.UnknownReason,
+                        operation = unknown.Operation,
+                        operationId = unknown.OperationId,
+                        runId = unknown.RunId,
+                        nodeExecutionId = unknown.NodeExecutionId,
+                        vendorTaskId = unknown.VendorTaskId
+                    },
+                    statusCode: (int)unknown.ResponseStatusCode);
+            }
             return Results.Json(
                 new { detail = exception.Detail ?? exception.Message },
                 statusCode: (int)exception.ResponseStatusCode);
@@ -737,6 +825,37 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
             return Results.Problem(
                 "The sample workstation Adapter is unavailable.",
                 statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+    }
+
+    private static async Task<IResult> ExecuteWorkstationCommandAsync(
+        string deviceId,
+        SampleWorkstationOperationRequest request,
+        Func<Task<SampleWorkstationOperationResponse>> operation,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await operation();
+            return Results.Ok(result);
+        }
+        catch (AdapterHttpException exception)
+        {
+            return Results.Json(
+                new { detail = exception.Detail ?? exception.Message },
+                statusCode: (int)exception.ResponseStatusCode);
+        }
+        catch (PhysicalExecutionAdmissionException exception)
+        {
+            return Results.Conflict(new { code = exception.Code, detail = exception.Detail });
+        }
+        catch (ArgumentException exception)
+        {
+            return Results.BadRequest(new { detail = exception.Message });
+        }
+        catch (InvalidOperationException exception)
+        {
+            return Results.UnprocessableEntity(new { detail = exception.Message });
         }
     }
 }

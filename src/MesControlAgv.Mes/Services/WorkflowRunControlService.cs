@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using MesControlAgv.Contracts;
+using MesControlAgv.Contracts.Devices;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Mes.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -277,6 +278,9 @@ public sealed partial class WorkflowApplicationService
             Reason = request.Reason
         });
         _controlAuthorizer.Demand(normalized.Actor, WorkflowRunControlPermissions.ResolveUnknown);
+        var arrivedAndCancel = request.Outcome == WorkflowUnknownResolutionOutcome.ConfirmedArrivedAndCancel;
+        if (arrivedAndCancel)
+            _controlAuthorizer.Demand(normalized.Actor, WorkflowRunControlPermissions.Cancel);
         var fingerprint = CreateControlFingerprint(
             WorkflowRunControlAction.ResolveUnknown,
             workflowRunId,
@@ -335,24 +339,59 @@ public sealed partial class WorkflowApplicationService
                 "The linked device operation is not Unknown and does not match this resolution request.");
         }
 
-        var retainedNodeOutputs = WorkflowPersistence.DeserializeDetails(node.OutputJson);
+        var retainedNodeOutputs = new Dictionary<string, string?>(WorkflowPersistence.DeserializeDetails(node.OutputJson));
         var retainedOperationOutputs = operation is null
             ? new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
-            : WorkflowPersistence.DeserializeDetails(operation.ResultSummaryJson);
+            : new Dictionary<string, string?>(WorkflowPersistence.DeserializeDetails(operation.ResultSummaryJson));
+
+        if (arrivedAndCancel)
+        {
+            // Historical reconciliation cannot authorize another physical command.
+            // Require durable, exactly linked arrival evidence, not a caller's assertion.
+            var executionRequest = WorkflowPersistence.DeserializeRequest(run.RequestJson);
+            var acceptance = await _database.FieldNavigationAcceptances.SingleOrDefaultAsync(
+                item => item.WorkflowRunId == workflowRunId && item.WorkflowNodeExecutionId == node.Id,
+                cancellationToken);
+            if (executionRequest.DryRun || executionRequest.PhysicalAuthorization is not { } authorization ||
+                completedStep.NodeType != WorkflowNodeType.Move || operation is null || acceptance is null ||
+                acceptance.WorkflowDeviceOperationId != operation.OperationId ||
+                acceptance.Status != FieldNavigationAcceptanceStatuses.Arrived ||
+                acceptance.PermitConsumedAtUtc is null || string.IsNullOrWhiteSpace(acceptance.DeviceTaskId) ||
+                !string.Equals(acceptance.AgvId, authorization.AgvId, StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(acceptance.TargetStationId, completedStep.TargetStation, StringComparison.OrdinalIgnoreCase))
+                throw new WorkflowRunControlConflictException("A consumed, exactly linked physical AGV arrival is required to reconcile and end this run.");
+
+            if (await _database.WorkflowNodeExecutions.AnyAsync(item =>
+                    item.WorkflowRunId == workflowRunId && item.Id != node.Id &&
+                    (item.Status == "Claimed" || item.Status == "Running" || item.Status == "Unknown"), cancellationToken) ||
+                await _database.WorkflowDeviceOperations.AnyAsync(item =>
+                    item.WorkflowRunId == workflowRunId && item.OperationId != operation.OperationId &&
+                    (item.Status == "Accepted" || item.Status == "Running" || item.Status == "Unknown"), cancellationToken))
+                throw new WorkflowRunControlConflictException("Other active or unknown work must be reconciled before ending this run.");
+
+            foreach (var outputs in new[] { retainedNodeOutputs, retainedOperationOutputs })
+            {
+                outputs["acceptanceId"] = acceptance.Id.ToString();
+                outputs["deviceTaskId"] = acceptance.DeviceTaskId;
+                outputs["stationId"] = acceptance.TargetStationId;
+                outputs["arrivalEvidenceStatus"] = acceptance.Status;
+                outputs["continuation"] = "CancelledWithoutDispatchOrRelease";
+            }
+        }
 
         var now = _timeProvider.GetUtcNow().UtcDateTime;
         WorkflowNextStepRequest? nextStep = null;
         WorkflowStepCompletionOutcome completionOutcome;
-        if (request.Outcome == WorkflowUnknownResolutionOutcome.ConfirmedSucceeded)
+        if (request.Outcome == WorkflowUnknownResolutionOutcome.ConfirmedSucceeded || arrivedAndCancel)
         {
             completionOutcome = WorkflowStepCompletionOutcome.Succeeded;
-            nextStep = WorkflowPersistence.ResolveFollowingStep(run, completedStep);
+            nextStep = arrivedAndCancel ? null : WorkflowPersistence.ResolveFollowingStep(run, completedStep);
             run.CurrentNodeId = nextStep?.NodeId ?? completedStep.NodeId;
             run.PendingStepJson = nextStep is null ? null : WorkflowPersistence.Serialize(nextStep);
             run.TransportOperationId = null;
             run.Attempt = 0;
             run.LastError = null;
-            run.RuntimeStatus = (nextStep is null
+            run.RuntimeStatus = (arrivedAndCancel ? WorkflowRuntimeStatus.Cancelled : nextStep is null
                 ? WorkflowRuntimeStatus.Completed
                 : WorkflowRuntimeStatus.Prepared).ToString();
         }
@@ -382,6 +421,20 @@ public sealed partial class WorkflowApplicationService
             nextStep,
             now,
             cancellationToken);
+        if (arrivedAndCancel)
+        {
+            var unstarted = await _database.WorkflowNodeExecutions.Where(item =>
+                item.WorkflowRunId == workflowRunId && item.Id != node.Id &&
+                (item.Status == "Pending" || item.Status == "Ready" || item.Status == "WaitingForResource" ||
+                 item.Status == "WaitingForSignal" || item.Status == "Blocked")).ToListAsync(cancellationToken);
+            foreach (var pending in unstarted)
+            {
+                pending.Status = WorkflowNodeExecutionStatus.Cancelled.ToString();
+                pending.CompletedAtUtc = now;
+                pending.UpdatedAtUtc = now;
+                pending.LastError = normalized.Reason;
+            }
+        }
         node.OutputJson = WorkflowPersistence.Serialize(new Dictionary<string, string?>(
             retainedNodeOutputs,
             StringComparer.OrdinalIgnoreCase)
@@ -396,6 +449,8 @@ public sealed partial class WorkflowApplicationService
         });
         if (operation is not null)
         {
+            if (arrivedAndCancel)
+                operation.VendorTaskId = retainedOperationOutputs["deviceTaskId"];
             operation.ResultSummaryJson = WorkflowPersistence.Serialize(new Dictionary<string, string?>(
                 retainedOperationOutputs,
                 StringComparer.OrdinalIgnoreCase)
@@ -433,7 +488,7 @@ public sealed partial class WorkflowApplicationService
             normalized.Reason,
             cancellationToken);
         await _database.SaveChangesAsync(cancellationToken);
-        if (completionOutcome == WorkflowStepCompletionOutcome.Succeeded)
+        if (completionOutcome == WorkflowStepCompletionOutcome.Succeeded && !arrivedAndCancel)
         {
             await ProcessAdvancedRunCoreAsync(workflowRunId, cancellationToken);
         }
@@ -525,6 +580,7 @@ public sealed partial class WorkflowApplicationService
             {
                 TransportOperationId = operationId,
                 Outcome = WorkflowStepCompletionOutcome.Unknown,
+                UnknownReason = UnknownReason.ManualReconciliationRequired,
                 Error = run.LastError
             },
             nextStep: null,

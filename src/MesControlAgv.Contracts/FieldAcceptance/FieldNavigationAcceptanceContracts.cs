@@ -73,6 +73,7 @@ public sealed record FieldNavigationAcceptanceDetailResponse(
 
 public static class FieldNavigationAcceptanceStatuses
 {
+    public const string ManuallyClosed = "manually_closed";
     public const string Draft = "draft";
     public const string Authorized = "authorized";
     public const string Dispatching = "dispatching";

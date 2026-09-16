@@ -114,19 +114,24 @@ internal sealed class TcpApiChannel : IDisposable
     private readonly TcpAgvOptions _options;
     private readonly ILogger<TcpAgvClient> _logger;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly bool _freshConnectionBeforeWrite;
     private TcpClient? _client;
     private NetworkStream? _stream;
+    private long _connectionVersion;
+    public long ConnectionVersion => Interlocked.Read(ref _connectionVersion);
 
     public TcpApiChannel(
         string host,
         int port,
         TcpAgvOptions options,
-        ILogger<TcpAgvClient> logger)
+        ILogger<TcpAgvClient> logger,
+        bool freshConnectionBeforeWrite = false)
     {
         _host = host;
         _port = port;
         _options = options;
         _logger = logger;
+        _freshConnectionBeforeWrite = freshConnectionBeforeWrite;
     }
 
     public Task<JsonDocument> RequestAsync(
@@ -169,6 +174,9 @@ internal sealed class TcpApiChannel : IDisposable
         await _gate.WaitAsync(cancellationToken);
         try
         {
+            // Status recovery does not revive an idle command socket. Renew BEFORE
+            // the first write, under this channel's lock; never retry a mutation.
+            if (_freshConnectionBeforeWrite && !readOnly) ResetConnection();
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeout.CancelAfter(Math.Max(1, _options.RequestTimeoutMs));
             var bytes = payload is null ? [] : JsonSerializer.SerializeToUtf8Bytes(payload, JsonOptions);
@@ -362,6 +370,7 @@ internal sealed class TcpApiChannel : IDisposable
 
     private void ResetConnection()
     {
+        Interlocked.Increment(ref _connectionVersion);
         _stream?.Dispose();
         _client?.Dispose();
         _stream = null;
@@ -376,6 +385,7 @@ internal sealed class TcpApiChannel : IDisposable
 }
 
 public sealed class TcpAgvClient :
+    IAgvTaskAbsenceEvidenceClient,
     IAgvDeviceClient,
     IAgvIoDeviceClient,
     IPhysicalAgvDeviceClient,
@@ -423,6 +433,10 @@ public sealed class TcpAgvClient :
     private readonly TcpApiChannel _otherChannel;
     // Serialize ownership read/acquire/reconcile and release transactions.
     private readonly SemaphoreSlim _controlTransactionGate = new(1, 1);
+    private readonly SemaphoreSlim _mapEvidenceGate = new(1, 1);
+    private ControllerMapEvidenceResponse? _validatedMapEvidence;
+    private long _mapStatusConnectionVersion;
+    private long _mapControlConnectionVersion;
     private readonly object _snapshotLock = new();
     private readonly ConcurrentDictionary<Guid, RoutePlan> _routes = new();
     private readonly ConcurrentDictionary<Guid, Guid> _parentTaskIds = new();
@@ -445,7 +459,8 @@ public sealed class TcpAgvClient :
         _runMode = runMode ?? AdapterRunMode.Standard;
         _logger = logger;
         _statusChannel = new TcpApiChannel(_options.Host, _options.StatusPort, _options, logger);
-        _commandChannel = new TcpApiChannel(_options.Host, _options.CommandPort, _options, logger);
+        _commandChannel = new TcpApiChannel(_options.Host, _options.CommandPort, _options, logger,
+            freshConnectionBeforeWrite: true);
         _controlChannel = new TcpApiChannel(_options.Host, _options.ControlPort, _options, logger);
         _otherChannel = new TcpApiChannel(_options.Host, _options.OtherPort, _options, logger);
     }
@@ -668,6 +683,7 @@ public sealed class TcpAgvClient :
     public async Task<ControllerMapEvidenceResponse?> GetControllerMapEvidenceAsync(
         CancellationToken cancellationToken)
     {
+        await _mapEvidenceGate.WaitAsync(cancellationToken);
         try
         {
             return await ReadControllerMapEvidenceAsync(cancellationToken);
@@ -675,22 +691,53 @@ public sealed class TcpAgvClient :
         catch (Exception exception) when (exception is
             AgvApiException or IOException or SocketException or TimeoutException or SmapParseException)
         {
+            _validatedMapEvidence = null;
             _logger.LogWarning(exception, "Unable to obtain controller map evidence at {Host}.", _options.Host);
             return null;
+        }
+        catch
+        {
+            _validatedMapEvidence = null;
+            throw;
+        }
+        finally
+        {
+            _mapEvidenceGate.Release();
         }
     }
 
     private async Task<ControllerMapEvidenceResponse?> ReadControllerMapEvidenceAsync(
         CancellationToken cancellationToken)
     {
+        var statusVersion = _statusChannel.ConnectionVersion;
+        var controlVersion = _controlChannel.ConnectionVersion;
         using var mapCatalogResponse = await _statusChannel.RequestReadOnlyAsync(
             QueryMapCatalogApi,
             null,
             cancellationToken);
         EnsureSuccess(mapCatalogResponse, QueryMapCatalogApi);
         var currentMap = ReadString(mapCatalogResponse.RootElement, "current_map")?.Trim();
-        if (string.IsNullOrWhiteSpace(currentMap)) return null;
+        if (string.IsNullOrWhiteSpace(currentMap))
+        {
+            _validatedMapEvidence = null;
+            return null;
+        }
         var storedMapNames = ReadStringArray(mapCatalogResponse.RootElement, "maps");
+
+        // The map is static within a controller session. Verify only its small
+        // identity response on subsequent preflights; never redownload the
+        // whole map merely because WPF or the readiness supervisor refreshed.
+        var mapMd5 = await QueryMapMd5Async(currentMap, storedMapNames, cancellationToken);
+        if (_validatedMapEvidence is { IsControllerAuthoritative: true } cached &&
+            !string.IsNullOrWhiteSpace(mapMd5) &&
+            MapNamesEqual(currentMap, cached.MapName) &&
+            string.Equals(mapMd5, cached.Md5, StringComparison.OrdinalIgnoreCase) &&
+            _mapStatusConnectionVersion == _statusChannel.ConnectionVersion &&
+            _mapControlConnectionVersion == _controlChannel.ConnectionVersion)
+        {
+            return cached; // Preserve the real full-map observation timestamp.
+        }
+        _validatedMapEvidence = null;
 
         using var stationCatalogResponse = await _statusChannel.RequestReadOnlyAsync(
             QueryStationCatalogApi,
@@ -698,8 +745,6 @@ public sealed class TcpAgvClient :
             cancellationToken);
         EnsureSuccess(stationCatalogResponse, QueryStationCatalogApi);
         var stationIds = ReadStationCatalog(stationCatalogResponse.RootElement);
-
-        var mapMd5 = await QueryMapMd5Async(currentMap, storedMapNames, cancellationToken);
 
         using var mapResponse = await _controlChannel.RequestReadOnlyAsync(
             DownloadMapApi,
@@ -716,7 +761,7 @@ public sealed class TcpAgvClient :
             && stationIds.ToHashSet(StringComparer.Ordinal)
                 .SetEquals(mapIdentity.StationMarks);
 
-        return new ControllerMapEvidenceResponse(
+        var evidence = new ControllerMapEvidenceResponse(
             catalogMatchesMap,
             "vendor-tcp:1300,1301,1302,4011",
             NormalizeMapName(currentMap),
@@ -727,6 +772,16 @@ public sealed class TcpAgvClient :
                 .Select(edge => new ControllerDirectedEdgeResponse(edge.FromMark, edge.ToMark))
                 .ToArray(),
             DateTimeOffset.UtcNow);
+        if (statusVersion != _statusChannel.ConnectionVersion ||
+            controlVersion != _controlChannel.ConnectionVersion)
+            return null;
+        if (evidence.IsControllerAuthoritative)
+        {
+            _validatedMapEvidence = evidence;
+            _mapStatusConnectionVersion = statusVersion;
+            _mapControlConnectionVersion = controlVersion;
+        }
+        return evidence;
     }
 
     private async Task<string?> QueryMapMd5Async(
@@ -967,6 +1022,63 @@ public sealed class TcpAgvClient :
     }
 
     public bool MayHaveWrittenNavigation(Guid taskId) => _navigationWrites.ContainsKey(taskId);
+
+    public Task<AgvTaskAbsenceEvidence> ReadTaskAbsenceAsync(
+        Guid taskId, IReadOnlyList<string> path, CancellationToken cancellationToken) =>
+        ReadTaskAbsenceCoreAsync(taskId, path, false, cancellationToken);
+
+    public Task<AgvTaskAbsenceEvidence> ReadTaskAbsenceAtDestinationAsync(
+        Guid taskId, IReadOnlyList<string> path, CancellationToken cancellationToken) =>
+        ReadTaskAbsenceCoreAsync(taskId, path, true, cancellationToken);
+
+    private async Task<AgvTaskAbsenceEvidence> ReadTaskAbsenceCoreAsync(
+        Guid taskId, IReadOnlyList<string> path, bool atDestination, CancellationToken cancellationToken)
+    {
+        if (taskId == Guid.Empty || path.Count < 2)
+            throw new ArgumentException("An exact task and route are required for absence evidence.");
+        var route = BuildNavigationRoute(taskId, path[0], path[^1], path);
+        using var response = await QueryTaskStatusAsync(route.DeviceTaskIds.ToArray(), cancellationToken);
+        EnsureSuccess(response, QueryTaskApi);
+        var statuses = ParseStrictTaskStatuses(response.RootElement);
+        if (statuses.Count != route.Segments.Count || statuses.Any(item => item.Status != 404) ||
+            route.DeviceTaskIds.Any(id => statuses.Count(item => item.TaskId == id) != 1))
+            throw new InvalidOperationException("Every exact route segment must explicitly report 404; no task was closed.");
+
+        // Unfiltered fresh read: cached push state and a non-Guid active ID are
+        // not evidence of idle. Unknown/malformed entries are rejected too.
+        using var current = await QueryTaskStatusAsync(null, cancellationToken);
+        EnsureSuccess(current, QueryTaskApi);
+        var currentStatuses = ParseStrictTaskStatuses(current.RootElement);
+        var currentRoots = EnumerateStatusRoots(current.RootElement).ToArray();
+        var scalarStatuses = currentRoots.Where(root => root.TryGetProperty("task_status", out _))
+            .Select(root => ReadInt(root, "task_status")).ToArray();
+        // Some controllers return only a terminal task list, without a scalar.
+        // An empty list without a scalar, or a present but unknown scalar, is
+        // not explicit idle evidence. 404 is valid only for the exact-ID query.
+        if (currentStatuses.Any(item => item.Status is not (4 or 5 or 6)) ||
+            scalarStatuses.Any(status => status is not (4 or 5 or 6)) ||
+            (scalarStatuses.Length == 0 && currentStatuses.Count == 0) ||
+            currentRoots.Any(root =>
+                !string.IsNullOrWhiteSpace(ReadString(root, "current_task_id")) ||
+                !string.IsNullOrWhiteSpace(ReadString(root, "task_id"))))
+            throw new InvalidOperationException("AGV has active or uncertain controller work; no task was closed.");
+        var station = ReadStation(current.RootElement);
+        if (station != (atDestination ? path[^1] : path[0]))
+            throw new InvalidOperationException("AGV is not at the required recorded station; no task was closed.");
+        return new AgvTaskAbsenceEvidence(taskId, station, path.ToArray(),
+            statuses.Select(item => new AgvAbsentSegment(item.TaskId, item.Status)).ToArray(), DateTimeOffset.UtcNow);
+    }
+
+    private static IReadOnlyList<DeviceTaskStatus> ParseStrictTaskStatuses(JsonElement root)
+    {
+        var statusRoot = GetTaskStatusRoot(root);
+        if (!statusRoot.TryGetProperty("task_status_list", out var list) || list.ValueKind != JsonValueKind.Array)
+            throw new InvalidOperationException("Controller task evidence is missing its explicit task list.");
+        var parsed = ParseTaskStatuses(root);
+        if (parsed.Count != list.GetArrayLength() || parsed.Any(item => string.IsNullOrWhiteSpace(item.TaskId)))
+            throw new InvalidOperationException("Controller task evidence is malformed.");
+        return parsed;
+    }
 
     public bool MayHaveWrittenCancellation(Guid taskId) => _cancellationWrites.ContainsKey(taskId);
 
@@ -1315,6 +1427,9 @@ public sealed class TcpAgvClient :
             .ToArray();
         return new RoutePlan(path, segments);
     }
+
+    internal static IReadOnlyList<string> GetRouteDeviceTaskIds(Guid taskId, IReadOnlyList<string> path) =>
+        BuildRoute(taskId, path).DeviceTaskIds.ToArray();
 
     private static IReadOnlyList<string> NormalizePath(IReadOnlyList<string> requestedPath)
     {

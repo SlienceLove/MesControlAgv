@@ -2,7 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using MesControlAgv.Application;
+using MesControlAgv.Contracts.Devices;
 using MesControlAgv.Contracts.Experiments;
+using MesControlAgv.Contracts.Samples;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Entities;
@@ -70,6 +72,38 @@ public sealed class ExperimentRuntimeAdmissionApiTests
             .Where(audit => audit.RequestId == request.RequestId &&
                             audit.EventType == "ExperimentJobAdmitted")
             .ToListAsync());
+    }
+
+    [Fact]
+    public async Task Admission_binds_registered_sample_to_the_created_workflow_run()
+    {
+        using var factory = new MesWebApplicationFactory();
+        using var client = factory.CreateClient();
+        var plan = await CreatePublishedPlanAsync(client);
+        var sampleId = $"S-{Guid.NewGuid():N}";
+        var register = await client.PostAsJsonAsync("/api/samples", new RegisterSampleRequest
+        {
+            SampleId = sampleId,
+            Barcode = $"BC-{Guid.NewGuid():N}",
+            SampleBatchId = "G5C-SAMPLE-BIND",
+            SourceLocation = "WH-A-01",
+            OperatorName = "g5c-test"
+        });
+        register.EnsureSuccessStatusCode();
+
+        var scheduled = await CreateScheduledJobAsync(
+            client,
+            plan,
+            "G5C-SAMPLE-BIND",
+            new DateTimeOffset(2026, 8, 22, 9, 30, 0, TimeSpan.Zero),
+            sampleId);
+        var admitted = await AdmitAsync(client, scheduled.Job.JobId, "Bind sample custody to runtime");
+
+        var sample = await client.GetFromJsonAsync<SampleRecordResponse>($"/api/samples/{sampleId}");
+        Assert.Equal(admitted.WorkflowRunId, sample!.RunId);
+        var events = await client.GetFromJsonAsync<IReadOnlyList<SampleEventResponse>>($"/api/samples/{sampleId}/events");
+        Assert.Contains(events!, item => item.EventType == "RunBound" &&
+                                         item.Detail == admitted.WorkflowRunId!.Value.ToString("N"));
     }
 
     [Fact]
@@ -201,6 +235,7 @@ public sealed class ExperimentRuntimeAdmissionApiTests
             {
                 DeviceOperationId = claimed.DeviceOperation!.OperationId,
                 Outcome = WorkflowStepCompletionOutcome.Unknown,
+                UnknownReason = UnknownReason.IncompleteResponse,
                 Error = "Adapter outcome could not be proven"
             },
             CancellationToken.None);
@@ -440,7 +475,8 @@ public sealed class ExperimentRuntimeAdmissionApiTests
         HttpClient client,
         ExperimentPlan plan,
         string batchId,
-        DateTimeOffset start)
+        DateTimeOffset start,
+        string? sampleId = null)
     {
         var create = await client.PostAsJsonAsync("/api/experiment-jobs", new CreateExperimentJobRequest
         {
@@ -449,7 +485,8 @@ public sealed class ExperimentRuntimeAdmissionApiTests
             Reason = $"Create {batchId}",
             PlanId = plan.PlanId,
             PlanVersion = plan.Version,
-            SampleBatchId = batchId
+            SampleBatchId = batchId,
+            SampleId = sampleId
         });
         create.EnsureSuccessStatusCode();
         var job = (await create.Content.ReadFromJsonAsync<ExperimentJob>())!;

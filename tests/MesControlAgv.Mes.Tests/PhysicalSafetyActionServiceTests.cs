@@ -116,6 +116,45 @@ public sealed class PhysicalSafetyActionServiceTests
             (await database.PhysicalSafetyActions.SingleAsync()).Status);
     }
 
+    [Theory]
+    [InlineData("adapter", true)]
+    [InlineData("ADAPTER", true)]
+    [InlineData("MesControlAgv.Adapter", false)]
+    [InlineData("other-client", false)]
+    [InlineData("none", false)]
+    [InlineData("unknown", false)]
+    [InlineData("", false)]
+    public async Task Final_move_release_uses_normalized_ownership_with_a_controller_nickname(
+        string snapshotOwner,
+        bool shouldRelease)
+    {
+        await using var database = CreateDatabase();
+        var gateway = new SafetyActionAgvGateway
+        {
+            Snapshot = new AgvSnapshotResponse(true, snapshotOwner, "LM1", null, "AGV-01")
+        };
+        var service = new PhysicalSafetyActionService(
+            database, gateway, null, PhysicalProfile("MesControlAgv.Adapter"),
+            new AlwaysReadyPhysicalReadinessState());
+        var runId = Guid.NewGuid();
+        var nodeId = Guid.NewGuid();
+        var operationId = Guid.NewGuid();
+
+        var first = await service.ReleaseFinalMoveAsync(
+            runId, nodeId, operationId, "AGV-01", "operator-a", 1, "supervisor-1",
+            WorkflowStepCompletionOutcome.Succeeded, CancellationToken.None);
+        var replay = await service.ReleaseFinalMoveAsync(
+            runId, nodeId, operationId, "AGV-01", "operator-a", 1, "supervisor-1",
+            WorkflowStepCompletionOutcome.Succeeded, CancellationToken.None);
+
+        Assert.Equal(shouldRelease ? PhysicalSafetyActionStatuses.Succeeded : PhysicalSafetyActionStatuses.Rejected,
+            first.Status);
+        Assert.Equal(first.Id, replay.Id);
+        Assert.Equal(first.Status, replay.Status);
+        Assert.Equal(shouldRelease ? 1 : 0, gateway.ReleaseCalls);
+        Assert.Equal(first.Status, (await database.PhysicalSafetyActions.SingleAsync()).Status);
+    }
+
     [Fact]
     public async Task Agv_release_rechecks_readiness_after_prepared_reservation_before_gateway_write()
     {
@@ -455,12 +494,12 @@ public sealed class PhysicalSafetyActionServiceTests
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .Options);
 
-    private static ProfileConfiguration PhysicalProfile() => ProfileConfiguration.Default with
+    private static ProfileConfiguration PhysicalProfile(string expectedControlOwner = "adapter") => ProfileConfiguration.Default with
     {
         Features = ProfileConfiguration.Default.Features with { UseSimulator = false },
         PhysicalAcceptance = new PhysicalAcceptanceProfile
         {
-            ExpectedControlOwner = "adapter",
+            ExpectedControlOwner = expectedControlOwner,
             MapSnapshot = new ControllerMapSnapshot { MapName = "test", Version = "1", Md5 = "test" },
             Safety = new PhysicalAgvSafetyProfile()
         }

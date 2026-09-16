@@ -18,7 +18,19 @@ public sealed class WorkflowInspectorTests
     public void Catalog_palette_creates_and_round_trips_all_typed_nodes()
     {
         using var fixture = new TempWorkflowFile();
-        var editor = new WorkflowEditorViewModel(new WorkflowStore(fixture.Path));
+        // The default profile intentionally has no vendor workstation binding.
+        // This all-node round-trip test supplies the corresponding design-time
+        // profile; it must not require enabling physical control by default.
+        var profile = ProfileConfiguration.Default;
+        profile = profile with
+        {
+            WorkflowDevices = profile.WorkflowDevices.Concat([new WorkflowDeviceProfile
+            {
+                DeviceId = "SAMPLE-WORKSTATION-01", DeviceFamily = WorkflowDeviceFamilyIds.SampleWorkstation,
+                CapabilityIds = [WorkflowCapabilityIds.SampleWorkstationExecute], Enabled = true, ControlEnabled = false
+            }]).ToArray()
+        };
+        var editor = new WorkflowEditorViewModel(new WorkflowStore(fixture.Path), profileConfiguration: profile);
         var catalog = BuiltInWorkflowCatalog.Create();
         var expectedTypeIds = new[]
         {
@@ -29,7 +41,8 @@ public sealed class WorkflowInspectorTests
             WorkflowGraphNodeTypeIds.ManualConfirmation,
             WorkflowGraphNodeTypeIds.InstrumentReadStatus,
             WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable,
-            WorkflowGraphNodeTypeIds.RobotExecuteProgram
+            WorkflowGraphNodeTypeIds.RobotExecuteProgram,
+            WorkflowGraphNodeTypeIds.SampleWorkstationExecuteTemplate
         };
 
         Assert.Equal(expectedTypeIds, editor.NodeTypeOptions.Select(option => option.NodeTypeId));

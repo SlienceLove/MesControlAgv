@@ -6,6 +6,7 @@
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.24" />
+    <InternalsVisibleTo Include="MesControlAgv.Mes.Tests" />
   </ItemGroup>
   <ItemGroup>
     <Compile Remove="artifacts\**" />

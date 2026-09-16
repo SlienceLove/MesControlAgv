@@ -1,5 +1,6 @@
 using MesControlAgv.Contracts;
 using MesControlAgv.Contracts.Experiments;
+using MesControlAgv.Contracts.Samples;
 using MesControlAgv.Contracts.Workflows;
 
 namespace MesControlAgv.Wpf.Services;
@@ -125,6 +126,31 @@ public interface IMesClient
         string deviceId,
         CancellationToken cancellationToken) =>
         Task.FromResult<SampleWorkstationDashboardSnapshot?>(null);
+    Task<IReadOnlyList<SampleRecordResponse>> GetSamplesAsync(
+        int limit,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<SampleRecordResponse>>([]);
+    Task<SampleRecordResponse?> GetSampleAsync(
+        string sampleIdOrBarcode,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<SampleRecordResponse?>(null);
+    Task<SampleRecordResponse> RegisterSampleAsync(
+        RegisterSampleRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<SampleRecordResponse>(new NotSupportedException("Sample management is not supported by this MES client."));
+    Task<ImportSamplesResponse> ImportSamplesAsync(
+        ImportSamplesRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ImportSamplesResponse>(new NotSupportedException("Sample import is not supported by this MES client."));
+    Task<SampleRecordResponse> BindSampleRunAsync(
+        string sampleIdOrBarcode,
+        BindSampleRunRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<SampleRecordResponse>(new NotSupportedException("Sample run binding is not supported by this MES client."));
+    Task<IReadOnlyList<SampleEventResponse>> GetSampleEventsAsync(
+        string sampleIdOrBarcode,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<SampleEventResponse>>([]);
     Task<ShineLabCommandResponse> SendShineLabConfigAsync(
         string equipmentCode,
         ShineLabConfigRequest request,

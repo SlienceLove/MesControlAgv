@@ -13,6 +13,54 @@ namespace MesControlAgv.Adapter.Tests;
 
 public sealed class TcpAgvClientTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Each_new_command_uses_a_fresh_connection_without_resetting_the_status_channel(bool closeIdleCommand)
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var status = new TcpApiTestServer(2, _ => Task.FromResult(
+            Encoding.UTF8.GetBytes("{\"ret_code\":0,\"DI\":[],\"DO\":[]}")));
+        await using var commands = new TcpApiTestServer(2, _ => Task.FromResult(
+            Encoding.UTF8.GetBytes("{\"ret_code\":0}")),
+            closeAfterResponse: (_, index) => closeIdleCommand && index == 0);
+        await using var control = new TcpApiTestServer(0, _ => throw new InvalidOperationException());
+        using var client = new TcpAgvClient(Options.Create(new TcpAgvOptions
+        {
+            Host = "127.0.0.1", StatusPort = status.Port, CommandPort = commands.Port,
+            ControlPort = control.Port, EnablePush = false, RequestTimeoutMs = 1000
+        }), NullLogger<TcpAgvClient>.Instance);
+
+        await client.GetIoAsync(cancellation.Token);
+        await client.PauseAsync(Guid.NewGuid(), cancellation.Token);
+        await client.ResumeAsync(Guid.NewGuid(), cancellation.Token);
+        await client.GetIoAsync(cancellation.Token);
+        await commands.Completion;
+        await status.Completion;
+
+        Assert.Equal(2, commands.ConnectionCount);
+        Assert.Equal(2, commands.ApiIds.Count);
+        Assert.Equal(1, status.ConnectionCount);
+        Assert.False(control.HasPendingConnection);
+    }
+
+    [Fact]
+    public async Task Fresh_command_connection_never_replays_a_command_after_lost_acknowledgement()
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var commands = new TcpApiTestServer(1, _ => Task.FromResult(Array.Empty<byte>()),
+            closeWithoutResponse: (_, _) => true);
+        using var client = new TcpAgvClient(Options.Create(new TcpAgvOptions
+        {
+            Host = "127.0.0.1", CommandPort = commands.Port, EnablePush = false,
+            RequestTimeoutMs = 1000
+        }), NullLogger<TcpAgvClient>.Instance);
+        await Assert.ThrowsAnyAsync<IOException>(() => client.PauseAsync(Guid.NewGuid(), cancellation.Token));
+        await commands.Completion;
+        Assert.Single(commands.ApiIds);
+        Assert.Equal(1, commands.ConnectionCount);
+    }
+
     [Fact]
     public async Task Get_io_reads_vendor_1013_and_preserves_di_validity_and_do_state()
     {
@@ -915,14 +963,26 @@ public sealed class TcpAgvClientTests
         await Task.WhenAll(statusServer.Completion, controlServer.Completion);
     }
 
-    [Fact]
-    public async Task Client_reads_controller_map_evidence_from_documented_read_apis()
+    [Theory]
+    [InlineData("stable")]
+    [InlineData("changed")]
+    [InlineData("reconnect")]
+    [InlineData("read-failed")]
+    [InlineData("concurrent")]
+    public async Task Client_reads_controller_map_evidence_from_documented_read_apis(string scenario)
     {
+        var changeMap = scenario == "changed";
+        var reconnect = scenario == "reconnect";
+        var readFailed = scenario == "read-failed";
+        var concurrent = scenario == "concurrent";
         using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await using var statusServer = new TcpApiTestServer(3, packet =>
+        var identityReads = 0;
+        var injectedReadFailure = false;
+        await using var statusServer = new TcpApiTestServer(reconnect ? 10 : readFailed || concurrent ? 7 : changeMap ? 6 : 5, packet =>
         {
             if (packet.ApiId == 1302)
             {
+                identityReads++;
                 using var request = JsonDocument.Parse(packet.Payload);
                 Assert.Equal(
                     ["acceptance-map.smap"],
@@ -939,9 +999,16 @@ public sealed class TcpAgvClientTests
                 1302 => "{\"ret_code\":0,\"map_info\":[{\"name\":\"acceptance-map.smap\",\"md5\":\"abcdef0123456789abcdef0123456789\"}]}",
                 _ => throw new InvalidOperationException($"Unexpected status API {packet.ApiId}.")
             };
+            if (changeMap && identityReads > 1 && packet.ApiId == 1302)
+                payload = payload.Replace("abcdef0123456789abcdef0123456789", "11111111111111111111111111111111");
+            if (readFailed && !injectedReadFailure && identityReads > 0 && packet.ApiId == 1300)
+            {
+                injectedReadFailure = true;
+                payload = "{\"ret_code\":40051,\"err_msg\":\"read failed\"}";
+            }
             return Task.FromResult(Encoding.UTF8.GetBytes(payload));
-        });
-        await using var controlServer = new TcpApiTestServer(1, packet =>
+        }, closeWithoutResponse: (_, index) => reconnect && index == 3);
+        await using var controlServer = new TcpApiTestServer(reconnect ? 3 : changeMap || readFailed ? 2 : 1, packet =>
         {
             Assert.Equal((ushort)4011, packet.ApiId);
             using var request = JsonDocument.Parse(packet.Payload);
@@ -997,6 +1064,35 @@ public sealed class TcpAgvClientTests
         Assert.Equal("abcdef0123456789abcdef0123456789", evidence.Md5);
         Assert.Equal(["LM1", "LM2"], evidence.StationIds);
         Assert.Equal([new ControllerDirectedEdgeResponse("LM1", "LM2")], evidence.DirectedEdges);
+        var secondRead = client.GetControllerMapEvidenceAsync(cancellation.Token);
+        var concurrentRead = concurrent ? client.GetControllerMapEvidenceAsync(cancellation.Token) : null;
+        var second = await secondRead;
+        if (concurrentRead is not null)
+            Assert.Same(evidence, await concurrentRead);
+        if (readFailed || reconnect)
+        {
+            Assert.Null(second);
+            var recovered = await client.GetControllerMapEvidenceAsync(cancellation.Token);
+            Assert.NotNull(recovered);
+            Assert.True(recovered.IsControllerAuthoritative);
+            Assert.NotSame(evidence, recovered);
+            Assert.Equal(evidence.Md5, recovered.Md5);
+            Assert.Equal(reconnect ? 3 : 2, controlServer.ApiIds.Count);
+            await Task.WhenAll(statusServer.Completion, controlServer.Completion);
+            return;
+        }
+        Assert.NotNull(second);
+        if (changeMap)
+        {
+            Assert.NotSame(evidence, second);
+            Assert.Equal("11111111111111111111111111111111", second.Md5);
+        }
+        else
+        {
+            Assert.Same(evidence, second);
+            Assert.Equal(evidence.ObservedAtUtc, second.ObservedAtUtc);
+        }
+        Assert.Equal(changeMap || reconnect ? 2 : 1, controlServer.ApiIds.Count);
         await Task.WhenAll(statusServer.Completion, controlServer.Completion);
     }
 
@@ -1082,7 +1178,7 @@ public sealed class TcpAgvClientTests
         Assert.NotNull(evidence);
         Assert.True(evidence.IsControllerAuthoritative);
         Assert.Equal("abcdef0123456789abcdef0123456789", evidence.Md5);
-        Assert.Equal([1300, 1301, 1302, 1302], statusServer.ApiIds);
+        Assert.Equal([1300, 1302, 1302, 1301], statusServer.ApiIds);
         await Task.WhenAll(statusServer.Completion, controlServer.Completion);
     }
 
@@ -1826,6 +1922,9 @@ internal sealed class TcpApiTestServer : IAsyncDisposable
     private readonly Func<AgvTcpPacket, Task<byte[]>> _handler;
     private readonly Func<AgvTcpPacket, int, bool> _closeWithoutResponse;
     private readonly Func<AgvTcpPacket, int, ushort> _responseApiId;
+    private readonly Func<AgvTcpPacket, int, bool> _closeAfterResponse;
+    private int _connectionCount;
+    private int _stopping;
     private readonly List<RouteRequest> _requests = [];
     private readonly List<IReadOnlyList<RouteRequest>> _batches = [];
     private readonly List<ushort> _apiIds = [];
@@ -1834,12 +1933,14 @@ internal sealed class TcpApiTestServer : IAsyncDisposable
         int expectedRequests,
         Func<AgvTcpPacket, Task<byte[]>> handler,
         Func<AgvTcpPacket, int, bool>? closeWithoutResponse = null,
-        Func<AgvTcpPacket, int, ushort>? responseApiId = null)
+        Func<AgvTcpPacket, int, ushort>? responseApiId = null,
+        Func<AgvTcpPacket, int, bool>? closeAfterResponse = null)
     {
         _expectedRequests = expectedRequests;
         _handler = handler;
         _closeWithoutResponse = closeWithoutResponse ?? ((_, _) => false);
         _responseApiId = responseApiId ?? ((packet, _) => (ushort)(packet.ApiId + 10000));
+        _closeAfterResponse = closeAfterResponse ?? ((_, _) => false);
         _listener = new TcpListener(IPAddress.Loopback, 0);
         _listener.Start();
         Completion = expectedRequests == 0 ? Task.CompletedTask : RunAsync();
@@ -1851,6 +1952,7 @@ internal sealed class TcpApiTestServer : IAsyncDisposable
     public IReadOnlyList<ushort> ApiIds => _apiIds;
     public bool HasPendingConnection => _listener.Pending();
     public Task Completion { get; }
+    public int ConnectionCount => Volatile.Read(ref _connectionCount);
 
     private async Task RunAsync()
     {
@@ -1859,11 +1961,15 @@ internal sealed class TcpApiTestServer : IAsyncDisposable
             var requestIndex = 0;
             while (requestIndex < _expectedRequests)
             {
+                if (Volatile.Read(ref _stopping) != 0) break;
                 using var client = await _listener.AcceptTcpClientAsync();
+                Interlocked.Increment(ref _connectionCount);
                 await using var stream = client.GetStream();
                 while (requestIndex < _expectedRequests)
                 {
-                    var packet = await AgvTcpProtocol.ReadPacketAsync(stream, 1024 * 1024, CancellationToken.None);
+                    AgvTcpPacket packet;
+                    try { packet = await AgvTcpProtocol.ReadPacketAsync(stream, 1024 * 1024, CancellationToken.None); }
+                    catch (EndOfStreamException) { break; } // Fresh command requests close the previous idle stream.
                     _apiIds.Add(packet.ApiId);
                     if (packet.ApiId == 3066) RecordNavigationRequest(packet);
 
@@ -1874,6 +1980,7 @@ internal sealed class TcpApiTestServer : IAsyncDisposable
                     var responsePacket = AgvTcpProtocol.CreatePacket(_responseApiId(packet, currentRequestIndex), response);
                     await stream.WriteAsync(responsePacket);
                     await stream.FlushAsync();
+                    if (_closeAfterResponse(packet, currentRequestIndex)) break;
                 }
             }
         }
@@ -1911,10 +2018,12 @@ internal sealed class TcpApiTestServer : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        Interlocked.Exchange(ref _stopping, 1);
         _listener.Stop();
         try { await Completion; }
         catch (SocketException) { }
         catch (IOException) { }
+        catch (InvalidOperationException) when (Volatile.Read(ref _stopping) != 0) { }
     }
 }
 

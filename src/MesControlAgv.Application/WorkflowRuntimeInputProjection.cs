@@ -31,6 +31,24 @@ public static class WorkflowRuntimeInputProjection
             }
         }
 
+        // Sample custody fields are run-level context.  They are projected to
+        // every node even when an older workflow version did not declare the
+        // fields, allowing device workers to append trace events without
+        // changing existing workflow definitions.
+        foreach (var name in new[]
+                 {
+                     WorkflowRuntimeParameterNames.SampleId,
+                     WorkflowRuntimeParameterNames.SampleBatchId,
+                     WorkflowRuntimeParameterNames.ContainerPosition
+                 })
+        {
+            if (TryGetValue(request.Parameters, name, out var supplied) &&
+                !string.IsNullOrWhiteSpace(supplied))
+            {
+                values[name] = supplied;
+            }
+        }
+
         if (string.Equals(
                 node.NodeTypeId,
                 WorkflowGraphNodeTypeIds.TimedWait,
@@ -44,7 +62,8 @@ public static class WorkflowRuntimeInputProjection
         }
 
         if (IsServerManagedInteraction(node.NodeTypeId) ||
-            string.Equals(node.NodeTypeId, WorkflowGraphNodeTypeIds.RobotExecuteProgram, StringComparison.OrdinalIgnoreCase))
+            string.Equals(node.NodeTypeId, WorkflowGraphNodeTypeIds.RobotExecuteProgram, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(node.NodeTypeId, WorkflowGraphNodeTypeIds.SampleWorkstationExecuteTemplate, StringComparison.OrdinalIgnoreCase))
         {
             foreach (var configuration in node.Configuration ??
                      new Dictionary<string, string?>())

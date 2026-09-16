@@ -36,7 +36,7 @@ public sealed class SampleWorkstationApiTests(MesWebApplicationFactory factory)
     }
 
     [Fact]
-    public async Task Workstation_api_has_no_mutating_route()
+    public async Task Workstation_control_route_requires_a_request_body()
     {
         var reader = new StubReader();
         using var configuredFactory = ConfigureReader(reader);
@@ -46,7 +46,7 @@ public sealed class SampleWorkstationApiTests(MesWebApplicationFactory factory)
             "/api/workstations/SAMPLE-WORKSTATION-01/tasks/TASK-01/start",
             content: null);
 
-        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Empty(reader.Calls);
     }
 

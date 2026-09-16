@@ -14,10 +14,13 @@ using System.Text.Json.Serialization;
 
 namespace MesControlAgv.Mes.Tests;
 
-public sealed class WorkflowFieldNavigationWorkerTests
+public sealed partial class WorkflowFieldNavigationWorkerTests
 {
-    [Fact]
-    public async Task Authorized_acceptance_advances_the_same_run_from_move_to_aubo_completion()
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Authorized_acceptance_advances_the_same_run_from_move_to_aubo_completion(bool waitForStability, bool staleBlocked)
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
@@ -109,17 +112,14 @@ public sealed class WorkflowFieldNavigationWorkerTests
             Assert.Single(await workflows.ListFieldNavigationDispatchableNodesAsync(CancellationToken.None))
                 .NodeExecution.Status);
 
+        var readiness = new TestPhysicalReadinessState(true, "test", 1, "test readiness failure");
         var dispatcher = new WorkflowFieldNavigationDispatcher(
             workflows,
             acceptanceService,
             repository,
             profile,
             new WorkflowFieldNavigationWorkerOptions { Enabled = true },
-            physicalReadiness: new TestPhysicalReadinessState(
-                enabled: true,
-                supervisorInstanceId: "test",
-                deviceEpoch: 1,
-                reason: "test readiness failure"));
+            physicalReadiness: readiness);
         await dispatcher.ProcessAsync(CancellationToken.None);
 
         var movingAcceptance = await repository.GetAsync(created.Id, CancellationToken.None);
@@ -135,6 +135,18 @@ public sealed class WorkflowFieldNavigationWorkerTests
             "AdapterStateReconciled",
             new { state = "arrived" },
             CancellationToken.None);
+        if (waitForStability)
+        {
+            readiness.DeviceOverride = ArrivedStabilizingSnapshot(movingAcceptance) with { Blocked = staleBlocked };
+            await dispatcher.ProcessAsync(CancellationToken.None);
+            await dispatcher.ProcessAsync(CancellationToken.None);
+            Assert.Equal(WorkflowRuntimeStatus.Prepared,
+                (await workflows.GetExecutionAsync(execution.ExecutionId, CancellationToken.None))!.RuntimeStatus);
+            Assert.Equal(2, (await workflows.ListNodeExecutionsAsync(execution.ExecutionId, CancellationToken.None)).Count);
+            Assert.Equal(1, adapter.DispatchCalls);
+            Assert.Equal(0, adapter.ReleaseControlCalls);
+            readiness.DeviceOverride = null;
+        }
         await dispatcher.ProcessAsync(CancellationToken.None);
 
         var afterMove = await workflows.GetExecutionAsync(execution.ExecutionId, CancellationToken.None);
@@ -248,10 +260,12 @@ public sealed class WorkflowFieldNavigationWorkerTests
             (await workflows.ListNodeExecutionsAsync(execution.ExecutionId, CancellationToken.None)).Single().Status);
     }
 
-    [Fact]
-    public async Task Final_arrived_move_completes_run_and_releases_adapter_control_once()
+    [Theory]
+    [InlineData("adapter")]
+    [InlineData("MesControlAgv.Adapter")]
+    public async Task Final_arrived_move_completes_run_and_releases_adapter_control_once(string expectedControlOwner)
     {
-        await using var fixture = await FinalMoveFixture.CreateAsync();
+        await using var fixture = await FinalMoveFixture.CreateAsync(expectedControlOwner);
 
         await fixture.CompleteAsync();
 
@@ -520,7 +534,7 @@ public sealed class WorkflowFieldNavigationWorkerTests
             agv: adapter,
             physicalReadiness: restartedReadiness);
 
-        await recovery.ProcessAsync(CancellationToken.None);
+        await recovery.RecoverAsync(CancellationToken.None);
 
         var run = await workflows.GetExecutionAsync(execution.ExecutionId, CancellationToken.None);
         var node = Assert.Single(await workflows.ListNodeExecutionsAsync(execution.ExecutionId, CancellationToken.None));
@@ -823,6 +837,171 @@ public sealed class WorkflowFieldNavigationWorkerTests
         Assert.Equal(releaseCalls, fixture.Adapter.ReleaseControlCalls);
     }
 
+    [Theory]
+    [InlineData("current")]
+    [InlineData("busy-full-preflight")]
+    [InlineData("other-task")]
+    [InlineData("vendor-task")]
+    [InlineData("destination")]
+    [InlineData("map")]
+    [InlineData("obstacle")]
+    [InlineData("epoch")]
+    [InlineData("reauthorization")]
+    [InlineData("restart")]
+    public async Task Running_move_allows_only_its_own_busy_state_without_replaying_dispatch(string scenario)
+    {
+        await using var fixture = await FinalMoveFixture.CreateAsync();
+        var acceptance = (await fixture.Repository.GetByWorkflowNodeExecutionIdAsync(
+            fixture.NodeExecutionId, CancellationToken.None))!;
+        acceptance.Status = FieldNavigationAcceptanceStatuses.Moving;
+        acceptance.DeviceTaskId = "current-device-task";
+        await fixture.Repository.SaveWithAuditAsync(acceptance, "TestMoving", new { }, CancellationToken.None);
+        fixture.Readiness.DeviceOverride = new PhysicalDeviceReadinessSnapshot
+        {
+            DeviceId = "AGV-01", DeviceEpoch = scenario == "epoch" ? 2 : 1,
+            State = PhysicalDeviceReadinessState.Blocked,
+            Online = true, ProbeSucceeded = true, FullPreflightValid = scenario != "busy-full-preflight",
+            LastFullPreflightAtUtc = DateTimeOffset.UtcNow,
+            MapName = acceptance.MapName, MapMd5 = scenario == "map" ? "other-map" : acceptance.MapMd5,
+            RequiresReauthorization = scenario == "reauthorization",
+            Emergency = false, Blocked = scenario == "obstacle",
+            ActiveTaskId = scenario == "other-task" ? Guid.NewGuid() : acceptance.Id,
+            ActiveDeviceTaskId = scenario == "vendor-task" ? "other-vendor-task" : acceptance.DeviceTaskId,
+            ActiveTaskTargetStationId = scenario == "destination" ? "other-station" : acceptance.TargetStationId,
+            BlockingReasons = scenario == "obstacle"
+                ? [PhysicalReadinessReasonCodes.ActiveTask, PhysicalReadinessReasonCodes.TemporaryObstacle]
+                : [PhysicalReadinessReasonCodes.ActiveTask]
+        };
+        var dispatched = fixture.Adapter.DispatchCalls;
+        if (scenario == "restart")
+            await new WorkflowFieldNavigationDispatcher(fixture.Workflows, fixture.AcceptanceService,
+                fixture.Repository, fixture.Profile, new WorkflowFieldNavigationWorkerOptions { Enabled = true },
+                agv: fixture.Adapter, physicalReadiness: fixture.Readiness).RecoverAsync(CancellationToken.None);
+        else
+            await fixture.CompleteAsync();
+
+        Assert.Equal(dispatched, fixture.Adapter.DispatchCalls);
+        Assert.Equal(0, fixture.Adapter.ReleaseControlCalls);
+        var run = await fixture.Workflows.GetExecutionAsync(fixture.ExecutionId, CancellationToken.None);
+        var expectedWait = scenario is "current" or "busy-full-preflight" or "map" or "obstacle" or "epoch" or "reauthorization";
+        var ownTask = scenario is "current" or "busy-full-preflight";
+        Assert.Equal(expectedWait ? WorkflowRuntimeStatus.Running : WorkflowRuntimeStatus.Unknown, run!.RuntimeStatus);
+        if (!ownTask) return;
+
+        // Arrival can reach persistence before the supervisor observes idle.
+        acceptance.Status = FieldNavigationAcceptanceStatuses.Arrived;
+        await fixture.Repository.SaveWithAuditAsync(acceptance, "TestArrived", new { }, CancellationToken.None);
+        await fixture.CompleteAsync();
+        Assert.Equal(0, fixture.Adapter.ReleaseControlCalls);
+        fixture.Readiness.DeviceOverride = fixture.Readiness.DeviceOverride with
+        {
+            ActiveTaskId = null, ActiveDeviceTaskId = null,
+            CurrentStationId = acceptance.TargetStationId, FullPreflightValid = false
+        };
+        await fixture.CompleteAsync();
+        Assert.Equal(WorkflowRuntimeStatus.Running,
+            (await fixture.Workflows.GetExecutionAsync(fixture.ExecutionId, CancellationToken.None))!.RuntimeStatus);
+        // The actual supervisor goes through a five-second, blocker-free
+        // Stabilizing interval after the cached ActiveTask blocker is cleared.
+        fixture.Readiness.DeviceOverride = ArrivedStabilizingSnapshot(acceptance);
+        await fixture.CompleteAsync();
+        await fixture.CompleteAsync();
+        Assert.Equal(WorkflowRuntimeStatus.Running,
+            (await fixture.Workflows.GetExecutionAsync(fixture.ExecutionId, CancellationToken.None))!.RuntimeStatus);
+        Assert.Equal(0, fixture.Adapter.ReleaseControlCalls);
+        fixture.Readiness.DeviceOverride = null;
+        await fixture.CompleteAsync();
+        await fixture.CompleteAsync();
+        Assert.Equal(WorkflowRuntimeStatus.Completed,
+            (await fixture.Workflows.GetExecutionAsync(fixture.ExecutionId, CancellationToken.None))!.RuntimeStatus);
+        Assert.Equal(dispatched, fixture.Adapter.DispatchCalls);
+        Assert.Equal(1, fixture.Adapter.ReleaseControlCalls);
+    }
+
+    [Theory]
+    [InlineData("other-task")]
+    [InlineData("vendor-task")]
+    [InlineData("station")]
+    [InlineData("map")]
+    [InlineData("epoch")]
+    [InlineData("offline")]
+    [InlineData("probe")]
+    [InlineData("preflight")]
+    [InlineData("reauthorization")]
+    [InlineData("emergency")]
+    [InlineData("obstacle")]
+    [InlineData("blocker")]
+    [InlineData("restart")]
+    public async Task Arrived_stabilizing_wait_does_not_bypass_safety_or_recovery(string scenario)
+    {
+        await using var fixture = await FinalMoveFixture.CreateAsync();
+        var acceptance = (await fixture.Repository.GetByWorkflowNodeExecutionIdAsync(
+            fixture.NodeExecutionId, CancellationToken.None))!;
+        fixture.Readiness.DeviceOverride = ArrivedStabilizingSnapshot(acceptance) with
+        {
+            ActiveTaskId = scenario == "other-task" ? Guid.NewGuid() : null,
+            ActiveDeviceTaskId = scenario == "vendor-task" ? "another-task" : null,
+            CurrentStationId = scenario == "station" ? "other-station" : acceptance.TargetStationId,
+            MapMd5 = scenario == "map" ? "other-map" : acceptance.MapMd5,
+            DeviceEpoch = scenario == "epoch" ? 2 : 1,
+            Online = scenario != "offline",
+            ProbeSucceeded = scenario != "probe",
+            FullPreflightValid = scenario != "preflight",
+            RequiresReauthorization = scenario == "reauthorization",
+            Emergency = scenario == "emergency",
+            Blocked = scenario == "obstacle",
+            BlockingReasons = scenario == "blocker" ? ["controller_faults_active"] : []
+        };
+        var dispatched = fixture.Adapter.DispatchCalls;
+        if (scenario == "restart")
+            await new WorkflowFieldNavigationDispatcher(fixture.Workflows, fixture.AcceptanceService,
+                fixture.Repository, fixture.Profile, new WorkflowFieldNavigationWorkerOptions { Enabled = true },
+                agv: fixture.Adapter, physicalReadiness: fixture.Readiness).RecoverAsync(CancellationToken.None);
+        else
+            await fixture.CompleteAsync();
+        var mustStop = scenario is "other-task" or "vendor-task" or "emergency" or "blocker" or "restart";
+        Assert.Equal(mustStop ? WorkflowRuntimeStatus.Unknown : WorkflowRuntimeStatus.Running,
+            (await fixture.Workflows.GetExecutionAsync(fixture.ExecutionId, CancellationToken.None))!.RuntimeStatus);
+        Assert.Equal(dispatched, fixture.Adapter.DispatchCalls);
+        Assert.Equal(0, fixture.Adapter.ReleaseControlCalls);
+    }
+
+    private static PhysicalDeviceReadinessSnapshot ArrivedStabilizingSnapshot(FieldNavigationAcceptance acceptance) => new()
+    {
+        DeviceId = "AGV-01", DeviceEpoch = 1,
+        State = PhysicalDeviceReadinessState.Stabilizing,
+        Online = true, ProbeSucceeded = true, FullPreflightValid = true, RequiresReauthorization = false,
+        LastFullPreflightAtUtc = DateTimeOffset.UtcNow,
+        MapName = acceptance.MapName, MapMd5 = acceptance.MapMd5,
+        Emergency = false, Blocked = false,
+        CurrentStationId = acceptance.TargetStationId,
+        BlockingReasons = []
+    };
+
+    [Fact]
+    public async Task Arrived_ready_transition_between_gate_reads_waits_then_completes_once()
+    {
+        await using var fixture = await FinalMoveFixture.CreateAsync();
+        var acceptance = (await fixture.Repository.GetByWorkflowNodeExecutionIdAsync(
+            fixture.NodeExecutionId, CancellationToken.None))!;
+        fixture.Readiness.DeviceOverride = ArrivedStabilizingSnapshot(acceptance);
+        fixture.Readiness.DeviceOverrideAfterGateRead = fixture.Readiness.DeviceOverride with
+        {
+            State = PhysicalDeviceReadinessState.Ready
+        };
+        var dispatched = fixture.Adapter.DispatchCalls;
+        await fixture.CompleteAsync();
+        Assert.Equal(WorkflowRuntimeStatus.Running,
+            (await fixture.Workflows.GetExecutionAsync(fixture.ExecutionId, CancellationToken.None))!.RuntimeStatus);
+        Assert.Equal(0, fixture.Adapter.ReleaseControlCalls);
+        await fixture.CompleteAsync();
+        await fixture.CompleteAsync();
+        Assert.Equal(WorkflowRuntimeStatus.Completed,
+            (await fixture.Workflows.GetExecutionAsync(fixture.ExecutionId, CancellationToken.None))!.RuntimeStatus);
+        Assert.Equal(1, fixture.Adapter.ReleaseControlCalls);
+        Assert.Equal(dispatched, fixture.Adapter.DispatchCalls);
+    }
+
     private sealed class FinalMoveFixture : IAsyncDisposable
     {
         private readonly SqliteConnection _connection;
@@ -873,7 +1052,7 @@ public sealed class WorkflowFieldNavigationWorkerTests
         public Guid NodeExecutionId { get; }
         public Guid DeviceOperationId { get; }
 
-        public static async Task<FinalMoveFixture> CreateAsync()
+        public static async Task<FinalMoveFixture> CreateAsync(string expectedControlOwner = "adapter")
         {
             var connection = new SqliteConnection("Data Source=:memory:");
             await connection.OpenAsync();
@@ -882,7 +1061,7 @@ public sealed class WorkflowFieldNavigationWorkerTests
                     .UseSqlite(connection)
                     .Options);
             await database.Database.EnsureCreatedAsync();
-            var profile = CreateProfile();
+            var profile = CreateProfile(expectedControlOwner);
             var validator = new WorkflowValidator(
                 BuiltInWorkflowCatalog.Create(),
                 WorkflowPublicationContext.FromProfile(profile));
@@ -1038,7 +1217,7 @@ public sealed class WorkflowFieldNavigationWorkerTests
         }
     }
 
-    private static ProfileConfiguration CreateProfile() => new()
+    private static ProfileConfiguration CreateProfile(string expectedControlOwner = "adapter") => new()
     {
         Product = new ProductProfile { ProductId = "MES-AGV", DisplayName = "test", Version = "1.0" },
         Agvs =
@@ -1078,7 +1257,7 @@ public sealed class WorkflowFieldNavigationWorkerTests
         },
         PhysicalAcceptance = new PhysicalAcceptanceProfile
         {
-            ExpectedControlOwner = "adapter",
+            ExpectedControlOwner = expectedControlOwner,
             MapSnapshot = new ControllerMapSnapshot
             {
                 MapName = "test-map",
@@ -1266,6 +1445,8 @@ public sealed class WorkflowFieldNavigationWorkerTests
         public string? LastDeviceId { get; private set; }
         public long? LastExpectedEpoch { get; private set; }
         public string? LastExpectedSupervisorInstanceId { get; private set; }
+        public PhysicalDeviceReadinessSnapshot? DeviceOverride { get; set; }
+        public PhysicalDeviceReadinessSnapshot? DeviceOverrideAfterGateRead { get; set; }
 
         public PhysicalReadinessResponse GetSnapshot() => new()
         {
@@ -1273,7 +1454,7 @@ public sealed class WorkflowFieldNavigationWorkerTests
             SupervisorInstanceId = supervisorInstanceId,
             Devices =
             [
-                new PhysicalDeviceReadinessSnapshot
+                DeviceOverride ?? new PhysicalDeviceReadinessSnapshot
                 {
                     DeviceId = "AGV-01",
                     DeviceEpoch = deviceEpoch,
@@ -1313,6 +1494,16 @@ public sealed class WorkflowFieldNavigationWorkerTests
                      expectedSupervisorInstanceId,
                      current.SupervisorInstanceId,
                      StringComparison.Ordinal));
+            if (isCurrent && currentDevice!.State != PhysicalDeviceReadinessState.Ready)
+            {
+                if (DeviceOverrideAfterGateRead is { } next)
+                {
+                    DeviceOverride = next;
+                    DeviceOverrideAfterGateRead = null;
+                }
+                validationReason = PhysicalReadinessReasonCodes.DeviceNotReady;
+                return false;
+            }
             validationReason = isCurrent ? null : reason;
             return isCurrent;
         }
@@ -1324,6 +1515,8 @@ public sealed class WorkflowFieldNavigationWorkerTests
     {
         private string? _loaded;
         public List<string> RunPrograms { get; } = [];
+        public Action? OnRun { get; set; }
+        public Exception? RunException { get; set; }
 
         public Task<AuboArmProgramStatusResponse> GetProgramAsync(string deviceId, CancellationToken cancellationToken) =>
             Task.FromResult(new AuboArmProgramStatusResponse(
@@ -1349,6 +1542,8 @@ public sealed class WorkflowFieldNavigationWorkerTests
             string deviceId, string? programName, string operatorName, Guid operationId, CancellationToken cancellationToken)
         {
             RunPrograms.Add(programName ?? _loaded ?? string.Empty);
+            OnRun?.Invoke();
+            if (RunException is not null) return Task.FromException<AuboArmProgramOperationResponse>(RunException);
             return Task.FromResult(Operation(operationId, deviceId, programName ?? _loaded ?? string.Empty, "run", operatorName, AuboArmProgramOperationState.Running));
         }
         public Task<AuboArmProgramOperationResponse> StopProgramAsync(

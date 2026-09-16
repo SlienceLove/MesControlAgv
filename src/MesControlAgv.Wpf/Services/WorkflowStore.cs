@@ -150,8 +150,53 @@ public sealed class WorkflowStore
                 Node(WorkflowNodeType.Custom, "恢复并重试", "恢复 AGV 后重新执行任务", null, 540, 260, 4),
                 Node(WorkflowNodeType.Dropoff, "确认放货", "确认恢复后的任务完成放货", targetStationId, 720, 260, 5),
                 Node(WorkflowNodeType.End, "结束", "实验流程完成", null, 900, 260, 6)
-            ])
+            ]),
+            CreateSingleSampleDeviceWorkflow(sourceStationId, targetStationId)
         ];
+    }
+
+    /// <summary>
+    /// Fixed single-sample flow used by the P0 physical acceptance path. The
+    /// workstation template is deliberately empty until the vendor template is
+    /// approved; the workflow remains editable and fail-closed.
+    /// </summary>
+    public static WorkflowDefinition CreateSingleSampleDeviceWorkflow(
+        string sourceStationId = "LM1",
+        string workstationStationId = "LM7",
+        string workstationDeviceId = "SAMPLE-WORKSTATION-01",
+        string? templateVersion = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sourceStationId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(workstationStationId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(workstationDeviceId);
+        var workstation = new WorkflowNode
+        {
+            Type = WorkflowNodeType.Custom,
+            GraphNodeTypeId = MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.SampleWorkstationExecuteTemplate,
+            Name = "开盖分液模板执行",
+            Description = "到站后执行已批准的开盖分液模板，并轮询任务结果",
+            X = 660,
+            Y = 420,
+            Order = 3,
+            Configuration = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+            {
+                [MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.DeviceId] = workstationDeviceId,
+                [MesControlAgv.Contracts.Workflows.WorkflowNodeConfigurationKeys.TemplateVersion] = templateVersion
+            }
+        };
+
+        return CreateLinearWorkflow(
+            "单样本设备联动流程",
+            "AGV 到站后执行开盖分液，随后保留离子色谱只读状态确认节点，供厂家模块到位后扩展真实控制。",
+            [
+                Node(WorkflowNodeType.Start, "开始", "启动单样本流程", null, 0, 420, 1),
+                Node(WorkflowNodeType.Move, $"前往 {workstationStationId}", "AGV 搬运样品到工作站", workstationStationId, 180, 420, 2),
+                RobotProgramNode("机械臂回原点", "回原点", "ARM-01", 420, 420, 3),
+                workstation,
+                Node(WorkflowNodeType.InstrumentOperation, "离子色谱状态确认", "只读确认离子色谱在线和稳定状态", null, 900, 420, 5),
+                Node(WorkflowNodeType.Custom, "人工结果确认", "确认设备结果或进入 Unknown 收口", null, 1140, 420, 6),
+                Node(WorkflowNodeType.End, "结束", "单样本流程完成", null, 1380, 420, 7)
+            ]);
     }
 
     /// <summary>

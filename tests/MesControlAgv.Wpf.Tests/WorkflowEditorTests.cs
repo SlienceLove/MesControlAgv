@@ -38,8 +38,10 @@ public sealed class WorkflowEditorTests
         Assert.All(workflows, workflow =>
         {
             var nodes = workflow.Nodes.OrderBy(node => node.Order).ToArray();
-            Assert.Equal(6, nodes.Length);
-            Assert.Equal(5, workflow.Edges.Count);
+            Assert.True(nodes.Length >= 2);
+            Assert.Equal(WorkflowNodeType.Start, nodes[0].Type);
+            Assert.Equal(WorkflowNodeType.End, nodes[^1].Type);
+            Assert.Equal(nodes.Length - 1, workflow.Edges.Count);
 
             for (var index = 0; index < nodes.Length - 1; index++)
             {

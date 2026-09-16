@@ -1,6 +1,8 @@
 using System.Globalization;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
+using MesControlAgv.Contracts.Devices;
+using MesControlAgv.Contracts.Samples;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Profiles;
 
@@ -54,11 +56,13 @@ public sealed class WorkflowAuboProgramDispatcher(
     WorkflowAuboProgramWorkerOptions options,
     TimeProvider? timeProvider = null,
     ILogger? logger = null,
-    IPhysicalReadinessState? physicalReadiness = null)
+    IPhysicalReadinessState? physicalReadiness = null,
+    SampleManagementService? sampleManagement = null)
 {
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private readonly ILogger? _logger = logger;
     private readonly IPhysicalReadinessState? _physicalReadiness = physicalReadiness;
+    private readonly SampleManagementService? _sampleManagement = sampleManagement;
 
     public async Task ProcessAsync(CancellationToken cancellationToken)
     {
@@ -428,15 +432,9 @@ public sealed class WorkflowAuboProgramDispatcher(
 
         while (_timeProvider.GetUtcNow() < deadline)
         {
-            if (!await HasCurrentSupervisorEpochAsync(workItem, armId, cancellationToken))
-            {
-                await CompleteAsync(
-                    workItem,
-                    WorkflowStepCompletionOutcome.Unknown,
-                    "The AUBO physical-session epoch changed after run was confirmed; no command was replayed and manual reconciliation is required.",
-                    cancellationToken);
-                return;
-            }
+            // Startup/load/run keep admission checks. After a confirmed run,
+            // use this program's read-only status instead of repeating the
+            // supervisor Ready/epoch gate; status outages are retried below.
 
             AuboArmProgramStatusResponse status;
             try
@@ -450,6 +448,9 @@ public sealed class WorkflowAuboProgramDispatcher(
             catch (Exception exception)
             {
                 var now = _timeProvider.GetUtcNow();
+                // An unobserved interval is not continuous proof of Stopped.
+                // Restart terminal stability after reads recover; never replay run.
+                stoppedSince = null;
                 unavailableSince ??= now;
                 lastObservationWarning = exception.Message;
                 _logger?.LogWarning(
@@ -470,9 +471,18 @@ public sealed class WorkflowAuboProgramDispatcher(
                 continue;
             }
 
+            if (!string.Equals(status.DeviceId, armId, StringComparison.OrdinalIgnoreCase))
+            {
+                await CompleteAsync(workItem, WorkflowStepCompletionOutcome.Unknown,
+                    $"AUBO status belongs to device '{status.DeviceId}', expected '{armId}'; no command was replayed.",
+                    cancellationToken);
+                return;
+            }
+
             var observedAt = _timeProvider.GetUtcNow();
             if (!status.Online || status.RuntimeState == AuboArmRuntimeState.Unknown)
             {
+                stoppedSince = null;
                 unavailableSince ??= observedAt;
                 lastObservationWarning = !status.Online
                     ? "机械臂离线"
@@ -748,7 +758,7 @@ public sealed class WorkflowAuboProgramDispatcher(
         IReadOnlyDictionary<string, string?>? outputs = null) =>
         CompleteWithCorrelationAsync(workItem, outcome, error, cancellationToken, outputs);
 
-    private Task CompleteWithCorrelationAsync(
+    private async Task CompleteWithCorrelationAsync(
         WorkflowNodeExecutionWorkItem workItem,
         WorkflowStepCompletionOutcome outcome,
         string? error,
@@ -769,16 +779,55 @@ public sealed class WorkflowAuboProgramDispatcher(
             evidence["attempt"] = operation.Attempt.ToString(CultureInfo.InvariantCulture);
         }
 
-        return workflows.CompleteNodeExecutionAsync(
+        await workflows.CompleteNodeExecutionAsync(
             workItem.NodeExecution.Id,
             new WorkflowNodeExecutionCompletionRequest
             {
                 DeviceOperationId = workItem.DeviceOperation?.OperationId,
                 Outcome = outcome,
                 Error = error,
+                UnknownReason = outcome == WorkflowStepCompletionOutcome.Unknown
+                    ? UnknownReason.ManualReconciliationRequired
+                    : null,
                 Outputs = evidence
             },
             cancellationToken);
+
+        if (outcome == WorkflowStepCompletionOutcome.Succeeded &&
+            _sampleManagement is not null &&
+            workItem.DeviceOperation is { } sampleOperation &&
+            workItem.NodeExecution.Inputs.TryGetValue(WorkflowRuntimeParameterNames.SampleId, out var sampleId) &&
+            !string.IsNullOrWhiteSpace(sampleId))
+        {
+            var deviceId = evidence.TryGetValue(WorkflowNodeConfigurationKeys.DeviceId, out var configuredDevice)
+                ? configuredDevice
+                : ReadInputOrNull(workItem.NodeExecution.Inputs, WorkflowNodeConfigurationKeys.DeviceId);
+            if (!string.IsNullOrWhiteSpace(deviceId))
+            {
+                try
+                {
+                    await _sampleManagement.MoveAsync(
+                        sampleId,
+                        new MoveSampleRequest
+                        {
+                            OperationId = sampleOperation.OperationId,
+                            DeviceId = deviceId,
+                            ToLocation = deviceId,
+                            OperatorName = "workflow-runtime",
+                            Status = SampleLifecycleStatus.Processing
+                        },
+                        cancellationToken);
+                }
+                catch (Exception exception) when (exception is ArgumentException or InvalidOperationException)
+                {
+                    _logger?.LogWarning(
+                        exception,
+                        "Sample custody update was not recorded after successful AUBO operation {OperationId} for workflow {WorkflowRunId}.",
+                        sampleOperation.OperationId,
+                        workItem.NodeExecution.WorkflowRunId);
+                }
+            }
+        }
     }
 
     private string? ResolveArmId(IReadOnlyDictionary<string, string?> inputs)
@@ -934,7 +983,8 @@ public sealed class WorkflowAuboProgramWorker(
                 options,
                 timeProvider,
                 logger,
-                recoveryScope.ServiceProvider.GetService<IPhysicalReadinessState>());
+                recoveryScope.ServiceProvider.GetService<IPhysicalReadinessState>(),
+                recoveryScope.ServiceProvider.GetService<SampleManagementService>());
             await recoveryDispatcher.RecoverAsync(stoppingToken);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -959,7 +1009,8 @@ public sealed class WorkflowAuboProgramWorker(
                     options,
                     timeProvider,
                     logger,
-                    scope.ServiceProvider.GetService<IPhysicalReadinessState>());
+                    scope.ServiceProvider.GetService<IPhysicalReadinessState>(),
+                    scope.ServiceProvider.GetService<SampleManagementService>());
                 await dispatcher.ProcessAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

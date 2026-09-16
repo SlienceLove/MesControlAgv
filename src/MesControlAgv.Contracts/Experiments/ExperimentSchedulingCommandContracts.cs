@@ -26,6 +26,9 @@ public static class ExperimentSchedulingIssueCodes
     public const string ResourceCapacityInsufficient = "EXP-RESOURCE-CAPACITY-INSUFFICIENT";
     public const string ResourceReservationConflict = "EXP-RESOURCE-RESERVATION-CONFLICT";
     public const string ResourceLeaseActive = "EXP-RESOURCE-LEASE-ACTIVE";
+    public const string SampleNotRegistered = "EXP-SAMPLE-NOT-REGISTERED";
+    public const string SampleBatchMismatch = "EXP-SAMPLE-BATCH-MISMATCH";
+    public const string SampleAlreadyBound = "EXP-SAMPLE-ALREADY-BOUND";
 }
 
 public enum ExperimentPlanValidationSeverity

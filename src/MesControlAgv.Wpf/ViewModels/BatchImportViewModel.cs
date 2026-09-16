@@ -96,9 +96,11 @@ public sealed class ControlCenterViewModel
 {
     public ControlCenterViewModel(
         WorkflowEditorViewModel workflowEditor,
+        IMesClient mes,
         ControlCenterModuleRegistry? moduleRegistry = null)
     {
         Workflow = workflowEditor ?? throw new ArgumentNullException(nameof(workflowEditor));
+        SampleManagement = new SampleManagementViewModel(mes ?? throw new ArgumentNullException(nameof(mes)));
         ModuleRegistry = moduleRegistry ?? ControlCenterModuleRegistry.CreateStandard();
     }
 
@@ -107,6 +109,7 @@ public sealed class ControlCenterViewModel
     public TaskMonitorViewModel TaskMonitor { get; } = new();
     public AgvCommunicationViewModel AgvCommunication { get; } = new();
     public BatchImportViewModel BatchImport { get; } = new();
+    public SampleManagementViewModel SampleManagement { get; }
     public KpiDashboardViewModel KpiDashboard { get; } = new();
     public WorkflowEditorViewModel Workflow { get; }
 }

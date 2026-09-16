@@ -1,0 +1,104 @@
+<UserControl x:Class="MesControlAgv.Wpf.Views.SampleManagementView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:MesControlAgv.Wpf"
+             HorizontalContentAlignment="Stretch"
+             VerticalContentAlignment="Stretch">
+    <Grid Margin="0,12,0,0">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="170" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <DockPanel Margin="0,0,0,12">
+            <StackPanel DockPanel.Dock="Left">
+                <TextBlock FontSize="22" FontWeight="SemiBold" Text="样品管理" />
+                <TextBlock Margin="0,4,0,0" Foreground="Gray"
+                           Text="支持扫码登记和 CSV/XLSX 模板导入；记录样品库位、RunId、设备操作和异常履历。" />
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button Margin="6,0,0,0" Padding="12,6" Click="ImportFile_Click" Content="导入 CSV/XLSX" />
+                <Button Margin="6,0,0,0" Padding="12,6" Command="{Binding RefreshCommand}" Content="刷新" />
+            </StackPanel>
+        </DockPanel>
+
+        <Border Grid.Row="1" Padding="10" Margin="0,0,0,12" Background="#F6F8FA"
+                BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="4">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="110" />
+                    <ColumnDefinition Width="170" />
+                    <ColumnDefinition Width="110" />
+                    <ColumnDefinition Width="170" />
+                    <ColumnDefinition Width="110" />
+                    <ColumnDefinition Width="170" />
+                    <ColumnDefinition Width="110" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock VerticalAlignment="Center" Text="样品 ID" />
+                <TextBox Grid.Column="1" Margin="4,0,12,0" Text="{Binding SampleId, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Grid.Column="2" VerticalAlignment="Center" Text="条码" />
+                <TextBox Grid.Column="3" Margin="4,0,12,0" Text="{Binding Barcode, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Grid.Column="4" VerticalAlignment="Center" Text="批次" />
+                <TextBox Grid.Column="5" Margin="4,0,12,0" Text="{Binding SampleBatchId, UpdateSourceTrigger=PropertyChanged}" />
+                <TextBlock Grid.Column="6" VerticalAlignment="Center" Text="来源库位" />
+                <TextBox Grid.Column="7" Margin="4,0,12,0" Text="{Binding SourceLocation, UpdateSourceTrigger=PropertyChanged}" />
+                <Button Grid.Column="8" Padding="12,5" Command="{Binding RegisterCommand}" Content="扫码/登记" />
+            </Grid>
+        </Border>
+
+        <DataGrid Grid.Row="2" ItemsSource="{Binding Samples}"
+                  SelectedItem="{Binding SelectedSample, Mode=TwoWay}"
+                  AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True"
+                  Margin="0,0,0,12" ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                  ScrollViewer.VerticalScrollBarVisibility="Auto">
+            <DataGrid.Columns>
+                <DataGridTextColumn Width="1.2*" Header="样品 ID" Binding="{Binding SampleId}" />
+                <DataGridTextColumn Width="1.2*" Header="条码" Binding="{Binding Barcode}" />
+                <DataGridTextColumn Width="1*" Header="批次" Binding="{Binding SampleBatchId}" />
+                <DataGridTextColumn Width="1.2*" Header="当前库位" Binding="{Binding CurrentLocation}" />
+                <DataGridTextColumn Width="1.2*" Header="当前设备" Binding="{Binding LastDeviceId}" />
+                <DataGridTextColumn Width="0.9*" Header="状态" Binding="{Binding Status}" />
+                <DataGridTextColumn Width="1.5*" Header="RunId" Binding="{Binding RunId}" />
+                <DataGridTextColumn Width="1.3*" Header="更新时间" Binding="{Binding UpdatedAtUtc}" />
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <Grid Grid.Row="3">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.15*" />
+                <ColumnDefinition Width="1*" />
+            </Grid.ColumnDefinitions>
+            <Border Padding="10" Background="#F6F8FA" BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="4">
+                <StackPanel>
+                    <TextBlock FontWeight="SemiBold" Text="查询/绑定运行" />
+                    <WrapPanel Margin="0,8,0,0">
+                        <TextBox Width="180" Text="{Binding QueryText, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button Margin="6,0,0,0" Padding="10,4" Command="{Binding QueryCommand}" Content="查询" />
+                        <TextBox Width="260" Margin="16,0,0,0" Text="{Binding RunIdText, UpdateSourceTrigger=PropertyChanged}" />
+                        <Button Margin="6,0,0,0" Padding="10,4" Command="{Binding BindRunCommand}" Content="绑定 RunId" />
+                    </WrapPanel>
+                    <TextBlock Margin="0,8,0,0" Foreground="Gray" Text="选中一条记录后输入 RunId，可补绑流程运行。" />
+                </StackPanel>
+            </Border>
+            <Border Grid.Column="1" Margin="12,0,0,0" Padding="10" Background="#FFF8E1"
+                    BorderBrush="#E8C35A" BorderThickness="1" CornerRadius="4">
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <TextBlock FontWeight="SemiBold" Text="导入问题/操作状态" />
+                        <TextBlock Margin="0,6,0,0" Text="{Binding StatusMessage}" TextWrapping="Wrap" />
+                        <ItemsControl Margin="0,6,0,0" ItemsSource="{Binding ImportIssues}" />
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Grid>
+
+        <Border Grid.Row="4" Margin="0,10,0,0" Padding="4" Background="#F6F8FA">
+            <TextBlock Foreground="Gray" Text="{Binding OfflineState.StateText, StringFormat=数据状态：{0}}" />
+        </Border>
+    </Grid>
+</UserControl>

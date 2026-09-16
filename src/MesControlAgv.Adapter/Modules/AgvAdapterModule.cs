@@ -127,10 +127,30 @@ public sealed class AgvAdapterModule : IDeviceAdapterModule
         await database.Database.EnsureCreatedAsync(cancellationToken);
         await AddColumnIfMissingAsync(database, "AgvId", cancellationToken);
         await AddColumnIfMissingAsync(database, "PathJson", cancellationToken);
+        await database.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS TaskManualClosures (
+                TaskId TEXT NOT NULL CONSTRAINT PK_TaskManualClosures PRIMARY KEY,
+                RequestId TEXT NOT NULL, RequestJson TEXT NOT NULL, ResultJson TEXT NOT NULL);
+            CREATE UNIQUE INDEX IF NOT EXISTS IX_TaskManualClosures_RequestId ON TaskManualClosures (RequestId);
+            """, cancellationToken);
     }
 
     public void MapEndpoints(IEndpointRouteBuilder endpoints)
     {
+        // Internal MES coordination only; user permissions are checked at the MES boundary.
+        endpoints.MapPost("/field-navigation-acceptances/{taskId:guid}/manual-close", async (
+            Guid taskId, FieldNavigationManualCloseCommand request, HttpContext context,
+            AdapterService service, CancellationToken ct) =>
+        {
+            if (context.Connection.RemoteIpAddress is not { } address || !System.Net.IPAddress.IsLoopback(address))
+                return Results.StatusCode(StatusCodes.Status403Forbidden);
+            try { return Results.Ok(await service.CloseUnconfirmedNavigationAsync(taskId, request, ct)); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { detail = ex.Message }); }
+            catch (KeyNotFoundException ex) { return Results.NotFound(new { detail = ex.Message }); }
+            catch (InvalidOperationException ex) { return Results.Conflict(new { detail = ex.Message }); }
+            catch (Exception ex) when (ex is IOException or SocketException or TimeoutException)
+            { return Results.Problem(detail: ex.Message, statusCode: StatusCodes.Status503ServiceUnavailable); }
+        });
         endpoints.MapPost("/tasks/{taskId:guid}/dispatch", async (
             Guid taskId,
             AdapterAgvDispatchRequest request,

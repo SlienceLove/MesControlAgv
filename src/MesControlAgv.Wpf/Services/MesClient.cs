@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using MesControlAgv.Contracts;
 using MesControlAgv.Contracts.Experiments;
+using MesControlAgv.Contracts.Samples;
 using MesControlAgv.Contracts.Workflows;
 using ContractAgvSnapshot = MesControlAgv.Contracts.AgvSnapshotResponse;
 using ContractAgvFleetStatus = MesControlAgv.Contracts.AgvFleetStatusResponse;
@@ -133,6 +134,98 @@ public sealed class MesClient(HttpClient client) : IMesClient
             status.Error,
             error.Error,
             tasks.Error);
+    }
+
+    public async Task<IReadOnlyList<SampleRecordResponse>> GetSamplesAsync(
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync($"api/samples?limit={Math.Clamp(limit, 1, 500)}", cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<List<SampleRecordResponse>>(cancellationToken) ?? [];
+    }
+
+    public async Task<SampleRecordResponse?> GetSampleAsync(
+        string sampleIdOrBarcode,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sampleIdOrBarcode);
+        using var response = await client.GetAsync(
+            $"api/samples/{Uri.EscapeDataString(sampleIdOrBarcode)}",
+            cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<SampleRecordResponse>(cancellationToken);
+    }
+
+    public async Task<SampleRecordResponse> RegisterSampleAsync(
+        RegisterSampleRequest request,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.PostAsJsonAsync("api/samples", request, cancellationToken);
+        await EnsureSampleSuccessAsync(response, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<SampleRecordResponse>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no sample registration result.");
+    }
+
+    public async Task<ImportSamplesResponse> ImportSamplesAsync(
+        ImportSamplesRequest request,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.PostAsJsonAsync("api/samples/import", request, cancellationToken);
+        await EnsureSampleSuccessAsync(response, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<ImportSamplesResponse>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no sample import result.");
+    }
+
+    public async Task<SampleRecordResponse> BindSampleRunAsync(
+        string sampleIdOrBarcode,
+        BindSampleRunRequest request,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sampleIdOrBarcode);
+        using var response = await client.PostAsJsonAsync(
+            $"api/samples/{Uri.EscapeDataString(sampleIdOrBarcode)}/bind-run",
+            request,
+            cancellationToken);
+        await EnsureSampleSuccessAsync(response, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<SampleRecordResponse>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no sample run-binding result.");
+    }
+
+    public async Task<IReadOnlyList<SampleEventResponse>> GetSampleEventsAsync(
+        string sampleIdOrBarcode,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sampleIdOrBarcode);
+        using var response = await client.GetAsync(
+            $"api/samples/{Uri.EscapeDataString(sampleIdOrBarcode)}/events",
+            cancellationToken);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<List<SampleEventResponse>>(cancellationToken) ?? [];
+    }
+
+    private static async Task EnsureSampleSuccessAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        if (response.IsSuccessStatusCode) return;
+
+        string? detail = null;
+        try
+        {
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
+            if (body.ValueKind == JsonValueKind.Object && body.TryGetProperty("detail", out var detailElement))
+                detail = detailElement.GetString();
+        }
+        catch (JsonException)
+        {
+        }
+
+        throw new InvalidOperationException(
+            string.IsNullOrWhiteSpace(detail)
+                ? $"MES rejected the sample request (HTTP {(int)response.StatusCode})."
+                : detail);
     }
 
     private async Task<WorkstationSectionResult<T>> ReadWorkstationSectionAsync<T>(

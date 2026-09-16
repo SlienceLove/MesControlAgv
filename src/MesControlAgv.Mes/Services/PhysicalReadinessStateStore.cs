@@ -1,5 +1,6 @@
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
+using MesControlAgv.Contracts.Workflows;
 
 namespace MesControlAgv.Mes.Services;
 
@@ -349,7 +350,8 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
             var canStabilize = probeTrusted && online &&
                                fullPreflightSatisfied && reasons.Count == 0;
 
-            // An observed active task or temporary obstacle is a scheduling
+            // Active tasks, temporary obstacles and normal workstation busy
+            // states are scheduling
             // blocker, not a new controller session. Keeping the epoch lets an
             // authorized multi-step workflow continue after the condition is
             // clear. Every other departure from Ready is fail-closed and
@@ -362,7 +364,10 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
                 string.Equals(
                     reason,
                     PhysicalReadinessReasonCodes.TemporaryObstacle,
-                    StringComparison.Ordinal));
+                    StringComparison.Ordinal) ||
+                (descriptor.DeviceFamily == WorkflowDeviceFamilyIds.SampleWorkstation &&
+                    reason is "sample_workstation_state_running" or "sample_workstation_state_initializing" or
+                        "sample_workstation_state_paused"));
             if (previous.State == PhysicalDeviceReadinessState.Ready &&
                 !canStabilize &&
                 !sessionBoundary &&

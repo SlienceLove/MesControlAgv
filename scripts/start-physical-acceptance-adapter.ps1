@@ -336,6 +336,8 @@ $environmentVariables = @{
     'Agv__Tcp__PushPort' = [string]$AgvPushPort
     'Agv__Tcp__AcquireControl' = if ($ExpectedRunMode -eq 'standard') { 'true' } else { 'false' }
     'Agv__Tcp__EnablePush' = 'false'
+    # Workflow permits use the separate field-navigation path, which performs
+    # fresh pre/post-acquisition map checks. Generic dispatch stays disabled.
     'Profile__features__enableAutomaticDispatch' = 'false'
     'Profile__features__enableFieldNavigationAcceptance' = if ($EnableFieldNavigationAcceptance) { 'true' } else { 'false' }
     'Profile__features__enableTaskCancellation' = 'false'

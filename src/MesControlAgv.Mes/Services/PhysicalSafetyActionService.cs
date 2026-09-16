@@ -542,8 +542,11 @@ public sealed class PhysicalSafetyActionService(
             return "AGV is offline.";
         var expectedOwner = profile.PhysicalAcceptance?.ExpectedControlOwner;
         if (string.IsNullOrWhiteSpace(expectedOwner)) expectedOwner = "adapter";
-        if (!string.Equals(snapshot.ControlOwner, expectedOwner, StringComparison.OrdinalIgnoreCase))
-            return $"AGV control owner is '{snapshot.ControlOwner}', expected '{expectedOwner}'.";
+        // The Adapter maps its own controller nickname to the role "adapter".
+        // ExpectedControlOwner is a controller-side name, not this snapshot role.
+        if (!string.Equals(snapshot.ControlOwner, "adapter", StringComparison.OrdinalIgnoreCase))
+            return $"AGV control owner is '{snapshot.ControlOwner}', expected 'adapter' " +
+                   $"(configured controller owner: '{expectedOwner}').";
         if (snapshot.CurrentTaskId is not null)
             return "AGV has an active controller task.";
 

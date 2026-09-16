@@ -11,7 +11,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace MesControlAgv.Adapter.Services;
 
-public sealed class AdapterService
+public sealed partial class AdapterService
 {
     private static readonly object DispatchGatesLock = new();
     private static readonly Dictionary<Guid, DispatchGate> DispatchGates = new();
@@ -162,6 +162,8 @@ public sealed class AdapterService
     {
         EnsureMutationIsAllowed("field-navigation dispatch");
         ArgumentNullException.ThrowIfNull(command);
+        if (await FindManualClosureAsync(acceptanceId, cancellationToken) is not null)
+            throw new InvalidOperationException("This task was manually closed and cannot be dispatched again.");
         EnsureDeviceControlEnabled(command.AgvId);
         if (_profile.PhysicalAcceptance is null)
             throw new InvalidOperationException("Field navigation acceptance requires a physical acceptance profile.");
@@ -289,6 +291,8 @@ public sealed class AdapterService
             }
 
             var existing = await _database.Tasks.FindAsync([taskId], cancellationToken);
+            if (await FindManualClosureAsync(taskId, cancellationToken) is not null)
+                throw new InvalidOperationException("This task was manually closed and cannot be dispatched again.");
             if (existing is not null && (existing.State != "failed" || waited))
             {
                 var existingSnapshot = await GetSnapshotAsync(existing.AgvId, cancellationToken);
@@ -468,10 +472,16 @@ public sealed class AdapterService
         }
     }
 
-    public async Task<AgvTaskResponse?> GetAsync(Guid taskId, CancellationToken cancellationToken)
+    public Task<AgvTaskResponse?> GetAsync(Guid taskId, CancellationToken cancellationToken) =>
+        _physicalSessionGate.RunAsync(() => GetCoreAsync(taskId, cancellationToken), cancellationToken);
+
+    private async Task<AgvTaskResponse?> GetCoreAsync(Guid taskId, CancellationToken cancellationToken)
     {
         var task = await _database.Tasks.FindAsync([taskId], cancellationToken);
         if (task is null) return null;
+        await _database.Entry(task).ReloadAsync(cancellationToken);
+        if (await FindManualClosureAsync(taskId, cancellationToken) is not null)
+            return ToResponse(task);
 
         var path = DeserializePath(task.PathJson);
         var deviceTask = await GetTaskFromDeviceAsync(task.AgvId, taskId, path, cancellationToken);
@@ -594,6 +604,7 @@ public sealed class AdapterService
         string? expectedAgvId = null)
     {
         EnsureMutationIsAllowed("pause");
+        await RejectManuallyClosedTaskAsync(taskId, cancellationToken);
         var task = await _database.Tasks.FindAsync([taskId], cancellationToken);
         if (task is null) return null;
         EnsureTaskBelongsToAgv(task, expectedAgvId);
@@ -621,6 +632,7 @@ public sealed class AdapterService
         string? expectedAgvId = null)
     {
         EnsureMutationIsAllowed("resume");
+        await RejectManuallyClosedTaskAsync(taskId, cancellationToken);
         var task = await _database.Tasks.FindAsync([taskId], cancellationToken);
         if (task is null) return null;
         EnsureTaskBelongsToAgv(task, expectedAgvId);
@@ -652,6 +664,7 @@ public sealed class AdapterService
         string? expectedAgvId = null)
     {
         EnsureMutationIsAllowed("cancellation");
+        await RejectManuallyClosedTaskAsync(taskId, cancellationToken);
         var task = await _database.Tasks.FindAsync([taskId], cancellationToken);
         if (task is null) return null;
         EnsureTaskBelongsToAgv(task, expectedAgvId);

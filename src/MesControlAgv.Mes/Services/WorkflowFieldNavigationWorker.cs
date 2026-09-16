@@ -1,5 +1,8 @@
+using System.Globalization;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
+using MesControlAgv.Contracts.Devices;
+using MesControlAgv.Contracts.Samples;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Mes.Entities;
@@ -80,7 +83,8 @@ public sealed class WorkflowFieldNavigationDispatcher(
     ILogger? logger = null,
     WorkflowFieldNavigationRetryState? retryState = null,
     IPhysicalReadinessState? physicalReadiness = null,
-    PhysicalSafetyActionService? safetyActions = null)
+    PhysicalSafetyActionService? safetyActions = null,
+    SampleManagementService? sampleManagement = null)
 {
     private enum FinalMoveTopology
     {
@@ -109,6 +113,7 @@ public sealed class WorkflowFieldNavigationDispatcher(
     private readonly ILogger? _logger = logger;
     private readonly WorkflowFieldNavigationRetryState? _retryState = retryState;
     private readonly IPhysicalReadinessState? _physicalReadiness = physicalReadiness;
+    private readonly SampleManagementService? _sampleManagement = sampleManagement;
 
     public async Task ProcessAsync(CancellationToken cancellationToken)
     {
@@ -558,9 +563,9 @@ public sealed class WorkflowFieldNavigationDispatcher(
                 continue;
             }
 
-            if (!await HasCurrentSupervisorEpochForRecoveryAsync(
-                    workItem,
-                    cancellationToken))
+            if (!(recovery
+                    ? await HasCurrentSupervisorEpochForRecoveryAsync(workItem, acceptance, cancellationToken)
+                    : await CanObserveCurrentTaskAsync(workItem, acceptance, cancellationToken)))
             {
                 continue;
             }
@@ -592,6 +597,7 @@ public sealed class WorkflowFieldNavigationDispatcher(
 
     private async Task<bool> HasCurrentSupervisorEpochForRecoveryAsync(
         WorkflowNodeExecutionWorkItem workItem,
+        FieldNavigationAcceptance acceptance,
         CancellationToken cancellationToken)
     {
         if (_physicalReadiness is not { Enabled: true } readiness)
@@ -639,9 +645,64 @@ public sealed class WorkflowFieldNavigationDispatcher(
             workItem,
             WorkflowStepCompletionOutcome.Unknown,
             error,
-            null,
+            acceptance,
             cancellationToken);
         return false;
+    }
+
+    private async Task<bool> CanObserveCurrentTaskAsync(
+        WorkflowNodeExecutionWorkItem workItem,
+        FieldNavigationAcceptance acceptance,
+        CancellationToken cancellationToken)
+    {
+        // Commissioning: an already dispatched task is observed, not admitted
+        // again. Map/Ready/authorization-version gates remain at NEW writes and
+        // restart recovery, never on each ordinary task-status poll.
+        var request = await workflows.GetExecutionRequestAsync(workItem.NodeExecution.WorkflowRunId, cancellationToken);
+        var device = _physicalReadiness?.GetSnapshot().Devices.FirstOrDefault(item =>
+            string.Equals(item.DeviceId, acceptance.AgvId, StringComparison.OrdinalIgnoreCase));
+        var identityMismatch = !acceptance.PermitConsumedAtUtc.HasValue ||
+            !string.Equals(acceptance.AgvId, request?.PhysicalAuthorization?.AgvId, StringComparison.OrdinalIgnoreCase) ||
+            (acceptance.Status is (FieldNavigationAcceptanceStatuses.Accepted or FieldNavigationAcceptanceStatuses.Moving or
+                FieldNavigationAcceptanceStatuses.Arrived) && string.IsNullOrWhiteSpace(acceptance.DeviceTaskId)) ||
+            (device?.ActiveTaskId is { } taskId && taskId != acceptance.Id) ||
+            (!string.IsNullOrWhiteSpace(device?.ActiveDeviceTaskId) &&
+                !string.Equals(device.ActiveDeviceTaskId, acceptance.DeviceTaskId, StringComparison.Ordinal)) ||
+            (device?.ActiveTaskId == acceptance.Id && !string.IsNullOrWhiteSpace(device.ActiveTaskTargetStationId) &&
+                !string.Equals(device.ActiveTaskTargetStationId, acceptance.TargetStationId, StringComparison.OrdinalIgnoreCase));
+        var hardStop = device?.Emergency == true || device?.FatalCount > 0 || device?.ErrorCount > 0 ||
+            device?.BlockingReasons.Contains("controller_faults_active", StringComparer.Ordinal) == true;
+        if (identityMismatch || hardStop)
+        {
+            await CompleteWithEntityAsync(workItem, WorkflowStepCompletionOutcome.Unknown,
+                identityMismatch ? "The current AGV task identity does not match the linked workflow operation; no command was replayed."
+                    : "The AGV reports an emergency or controller fault; no next action was dispatched.",
+                acceptance, cancellationToken);
+            return false;
+        }
+
+        // A temporary obstacle is a wait, not an uncertain command outcome.
+        // Explicit terminal failures still flow through their original result.
+        if (acceptance.Status is FieldNavigationAcceptanceStatuses.Dispatching or
+            FieldNavigationAcceptanceStatuses.Accepted or FieldNavigationAcceptanceStatuses.Moving)
+        {
+            var seconds = workItem.NodeExecution.Inputs.TryGetValue(WorkflowNodeConfigurationKeys.TimeoutSeconds, out var value) &&
+                double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var configured) &&
+                double.IsFinite(configured) && configured > 0 ? configured : 300;
+            if (workItem.NodeExecution.StartedAt is { } started &&
+                _timeProvider.GetUtcNow() - started >= TimeSpan.FromSeconds(seconds))
+            {
+                await CompleteWithEntityAsync(workItem, WorkflowStepCompletionOutcome.Unknown,
+                    "AGV task result was not confirmed before the node observation timeout; no command was replayed.",
+                    acceptance, cancellationToken);
+                return false;
+            }
+        }
+        // A durable matching arrival completes an intermediate Move even if
+        // the observer still holds an earlier obstacle flag. Final release has
+        // its own new-write admission check in CompleteArrivedAsync.
+        return device?.Blocked != true || acceptance.Status is FieldNavigationAcceptanceStatuses.Arrived or FieldNavigationAcceptanceStatuses.Failed or
+            FieldNavigationAcceptanceStatuses.Cancelled or FieldNavigationAcceptanceStatuses.Unknown;
     }
 
     private bool CanRun() =>
@@ -729,6 +790,14 @@ public sealed class WorkflowFieldNavigationDispatcher(
                 cancellationToken);
             return;
         }
+
+        // Release is a NEW control write, unlike recording an intermediate
+        // arrival. Wait for its admission rather than converting Stabilizing
+        // into Unknown or attempting a release that must be rejected.
+        if (_physicalReadiness is not { Enabled: true } readiness ||
+            !readiness.IsCurrentAndReady(acceptance.AgvId, acceptance.DeviceEpoch,
+                acceptance.ReadinessSupervisorInstanceId, out _))
+            return;
 
         // Release before recording the final workflow outcome. The active-run
         // gate therefore remains occupied while cleanup is in progress. A
@@ -1039,7 +1108,7 @@ public sealed class WorkflowFieldNavigationDispatcher(
             acceptance is null ? null : ToResponse(acceptance),
             cancellationToken);
 
-    private Task<WorkflowExecutionSnapshot> CompleteAsync(
+    private async Task<WorkflowExecutionSnapshot> CompleteAsync(
         WorkflowNodeExecutionWorkItem workItem,
         WorkflowStepCompletionOutcome outcome,
         string? error,
@@ -1056,16 +1125,57 @@ public sealed class WorkflowFieldNavigationDispatcher(
                 ? _timeProvider.GetUtcNow().ToString("O")
                 : null
         };
-        return workflows.CompleteNodeExecutionAsync(
+        var completed = await workflows.CompleteNodeExecutionAsync(
             workItem.NodeExecution.Id,
             new WorkflowNodeExecutionCompletionRequest
             {
                 DeviceOperationId = workItem.DeviceOperation?.OperationId,
                 Outcome = outcome,
                 Error = error,
+                UnknownReason = outcome == WorkflowStepCompletionOutcome.Unknown
+                    ? UnknownReason.ManualReconciliationRequired
+                    : null,
                 Outputs = outputs
             },
             cancellationToken);
+
+        if (outcome == WorkflowStepCompletionOutcome.Succeeded &&
+            _sampleManagement is not null &&
+            workItem.DeviceOperation is { } operation &&
+            acceptance is { TargetStationId: { Length: > 0 } targetStation } &&
+            workItem.NodeExecution.Inputs.TryGetValue(WorkflowRuntimeParameterNames.SampleId, out var sampleId) &&
+            !string.IsNullOrWhiteSpace(sampleId))
+        {
+            try
+            {
+                await _sampleManagement.MoveAsync(
+                    sampleId,
+                    new MoveSampleRequest
+                    {
+                        OperationId = operation.OperationId,
+                        DeviceId = acceptance.AgvId,
+                        ToLocation = targetStation,
+                        OperatorName = string.IsNullOrWhiteSpace(acceptance.OperatorName)
+                            ? "workflow-runtime"
+                            : acceptance.OperatorName,
+                        Status = SampleLifecycleStatus.InTransit
+                    },
+                    cancellationToken);
+            }
+            catch (Exception exception) when (exception is ArgumentException or InvalidOperationException or DbUpdateException)
+            {
+                // Device completion remains authoritative.  A missing sample
+                // registration is surfaced in logs and can be reconciled from
+                // the durable workflow operation without replaying AGV motion.
+                _logger?.LogWarning(
+                    exception,
+                    "Sample custody update was not recorded after successful AGV operation {OperationId} for workflow {WorkflowRunId}.",
+                    operation.OperationId,
+                    workItem.NodeExecution.WorkflowRunId);
+            }
+        }
+
+        return completed;
     }
 
     private static FieldNavigationAcceptanceResponse ToResponse(FieldNavigationAcceptance acceptance) => new(
@@ -1128,7 +1238,8 @@ public sealed class WorkflowFieldNavigationWorker(
                 logger,
                 retryState,
                 recoveryScope.ServiceProvider.GetService<IPhysicalReadinessState>(),
-                recoveryScope.ServiceProvider.GetService<PhysicalSafetyActionService>());
+                recoveryScope.ServiceProvider.GetService<PhysicalSafetyActionService>(),
+                recoveryScope.ServiceProvider.GetService<SampleManagementService>());
             await recoveryDispatcher.RecoverAsync(stoppingToken);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -1159,7 +1270,8 @@ public sealed class WorkflowFieldNavigationWorker(
                     logger,
                     retryState,
                     scope.ServiceProvider.GetService<IPhysicalReadinessState>(),
-                    scope.ServiceProvider.GetService<PhysicalSafetyActionService>());
+                    scope.ServiceProvider.GetService<PhysicalSafetyActionService>(),
+                    scope.ServiceProvider.GetService<SampleManagementService>());
                 await dispatcher.ProcessAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)

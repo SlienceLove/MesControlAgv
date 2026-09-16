@@ -20,7 +20,9 @@ public enum WorkflowRunControlAction
 public enum WorkflowUnknownResolutionOutcome
 {
     ConfirmedSucceeded,
-    ConfirmedFailed
+    ConfirmedFailed,
+    /// <summary>Record a linked AGV arrival and terminate the remaining run without dispatch or release.</summary>
+    ConfirmedArrivedAndCancel
 }
 
 /// <summary>

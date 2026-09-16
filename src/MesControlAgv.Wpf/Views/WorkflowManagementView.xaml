@@ -48,6 +48,7 @@
                             ToolTip="仅显式启用现场批量执行配置；需要一次总授权，执行中仍逐段复核安全状态" />
                 </StackPanel>
                 <WrapPanel x:Name="WorkflowCommandToolbar" Grid.Row="1" Margin="0,10,0,0" Orientation="Horizontal">
+                    <Button AutomationProperties.AutomationId="WorkflowHomingTemplateButton" Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.CreateHomingTemplateCommand}" Content="AGV+机械臂回原点联调" ToolTip="四段导航，三个机械臂节点统一执行回原点.pro；不运行待交付的仪器模块" />
                     <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.CreateAuboTemplateCommand}" Content="料盘四段标准模板" ToolTip="原点→站点1取料盘→站点2放料盘→站点1回收料盘→原点" />
                     <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.NewWorkflowCommand}" Content="新建流程" />
                     <Button Margin="6,0,0,0" Padding="14,7" Command="{Binding WorkflowEditor.CopyWorkflowCommand}" Content="复制" />
@@ -361,7 +362,7 @@
                                             <ColumnDefinition Width="88" />
                                             <ColumnDefinition Width="*" />
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock VerticalAlignment="Center" Foreground="#667085" Text="有效分钟(30+)" />
+                                        <TextBlock VerticalAlignment="Center" Foreground="#667085" Text="有效分钟(31+)" />
                                         <TextBox Grid.Column="1"
                                                  AutomationProperties.AutomationId="WorkflowPhysicalBatchPermitMinutesInput"
                                                  Text="{Binding WorkflowEditor.PhysicalBatchPermitMinutes, UpdateSourceTrigger=PropertyChanged}" />

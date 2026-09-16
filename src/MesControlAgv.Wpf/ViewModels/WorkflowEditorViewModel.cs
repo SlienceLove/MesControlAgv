@@ -139,6 +139,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
 
         NewWorkflowCommand = new EditorCommand(CreateWorkflow);
         CreateAuboTemplateCommand = new EditorCommand(CreateAuboTemplate);
+        CreateHomingTemplateCommand = new EditorCommand(() => CreateAuboTemplateCore(true));
         RefreshRobotProgramsCommand = new AsyncEditorCommand(
             () => RunRemoteAsync(
                 "刷新机械臂程序目录",
@@ -347,7 +348,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
             MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.ManualConfirmation,
             MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentReadStatus,
             MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable,
-            MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.RobotExecuteProgram
+            MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.RobotExecuteProgram,
+            MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.SampleWorkstationExecuteTemplate
         };
         return orderedIds.Select(nodeTypeId =>
         {
@@ -391,8 +393,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
             var requiresControl = capability.SafetyClassification is
                 MesControlAgv.Contracts.Workflows.WorkflowSafetyClassification.ControlledDeviceAction or
                 MesControlAgv.Contracts.Workflows.WorkflowSafetyClassification.RestrictedDeviceWrite;
-            if (requiresControl && !capability.ControlEnabled &&
-                !string.Equals(definition.NodeTypeId, MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.RobotExecuteProgram, StringComparison.OrdinalIgnoreCase))
+            var allowDesignTimeConfiguration = IsDesignTimeControlledNode(definition.NodeTypeId);
+            if (requiresControl && !capability.ControlEnabled && !allowDesignTimeConfiguration)
             {
                 reason = capability.UnavailableReason ?? $"目录能力 {capabilityId} 未启用控制。";
                 return false;
@@ -406,8 +408,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
             var providers = _publicationContext.GetDevices(capability.DeviceFamily)
                 .Where(device => device.Enabled && device.Provides(capabilityId));
             if (requiresControl) providers = providers.Where(device => device.ControlEnabled);
-            if (!providers.Any() &&
-                !string.Equals(definition.NodeTypeId, MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.RobotExecuteProgram, StringComparison.OrdinalIgnoreCase))
+            if (!providers.Any() && !allowDesignTimeConfiguration)
             {
                 reason = $"当前 Profile 没有可用设备提供 {capabilityId}.";
                 return false;
@@ -436,6 +437,16 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
         _ => WorkflowNodeType.Custom
     };
 
+    private static bool IsDesignTimeControlledNode(string nodeTypeId) =>
+        string.Equals(
+            nodeTypeId,
+            MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.RobotExecuteProgram,
+            StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(
+            nodeTypeId,
+            MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.SampleWorkstationExecuteTemplate,
+            StringComparison.OrdinalIgnoreCase);
+
     private static string LocalizeNodeType(string nodeTypeId, string fallback) => nodeTypeId switch
     {
         MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.Start => "开始",
@@ -445,6 +456,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
         MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.ManualConfirmation => "人工确认",
         MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentReadStatus => "仪器读取",
         MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable => "仪器稳定等待",
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.SampleWorkstationExecuteTemplate => "开盖分液模板执行",
         _ => fallback
     };
 
@@ -750,7 +762,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
     public bool IsPhysicalBatchExecutionEnabled => _physicalBatchExecutionEnabled;
 
     public string PhysicalBatchExecutionStatus => _physicalBatchExecutionEnabled
-        ? "现场一键执行已显式启用；仅限标准模板，有效期 30–1440 分钟，仍需 MES worker 和现场预检。"
+        ? "现场一键执行已显式启用；仅限标准模板，有效期 31–1440 分钟（含提交余量），仍需 MES worker 和现场预检。"
         : "现场一键执行默认关闭；完成现场预检后由启动配置显式启用。";
 
     public string PhysicalBatchSafetyObserverName
@@ -870,6 +882,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
 
     public ICommand NewWorkflowCommand { get; }
     public ICommand CreateAuboTemplateCommand { get; }
+    public ICommand CreateHomingTemplateCommand { get; }
     public ICommand RefreshRobotProgramsCommand { get; }
     public ICommand CopyWorkflowCommand { get; }
     public ICommand DeleteWorkflowCommand { get; }
@@ -914,7 +927,9 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
         Message = "已新建实验流程。";
     }
 
-    private void CreateAuboTemplate()
+    private void CreateAuboTemplate() => CreateAuboTemplateCore(false);
+
+    private void CreateAuboTemplateCore(bool homing)
     {
         var enabled = _profileConfiguration.Stations
             .Where(station => station.Enabled && !string.IsNullOrWhiteSpace(station.AgvStationId))
@@ -939,6 +954,9 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
             origin,
             station1,
             station2,
+            firstProgramName: homing ? "回原点.pro" : "取料盘.pro",
+            secondProgramName: homing ? "回原点.pro" : "放料盘.pro",
+            thirdProgramName: homing ? "回原点.pro" : "回收料盘.pro",
             armDeviceId: armDeviceId);
         var document = WorkflowDocumentMapper.ToGraph(template);
         _documents.Add(document);
@@ -946,6 +964,11 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
         _workflowProjections.Add(projection);
         SelectedWorkflow = projection;
         Message = $"已创建料盘标准模板：原点 {origin} → 站点1 {station1}（取料盘.pro）→ 站点2 {station2}（放料盘.pro）→ 站点1 {station1}（回收料盘.pro）→ 原点 {origin}。请只读刷新目录并确认三个实际程序名，发布前需现场开启机械臂控制权限。";
+        if (homing)
+        {
+            projection.Description = "AGV 四段导航联调；三个机械臂节点均仅执行回原点.pro，不执行取放料业务。";
+            Message = "已创建 AGV + AUBO 回原点联调模板：三个机械臂节点均执行回原点.pro；不包含厂家模块待交付设备。";
+        }
     }
 
     private static string? ResolveNumberedFieldStation(
@@ -1094,7 +1117,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
         !string.IsNullOrWhiteSpace(PhysicalBatchOperatorName) &&
         !string.IsNullOrWhiteSpace(PhysicalBatchSafetyObserverName) &&
         !string.IsNullOrWhiteSpace(PhysicalBatchPermitPrefix) &&
-        int.TryParse(PhysicalBatchPermitMinutes, out var minutes) && minutes is >= 30 and <= 1440;
+        int.TryParse(PhysicalBatchPermitMinutes, out var minutes) && minutes is >= 31 and <= 1440;
 
     private async Task RunRemoteAsync(string action, Func<Task> operation, CancellationToken cancellationToken)
     {
@@ -1405,7 +1428,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
             SelectedWorkflow is not { } workflow ||
             SelectedRemoteVersion is not { } version ||
             !int.TryParse(PhysicalBatchPermitMinutes, out var permitMinutes) ||
-            permitMinutes is < 30 or > 1440)
+            permitMinutes is < 31 or > 1440)
         {
             return;
         }
@@ -1413,11 +1436,10 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
         var operatorName = PhysicalBatchOperatorName.Trim();
         var observerName = PhysicalBatchSafetyObserverName.Trim();
         var permitPrefix = PhysicalBatchPermitPrefix.Trim();
-        var expiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(permitMinutes);
         if (!_confirmation.Confirm(
                 "确认一键现场执行",
                 $"将按已发布标准模板一次性提交完整现场流程，并由 MES 按节点顺序自动创建/授权 Move 许可。\n" +
-                $"操作者：{operatorName}\n安全监护人：{observerName}\n许可前缀：{permitPrefix}\n" +
+                $"操作者：{operatorName}\n安全监护人：{observerName}\n许可前缀：{permitPrefix}\n确认后有效分钟：{permitMinutes}\n" +
                 "现场 worker 会在每个 AGV/机械臂节点前重新读取设备状态；可恢复条件只重试只读检查，已发送但结果不明确的命令不会自动重发。确认继续？"))
         {
             return;
@@ -1425,6 +1447,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
 
         var agvId = _profileConfiguration.Agvs
             .FirstOrDefault(agv => agv.Enabled)?.AgvId ?? string.Empty;
+        // Time spent reading the confirmation must not consume the permit.
+        var expiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(permitMinutes);
         var result = await _mes.ExecuteWorkflowAsync(
             new ContractWorkflowExecutionRequest
             {
@@ -1514,6 +1538,10 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
 
         var expectedPrograms = new[] { "取料盘.pro", "放料盘.pro", "回收料盘.pro" };
         var programNodes = nodes.Where(node => node.Type == WorkflowNodeType.RobotProgram).ToArray();
+        if (programNodes.All(node => string.Equals(
+                ReadWorkflowNodeValue(node, ContractWorkflowNodeConfigurationKeys.ProgramName),
+                "回原点.pro", StringComparison.Ordinal)))
+            expectedPrograms = ["回原点.pro", "回原点.pro", "回原点.pro"];
         return programNodes.Select((node, index) => new
             {
                 DeviceId = ReadWorkflowNodeValue(node, ContractWorkflowNodeConfigurationKeys.DeviceId),

@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts.Experiments;
+using MesControlAgv.Contracts.Samples;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Entities;
@@ -20,7 +21,8 @@ public sealed class ExperimentRuntimeAdmissionService(
     ExperimentResourceCatalog resourceCatalog,
     ExperimentSchedulingMutationGate mutationGate,
     ExperimentRuntimeLeaseLifecycle leaseLifecycle,
-    TimeProvider timeProvider) : IExperimentRuntimeAdmissionService
+    TimeProvider timeProvider,
+    SampleManagementService sampleManagement) : IExperimentRuntimeAdmissionService
 {
     private const string AdmittedEventType = "ExperimentJobAdmitted";
     private const string RejectedEventType = "ExperimentJobAdmissionRejected";
@@ -158,6 +160,22 @@ public sealed class ExperimentRuntimeAdmissionService(
                     "The pinned workflow version rejected experiment admission.");
             }
 
+            // Bind the pre-registered sample to the newly-created workflow run
+            // before any device worker can claim a node. This keeps custody
+            // events correlated without requiring the operator to copy a RunId
+            // back into the sample page after admission.
+            if (!string.IsNullOrWhiteSpace(job.SampleId))
+            {
+                await sampleManagement.BindRunAsync(
+                    job.SampleId,
+                    new BindSampleRunRequest
+                    {
+                        RunId = workflowResult.ExecutionId,
+                        OperatorName = metadata.Actor
+                    },
+                    cancellationToken);
+            }
+
             var leaseExpiry = CalculateLeaseExpiry(schedule, now);
             var leases = plannedReservations.Select(reservation => new WorkflowResourceLeaseRecord
             {
@@ -250,6 +268,35 @@ public sealed class ExperimentRuntimeAdmissionService(
                 $"Experiment job '{job.JobId}' is not in Scheduled state or is already linked to a workflow run.",
                 Array.Empty<ExperimentResourceReference>());
         }
+
+        if (!string.IsNullOrWhiteSpace(job.SampleId))
+        {
+            var sample = await sampleManagement.GetAsync(job.SampleId, cancellationToken);
+            if (sample is null)
+            {
+                return new AdmissionRejection(
+                    ExperimentSchedulingIssueCodes.SampleNotRegistered,
+                    $"Sample '{job.SampleId}' must be registered before runtime admission.",
+                    Array.Empty<ExperimentResourceReference>());
+            }
+
+            if (!string.Equals(sample.SampleBatchId, job.SampleBatchId, StringComparison.OrdinalIgnoreCase))
+            {
+                return new AdmissionRejection(
+                    ExperimentSchedulingIssueCodes.SampleBatchMismatch,
+                    $"Sample '{sample.SampleId}' belongs to batch '{sample.SampleBatchId}', not '{job.SampleBatchId}'.",
+                    Array.Empty<ExperimentResourceReference>());
+            }
+
+            if (sample.RunId is { } existingRun && existingRun != Guid.Empty)
+            {
+                return new AdmissionRejection(
+                    ExperimentSchedulingIssueCodes.SampleAlreadyBound,
+                    $"Sample '{sample.SampleId}' is already bound to workflow run '{existingRun:D}'.",
+                    Array.Empty<ExperimentResourceReference>());
+            }
+        }
+
         if (schedules.Count != 1 || schedule is null ||
             ExperimentSchedulingPersistence.ParseStatus<ScheduleEntryStatus>(schedule.Status) !=
             ScheduleEntryStatus.Scheduled)

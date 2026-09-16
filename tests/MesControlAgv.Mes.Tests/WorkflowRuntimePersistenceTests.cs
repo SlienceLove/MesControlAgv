@@ -1,4 +1,5 @@
 ﻿using MesControlAgv.Application;
+using MesControlAgv.Contracts.Devices;
 using MesControlAgv.Contracts.Workflows;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -494,6 +495,7 @@ public sealed class WorkflowRuntimePersistenceTests
             {
                 TransportOperationId = secondClaim.TransportOperationId!.Value,
                 Outcome = WorkflowStepCompletionOutcome.Unknown,
+                UnknownReason = UnknownReason.IncompleteResponse,
                 Error = "adapter response was ambiguous"
             }, CancellationToken.None);
             Assert.Equal(WorkflowRuntimeStatus.Unknown, unknown.RuntimeStatus);

@@ -228,7 +228,10 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
         return ToResponse(acceptance);
     }
 
-    public async Task<FieldNavigationAcceptanceResponse> DispatchAsync(
+    public Task<FieldNavigationAcceptanceResponse> DispatchAsync(Guid acceptanceId, CancellationToken cancellationToken) =>
+        FieldNavigationAcceptanceGate.RunAsync(() => DispatchStandaloneCoreAsync(acceptanceId, cancellationToken), cancellationToken);
+
+    private async Task<FieldNavigationAcceptanceResponse> DispatchStandaloneCoreAsync(
         Guid acceptanceId,
         CancellationToken cancellationToken)
     {
@@ -243,7 +246,12 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
         return await DispatchCoreAsync(acceptance, cancellationToken);
     }
 
-    public async Task<FieldNavigationAcceptanceResponse> DispatchForWorkflowAsync(
+    public Task<FieldNavigationAcceptanceResponse> DispatchForWorkflowAsync(
+        Guid acceptanceId, Guid workflowNodeExecutionId, Guid workflowDeviceOperationId, CancellationToken cancellationToken) =>
+        FieldNavigationAcceptanceGate.RunAsync(() => DispatchWorkflowCoreAsync(
+            acceptanceId, workflowNodeExecutionId, workflowDeviceOperationId, cancellationToken), cancellationToken);
+
+    private async Task<FieldNavigationAcceptanceResponse> DispatchWorkflowCoreAsync(
         Guid acceptanceId,
         Guid workflowNodeExecutionId,
         Guid workflowDeviceOperationId,
@@ -415,14 +423,17 @@ public sealed class FieldNavigationAcceptanceService : IFieldNavigationAcceptanc
         return await CancelAsync(acceptanceId, acceptance.OperatorName, cancellationToken);
     }
 
-    public async Task<FieldNavigationAcceptanceResponse> CancelAsync(
+    public Task<FieldNavigationAcceptanceResponse> CancelAsync(Guid acceptanceId, string? operatorName, CancellationToken cancellationToken) =>
+        FieldNavigationAcceptanceGate.RunAsync(() => CancelStandaloneCoreAsync(acceptanceId, operatorName, cancellationToken), cancellationToken);
+
+    private async Task<FieldNavigationAcceptanceResponse> CancelStandaloneCoreAsync(
         Guid acceptanceId,
         string? operatorName,
         CancellationToken cancellationToken)
     {
         var actor = RequireValue(operatorName, nameof(operatorName));
         var acceptance = await RequireAcceptanceAsync(acceptanceId, cancellationToken);
-        if (acceptance.Status is FieldNavigationAcceptanceStatuses.Cancelled or
+        if (acceptance.Status is FieldNavigationAcceptanceStatuses.ManuallyClosed or FieldNavigationAcceptanceStatuses.Cancelled or
             FieldNavigationAcceptanceStatuses.Failed or
             FieldNavigationAcceptanceStatuses.Rejected or
             FieldNavigationAcceptanceStatuses.Expired)

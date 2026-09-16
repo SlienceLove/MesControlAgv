@@ -10,6 +10,21 @@ namespace MesControlAgv.Wpf.Tests;
 public sealed class WorkflowRunMonitorViewModelTests
 {
     [Fact]
+    public void Physical_warning_title_binds_to_actual_gate_state()
+    {
+        var root = new System.IO.DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !System.IO.Directory.Exists(System.IO.Path.Combine(root.FullName, "src", "MesControlAgv.Wpf")))
+            root = root.Parent;
+        Assert.NotNull(root);
+        var document = System.Xml.Linq.XDocument.Load(System.IO.Path.Combine(root.FullName,
+            "src", "MesControlAgv.Wpf", "WorkflowCanvas", "WorkflowRunMonitorView.xaml"));
+        var title = Assert.Single(document.Descendants().Where(element => element.Attributes().Any(attribute =>
+            attribute.Name.LocalName == "AutomationProperties.AutomationId" &&
+            attribute.Value == "WorkflowPhysicalGateWarningTitle")));
+        Assert.Equal("{Binding PhysicalGateStatus}", title.Attribute("Text")?.Value);
+    }
+
+    [Fact]
     public async Task Load_projects_the_pinned_graph_and_preserves_the_runtime_viewport_on_refresh()
     {
         var fixture = WorkflowRunMonitorFixture.Create();
@@ -413,7 +428,7 @@ public sealed class WorkflowRunMonitorViewModelTests
     }
 
     [Fact]
-    public async Task Unknown_resolution_has_two_explicit_conclusions_and_confirmed_success_never_calls_retry()
+    public async Task Unknown_resolution_confirmed_success_never_calls_retry()
     {
         var fixture = WorkflowRunMonitorFixture.Create();
         var client = new WorkflowRunMonitorClientStub(fixture)
@@ -461,6 +476,35 @@ public sealed class WorkflowRunMonitorViewModelTests
         Assert.Null(monitor.CanvasViewModel);
         Assert.Empty(monitor.Nodes);
         Assert.False(monitor.IsBusy);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Arrival_close_requires_cancel_permission_and_sends_distinct_noncontinuing_outcome(bool canCancel)
+    {
+        var fixture = WorkflowRunMonitorFixture.Create();
+        var client = new WorkflowRunMonitorClientStub(fixture)
+        {
+            Run = fixture.Run with { RuntimeStatus = WorkflowRuntimeStatus.Unknown },
+            Nodes = [fixture.NodeExecution with { Status = WorkflowNodeExecutionStatus.Unknown }],
+            DeviceOperations = [fixture.DeviceOperation with { Status = WorkflowDeviceOperationStatus.Unknown }],
+            GrantedPermissions = canCancel
+                ? [WorkflowRunControlPermissions.ResolveUnknown, WorkflowRunControlPermissions.Cancel]
+                : [WorkflowRunControlPermissions.ResolveUnknown]
+        };
+        var confirmation = new WorkflowRunControlConfirmationStub();
+        var monitor = new WorkflowRunMonitorViewModel(client, confirmation);
+        await monitor.LoadAsync(fixture.Run.ExecutionId);
+        monitor.ControlReason = "Verified arrival; end old run without dispatch";
+        Assert.Equal(canCancel, monitor.ResolveArrivedAndCancelCommand.CanExecute(null));
+        if (!canCancel) return;
+        monitor.ResolveArrivedAndCancelCommand.Execute(null);
+        await WaitUntilAsync(() => client.UnknownResolutionRequests.Count == 1 && !monitor.IsBusy);
+        Assert.Equal(WorkflowUnknownResolutionOutcome.ConfirmedArrivedAndCancel,
+            Assert.Single(client.UnknownResolutionRequests).Outcome);
+        Assert.Contains("不会派发后续动作", Assert.Single(confirmation.Messages), StringComparison.Ordinal);
+        Assert.Equal(WorkflowRuntimeStatus.Cancelled, monitor.Run!.RuntimeStatus);
     }
 
     [Fact]
@@ -724,6 +768,77 @@ public sealed class WorkflowRunMonitorViewModelTests
     }
 
     [Fact]
+    public async Task Unknown_physical_run_does_not_promise_automatic_continuation()
+    {
+        var fixture = WorkflowRunMonitorFixture.Create();
+        var client = new WorkflowRunMonitorClientStub(fixture)
+        {
+            Run = fixture.Run with { RuntimeStatus = WorkflowRuntimeStatus.Unknown, LastError = "device_epoch_mismatch" }
+        };
+        var monitor = new WorkflowRunMonitorViewModel(client, physicalRuntime: true);
+        await monitor.LoadAsync(fixture.Run.ExecutionId);
+        Assert.Contains("人工核对", monitor.PhysicalGateStatus);
+        Assert.Contains("不会自动", monitor.PhysicalGateWarning);
+        Assert.DoesNotContain("条件恢复后将继续", monitor.PhysicalGateWarning);
+        Assert.Contains("device_epoch_mismatch", monitor.PhysicalGateWarning);
+    }
+
+    [Theory]
+    [InlineData(WorkflowGraphNodeTypeIds.Move, false)]
+    [InlineData(WorkflowGraphNodeTypeIds.Move, true)]
+    [InlineData(WorkflowGraphNodeTypeIds.RobotExecuteProgram, false)]
+    [InlineData(WorkflowGraphNodeTypeIds.RobotExecuteProgram, true)]
+    public async Task Running_physical_node_observes_run_without_repeating_startup_preflight(string nodeTypeId, bool expired)
+    {
+        var fixture = WorkflowRunMonitorFixture.Create();
+        var client = new WorkflowRunMonitorClientStub(fixture)
+        {
+            Run = fixture.Run with
+            {
+                RuntimeStatus = WorkflowRuntimeStatus.Prepared,
+                PendingStepRequest = new WorkflowNextStepRequest
+                {
+                    StepRequestId = fixture.NodeExecution.StepRequestId,
+                    ExecutionId = fixture.Run.ExecutionId,
+                    WorkflowId = fixture.Run.WorkflowId,
+                    Version = fixture.Run.Version,
+                    NodeId = fixture.MoveNodeId,
+                    NodeType = nodeTypeId == WorkflowGraphNodeTypeIds.Move ? WorkflowNodeType.Move : WorkflowNodeType.RobotProgram,
+                    NodeTypeId = nodeTypeId,
+                    NodeName = "offline observation",
+                    Parameters = new Dictionary<string, string?> { [WorkflowNodeConfigurationKeys.DeviceId] = "ARM-01" }
+                }
+            },
+            PhysicalReadException = new HttpRequestException("offline fake preflight unavailable")
+        };
+        var alerts = new WorkflowRuntimeAlertPresenterStub();
+        var monitor = new WorkflowRunMonitorViewModel(client, alertPresenter: alerts, physicalRuntime: true);
+        await monitor.LoadAsync(fixture.Run.ExecutionId);
+        Assert.True(monitor.HasPhysicalGateWarning); // startup checks remain
+        var readsBefore = client.PhysicalPreflightReadCount + client.AuboProgramReadCount;
+        Assert.Equal(1, readsBefore);
+        var alertsBefore = alerts.Messages.Count;
+        client.Run = client.Run with
+        {
+            RuntimeStatus = WorkflowRuntimeStatus.Running,
+            PhysicalAuthorization = new WorkflowPhysicalRunAuthorization
+            {
+                AgvId = "AGV-01", OperatorName = "admin", SafetyObserverName = "admin",
+                PermitPrefix = "offline", ExpiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(expired ? -1 : 60)
+            }
+        };
+        await monitor.LoadAsync(fixture.Run.ExecutionId);
+        await monitor.LoadAsync(fixture.Run.ExecutionId);
+        Assert.Equal(readsBefore, client.PhysicalPreflightReadCount + client.AuboProgramReadCount);
+        Assert.False(monitor.HasPhysicalGateWarning);
+        Assert.Contains("等待", monitor.PhysicalGateStatus);
+        Assert.DoesNotContain("暂停", monitor.PhysicalGateStatus);
+        Assert.Equal(alertsBefore, alerts.Messages.Count);
+        Assert.Empty(client.CreatedAcceptanceRequests);
+        Assert.Empty(client.AuthorizationRequests);
+    }
+
+    [Fact]
     public async Task Physical_robot_node_warns_once_for_unready_arm_and_clears_after_recovery()
     {
         var baseline = WorkflowRunMonitorFixture.Create();
@@ -857,6 +972,9 @@ internal sealed class WorkflowRunMonitorClientStub : IMesClient
     public List<PrepareExperimentRunRequest> PrepareCompositeRequests { get; } = [];
     public AuboArmProgramStatusResponse? AuboProgramStatus { get; set; }
     public PhysicalAgvPreflightResponse? PhysicalPreflight { get; set; }
+    public Exception? PhysicalReadException { get; set; }
+    public int PhysicalPreflightReadCount { get; private set; }
+    public int AuboProgramReadCount { get; private set; }
     public IReadOnlyList<string> GrantedPermissions { get; set; } = [];
     public List<WorkflowRunControlRequest> PauseRequests { get; } = [];
     public List<WorkflowRunControlRequest> ResumeRequests { get; } = [];
@@ -923,10 +1041,22 @@ internal sealed class WorkflowRunMonitorClientStub : IMesClient
 
     public Task<AuboArmProgramStatusResponse?> GetAuboArmProgramAsync(
         string deviceId,
-        CancellationToken cancellationToken) => Task.FromResult(AuboProgramStatus);
+        CancellationToken cancellationToken)
+    {
+        AuboProgramReadCount++;
+        return PhysicalReadException is { } exception
+            ? Task.FromException<AuboArmProgramStatusResponse?>(exception)
+            : Task.FromResult(AuboProgramStatus);
+    }
 
     public Task<PhysicalAgvPreflightResponse?> GetPhysicalPreflightAsync(
-        CancellationToken cancellationToken) => Task.FromResult(PhysicalPreflight);
+        CancellationToken cancellationToken)
+    {
+        PhysicalPreflightReadCount++;
+        return PhysicalReadException is { } exception
+            ? Task.FromException<PhysicalAgvPreflightResponse?>(exception)
+            : Task.FromResult(PhysicalPreflight);
+    }
 
     public Task<FieldNavigationAcceptanceResponse> CreateFieldNavigationAcceptanceAsync(
         CreateFieldNavigationAcceptanceRequest request,
@@ -1028,7 +1158,8 @@ internal sealed class WorkflowRunMonitorClientStub : IMesClient
         CancellationToken cancellationToken)
     {
         UnknownResolutionRequests.Add(request);
-        Run = Run! with { RuntimeStatus = WorkflowRuntimeStatus.Prepared };
+        Run = Run! with { RuntimeStatus = request.Outcome == WorkflowUnknownResolutionOutcome.ConfirmedArrivedAndCancel
+            ? WorkflowRuntimeStatus.Cancelled : WorkflowRuntimeStatus.Prepared };
         Nodes = Nodes.Select(node => node.Id == request.NodeExecutionId
             ? node with { Status = WorkflowNodeExecutionStatus.Succeeded }
             : node).ToArray();

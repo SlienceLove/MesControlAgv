@@ -30,6 +30,9 @@ public static class WorkflowRuntimeParameterNames
 
     public const string InstrumentId = "instrumentId";
     public const string InstrumentOperation = "operation";
+    public const string SampleId = "sampleId";
+    public const string SampleBatchId = "sampleBatchId";
+    public const string ContainerPosition = "containerPosition";
 }
 
 /// <summary>

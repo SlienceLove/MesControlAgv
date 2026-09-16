@@ -50,6 +50,10 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
 
     public DbSet<PhysicalSafetyActionRecord> PhysicalSafetyActions => Set<PhysicalSafetyActionRecord>();
 
+    public DbSet<SampleRecord> Samples => Set<SampleRecord>();
+
+    public DbSet<SampleEventRecord> SampleEvents => Set<SampleEventRecord>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<TransportTask>(entity =>
@@ -373,6 +377,40 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.HasIndex(action => action.Fingerprint).IsUnique();
             entity.HasIndex(action => new { action.DeviceId, action.PreparedAtUtc });
             entity.Property(action => action.SupervisorInstanceId).HasMaxLength(128);
+        });
+
+        modelBuilder.Entity<SampleRecord>(entity =>
+        {
+            entity.ToTable("SampleRecords");
+            entity.HasKey(sample => sample.Id);
+            entity.Property(sample => sample.SampleId).HasMaxLength(256).IsRequired().UseCollation("NOCASE");
+            entity.Property(sample => sample.Barcode).HasMaxLength(256).IsRequired().UseCollation("NOCASE");
+            entity.Property(sample => sample.SampleBatchId).HasMaxLength(256).IsRequired();
+            entity.Property(sample => sample.SourceLocation).HasMaxLength(256).IsRequired();
+            entity.Property(sample => sample.ContainerPosition).HasMaxLength(128);
+            entity.Property(sample => sample.CurrentLocation).HasMaxLength(256);
+            entity.Property(sample => sample.Status).HasMaxLength(32).IsRequired();
+            entity.Property(sample => sample.LastDeviceId).HasMaxLength(128);
+            entity.Property(sample => sample.CreatedBy).HasMaxLength(256).IsRequired();
+            entity.Property(sample => sample.LastError).HasMaxLength(2048);
+            entity.HasIndex(sample => sample.SampleId).IsUnique();
+            entity.HasIndex(sample => sample.Barcode).IsUnique();
+            entity.HasIndex(sample => new { sample.Status, sample.UpdatedAtUtc });
+            entity.HasIndex(sample => sample.RunId);
+        });
+
+        modelBuilder.Entity<SampleEventRecord>(entity =>
+        {
+            entity.ToTable("SampleEvents");
+            entity.HasKey(sampleEvent => sampleEvent.Id);
+            entity.Property(sampleEvent => sampleEvent.EventType).HasMaxLength(64).IsRequired();
+            entity.Property(sampleEvent => sampleEvent.DeviceId).HasMaxLength(128).IsRequired();
+            entity.Property(sampleEvent => sampleEvent.FromLocation).HasMaxLength(256);
+            entity.Property(sampleEvent => sampleEvent.ToLocation).HasMaxLength(256);
+            entity.Property(sampleEvent => sampleEvent.Actor).HasMaxLength(256).IsRequired();
+            entity.Property(sampleEvent => sampleEvent.Detail).HasMaxLength(2048);
+            entity.HasIndex(sampleEvent => new { sampleEvent.SampleRecordId, sampleEvent.OccurredAtUtc });
+            entity.HasIndex(sampleEvent => sampleEvent.OperationId);
         });
     }
 }

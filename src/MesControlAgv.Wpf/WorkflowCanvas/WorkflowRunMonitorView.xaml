@@ -305,6 +305,11 @@
                                 Content="确认失败并终止"
                                 ToolTip="{Binding UnknownResolutionUnavailableReason}"
                                 ToolTipService.ShowOnDisabled="True" />
+                        <Button Margin="8,0,0,0" Padding="10,4" MinHeight="32"
+                                AutomationProperties.AutomationId="WorkflowArrivedAndCancelButton"
+                                Command="{Binding ResolveArrivedAndCancelCommand}"
+                                Content="核对到站并结束旧流程"
+                                ToolTip="仅用于有匹配到站回执的 AGV 节点；结束剩余流程，不派发或重发动作。" />
                     </StackPanel>
                 </Grid>
             </Border>
@@ -317,9 +322,10 @@
                     CornerRadius="4"
                     Visibility="{Binding HasPhysicalGateWarning, Converter={StaticResource BooleanToVisibilityConverter}}">
                 <StackPanel>
-                    <TextBlock Foreground="#8A5A00"
+                    <TextBlock AutomationProperties.AutomationId="WorkflowPhysicalGateWarningTitle"
+                               Foreground="#8A5A00"
                                FontWeight="SemiBold"
-                               Text="现场条件告警：流程暂不推进，等待自动复核" />
+                               Text="{Binding PhysicalGateStatus}" />
                     <TextBlock Margin="0,3,0,0"
                                Foreground="#8A5A00"
                                Text="{Binding PhysicalGateWarning}"

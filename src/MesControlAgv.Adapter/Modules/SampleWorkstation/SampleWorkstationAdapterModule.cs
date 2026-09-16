@@ -1,5 +1,6 @@
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
+using MesControlAgv.Contracts.Devices;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -44,7 +45,9 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
             client.BaseAddress = new Uri(options.BaseUrl, UriKind.Absolute);
             client.Timeout = TimeSpan.FromMilliseconds(options.RequestTimeoutMs);
         });
+        services.AddSingleton<SampleWorkstationOperationJournal>();
         services.AddScoped<ISampleWorkstationDriver, SampleWorkstationReadOnlyDriver>();
+        services.AddScoped<ISampleWorkstationController, SampleWorkstationControlledDriver>();
     }
 
     public Task InitializeAsync(IServiceProvider services, CancellationToken cancellationToken) =>
@@ -121,6 +124,60 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
                 EnsureWorkstation(policy.EnsureReadEnabled(deviceId));
                 return await driver.GetTaskStateAsync(deviceId, taskNo, cancellationToken);
             }));
+
+        endpoints.MapPost("/api/workstations/{deviceId}/initialize", async (
+            string deviceId,
+            SampleWorkstationOperationRequest request,
+            ISampleWorkstationController controller,
+            DeviceOperationPolicy policy,
+            CancellationToken cancellationToken) =>
+            await ExecuteCommandAsync(async () =>
+            {
+                EnsureWorkstation(policy.EnsureControlEnabled(deviceId));
+                return await controller.InitializeAsync(deviceId, request, cancellationToken);
+            }));
+
+        endpoints.MapPost("/api/workstations/{deviceId}/tasks", async (
+            string deviceId,
+            SampleWorkstationTaskCreateRequest request,
+            ISampleWorkstationController controller,
+            DeviceOperationPolicy policy,
+            CancellationToken cancellationToken) =>
+            await ExecuteCommandAsync(async () =>
+            {
+                EnsureWorkstation(policy.EnsureControlEnabled(deviceId));
+                return await controller.CreateTaskAsync(deviceId, request, cancellationToken);
+            }));
+
+        endpoints.MapPost("/api/workstations/{deviceId}/tasks/{taskNo}/trajectory", async (
+            string deviceId,
+            string taskNo,
+            SampleWorkstationTrajectoryRequest request,
+            ISampleWorkstationController controller,
+            DeviceOperationPolicy policy,
+            CancellationToken cancellationToken) =>
+            await ExecuteCommandAsync(async () =>
+            {
+                EnsureWorkstation(policy.EnsureControlEnabled(deviceId));
+                if (!string.Equals(request.TaskNo?.Trim(), taskNo?.Trim(), StringComparison.Ordinal))
+                    throw new ArgumentException("Route task number and request TaskNo must match.");
+                return await controller.AddTrajectoryAsync(deviceId, request, cancellationToken);
+            }));
+
+        endpoints.MapPost("/api/workstations/{deviceId}/tasks/{taskNo}/start", async (
+            string deviceId,
+            string taskNo,
+            SampleWorkstationStartRequest request,
+            ISampleWorkstationController controller,
+            DeviceOperationPolicy policy,
+            CancellationToken cancellationToken) =>
+            await ExecuteCommandAsync(async () =>
+            {
+                EnsureWorkstation(policy.EnsureControlEnabled(deviceId));
+                if (!string.Equals(request.TaskNo?.Trim(), taskNo?.Trim(), StringComparison.Ordinal))
+                    throw new ArgumentException("Route task number and request TaskNo must match.");
+                return await controller.StartExperimentAsync(deviceId, request, cancellationToken);
+            }));
     }
 
     private static void EnsureWorkstation(DeviceAdapterRegistration device)
@@ -158,6 +215,48 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
         catch (TaskCanceledException exception)
         {
             return Results.Problem(exception.Message, statusCode: StatusCodes.Status504GatewayTimeout);
+        }
+    }
+
+    private static async Task<IResult> ExecuteCommandAsync<T>(Func<Task<T>> action)
+    {
+        try
+        {
+            return Results.Ok(await action());
+        }
+        catch (DeviceControlDisabledException exception)
+        {
+            return Results.Problem(exception.Message, statusCode: StatusCodes.Status403Forbidden);
+        }
+        catch (SampleWorkstationOperationUnknownException exception)
+        {
+            return Results.Conflict(new
+            {
+                detail = exception.Message,
+                state = DeviceOperationLifecycle.Unknown,
+                unknownReason = exception.Reason,
+                operation = exception.Operation,
+                operationId = exception.Request.OperationId,
+                runId = exception.Request.RunId,
+                nodeExecutionId = exception.Request.NodeExecutionId,
+                vendorTaskId = exception.VendorTaskId
+            });
+        }
+        catch (KeyNotFoundException exception)
+        {
+            return Results.NotFound(new { detail = exception.Message });
+        }
+        catch (ArgumentException exception)
+        {
+            return Results.BadRequest(new { detail = exception.Message });
+        }
+        catch (InvalidOperationException exception)
+        {
+            return Results.UnprocessableEntity(new { detail = exception.Message });
+        }
+        catch (HttpRequestException exception)
+        {
+            return Results.Problem(exception.Message, statusCode: StatusCodes.Status503ServiceUnavailable);
         }
     }
 }

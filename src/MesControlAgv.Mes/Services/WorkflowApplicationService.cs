@@ -851,7 +851,7 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
                         result = CreateRejection(
                             request,
                             WorkflowExecutionRejectionCodes.PhysicalTemplateRequired,
-                            "One-click physical execution only accepts the approved LM1→LM7→LM2→LM7→LM1 material workflow with 取料盘/放料盘/回收料盘 programs.");
+                            "One-click physical execution requires the approved LM1→LM7→LM2→LM7→LM1 workflow, with either the material programs or 回原点.pro at all three robot nodes.");
                     }
                 }
 
@@ -1201,6 +1201,10 @@ public sealed partial class WorkflowApplicationService : IWorkflowApplicationSer
 
         var expectedPrograms = new[] { "取料盘.pro", "放料盘.pro", "回收料盘.pro" };
         var programNodes = nodes.Where(node => node.Type == WorkflowNodeType.RobotProgram).ToArray();
+        if (programNodes.All(node => string.Equals(
+                ReadNodeValue(node, WorkflowNodeConfigurationKeys.ProgramName),
+                "回原点.pro", StringComparison.Ordinal)))
+            expectedPrograms = ["回原点.pro", "回原点.pro", "回原点.pro"];
         return programNodes.Select((node, index) => new
         {
             DeviceId = ReadNodeValue(node, WorkflowNodeConfigurationKeys.DeviceId),
@@ -1559,6 +1563,14 @@ internal static class WorkflowPersistence
     public static Guid CreateStableOperationId(Guid executionId, Guid nodeId, int attempt)
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"{executionId:N}|{nodeId:N}|{attempt}"));
+        return new Guid(bytes.AsSpan(0, 16));
+    }
+
+    public static Guid CreateStableSubOperationId(Guid parentOperationId, string stage)
+    {
+        if (parentOperationId == Guid.Empty) throw new ArgumentException("A parent operation id is required.", nameof(parentOperationId));
+        if (string.IsNullOrWhiteSpace(stage)) throw new ArgumentException("A stage is required.", nameof(stage));
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes($"{parentOperationId:N}|{stage.Trim()}"));
         return new Guid(bytes.AsSpan(0, 16));
     }
 

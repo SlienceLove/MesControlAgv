@@ -34,6 +34,16 @@ public interface INavigationAttemptState
     bool MayHaveWrittenNavigation(Guid taskId);
 }
 
+/// <summary>Strict, fresh 1110 absence proof; never sends a device mutation.</summary>
+public interface IAgvTaskAbsenceEvidenceClient
+{
+    Task<AgvTaskAbsenceEvidence> ReadTaskAbsenceAsync(
+        Guid taskId, IReadOnlyList<string> path, CancellationToken cancellationToken);
+    Task<AgvTaskAbsenceEvidence> ReadTaskAbsenceAtDestinationAsync(
+        Guid taskId, IReadOnlyList<string> path, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("The driver cannot prove historical task absence at the destination.");
+}
+
 /// <summary>
 /// Optional physical-driver evidence that distinguishes a failure before any
 /// cancellation write from a write whose result may be unknown.

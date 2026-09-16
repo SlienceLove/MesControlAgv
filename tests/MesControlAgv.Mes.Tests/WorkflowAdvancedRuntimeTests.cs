@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using MesControlAgv.Application;
+using MesControlAgv.Contracts.Devices;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Domain.Workflows;
@@ -733,6 +734,9 @@ internal sealed class WorkflowAdvancedRuntimeFixture : IAsyncDisposable
             {
                 DeviceOperationId = claimed.DeviceOperation!.OperationId,
                 Outcome = outcome,
+                UnknownReason = outcome == WorkflowStepCompletionOutcome.Unknown
+                    ? UnknownReason.IncompleteResponse
+                    : null,
                 Error = error,
                 Outputs = outputs ?? new Dictionary<string, string?>()
             },

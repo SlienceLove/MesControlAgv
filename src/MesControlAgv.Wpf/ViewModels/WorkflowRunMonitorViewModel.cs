@@ -28,6 +28,7 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     private readonly AsyncCommand _cancelCommand;
     private readonly AsyncCommand _resolveSucceededCommand;
     private readonly AsyncCommand _resolveFailedCommand;
+    private readonly AsyncCommand _resolveArrivedAndCancelCommand;
     private readonly AsyncCommand _prepareCompositeRunCommand;
     private readonly AsyncCommand _createAndAuthorizeFieldMoveCommand;
     private readonly IWorkflowRuntimeAlertPresenter _alertPresenter;
@@ -104,6 +105,10 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         _resolveFailedCommand = new AsyncCommand(
             () => ResolveUnknownAsync(WorkflowUnknownResolutionOutcome.ConfirmedFailed),
             () => CanResolveUnknown);
+        _resolveArrivedAndCancelCommand = new AsyncCommand(
+            () => ResolveUnknownAsync(WorkflowUnknownResolutionOutcome.ConfirmedArrivedAndCancel),
+            () => CanResolveUnknown && SelectedNode?.NodeTypeId == "agv.move" &&
+                string.IsNullOrEmpty(GetControlUnavailableReason(WorkflowRunControlPermissions.Cancel, true, string.Empty)));
         _prepareCompositeRunCommand = new AsyncCommand(
             PrepareCompositeRunAsync,
             () => CanPrepareCompositeRun);
@@ -215,6 +220,7 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     public ICommand CancelCommand { get; }
     public ICommand ResolveUnknownSucceededCommand { get; }
     public ICommand ResolveUnknownFailedCommand { get; }
+    public ICommand ResolveArrivedAndCancelCommand => _resolveArrivedAndCancelCommand;
     public ICommand PrepareCompositeRunCommand => _prepareCompositeRunCommand;
     public ICommand CreateAndAuthorizeFieldMoveCommand { get; }
     public ICommand RefreshExperimentJobsCommand => _refreshExperimentJobsCommand;
@@ -1233,6 +1239,27 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
             return;
         }
 
+        if (Run.RuntimeStatus == WorkflowRuntimeStatus.Unknown)
+        {
+            PhysicalGateStatus = "结果未知，等待人工核对；不会自动继续或重发";
+            UpdatePhysicalGateWarning(
+                "physical-result-unknown",
+                $"本次设备执行结果需要人工核对。网络或地图状态恢复也不会自动续跑或重发指令。请核对节点、设备任务及到站记录后处置。原因：{Run.LastError}",
+                "现场执行待核对");
+            return;
+        }
+
+        // Once execution has started, MES owns task observation and hard-stop
+        // decisions. Do not re-run startup preflight or authorization checks
+        // from the monitor, or label a normal wait as a paused/unknown result.
+        if (Run.RuntimeStatus == WorkflowRuntimeStatus.Running)
+        {
+            PhysicalGateStatus = "流程执行中，等待当前节点回执；下一动作仍保留启动检查";
+            PhysicalGateWarning = string.Empty;
+            _lastPhysicalGateWarningKey = null;
+            return;
+        }
+
         if (Run.PhysicalAuthorization is { } authorization &&
             authorization.ExpiresAtUtc <= DateTimeOffset.UtcNow)
         {
@@ -1852,8 +1879,11 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     {
         if (Run is null || SelectedNode is null) return;
         var confirmedSuccess = outcome == WorkflowUnknownResolutionOutcome.ConfirmedSucceeded;
-        var title = confirmedSuccess ? "确认现场结果为成功" : "确认失败并终止流程";
-        var message = confirmedSuccess
+        var arrivedAndCancel = outcome == WorkflowUnknownResolutionOutcome.ConfirmedArrivedAndCancel;
+        var title = arrivedAndCancel ? "核对到站并结束旧流程" : confirmedSuccess ? "确认现场结果为成功" : "确认失败并终止流程";
+        var message = arrivedAndCancel
+            ? "MES 将核对已关联的 AGV 到站回执，把该节点记录为成功，并终止剩余流程。不会派发后续动作、重发导航或释放控制权；这不代表全流程完成。是否继续？"
+            : confirmedSuccess
             ? "此操作会把选中的 Unknown 节点记录为现场确认成功，并按已发布流程推进。不会重发设备命令。是否继续？"
             : "此操作会把选中的 Unknown 节点记录为失败并终止流程。不会重发设备命令。是否继续？";
         if (!_confirmation.Confirm(title, message)) return;
@@ -1880,7 +1910,9 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
             await LoadAsync(runId);
             StatusMessage = result.IsIdempotentReplay
                 ? "Unknown 处置请求已按原结果重放。"
-                : confirmedSuccess
+                : arrivedAndCancel
+                    ? "已核对到站并结束旧流程；没有派发后续动作。"
+                    : confirmedSuccess
                     ? "已记录现场确认成功；未重发设备命令。"
                     : "已记录现场确认失败并终止流程；未重发设备命令。";
         }
@@ -2279,6 +2311,7 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         _cancelCommand.RaiseCanExecuteChanged();
         _resolveSucceededCommand.RaiseCanExecuteChanged();
         _resolveFailedCommand.RaiseCanExecuteChanged();
+        _resolveArrivedAndCancelCommand.RaiseCanExecuteChanged();
         _createAndAuthorizeFieldMoveCommand.RaiseCanExecuteChanged();
         OnPropertyChanged(nameof(CanPause));
         OnPropertyChanged(nameof(HasCompositeJob));

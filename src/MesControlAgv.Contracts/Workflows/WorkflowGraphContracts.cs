@@ -67,6 +67,8 @@ public static class WorkflowGraphNodeTypeIds
     public const string InstrumentOperation = "instrument.operation";
     /// <summary>Load and run one explicitly approved robot-arm program.</summary>
     public const string RobotExecuteProgram = "robot.execute-program";
+    /// <summary>Execute one approved cap-opening/dispensing workstation template.</summary>
+    public const string SampleWorkstationExecuteTemplate = "sample-workstation.execute-template";
     public const string InstrumentReadStatus = "instrument.read-status";
     public const string InstrumentWaitUntilStable = "instrument.wait-until-stable";
 
@@ -94,6 +96,7 @@ public static class WorkflowGraphNodeTypeIds
             End => WorkflowNodeType.End,
             InstrumentOperation => WorkflowNodeType.InstrumentOperation,
             RobotExecuteProgram => WorkflowNodeType.RobotProgram,
+            SampleWorkstationExecuteTemplate => WorkflowNodeType.Custom,
             _ => WorkflowNodeType.Custom
         };
 }

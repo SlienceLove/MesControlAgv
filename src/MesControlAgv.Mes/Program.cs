@@ -50,6 +50,7 @@ var physicalReadinessOptions = builder.Configuration
 builder.Services.AddSingleton(physicalReadinessOptions);
 builder.Services.AddScoped<IPhysicalDeviceReadinessProbe, PhysicalAgvReadinessProbe>();
 builder.Services.AddScoped<IPhysicalDeviceReadinessProbe, PhysicalAuboReadinessProbe>();
+builder.Services.AddScoped<IPhysicalDeviceReadinessProbe, PhysicalSampleWorkstationReadinessProbe>();
 builder.Services.AddSingleton(builder.Configuration
     .GetSection("AgvAuboSequence")
     .Get<AgvAuboSequenceOptions>() ?? new AgvAuboSequenceOptions());
@@ -61,6 +62,10 @@ var workflowFieldNavigationWorkerOptions = builder.Configuration
     .Get<WorkflowFieldNavigationWorkerOptions>() ?? new WorkflowFieldNavigationWorkerOptions();
 builder.Services.AddSingleton(workflowAuboWorkerOptions);
 builder.Services.AddSingleton(workflowFieldNavigationWorkerOptions);
+var workflowSampleWorkstationWorkerOptions = builder.Configuration
+    .GetSection(WorkflowSampleWorkstationWorkerOptions.SectionName)
+    .Get<WorkflowSampleWorkstationWorkerOptions>() ?? new WorkflowSampleWorkstationWorkerOptions();
+builder.Services.AddSingleton(workflowSampleWorkstationWorkerOptions);
 var physicalBatchEnabled = !profile.Features.UseSimulator &&
                            physicalReadinessOptions.Enabled &&
                            profile.Features.EnableFieldNavigationAcceptance &&
@@ -76,6 +81,9 @@ builder.Services.AddSingleton(new WorkflowPhysicalBatchAdmissionGate(
         : "physical_execution_workers_disabled: MES 启动时未同时启用现场导航、自动许可和 AUBO worker，因此拒绝一键现场执行。"));
 builder.Services.AddSingleton<WorkflowFieldNavigationRetryState>();
 builder.Services.AddHttpClient<ISampleWorkstationReader, SampleWorkstationAdapterClient>(client =>
+    client.BaseAddress = new Uri(
+        builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5041/"));
+builder.Services.AddHttpClient<ISampleWorkstationController, SampleWorkstationAdapterClient>(client =>
     client.BaseAddress = new Uri(
         builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5041/"));
 builder.Services.AddHttpClient<IIonChromatographyStatusReader, IonChromatographyGatewayClient>(client =>
@@ -134,11 +142,13 @@ builder.Services.AddScoped<IExperimentCompositeRuntimeService>(services =>
 builder.Services.AddScoped<ExperimentRuntimeRecoveryCoordinator>();
 builder.Services.AddScoped<FieldNavigationAcceptanceRepository>();
 builder.Services.AddScoped<IFieldNavigationAcceptanceApplicationService, FieldNavigationAcceptanceService>();
+builder.Services.AddScoped<FieldNavigationManualClosureService>();
 builder.Services.AddScoped<TaskRepository>();
 builder.Services.AddScoped<ITaskApplicationService, TaskService>();
 builder.Services.AddScoped<IKpiDashboardApplicationService, KpiDashboardService>();
 builder.Services.AddScoped<IAgvAuboSequenceService, AgvAuboSequenceService>();
 builder.Services.AddScoped<PhysicalSafetyActionService>();
+builder.Services.AddScoped<SampleManagementService>();
 builder.Services.AddSingleton<PhysicalReadinessStateStore>();
 builder.Services.AddSingleton<PhysicalReadinessSupervisor>();
 builder.Services.AddSingleton<IPhysicalReadinessState>(services =>
@@ -156,6 +166,7 @@ builder.Services.AddHostedService<WorkflowSimulatorWorker>();
 builder.Services.AddHostedService<WorkflowAdvancedRuntimeWorker>();
 builder.Services.AddHostedService<WorkflowAuboProgramWorker>();
 builder.Services.AddHostedService<WorkflowFieldNavigationWorker>();
+builder.Services.AddHostedService<WorkflowSampleWorkstationWorker>();
 
 var app = builder.Build();
 
@@ -170,6 +181,7 @@ using (var scope = app.Services.CreateScope())
     await EnsureFieldNavigationAcceptanceTablesAsync(database);
     await EnsureShineLabTablesAsync(database);
     await EnsurePhysicalSafetyActionTablesAsync(database);
+    await EnsureSampleManagementTablesAsync(database);
     await PhysicalSafetyActionService.ReconcilePreparedRecordsAsync(database, CancellationToken.None);
 }
 
@@ -178,6 +190,8 @@ app.MapGet("/health", () => Results.Ok(new { service = "mes", status = "ok" }));
 app.MapMesDeviceGatewayEndpoints();
 app.MapPhysicalReadinessEndpoints();
 app.MapShineLabStatusEndpoints();
+
+app.MapSampleManagementEndpoints();
 
 app.MapMesWorkflowEndpoints();
 
@@ -205,6 +219,20 @@ app.MapPost("/api/field-navigation-acceptances", async (
     {
         return Results.UnprocessableEntity(new { detail = exception.Message });
     }
+});
+
+app.MapPost("/api/field-navigation-acceptances/{acceptanceId:guid}/manual-close", async (
+    Guid acceptanceId, FieldNavigationManualCloseRequest request,
+    FieldNavigationManualClosureService service, CancellationToken ct) =>
+{
+    try { return Results.Ok(await service.CloseAsync(acceptanceId, request, ct)); }
+    catch (WorkflowRunControlForbiddenException ex) { return Results.Problem(detail: ex.Message, statusCode: 403); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { detail = ex.Message }); }
+    catch (KeyNotFoundException ex) { return Results.NotFound(new { detail = ex.Message }); }
+    catch (InvalidOperationException ex) { return Results.Conflict(new { detail = ex.Message }); }
+    catch (AdapterHttpException ex) { return Results.Problem(detail: ex.Detail, statusCode: (int)ex.ResponseStatusCode); }
+    catch (Exception ex) when (ex is HttpRequestException or TimeoutException)
+    { return Results.Problem(detail: ex.Message, statusCode: 503); }
 });
 
 app.MapGet("/api/field-navigation-acceptances/{acceptanceId:guid}", async (
@@ -1031,6 +1059,62 @@ static async Task EnsurePhysicalSafetyActionTablesAsync(MesDbContext database)
             (Name: "CompletedAtUtc", Sql: "TEXT NULL"),
             (Name: "UpdatedAtUtc", Sql: "TEXT NOT NULL DEFAULT ''")
         ]);
+}
+
+static async Task EnsureSampleManagementTablesAsync(MesDbContext database)
+{
+    var connection = database.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open)
+        await connection.OpenAsync();
+
+    var statements = new[]
+    {
+        """
+        CREATE TABLE IF NOT EXISTS SampleRecords (
+            Id TEXT NOT NULL PRIMARY KEY,
+            SampleId TEXT NOT NULL,
+            Barcode TEXT NOT NULL,
+            SampleBatchId TEXT NOT NULL,
+            SourceLocation TEXT NOT NULL,
+            ContainerPosition TEXT NULL,
+            CurrentLocation TEXT NULL,
+            Status TEXT NOT NULL,
+            RunId TEXT NULL,
+            LastDeviceId TEXT NULL,
+            CreatedBy TEXT NOT NULL,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL,
+            LastError TEXT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS SampleEvents (
+            Id TEXT NOT NULL PRIMARY KEY,
+            SampleRecordId TEXT NOT NULL,
+            OperationId TEXT NULL,
+            EventType TEXT NOT NULL,
+            DeviceId TEXT NOT NULL,
+            FromLocation TEXT NULL,
+            ToLocation TEXT NULL,
+            Actor TEXT NOT NULL,
+            OccurredAtUtc TEXT NOT NULL,
+            Detail TEXT NULL
+        );
+        """,
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_SampleRecords_SampleId ON SampleRecords (SampleId);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_SampleRecords_Barcode ON SampleRecords (Barcode);",
+        "CREATE INDEX IF NOT EXISTS IX_SampleRecords_Status_UpdatedAtUtc ON SampleRecords (Status, UpdatedAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_SampleRecords_RunId ON SampleRecords (RunId);",
+        "CREATE INDEX IF NOT EXISTS IX_SampleEvents_SampleRecordId_OccurredAtUtc ON SampleEvents (SampleRecordId, OccurredAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_SampleEvents_OperationId ON SampleEvents (OperationId);"
+    };
+
+    foreach (var statement in statements)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = statement;
+        await command.ExecuteNonQueryAsync();
+    }
 }
 
 static ProfileConfiguration BindProfile(IConfiguration configuration)

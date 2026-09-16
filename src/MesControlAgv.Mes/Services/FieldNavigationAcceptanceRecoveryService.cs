@@ -14,6 +14,8 @@ public sealed class FieldNavigationAcceptanceRecoveryService(
     ProfileConfiguration profile,
     ILogger<FieldNavigationAcceptanceRecoveryService> logger) : BackgroundService
 {
+    private const string IdentityMismatch = "adapter_task_identity_mismatch";
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!profile.Features.EnableFieldNavigationAcceptance) return;
@@ -27,8 +29,10 @@ public sealed class FieldNavigationAcceptanceRecoveryService(
         }
     }
 
-    private async Task ReconcileOnceAsync(CancellationToken cancellationToken)
+    /// <summary>Runs one read-only Adapter reconciliation pass; never dispatches a device command.</summary>
+    internal async Task ReconcileOnceAsync(CancellationToken cancellationToken)
     {
+        if (!profile.Features.EnableFieldNavigationAcceptance) return;
         using var scope = scopeFactory.CreateScope();
         var repository = scope.ServiceProvider.GetRequiredService<FieldNavigationAcceptanceRepository>();
         var gateway = scope.ServiceProvider.GetRequiredService<IAgvGateway>();
@@ -49,9 +53,24 @@ public sealed class FieldNavigationAcceptanceRecoveryService(
 
         foreach (var acceptance in records)
         {
+            await FieldNavigationAcceptanceGate.Semaphore.WaitAsync(cancellationToken);
+            try
+            {
+            await repository.Database.Entry(acceptance).ReloadAsync(cancellationToken);
+            if (acceptance.Status == FieldNavigationAcceptanceStatuses.ManuallyClosed) continue;
+            // An unconsumed permit has not crossed the write boundary. A
+            // proven identity conflict needs operator reconciliation, not a
+            // later poll silently replacing it with a successful arrival.
+            if (!acceptance.PermitConsumedAtUtc.HasValue ||
+                (acceptance.Status == FieldNavigationAcceptanceStatuses.Unknown &&
+                 acceptance.LastError?.StartsWith(IdentityMismatch, StringComparison.Ordinal) == true))
+                continue;
+
             try
             {
                 var task = await gateway.GetTaskAsync(acceptance.Id, cancellationToken);
+                // Do not overwrite a manual terminal disposition after a lost MES acknowledgement.
+                if (task?.State == FieldNavigationAcceptanceStatuses.ManuallyClosed) continue;
                 if (task is null)
                 {
                     await RecordTransientObservationAsync(
@@ -60,6 +79,21 @@ public sealed class FieldNavigationAcceptanceRecoveryService(
                         "adapter_task_temporarily_unavailable",
                         "AdapterTaskTemporarilyUnavailable",
                         cancellationToken);
+                    continue;
+                }
+
+                var mismatches = GetIdentityMismatches(acceptance, task);
+                if (mismatches.Count > 0)
+                {
+                    acceptance.Status = FieldNavigationAcceptanceStatuses.Unknown;
+                    acceptance.LastError = $"{IdentityMismatch}: {string.Join(",", mismatches)}; manual_reconciliation_required";
+                    await repository.SaveWithAuditAsync(acceptance, "AdapterTaskIdentityMismatch", new
+                    {
+                        source = "adapter-task-poll",
+                        mismatches,
+                        expected = new { taskId = acceptance.Id, acceptance.AgvId, acceptance.TargetStationId, acceptance.DeviceTaskId },
+                        observed = new { task.TaskId, task.AgvId, task.TargetStationId, task.DeviceTaskId, task.State }
+                    }, cancellationToken);
                     continue;
                 }
 
@@ -107,7 +141,22 @@ public sealed class FieldNavigationAcceptanceRecoveryService(
                         acceptance.Id);
                 }
             }
+            }
+            finally { FieldNavigationAcceptanceGate.Semaphore.Release(); }
         }
+    }
+
+    private static IReadOnlyList<string> GetIdentityMismatches(Entities.FieldNavigationAcceptance acceptance, AgvTaskResponse task)
+    {
+        var mismatches = new List<string>();
+        if (task.TaskId != acceptance.Id) mismatches.Add("task_id");
+        if (!string.Equals(task.AgvId, acceptance.AgvId, StringComparison.OrdinalIgnoreCase)) mismatches.Add("agv_id");
+        if (!string.Equals(task.TargetStationId, acceptance.TargetStationId, StringComparison.OrdinalIgnoreCase)) mismatches.Add("target_station");
+        if (string.IsNullOrWhiteSpace(task.DeviceTaskId) ||
+            (!string.IsNullOrWhiteSpace(acceptance.DeviceTaskId) &&
+             !string.Equals(task.DeviceTaskId, acceptance.DeviceTaskId, StringComparison.Ordinal)))
+            mismatches.Add("vendor_task_id");
+        return mismatches;
     }
 
     private static async Task RecordTransientObservationAsync(

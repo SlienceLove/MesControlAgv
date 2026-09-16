@@ -10,7 +10,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MesControlAgv.Mes.Tests;
 
-public sealed class WorkflowAuboProgramWorkerTests
+public sealed partial class WorkflowAuboProgramWorkerTests
 {
     [Fact]
     public async Task Workflow_runs_robot_programs_once_in_station_order()
@@ -639,6 +639,7 @@ public sealed class WorkflowAuboProgramWorkerTests
         public List<Guid> RunOperationIds { get; } = [];
         public List<AuboArmOperationCorrelation> Correlations { get; } = [];
         public Dictionary<Guid, Guid> CorrelationOperationIds { get; } = [];
+        public Func<AuboArmProgramStatusResponse>? ObserveAfterRun { get; init; }
         private string? _loaded;
         public Task<AuboArmStatusResponse> GetStatusAsync(string deviceId, CancellationToken cancellationToken) => Task.FromResult(Status(deviceId));
         public Task<AuboArmReadinessResponse> GetReadinessAsync(string deviceId, CancellationToken cancellationToken) => Task.FromResult(new AuboArmReadinessResponse(deviceId, true, [], Status(deviceId), _loaded, DateTimeOffset.UtcNow));
@@ -647,6 +648,8 @@ public sealed class WorkflowAuboProgramWorkerTests
         public Task<AuboArmHandshakeResultResponse> DispatchAsync(string deviceId, Guid operationId, int commandCode, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<AuboArmProgramStatusResponse> GetProgramAsync(string deviceId, CancellationToken cancellationToken)
         {
+            if (RunCalls > 0 && ObserveAfterRun is not null)
+                return Task.FromResult(ObserveAfterRun());
             if (ProgramStatuses.Count > 0)
                 return Task.FromResult(ProgramStatuses.Dequeue());
 

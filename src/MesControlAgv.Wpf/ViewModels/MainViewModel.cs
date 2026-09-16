@@ -80,7 +80,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         ShineLabDeviceStatus = new ShineLabDeviceStatusViewModel(_mes);
         ShineLabTaskDispatch = new ShineLabTaskDispatchViewModel(_mes);
         ShineLabSequenceImport = new ShineLabSequenceImportViewModel(mes: _mes);
-        _modules = new ControlCenterViewModel(WorkflowEditor, ModuleRegistry);
+        _modules = new ControlCenterViewModel(WorkflowEditor, _mes, ModuleRegistry);
         _modules.AgvCommunication.ConfigureRuntimeMode(effectiveRuntimeMode);
         DiagnosticAudit = diagnosticAudit ?? new OfflineDiagnosticAuditTrail();
         Diagnostics = new DiagnosticsCenterViewModel(StartupDiagnostics, DiagnosticAudit);
@@ -88,6 +88,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         ObserveOfflineState("ion-chromatography", IonChromatography.OfflineState);
         ObserveOfflineState("readiness", Readiness.OfflineState);
         ObserveOfflineState("batch-import", _modules.BatchImport.OfflineState);
+        ObserveOfflineState("sample-management", _modules.SampleManagement.OfflineState);
         ObserveOfflineState("shinelab-import", ShineLabSequenceImport.OfflineState);
         DiagnosticAudit.Record(
             "startup",
@@ -131,6 +132,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ObservableCollection<AgvRowViewModel> Agvs => _modules.AgvCommunication.Agvs;
     public ObservableCollection<BatchTaskRowViewModel> BatchTasks => _modules.BatchImport.BatchTasks;
     public ObservableCollection<string> BatchImportIssues => _modules.BatchImport.BatchImportIssues;
+    public SampleManagementViewModel Samples => _modules.SampleManagement;
     public ObservableCollection<DashboardStation> AvailableStations { get; } = [];
     public bool HasAvailableStations => AvailableStations.Count > 0;
     public string StationCatalogHint => AvailableStations.Count > 0
@@ -654,6 +656,9 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         return Task.CompletedTask;
     }
 
+    public Task ImportSampleFileAsync(string filePath) =>
+        Samples.ImportFileAsync(filePath);
+
     private async Task SubmitBatchAsync()
     {
         _modules.BatchImport.Sort();
@@ -1116,6 +1121,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         WorkflowEditor.Dispose();
         WorkflowRunMonitor.Dispose();
         AuboArm.Dispose();
+        Samples.Dispose();
         _refreshGate.Dispose();
         _actionGate.Dispose();
         _shutdown.Dispose();

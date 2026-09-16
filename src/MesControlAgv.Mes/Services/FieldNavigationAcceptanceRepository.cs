@@ -17,8 +17,12 @@ public sealed class FieldNavigationAcceptanceRepository(MesDbContext database)
         await database.SaveChangesAsync(cancellationToken);
     }
 
-    public Task<FieldNavigationAcceptance?> GetAsync(Guid acceptanceId, CancellationToken cancellationToken) =>
-        database.FieldNavigationAcceptances.SingleOrDefaultAsync(item => item.Id == acceptanceId, cancellationToken);
+    public async Task<FieldNavigationAcceptance?> GetAsync(Guid acceptanceId, CancellationToken cancellationToken)
+    {
+        var item = await database.FieldNavigationAcceptances.SingleOrDefaultAsync(item => item.Id == acceptanceId, cancellationToken);
+        if (item is not null) await database.Entry(item).ReloadAsync(cancellationToken);
+        return item;
+    }
 
     public Task<FieldNavigationAcceptance?> GetByPermitIdAsync(string permitId, CancellationToken cancellationToken) =>
         database.FieldNavigationAcceptances.SingleOrDefaultAsync(item => item.PermitId == permitId, cancellationToken);

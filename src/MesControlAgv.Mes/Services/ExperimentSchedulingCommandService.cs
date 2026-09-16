@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts.Experiments;
+using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Entities;
@@ -411,6 +412,9 @@ public sealed class ExperimentSchedulingCommandService(
             new Dictionary<string, string?>());
         var mergedParameters = new Dictionary<string, string?>(parameters, StringComparer.OrdinalIgnoreCase);
         foreach (var item in overrides) mergedParameters[item.Key] = item.Value;
+        if (!string.IsNullOrWhiteSpace(sampleId))
+            mergedParameters[WorkflowRuntimeParameterNames.SampleId] = sampleId;
+        mergedParameters[WorkflowRuntimeParameterNames.SampleBatchId] = sampleBatchId;
 
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var record = new ExperimentJobRecord

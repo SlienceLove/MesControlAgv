@@ -1,5 +1,6 @@
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
+using MesControlAgv.Contracts.Devices;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Domain.Workflows;
@@ -13,6 +14,76 @@ namespace MesControlAgv.Mes.Tests;
 
 public sealed class WorkflowRunControlTests
 {
+    [Theory]
+    [InlineData("arrived")]
+    [InlineData("missing")]
+    [InlineData("moving")]
+    [InlineData("wrong-operation")]
+    [InlineData("wrong-target")]
+    [InlineData("unconsumed")]
+    [InlineData("no-cancel-permission")]
+    public async Task Historical_arrival_can_end_run_without_current_authorization_or_continuation(string evidence)
+    {
+        await using var fixture = await WorkflowRunControlFixture.CreateAsync();
+        var runId = await fixture.AdmitAsync(
+            WorkflowTestDefinitions.CreateMoveWorkflow(null, "SAMPLE_01", "ST_OPEN_01"), physical: true);
+        var ready = Assert.Single(await fixture.Service.ListNodeExecutionsAsync(runId, CancellationToken.None));
+        var claimed = await fixture.Service.ClaimNodeExecutionAsync(ready.Id, CancellationToken.None);
+        var operationId = claimed.DeviceOperation!.OperationId;
+        await fixture.Service.CompleteNodeExecutionAsync(ready.Id,
+            new WorkflowNodeExecutionCompletionRequest
+            {
+                DeviceOperationId = operationId, Outcome = WorkflowStepCompletionOutcome.Unknown,
+                UnknownReason = UnknownReason.Timeout, Error = "Forward observation failed"
+            }, CancellationToken.None);
+        if (evidence != "missing")
+        {
+            fixture.Database.FieldNavigationAcceptances.Add(new MesControlAgv.Mes.Entities.FieldNavigationAcceptance
+            {
+                WorkflowRunId = runId, WorkflowNodeExecutionId = ready.Id,
+                WorkflowDeviceOperationId = evidence == "wrong-operation" ? Guid.NewGuid() : operationId,
+                AgvId = "AGV-01", SourceStationId = "LM1",
+                TargetStationId = evidence == "wrong-target" ? "other-station" : "SAMPLE_01",
+                Status = evidence == "moving" ? "moving" : "arrived",
+                PermitConsumedAtUtc = evidence == "unconsumed" ? null : DateTimeOffset.UtcNow.AddMinutes(-5),
+                DeviceTaskId = "historical-arrival-task"
+            });
+            await fixture.Database.SaveChangesAsync();
+        }
+        // Old authorization may be stale or the supervisor unavailable. This
+        // action only closes a historical run; it grants no physical authority.
+        fixture.DisablePhysicalSupervisor();
+        var request = new WorkflowUnknownResolutionRequest
+        {
+            RequestId = Guid.NewGuid(), Actor = evidence == "no-cancel-permission" ? "supervisor-1" : "operator-1",
+            Reason = "Verified linked arrival; end old run before a separately authorized retest",
+            NodeExecutionId = ready.Id, Outcome = WorkflowUnknownResolutionOutcome.ConfirmedArrivedAndCancel
+        };
+        if (evidence != "arrived")
+        {
+            if (evidence == "no-cancel-permission")
+                await Assert.ThrowsAsync<WorkflowRunControlForbiddenException>(() => fixture.Service.ResolveUnknownAsync(runId, request, CancellationToken.None));
+            else
+                await Assert.ThrowsAsync<WorkflowRunControlConflictException>(() => fixture.Service.ResolveUnknownAsync(runId, request, CancellationToken.None));
+            Assert.Equal(WorkflowRuntimeStatus.Unknown, (await fixture.Service.GetExecutionAsync(runId, CancellationToken.None))!.RuntimeStatus);
+            Assert.Equal(WorkflowDeviceOperationStatus.Unknown,
+                Assert.Single(await fixture.Service.ListDeviceOperationsAsync(runId, CancellationToken.None)).Status);
+            return;
+        }
+        var result = await fixture.Service.ResolveUnknownAsync(runId, request, CancellationToken.None);
+        Assert.Equal(WorkflowRuntimeStatus.Cancelled, result.Run.RuntimeStatus);
+        Assert.Null(result.Run.PendingStepRequest);
+        Assert.True((await fixture.Service.ResolveUnknownAsync(runId, request, CancellationToken.None)).IsIdempotentReplay);
+        Assert.Equal(WorkflowNodeExecutionStatus.Succeeded,
+            Assert.Single(await fixture.Service.ListNodeExecutionsAsync(runId, CancellationToken.None)).Status);
+        var operation = Assert.Single(await fixture.Service.ListDeviceOperationsAsync(runId, CancellationToken.None));
+        Assert.Equal(WorkflowDeviceOperationStatus.Succeeded, operation.Status);
+        Assert.Equal("historical-arrival-task", operation.VendorTaskId);
+        Assert.Equal("CancelledWithoutDispatchOrRelease", operation.ResultSummary["continuation"]);
+        Assert.Single(await fixture.Database.WorkflowAudits.Where(a => a.EventType == "WorkflowUnknownResolved").ToListAsync());
+        Assert.Empty(await fixture.Service.ListFieldNavigationDispatchableNodesAsync(CancellationToken.None));
+    }
+
     [Fact]
     public async Task Pause_blocks_ready_claims_and_resume_restores_prepared_state_with_audit_and_idempotency()
     {
@@ -148,6 +219,7 @@ public sealed class WorkflowRunControlTests
             {
                 DeviceOperationId = claimed.DeviceOperation!.OperationId,
                 Outcome = WorkflowStepCompletionOutcome.Unknown,
+                UnknownReason = UnknownReason.Timeout,
                 Error = "Adapter response timeout"
             },
             CancellationToken.None);
@@ -171,6 +243,7 @@ public sealed class WorkflowRunControlTests
             {
                 DeviceOperationId = claimed.DeviceOperation!.OperationId,
                 Outcome = WorkflowStepCompletionOutcome.Unknown,
+                UnknownReason = UnknownReason.Timeout,
                 Error = "Adapter response timeout"
             },
             CancellationToken.None);
@@ -217,6 +290,7 @@ public sealed class WorkflowRunControlTests
             {
                 DeviceOperationId = claimed.DeviceOperation!.OperationId,
                 Outcome = WorkflowStepCompletionOutcome.Unknown,
+                UnknownReason = UnknownReason.ManualReconciliationRequired,
                 Error = "Adapter response timeout"
             },
             CancellationToken.None);
@@ -260,6 +334,7 @@ public sealed class WorkflowRunControlTests
             {
                 DeviceOperationId = claimed.DeviceOperation!.OperationId,
                 Outcome = WorkflowStepCompletionOutcome.Unknown,
+                UnknownReason = UnknownReason.ManualReconciliationRequired,
                 Error = "Legacy ambiguous outcome"
             },
             CancellationToken.None);

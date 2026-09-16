@@ -60,6 +60,18 @@ public sealed class VendorSampleWorkstationHttpClient(HttpClient client)
         return new VendorSampleWorkstationResponse(code, dataElement.Clone());
     }
 
+    /// <summary>
+    /// Calls a vendor command using the documented HTTP method. The workstation
+    /// V1.0 PDF documents command endpoints as GET; the Adapter exposes them
+    /// only behind controlled MES POST routes and never lets callers provide a
+    /// raw URL or arbitrary query dictionary.
+    /// </summary>
+    public Task<VendorSampleWorkstationResponse> ExecuteCommandAsync(
+        string path,
+        IReadOnlyDictionary<string, string?> query,
+        CancellationToken cancellationToken) =>
+        GetAsync(path, query, cancellationToken);
+
     private static bool TryReadCode(JsonElement element, out int code)
     {
         if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out code)) return true;

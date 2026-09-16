@@ -93,6 +93,26 @@ public static class BuiltInWorkflowCatalog
         },
         new()
         {
+            NodeTypeId = WorkflowGraphNodeTypeIds.SampleWorkstationExecuteTemplate,
+            SchemaVersion = CurrentSchemaVersion,
+            DisplayName = "Execute Sample Workstation Template",
+            Category = "Sample Workstation",
+            ConfigurationSchema = SampleWorkstationConfiguration(),
+            ResultSchema = SampleWorkstationResult(),
+            Ports =
+            [
+                ControlInput(),
+                SuccessOutput(),
+                FailureOutput(),
+                TimeoutOutput()
+            ],
+            ExecutionMode = WorkflowExecutionMode.DeviceCommand,
+            SafetyClassification = WorkflowSafetyClassification.ControlledDeviceAction,
+            RequiredCapabilityIds = [WorkflowCapabilityIds.SampleWorkstationExecute],
+            ProfileSupport = CurrentProfile()
+        },
+        new()
+        {
             NodeTypeId = WorkflowGraphNodeTypeIds.TimedWait,
             SchemaVersion = CurrentSchemaVersion,
             DisplayName = "Timed Wait",
@@ -389,6 +409,20 @@ public static class BuiltInWorkflowCatalog
             },
             new DeviceCapabilityDefinition
             {
+                CapabilityId = WorkflowCapabilityIds.SampleWorkstationExecute,
+                SchemaVersion = CurrentSchemaVersion,
+                DisplayName = "Execute Sample Workstation Template",
+                DeviceFamily = WorkflowDeviceFamilyIds.SampleWorkstation,
+                ConfigurationSchema = SampleWorkstationConfiguration(),
+                ResultSchema = SampleWorkstationResult(),
+                ExecutionMode = WorkflowExecutionMode.DeviceCommand,
+                SafetyClassification = WorkflowSafetyClassification.ControlledDeviceAction,
+                ProfileSupport = CurrentProfile(),
+                Enabled = true,
+                ControlEnabled = true
+            },
+            new DeviceCapabilityDefinition
+            {
                 CapabilityId = WorkflowCapabilityIds.InstrumentIdentify,
                 SchemaVersion = CurrentSchemaVersion,
                 DisplayName = "Identify Instrument",
@@ -546,6 +580,36 @@ public static class BuiltInWorkflowCatalog
             StringField("deviceId", "Robot Arm", required: true),
             StringField("programName", "Program Name", required: true),
             StringField("runtime", "Runtime", required: true),
+            DateTimeField("completedAtUtc", "Completed At", required: true)
+        ]
+    };
+
+    private static WorkflowObjectSchema SampleWorkstationConfiguration() => new()
+    {
+        Fields =
+        [
+            StringField(
+                WorkflowNodeConfigurationKeys.DeviceId,
+                "Sample Workstation",
+                required: true,
+                referenceKind: WorkflowSchemaReferenceKind.Device,
+                deviceFamily: WorkflowDeviceFamilyIds.SampleWorkstation),
+            StringField(
+                WorkflowNodeConfigurationKeys.TemplateVersion,
+                "Approved Template Version",
+                required: true)
+        ]
+    };
+
+    private static WorkflowObjectSchema SampleWorkstationResult() => new()
+    {
+        Fields =
+        [
+            StringField("deviceId", "Sample Workstation", required: true),
+            StringField("equipmentNo", "Equipment Number", required: true),
+            StringField("taskNo", "Vendor Task", required: true),
+            StringField("templateVersion", "Template Version", required: true),
+            StringField("taskState", "Task State", required: true),
             DateTimeField("completedAtUtc", "Completed At", required: true)
         ]
     };

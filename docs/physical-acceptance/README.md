@@ -1,5 +1,15 @@
 # Physical AGV acceptance configuration
 
+## 最新交接：2026-09-16
+
+- 新会话从仓库根目录 [NEXT-SESSION.md](../../NEXT-SESSION.md) 接续。
+- [AGV/AUBO 单次完整自动流程通过](2026-09-16-agv-aubo-full-flow-passed.md)：新 run 七节点成功、自动释放控制权、终态 Completed，WPF 已完成；历史返航已双层核销，324 项相关回归通过。
+- [前段运行与末段释放修复](2026-09-16-agv-aubo-final-release-owner-fix.md)：保留早先人工核销及当时阻塞的历史记录，已由上述新 run 完成自动验收。
+- [AMR Ping 看门狗诊断归档](2026-09-14-amr-watchdog-diagnosis-archive.md)：用户关闭看门狗后实际观察约 27 分 34 秒，无新增断线；监听已停止。
+- 9 月 14 日的暂停 run 已取消；不要按历史记录恢复它。
+
+以下内容保留为历史配置说明，不替代上述最新交接。
+
 Last updated: 2026-08-17
 
 `adapter.physical-acceptance.example.json` is a versioned template for a future

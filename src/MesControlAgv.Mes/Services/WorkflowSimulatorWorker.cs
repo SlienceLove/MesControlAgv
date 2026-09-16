@@ -1,6 +1,7 @@
 using System.Globalization;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
+using MesControlAgv.Contracts.Devices;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Profiles;
 
@@ -277,6 +278,9 @@ public sealed class WorkflowSimulatorDispatcher(
             DeviceOperationId = workItem.DeviceOperation?.OperationId,
             Outcome = outcome,
             Error = error,
+            UnknownReason = outcome == WorkflowStepCompletionOutcome.Unknown
+                ? UnknownReason.ManualReconciliationRequired
+                : null,
             Outputs = outputs ?? new Dictionary<string, string?>()
         }, cancellationToken);
 

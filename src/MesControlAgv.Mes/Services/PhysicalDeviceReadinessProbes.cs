@@ -125,6 +125,14 @@ public sealed class PhysicalAgvReadinessProbe(
         {
             SafetyReadiness = assessment.Readiness ?? assessment.Snapshot.SafetyReadiness
         };
+        if (assessedSnapshot.CurrentTaskId != snapshot.CurrentTaskId)
+        {
+            // Full preflight is a later observation. Do not attach the prior
+            // task's details (or its read failure) to the new idle/active state.
+            // A newly active task remains blocked until its own details are read.
+            activeTask = null;
+            activeTaskReadError = null;
+        }
         var assessmentReasons = assessment.BlockingReasons
             .Where(reason => !string.IsNullOrWhiteSpace(reason))
             .Select(NormalizePreflightReason)
@@ -220,7 +228,7 @@ public sealed class PhysicalAgvReadinessProbe(
             FullPreflightBlockingReasons = isFullPreflight ? reasons.ToArray() : [],
             ObservedAtUtc = observedAtUtc,
             FullPreflightObservedAtUtc = isFullPreflight
-                ? mapEvidence?.ObservedAtUtc ?? readiness?.ObservedAtUtc ?? observedAtUtc
+                ? readiness?.ObservedAtUtc ?? observedAtUtc
                 : null,
             Error = activeTaskReadError
         };
@@ -354,5 +362,42 @@ public sealed class PhysicalAuboReadinessProbe(
     private static void AddReason(ICollection<string> reasons, string reason)
     {
         if (!reasons.Contains(reason, StringComparer.Ordinal)) reasons.Add(reason);
+    }
+}
+
+/// <summary>Read-only workstation status probe used by the physical epoch gate.</summary>
+public sealed class PhysicalSampleWorkstationReadinessProbe(
+    ISampleWorkstationReader reader,
+    TimeProvider timeProvider) : IPhysicalDeviceReadinessProbe
+{
+    public bool CanProbe(PhysicalDeviceDescriptor device) =>
+        string.Equals(device.DeviceFamily, WorkflowDeviceFamilyIds.SampleWorkstation, StringComparison.OrdinalIgnoreCase);
+
+    public async Task<PhysicalDeviceReadinessObservation> ProbeAsync(
+        PhysicalDeviceDescriptor device,
+        bool fullPreflight,
+        CancellationToken cancellationToken)
+    {
+        var status = await reader.GetStatusAsync(device.DeviceId, cancellationToken);
+        var reasons = new List<string>();
+        if (!status.Online) reasons.Add(PhysicalReadinessReasonCodes.DeviceOffline);
+        if (status.State is not SampleWorkstationDeviceState.Idle)
+            reasons.Add($"sample_workstation_state_{status.State.ToString().ToLowerInvariant()}");
+        if (!string.Equals(status.DeviceId, device.DeviceId, StringComparison.OrdinalIgnoreCase))
+            reasons.Add("sample_workstation_device_identity_mismatch");
+        var observed = status.ObservedAtUtc == default ? timeProvider.GetUtcNow() : status.ObservedAtUtc;
+        return new PhysicalDeviceReadinessObservation
+        {
+            DeviceId = device.DeviceId,
+            DeviceFamily = device.DeviceFamily,
+            ProbeSucceeded = true,
+            Online = status.Online,
+            IsFullPreflight = fullPreflight,
+            FullPreflightPassed = fullPreflight && reasons.Count == 0,
+            BlockingReasons = reasons.ToArray(),
+            FullPreflightBlockingReasons = fullPreflight ? reasons.ToArray() : [],
+            ObservedAtUtc = observed,
+            FullPreflightObservedAtUtc = fullPreflight ? observed : null
+        };
     }
 }

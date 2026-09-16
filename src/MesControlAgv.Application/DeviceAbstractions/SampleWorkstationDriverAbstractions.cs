@@ -33,3 +33,30 @@ public interface ISampleWorkstationReader
 }
 
 public interface ISampleWorkstationDriver : ISampleWorkstationReader;
+
+/// <summary>
+/// Controlled workstation boundary. Implementations must serialize writes and
+/// never retry an operation whose vendor outcome is unknown.
+/// </summary>
+public interface ISampleWorkstationController
+{
+    Task<SampleWorkstationOperationResponse> InitializeAsync(
+        string deviceId,
+        SampleWorkstationOperationRequest request,
+        CancellationToken cancellationToken);
+
+    Task<SampleWorkstationOperationResponse> CreateTaskAsync(
+        string deviceId,
+        SampleWorkstationTaskCreateRequest request,
+        CancellationToken cancellationToken);
+
+    Task<SampleWorkstationOperationResponse> AddTrajectoryAsync(
+        string deviceId,
+        SampleWorkstationTrajectoryRequest request,
+        CancellationToken cancellationToken);
+
+    Task<SampleWorkstationOperationResponse> StartExperimentAsync(
+        string deviceId,
+        SampleWorkstationStartRequest request,
+        CancellationToken cancellationToken);
+}
