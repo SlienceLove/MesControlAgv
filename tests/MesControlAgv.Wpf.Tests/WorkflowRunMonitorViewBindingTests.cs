@@ -46,6 +46,7 @@ public sealed class WorkflowRunMonitorViewBindingTests
                 var cancel = Assert.IsType<Button>(view.FindName("CancelRunButton"));
                 var resolveSucceeded = Assert.IsType<Button>(view.FindName("ResolveUnknownSucceededButton"));
                 var resolveFailed = Assert.IsType<Button>(view.FindName("ResolveUnknownFailedButton"));
+                var fieldAcceptancePanel = Assert.IsType<Border>(view.FindName("WorkflowFieldAcceptancePanel"));
                 var fieldAcceptance = Assert.IsType<Button>(view.FindName("CreateFieldAcceptanceButton"));
                 var autoRefresh = Assert.IsType<CheckBox>(view.FindName("AutoRefreshCheckBox"));
                 var progress = Assert.IsType<ProgressBar>(view.FindName("WorkflowRunProgressBar"));
@@ -77,6 +78,7 @@ public sealed class WorkflowRunMonitorViewBindingTests
                 Assert.Equal(monitor.ProgressPercent, progress.Value);
                 Assert.Equal(Visibility.Collapsed, failurePanel.Visibility);
                 Assert.Equal(Visibility.Collapsed, cancellationPanel.Visibility);
+                Assert.Equal(Visibility.Collapsed, fieldAcceptancePanel.Visibility);
                 Assert.DoesNotContain("重试", resolveSucceeded.Content.ToString(), StringComparison.Ordinal);
                 Assert.DoesNotContain("重试", resolveFailed.Content.ToString(), StringComparison.Ordinal);
                 window.Close();

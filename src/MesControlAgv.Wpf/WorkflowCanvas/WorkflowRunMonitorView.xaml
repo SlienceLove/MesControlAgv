@@ -327,12 +327,14 @@
                 </StackPanel>
             </Border>
 
-            <Border Margin="0,8,0,0"
+            <Border x:Name="WorkflowFieldAcceptancePanel"
+                    Margin="0,8,0,0"
                     Padding="10,8"
                     Background="#FFF8E7"
                     BorderBrush="#F79009"
                     BorderThickness="1"
-                    CornerRadius="4">
+                    CornerRadius="4"
+                    Visibility="Collapsed">
                 <StackPanel>
                     <DockPanel>
                         <TextBlock DockPanel.Dock="Left"
