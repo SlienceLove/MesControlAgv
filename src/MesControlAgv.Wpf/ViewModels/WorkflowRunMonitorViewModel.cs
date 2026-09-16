@@ -629,25 +629,7 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         DeviceOperations.Any(operation => operation.Status == WorkflowDeviceOperationStatus.Unknown);
 
     public WorkflowRunNodeItemViewModel? PendingManualConfirmationNode
-    {
-        get
-        {
-            if (Run is null || Run.IsTerminal) return null;
-            var waiting = Nodes.Where(node =>
-                    node.Status == WorkflowNodeExecutionStatus.WaitingForSignal &&
-                    string.Equals(
-                        node.NodeTypeId,
-                        WorkflowGraphNodeTypeIds.ManualConfirmation,
-                        StringComparison.OrdinalIgnoreCase))
-                .ToArray();
-            return Run?.CurrentNodeId is { } currentNodeId
-                ? waiting.Where(node => node.NodeId == currentNodeId)
-                    .OrderByDescending(node => node.Attempt)
-                    .ThenByDescending(node => node.UpdatedAt)
-                    .FirstOrDefault() ?? waiting.OrderByDescending(node => node.UpdatedAt).FirstOrDefault()
-                : waiting.OrderByDescending(node => node.UpdatedAt).FirstOrDefault();
-        }
-    }
+        => ResolvePendingManualConfirmation().Node;
 
     public bool HasPendingManualConfirmation => PendingManualConfirmationNode is not null;
 
@@ -676,7 +658,8 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         {
             if (IsBusy) return "正在处理其他运行请求。";
             if (Run is null) return "请先加载流程运行。";
-            if (PendingManualConfirmationNode is null) return "当前没有等待处理的人工确认节点。";
+            var pending = ResolvePendingManualConfirmation();
+            if (pending.Node is null) return pending.UnavailableReason;
             if (string.IsNullOrWhiteSpace(OperatorName)) return "请输入操作者身份。";
             if (!string.Equals(_permissionActor, OperatorName.Trim(), StringComparison.OrdinalIgnoreCase))
                 return "请先由 MES 校验当前操作者权限。";
@@ -687,6 +670,38 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
             if (string.IsNullOrWhiteSpace(ControlReason)) return "请输入本次操作原因。";
             return string.Empty;
         }
+    }
+
+    private (WorkflowRunNodeItemViewModel? Node, string UnavailableReason)
+        ResolvePendingManualConfirmation()
+    {
+        if (Run is null) return (null, "请先加载流程运行。");
+        if (Run.IsTerminal) return (null, "流程已结束，不能再处理人工确认。");
+        var waiting = Nodes.Where(node =>
+                node.Status == WorkflowNodeExecutionStatus.WaitingForSignal &&
+                string.Equals(
+                    node.NodeTypeId,
+                    WorkflowGraphNodeTypeIds.ManualConfirmation,
+                    StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (Run.CurrentNodeId is { } currentNodeId)
+        {
+            var current = waiting.Where(node => node.NodeId == currentNodeId).ToArray();
+            return current.Length switch
+            {
+                1 => (current[0], string.Empty),
+                > 1 => (null, "当前节点存在多个等待人工确认的执行记录，请刷新并核对运行状态。"),
+                _ when waiting.Length > 0 => (null, "当前节点与等待人工确认节点不一致，请刷新并核对运行状态。"),
+                _ => (null, "当前没有等待处理的人工确认节点。")
+            };
+        }
+
+        return waiting.Length switch
+        {
+            1 => (waiting[0], string.Empty),
+            > 1 => (null, "存在多个等待人工确认节点，无法确定操作目标。"),
+            _ => (null, "当前没有等待处理的人工确认节点。")
+        };
     }
 
     public bool CanPause => string.IsNullOrEmpty(PauseUnavailableReason);
@@ -1837,6 +1852,8 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     private async Task CompleteManualConfirmationAsync(WorkflowManualConfirmationOutcome outcome)
     {
         if (Run is null || PendingManualConfirmationNode is not { } node) return;
+        var runId = Run.ExecutionId;
+        var nodeExecutionId = node.Id;
         var confirmed = outcome == WorkflowManualConfirmationOutcome.Confirmed;
         var title = confirmed ? "确认并继续流程" : "确认取消后续流程";
         var message = confirmed
@@ -1844,7 +1861,26 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
             : "取消只终止尚未执行的后续流程，不会向设备发送停止命令，也不会打断已经开始的设备动作。是否继续？";
         if (!_confirmation.Confirm(title, message)) return;
 
-        var runId = Run.ExecutionId;
+        try
+        {
+            await LoadAsync(runId);
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = $"人工确认状态复核失败，未发送操作请求：{exception.Message}";
+            return;
+        }
+        if (Run?.ExecutionId != runId || PendingManualConfirmationNode?.Id != nodeExecutionId)
+        {
+            StatusMessage = "人工确认节点状态已变化，未发送操作请求；请核对刷新后的运行状态。";
+            return;
+        }
+        if (!CanCompleteManualConfirmation)
+        {
+            StatusMessage = $"人工确认操作未发送：{ManualConfirmationUnavailableReason}";
+            return;
+        }
+
         var actor = OperatorName.Trim();
         var reason = ControlReason.Trim();
         IsBusy = true;
@@ -1852,13 +1888,14 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         {
             var result = await _mes.CompleteWorkflowManualConfirmationAsync(
                 runId,
-                node.Id,
+                nodeExecutionId,
                 new WorkflowManualConfirmationRequest
                 {
                     RequestId = Guid.NewGuid(),
                     Actor = actor,
                     Reason = reason,
-                    Outcome = outcome
+                    Outcome = outcome,
+                    Comment = reason
                 },
                 CancellationToken.None);
             ControlReason = string.Empty;
