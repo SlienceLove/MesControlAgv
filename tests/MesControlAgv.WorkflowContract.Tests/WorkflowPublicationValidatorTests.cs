@@ -66,20 +66,15 @@ public sealed class WorkflowPublicationValidatorTests
     }
 
     [Fact]
-    public void Sample_workstation_requires_a_direct_manual_confirmation_predecessor()
+    public void Sample_workstation_without_manual_confirmation_is_publishable()
     {
         var profile = CreateSampleWorkstationProfile();
         var workflow = CreateLinearWorkflow(
             WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask,
             SampleWorkstationConfiguration());
-        var workstation = GetMiddleNode(workflow);
-
         var result = CreateValidator(profile: profile).ValidateForPublication(workflow);
 
-        Assert.False(result.IsValid);
-        Assert.Contains(result.Issues, issue =>
-            issue.Code == WorkflowPublicationIssueCodes.SampleWorkstationManualConfirmationRequired &&
-            issue.NodeId == workstation.Id);
+        Assert.True(result.IsValid);
     }
 
     [Fact]
@@ -125,8 +120,6 @@ public sealed class WorkflowPublicationValidatorTests
         var result = CreateValidator(profile: profile).ValidateForPublication(workflow);
 
         Assert.True(result.IsValid);
-        Assert.DoesNotContain(result.Issues, issue =>
-            issue.Code == WorkflowPublicationIssueCodes.SampleWorkstationManualConfirmationRequired);
     }
 
     [Theory]
