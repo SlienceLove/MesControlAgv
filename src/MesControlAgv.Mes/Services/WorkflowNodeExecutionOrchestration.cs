@@ -119,6 +119,42 @@ public sealed partial class WorkflowApplicationService
             .ToArray();
     }
 
+    public async Task<IReadOnlyList<WorkflowNodeExecutionWorkItem>> ListSampleWorkstationDispatchableNodesAsync(
+        CancellationToken cancellationToken)
+    {
+        await EnsureLegacySimulatorRuntimeRecordsAsync(cancellationToken);
+        var records = await (
+                from node in _database.WorkflowNodeExecutions.AsNoTracking()
+                join run in _database.WorkflowExecutions.AsNoTracking()
+                    on node.WorkflowRunId equals run.ExecutionId
+                where (run.RuntimeStatus == WorkflowRuntimeStatus.Prepared.ToString() ||
+                       run.RuntimeStatus == WorkflowRuntimeStatus.Running.ToString()) &&
+                      node.Status == WorkflowNodeExecutionStatus.Ready.ToString() &&
+                      node.NodeTypeId == WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask
+                select node)
+            .OrderBy(item => item.CreatedAtUtc)
+            .ThenBy(item => item.Id)
+            .ToListAsync(cancellationToken);
+        return (await CreateWorkItemsAsync(records, cancellationToken))
+            .Where(IsSampleWorkstationWorkItem)
+            .ToArray();
+    }
+
+    public async Task<IReadOnlyList<WorkflowNodeExecutionWorkItem>> ListSampleWorkstationRecoverableNodesAsync(
+        CancellationToken cancellationToken)
+    {
+        var records = await _database.WorkflowNodeExecutions
+            .AsNoTracking()
+            .Where(item => item.Status == WorkflowNodeExecutionStatus.Running.ToString() &&
+                           item.NodeTypeId == WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask)
+            .OrderBy(item => item.StartedAtUtc)
+            .ThenBy(item => item.Id)
+            .ToListAsync(cancellationToken);
+        return (await CreateWorkItemsAsync(records, cancellationToken))
+            .Where(IsSampleWorkstationWorkItem)
+            .ToArray();
+    }
+
     public async Task<WorkflowNodeExecutionWorkItem> ClaimNodeExecutionAsync(
         Guid nodeExecutionId,
         CancellationToken cancellationToken)
@@ -186,7 +222,8 @@ public sealed partial class WorkflowApplicationService
         var step = CreateStepRequest(run, node);
         Guid compatibilityOperationId;
         if (IsNodeType(node.NodeTypeId, WorkflowGraphNodeTypeIds.Move) ||
-            IsNodeType(node.NodeTypeId, WorkflowGraphNodeTypeIds.RobotExecuteProgram))
+            IsNodeType(node.NodeTypeId, WorkflowGraphNodeTypeIds.RobotExecuteProgram) ||
+            IsNodeType(node.NodeTypeId, WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask))
         {
             if (completion.DeviceOperationId is not { } operationId ||
                 operationId == Guid.Empty)
@@ -236,6 +273,11 @@ public sealed partial class WorkflowApplicationService
             TransportOperationId = compatibilityOperationId,
             Outcome = completion.Outcome,
             Error = completion.Error,
+            UnknownReason = completion.Outcome == WorkflowStepCompletionOutcome.Unknown
+                ? completion.UnknownReason ?? MesControlAgv.Contracts.Devices.UnknownReason.ManualReconciliationRequired
+                : completion.UnknownReason,
+            VendorTaskId = completion.VendorTaskId,
+            RawResponseSummary = completion.RawResponseSummary,
             Outputs = completion.Outputs
         }, cancellationToken);
     }
@@ -433,7 +475,9 @@ public sealed partial class WorkflowApplicationService
                 ? WorkflowNodeType.Move
                 : IsNodeType(node.NodeTypeId, WorkflowGraphNodeTypeIds.RobotExecuteProgram)
                     ? WorkflowNodeType.RobotProgram
-                    : WorkflowNodeType.Wait,
+                    : IsNodeType(node.NodeTypeId, WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask)
+                        ? WorkflowNodeType.Custom
+                        : WorkflowNodeType.Wait,
             NodeTypeId = node.NodeTypeId,
             NodeName = node.NodeName,
             TargetStation = targetStation,
@@ -467,8 +511,15 @@ public sealed partial class WorkflowApplicationService
         return IsNodeType(node.NodeTypeId, WorkflowGraphNodeTypeIds.RobotExecuteProgram);
     }
 
+    private static bool IsSampleWorkstationWorkItem(WorkflowNodeExecutionWorkItem workItem) =>
+        IsNodeType(
+            workItem.NodeExecution.NodeTypeId,
+            WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask);
+
     private static bool IsDeviceWorkItem(WorkflowNodeExecutionWorkItem workItem) =>
-        IsSimulatorWorkItem(workItem) || IsAuboProgramWorkItem(workItem);
+        IsSimulatorWorkItem(workItem) ||
+        IsAuboProgramWorkItem(workItem) ||
+        IsSampleWorkstationWorkItem(workItem);
 
     private static bool IsTimedWait(string nodeTypeId) =>
         IsNodeType(nodeTypeId, WorkflowGraphNodeTypeIds.TimedWait) ||

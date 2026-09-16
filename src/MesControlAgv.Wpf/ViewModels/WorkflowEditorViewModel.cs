@@ -123,7 +123,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
         _simulatorExecutionEnabled = simulatorExecutionEnabled;
         _physicalBatchExecutionEnabled = physicalBatchExecutionEnabled;
         _confirmation = confirmation ?? MessageBoxWorkflowRunControlConfirmation.Instance;
-        _profileConfiguration = EnsureRobotArmProfile(profileConfiguration ?? ProfileConfiguration.Default);
+        _profileConfiguration = EnsureDesignTimeDeviceProfiles(
+            profileConfiguration ?? ProfileConfiguration.Default);
         _publicationContext = WorkflowPublicationContext.FromProfile(_profileConfiguration);
         foreach (var station in _profileConfiguration.Stations)
             _profileStationNames[station.StationId] = station.Name;
@@ -271,32 +272,37 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
         return null;
     }
 
-    private static ProfileConfiguration EnsureRobotArmProfile(ProfileConfiguration profile)
+    private static ProfileConfiguration EnsureDesignTimeDeviceProfiles(ProfileConfiguration profile)
     {
-        if ((profile.WorkflowDevices ?? []).Any(device =>
-                string.Equals(device.DeviceFamily, MesControlAgv.Contracts.Workflows.WorkflowDeviceFamilyIds.RobotArm, StringComparison.OrdinalIgnoreCase)))
-        {
-            return profile;
-        }
+        var devices = (profile.WorkflowDevices ?? []).ToList();
+        if (!devices.Any(device => string.Equals(
+                device.DeviceFamily,
+                MesControlAgv.Contracts.Workflows.WorkflowDeviceFamilyIds.RobotArm,
+                StringComparison.OrdinalIgnoreCase)))
+            devices.Add(new WorkflowDeviceProfile
+            {
+                DeviceId = "ARM-01",
+                DeviceFamily = MesControlAgv.Contracts.Workflows.WorkflowDeviceFamilyIds.RobotArm,
+                CapabilityIds = [MesControlAgv.Contracts.Workflows.WorkflowCapabilityIds.RobotExecuteProgram],
+                Enabled = true,
+                ControlEnabled = false
+            });
 
-        return profile with
-        {
-            WorkflowDevices = (profile.WorkflowDevices ?? [])
-                .Concat([
-                    new WorkflowDeviceProfile
-                    {
-                        DeviceId = "ARM-01",
-                        DeviceFamily = MesControlAgv.Contracts.Workflows.WorkflowDeviceFamilyIds.RobotArm,
-                        CapabilityIds = [MesControlAgv.Contracts.Workflows.WorkflowCapabilityIds.RobotExecuteProgram],
-                        Enabled = true,
-                        // Design-time editing is allowed so the operator can
-                        // build a flow; publication/execution still requires
-                        // an explicit control-enabled deployment profile.
-                        ControlEnabled = false
-                    }
-                ])
-                .ToArray()
-        };
+        if (!devices.Any(device => string.Equals(
+                device.DeviceFamily,
+                MesControlAgv.Contracts.Workflows.WorkflowDeviceFamilyIds.SampleWorkstation,
+                StringComparison.OrdinalIgnoreCase)))
+            devices.Add(new WorkflowDeviceProfile
+            {
+                DeviceId = "SAMPLE-WORKSTATION-01",
+                DeviceFamily = MesControlAgv.Contracts.Workflows.WorkflowDeviceFamilyIds.SampleWorkstation,
+                CapabilityIds =
+                [MesControlAgv.Contracts.Workflows.WorkflowCapabilityIds.SampleWorkstationStartExistingTask],
+                Enabled = true,
+                ControlEnabled = false
+            });
+
+        return profile with { WorkflowDevices = devices.ToArray() };
     }
 
     private void ApplyInspectorProfileStations(
@@ -347,7 +353,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
             MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.ManualConfirmation,
             MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentReadStatus,
             MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable,
-            MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.RobotExecuteProgram
+            MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.RobotExecuteProgram,
+            MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask
         };
         return orderedIds.Select(nodeTypeId =>
         {
@@ -391,8 +398,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
             var requiresControl = capability.SafetyClassification is
                 MesControlAgv.Contracts.Workflows.WorkflowSafetyClassification.ControlledDeviceAction or
                 MesControlAgv.Contracts.Workflows.WorkflowSafetyClassification.RestrictedDeviceWrite;
-            if (requiresControl && !capability.ControlEnabled &&
-                !string.Equals(definition.NodeTypeId, MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.RobotExecuteProgram, StringComparison.OrdinalIgnoreCase))
+            var allowDesignTimeControl = IsDesignTimeControlledNode(definition.NodeTypeId);
+            if (requiresControl && !capability.ControlEnabled && !allowDesignTimeControl)
             {
                 reason = capability.UnavailableReason ?? $"目录能力 {capabilityId} 未启用控制。";
                 return false;
@@ -406,8 +413,7 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
             var providers = _publicationContext.GetDevices(capability.DeviceFamily)
                 .Where(device => device.Enabled && device.Provides(capabilityId));
             if (requiresControl) providers = providers.Where(device => device.ControlEnabled);
-            if (!providers.Any() &&
-                !string.Equals(definition.NodeTypeId, MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.RobotExecuteProgram, StringComparison.OrdinalIgnoreCase))
+            if (!providers.Any() && !allowDesignTimeControl)
             {
                 reason = $"当前 Profile 没有可用设备提供 {capabilityId}.";
                 return false;
@@ -436,6 +442,16 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
         _ => WorkflowNodeType.Custom
     };
 
+    private static bool IsDesignTimeControlledNode(string nodeTypeId) =>
+        string.Equals(
+            nodeTypeId,
+            MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.RobotExecuteProgram,
+            StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(
+            nodeTypeId,
+            MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask,
+            StringComparison.OrdinalIgnoreCase);
+
     private static string LocalizeNodeType(string nodeTypeId, string fallback) => nodeTypeId switch
     {
         MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.Start => "开始",
@@ -445,6 +461,8 @@ public sealed class WorkflowEditorViewModel : INotifyPropertyChanged, IDisposabl
         MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.ManualConfirmation => "人工确认",
         MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentReadStatus => "仪器读取",
         MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable => "仪器稳定等待",
+        MesControlAgv.Contracts.Workflows.WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask =>
+            "开盖分液：执行已有任务",
         _ => fallback
     };
 

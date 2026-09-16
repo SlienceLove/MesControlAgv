@@ -76,6 +76,8 @@ public static class WorkflowPublicationIssueCodes
     public const string NodeUnreachable = "WF-PATH-NODE-UNREACHABLE";
     public const string EndUnreachable = "WF-PATH-END-UNREACHABLE";
     public const string CycleUnsupported = "WF-PATH-CYCLE-UNSUPPORTED";
+    public const string SampleWorkstationManualConfirmationRequired =
+        "WF-SAMPLE-WORKSTATION-MANUAL-CONFIRMATION-REQUIRED";
 }
 
 internal static class WorkflowPublicationRules
@@ -99,7 +101,42 @@ internal static class WorkflowPublicationRules
         var resolvedEdges = ValidateEdges(edges, nodes, resolvedNodes, issues);
         ValidateLegacyProjection(edges, resolvedNodes, issues);
         ValidateTopology(resolvedNodes, resolvedEdges, issues);
+        ValidateSampleWorkstationManualConfirmation(nodes, edges, issues);
         WorkflowAdvancedPublicationRules.Validate(workflow, catalogs, issues);
+    }
+
+    private static void ValidateSampleWorkstationManualConfirmation(
+        IReadOnlyList<WorkflowNode> nodes,
+        IReadOnlyList<WorkflowEdgeDefinition> edges,
+        ICollection<WorkflowValidationIssue> issues)
+    {
+        var nodeById = nodes
+            .Where(node => node.Id != Guid.Empty)
+            .GroupBy(node => node.Id)
+            .ToDictionary(group => group.Key, group => group.First());
+        foreach (var workstation in nodes.Where(node => string.Equals(
+                     node.NodeTypeId,
+                     WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask,
+                     StringComparison.OrdinalIgnoreCase)))
+        {
+            var hasDirectConfirmation = edges.Any(edge =>
+                edge.TargetNodeId == workstation.Id &&
+                edge.Kind == WorkflowEdgeKind.Success &&
+                string.Equals(edge.SourcePort, "success", StringComparison.Ordinal) &&
+                string.Equals(edge.TargetPort, "in", StringComparison.Ordinal) &&
+                nodeById.TryGetValue(edge.SourceNodeId, out var source) &&
+                string.Equals(
+                    source.NodeTypeId,
+                    WorkflowGraphNodeTypeIds.ManualConfirmation,
+                    StringComparison.OrdinalIgnoreCase));
+            if (!hasDirectConfirmation)
+            {
+                issues.Add(Error(
+                    WorkflowPublicationIssueCodes.SampleWorkstationManualConfirmationRequired,
+                    "The sample workstation node requires a direct Manual Confirmation success predecessor for completed machine initialization.",
+                    workstation.Id));
+            }
+        }
     }
 
     private static IReadOnlyDictionary<Guid, ResolvedNode> ResolveNodes(

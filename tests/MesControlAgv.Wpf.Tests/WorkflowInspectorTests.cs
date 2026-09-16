@@ -29,7 +29,8 @@ public sealed class WorkflowInspectorTests
             WorkflowGraphNodeTypeIds.ManualConfirmation,
             WorkflowGraphNodeTypeIds.InstrumentReadStatus,
             WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable,
-            WorkflowGraphNodeTypeIds.RobotExecuteProgram
+            WorkflowGraphNodeTypeIds.RobotExecuteProgram,
+            WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask
         };
 
         Assert.Equal(expectedTypeIds, editor.NodeTypeOptions.Select(option => option.NodeTypeId));
@@ -81,6 +82,20 @@ public sealed class WorkflowInspectorTests
         Assert.Equal(
             WorkflowInspectorEditorKind.Boolean,
             editor.Inspector.Fields.Single(field => field.Key == WorkflowNodeConfigurationKeys.RequireComment).EditorKind);
+
+        var workstation = editor.SelectedWorkflow.Nodes.Single(node =>
+            node.GraphNodeTypeId == WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask &&
+            snapshots.ContainsKey(node.Id));
+        editor.SelectedNode = workstation;
+        var workstationDevice = editor.Inspector.Fields.Single(field =>
+            field.Key == WorkflowNodeConfigurationKeys.DeviceId);
+        Assert.Equal(WorkflowInspectorEditorKind.Selection, workstationDevice.EditorKind);
+        Assert.Contains(workstationDevice.Options, option =>
+            option.Value == "SAMPLE-WORKSTATION-01" && option.IsAvailable);
+        Assert.Equal(
+            WorkflowInspectorEditorKind.Text,
+            editor.Inspector.Fields.Single(field =>
+                field.Key == WorkflowNodeConfigurationKeys.TaskNo).EditorKind);
 
         editor.SaveCommand.Execute(null);
         var reloaded = new WorkflowEditorViewModel(new WorkflowStore(fixture.Path));

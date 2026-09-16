@@ -494,6 +494,11 @@ public sealed class WorkflowInspectorViewModel : INotifyPropertyChanged
             definition.NodeTypeId,
             WorkflowGraphNodeTypeIds.RobotExecuteProgram,
             StringComparison.OrdinalIgnoreCase);
+        var designTimeSampleWorkstation = string.Equals(
+            definition.NodeTypeId,
+            WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask,
+            StringComparison.OrdinalIgnoreCase);
+        var allowDesignTimeControl = designTimeRobotProgram || designTimeSampleWorkstation;
         return profile.GetDevices(field.DeviceFamily ?? string.Empty)
             .OrderBy(device => device.DeviceId, StringComparer.Ordinal)
             .Select(device =>
@@ -501,11 +506,11 @@ public sealed class WorkflowInspectorViewModel : INotifyPropertyChanged
                 var missingCapability = definition.RequiredCapabilityIds.FirstOrDefault(capabilityId =>
                     !device.Provides(capabilityId));
                 var available = device.Enabled &&
-                (!requiresControl || device.ControlEnabled || designTimeRobotProgram) &&
+                (!requiresControl || device.ControlEnabled || allowDesignTimeControl) &&
                                 missingCapability is null;
                 var reason = !device.Enabled
                     ? "设备在当前 Profile 中已禁用。"
-                    : requiresControl && !device.ControlEnabled && !designTimeRobotProgram
+                    : requiresControl && !device.ControlEnabled && !allowDesignTimeControl
                         ? "设备控制在当前 Profile 中未启用。"
                         : missingCapability is not null
                             ? $"设备未声明能力 {missingCapability}."

@@ -8,7 +8,7 @@ namespace MesControlAgv.Domain.Workflows;
 /// </summary>
 public static class BuiltInWorkflowCatalog
 {
-    public const string CurrentCatalogVersion = "1.3";
+    public const string CurrentCatalogVersion = "1.4";
     public const string CurrentSchemaVersion = "1.0";
     public const string CurrentProductId = "MES-AGV";
     public const string AdvancedFlowContractOnlyReason =
@@ -89,6 +89,26 @@ public static class BuiltInWorkflowCatalog
             ExecutionMode = WorkflowExecutionMode.DeviceCommand,
             SafetyClassification = WorkflowSafetyClassification.ControlledDeviceAction,
             RequiredCapabilityIds = [WorkflowCapabilityIds.RobotExecuteProgram],
+            ProfileSupport = CurrentProfile()
+        },
+        new()
+        {
+            NodeTypeId = WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask,
+            SchemaVersion = CurrentSchemaVersion,
+            DisplayName = "Execute Existing Sample Workstation Task",
+            Category = "Sample Workstation",
+            ConfigurationSchema = SampleWorkstationExistingTaskConfiguration(),
+            ResultSchema = SampleWorkstationExistingTaskResult(),
+            Ports =
+            [
+                ControlInput(),
+                SuccessOutput(),
+                FailureOutput(),
+                TimeoutOutput()
+            ],
+            ExecutionMode = WorkflowExecutionMode.DeviceCommand,
+            SafetyClassification = WorkflowSafetyClassification.ControlledDeviceAction,
+            RequiredCapabilityIds = [WorkflowCapabilityIds.SampleWorkstationStartExistingTask],
             ProfileSupport = CurrentProfile()
         },
         new()
@@ -389,6 +409,20 @@ public static class BuiltInWorkflowCatalog
             },
             new DeviceCapabilityDefinition
             {
+                CapabilityId = WorkflowCapabilityIds.SampleWorkstationStartExistingTask,
+                SchemaVersion = CurrentSchemaVersion,
+                DisplayName = "Start Existing Sample Workstation Task",
+                DeviceFamily = WorkflowDeviceFamilyIds.SampleWorkstation,
+                ConfigurationSchema = SampleWorkstationExistingTaskConfiguration(),
+                ResultSchema = SampleWorkstationExistingTaskResult(),
+                ExecutionMode = WorkflowExecutionMode.DeviceCommand,
+                SafetyClassification = WorkflowSafetyClassification.ControlledDeviceAction,
+                ProfileSupport = CurrentProfile(),
+                Enabled = true,
+                ControlEnabled = true
+            },
+            new DeviceCapabilityDefinition
+            {
                 CapabilityId = WorkflowCapabilityIds.InstrumentIdentify,
                 SchemaVersion = CurrentSchemaVersion,
                 DisplayName = "Identify Instrument",
@@ -546,6 +580,35 @@ public static class BuiltInWorkflowCatalog
             StringField("deviceId", "Robot Arm", required: true),
             StringField("programName", "Program Name", required: true),
             StringField("runtime", "Runtime", required: true),
+            DateTimeField("completedAtUtc", "Completed At", required: true)
+        ]
+    };
+
+    private static WorkflowObjectSchema SampleWorkstationExistingTaskConfiguration() => new()
+    {
+        Fields =
+        [
+            StringField(
+                WorkflowNodeConfigurationKeys.DeviceId,
+                "Sample Workstation",
+                required: true,
+                referenceKind: WorkflowSchemaReferenceKind.Device,
+                deviceFamily: WorkflowDeviceFamilyIds.SampleWorkstation),
+            StringField(
+                WorkflowNodeConfigurationKeys.TaskNo,
+                "Existing Task Number",
+                required: true)
+        ]
+    };
+
+    private static WorkflowObjectSchema SampleWorkstationExistingTaskResult() => new()
+    {
+        Fields =
+        [
+            StringField("deviceId", "Sample Workstation", required: true),
+            StringField("taskNo", "Task Number", required: true),
+            StringField("taskState", "Task State", required: true),
+            DateTimeField("runningObservedAtUtc", "Running Observed At", required: true),
             DateTimeField("completedAtUtc", "Completed At", required: true)
         ]
     };

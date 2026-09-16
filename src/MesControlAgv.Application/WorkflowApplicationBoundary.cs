@@ -123,6 +123,14 @@ public interface IWorkflowApplicationService : IWorkflowVersionReader, IWorkflow
     Task<IReadOnlyList<WorkflowNodeExecutionWorkItem>> ListAuboProgramRecoverableNodesAsync(
         CancellationToken cancellationToken);
 
+    /// <summary>Returns ready existing-task workstation nodes for the single-flight worker.</summary>
+    Task<IReadOnlyList<WorkflowNodeExecutionWorkItem>> ListSampleWorkstationDispatchableNodesAsync(
+        CancellationToken cancellationToken);
+
+    /// <summary>Returns running workstation nodes for read-only restart reconciliation.</summary>
+    Task<IReadOnlyList<WorkflowNodeExecutionWorkItem>> ListSampleWorkstationRecoverableNodesAsync(
+        CancellationToken cancellationToken);
+
     /// <summary>Claims one durable node attempt without contacting a device.</summary>
     Task<WorkflowNodeExecutionWorkItem> ClaimNodeExecutionAsync(
         Guid nodeExecutionId,

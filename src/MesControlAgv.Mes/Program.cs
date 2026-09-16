@@ -59,8 +59,12 @@ var workflowAuboWorkerOptions = builder.Configuration
 var workflowFieldNavigationWorkerOptions = builder.Configuration
     .GetSection("WorkflowFieldNavigationWorker")
     .Get<WorkflowFieldNavigationWorkerOptions>() ?? new WorkflowFieldNavigationWorkerOptions();
+var workflowSampleWorkstationWorkerOptions = builder.Configuration
+    .GetSection(WorkflowSampleWorkstationWorkerOptions.SectionName)
+    .Get<WorkflowSampleWorkstationWorkerOptions>() ?? new WorkflowSampleWorkstationWorkerOptions();
 builder.Services.AddSingleton(workflowAuboWorkerOptions);
 builder.Services.AddSingleton(workflowFieldNavigationWorkerOptions);
+builder.Services.AddSingleton(workflowSampleWorkstationWorkerOptions);
 var physicalBatchEnabled = !profile.Features.UseSimulator &&
                            physicalReadinessOptions.Enabled &&
                            profile.Features.EnableFieldNavigationAcceptance &&
@@ -154,6 +158,7 @@ builder.Services.AddHostedService<WorkflowSimulatorWorker>();
 builder.Services.AddHostedService<WorkflowAdvancedRuntimeWorker>();
 builder.Services.AddHostedService<WorkflowAuboProgramWorker>();
 builder.Services.AddHostedService<WorkflowFieldNavigationWorker>();
+builder.Services.AddHostedService<WorkflowSampleWorkstationWorker>();
 
 var app = builder.Build();
 

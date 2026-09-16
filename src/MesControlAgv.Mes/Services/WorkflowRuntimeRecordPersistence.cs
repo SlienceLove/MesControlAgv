@@ -156,7 +156,7 @@ public sealed partial class WorkflowApplicationService
         node.LastError = null;
         node.UpdatedAtUtc = now;
 
-        if (step.NodeType is not (WorkflowNodeType.Move or WorkflowNodeType.RobotProgram))
+        if (!IsDeviceStep(step))
         {
             return (node, null);
         }
@@ -210,8 +210,9 @@ public sealed partial class WorkflowApplicationService
         DateTime now,
         CancellationToken cancellationToken)
     {
-        if (completion.Outcome == WorkflowStepCompletionOutcome.Unknown && completion.UnknownReason is null)
-            throw new ArgumentException("Unknown outcome requires a controlled UnknownReason.", nameof(completion));
+        var unknownReason = completion.Outcome == WorkflowStepCompletionOutcome.Unknown
+            ? completion.UnknownReason ?? MesControlAgv.Contracts.Devices.UnknownReason.ManualReconciliationRequired
+            : completion.UnknownReason;
         var node = await GetOrCreateNodeExecutionRecordAsync(
             run,
             completedStep,
@@ -219,7 +220,7 @@ public sealed partial class WorkflowApplicationService
             now,
             cancellationToken);
         WorkflowDeviceOperationRecord? device = null;
-        if (completedStep.NodeType is WorkflowNodeType.Move or WorkflowNodeType.RobotProgram)
+        if (IsDeviceStep(completedStep))
         {
             (_, device) = await EnsureClaimRuntimeRecordsAsync(
                 run,
@@ -265,7 +266,7 @@ public sealed partial class WorkflowApplicationService
             device.ResultSummaryJson = WorkflowPersistence.Serialize(outputs);
             device.VendorTaskId = completion.VendorTaskId;
             device.ResultFileReference = node.ResultFileReference;
-            device.UnknownReason = completion.UnknownReason?.ToString();
+            device.UnknownReason = unknownReason?.ToString();
             device.RawResponseSummaryJson = string.IsNullOrWhiteSpace(completion.RawResponseSummary)
                 ? null : completion.RawResponseSummary.Length > 8192 ? completion.RawResponseSummary[..8192] : completion.RawResponseSummary;
             device.LastError = node.LastError;
@@ -502,13 +503,26 @@ public sealed partial class WorkflowApplicationService
         ["stepRequestId"] = step.StepRequestId.ToString(),
         ["targetStation"] = step.TargetStation,
         ["deviceId"] = ResolveDeviceId(step),
-        ["programName"] = ResolveProgramName(step)
+        ["programName"] = ResolveProgramName(step),
+        ["taskNo"] = ResolveTaskNo(step)
     };
+
+    private static bool IsDeviceStep(WorkflowNextStepRequest step) =>
+        step.NodeType is WorkflowNodeType.Move or WorkflowNodeType.RobotProgram ||
+        string.Equals(
+            step.NodeTypeId,
+            WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask,
+            StringComparison.OrdinalIgnoreCase);
 
     private static string ResolveDeviceCapability(WorkflowNextStepRequest step) =>
         step.NodeType == WorkflowNodeType.RobotProgram
             ? WorkflowCapabilityIds.RobotExecuteProgram
-            : WorkflowCapabilityIds.AgvNavigateToStation;
+            : string.Equals(
+                step.NodeTypeId,
+                WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask,
+                StringComparison.OrdinalIgnoreCase)
+                ? WorkflowCapabilityIds.SampleWorkstationStartExistingTask
+                : WorkflowCapabilityIds.AgvNavigateToStation;
 
     private static string? ResolveDeviceId(WorkflowNextStepRequest step) =>
         step.Parameters.TryGetValue(WorkflowNodeConfigurationKeys.DeviceId, out var value) &&
@@ -518,6 +532,12 @@ public sealed partial class WorkflowApplicationService
 
     private static string? ResolveProgramName(WorkflowNextStepRequest step) =>
         step.Parameters.TryGetValue(WorkflowNodeConfigurationKeys.ProgramName, out var value) &&
+        !string.IsNullOrWhiteSpace(value)
+            ? value.Trim()
+            : null;
+
+    private static string? ResolveTaskNo(WorkflowNextStepRequest step) =>
+        step.Parameters.TryGetValue(WorkflowNodeConfigurationKeys.TaskNo, out var value) &&
         !string.IsNullOrWhiteSpace(value)
             ? value.Trim()
             : null;

@@ -67,6 +67,8 @@ public static class WorkflowGraphNodeTypeIds
     public const string InstrumentOperation = "instrument.operation";
     /// <summary>Load and run one explicitly approved robot-arm program.</summary>
     public const string RobotExecuteProgram = "robot.execute-program";
+    /// <summary>Start one task that already exists in the sample workstation software.</summary>
+    public const string SampleWorkstationExecuteExistingTask = "sample-workstation.execute-existing-task";
     public const string InstrumentReadStatus = "instrument.read-status";
     public const string InstrumentWaitUntilStable = "instrument.wait-until-stable";
 
@@ -94,6 +96,7 @@ public static class WorkflowGraphNodeTypeIds
             End => WorkflowNodeType.End,
             InstrumentOperation => WorkflowNodeType.InstrumentOperation,
             RobotExecuteProgram => WorkflowNodeType.RobotProgram,
+            SampleWorkstationExecuteExistingTask => WorkflowNodeType.Custom,
             _ => WorkflowNodeType.Custom
         };
 }

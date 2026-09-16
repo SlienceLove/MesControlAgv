@@ -27,7 +27,8 @@ public sealed class WorkflowCatalogTests
             WorkflowGraphNodeTypeIds.TimedWait,
             WorkflowGraphNodeTypeIds.InstrumentReadStatus,
             WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable,
-            WorkflowGraphNodeTypeIds.RobotExecuteProgram
+            WorkflowGraphNodeTypeIds.RobotExecuteProgram,
+            WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask
         ],
             catalog.NodeTypes.Definitions.Select(definition => definition.NodeTypeId).ToArray());
         Assert.All(
@@ -44,6 +45,23 @@ public sealed class WorkflowCatalogTests
         Assert.Contains(WorkflowCapabilityIds.RobotExecuteProgram, robot.RequiredCapabilityIds);
         AssertField(robot, WorkflowNodeConfigurationKeys.DeviceId, required: true, defaultValue: null);
         AssertField(robot, WorkflowNodeConfigurationKeys.ProgramName, required: true, defaultValue: null);
+
+        var workstation = GetNode(
+            catalog.NodeTypes,
+            WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask);
+        Assert.True(workstation.Enabled);
+        Assert.Equal(
+            [WorkflowCapabilityIds.SampleWorkstationStartExistingTask],
+            workstation.RequiredCapabilityIds);
+        AssertField(workstation, WorkflowNodeConfigurationKeys.DeviceId, required: true, defaultValue: null);
+        AssertField(workstation, WorkflowNodeConfigurationKeys.TaskNo, required: true, defaultValue: null);
+
+        var workstationCapability = Assert.Single(
+            catalog.Capabilities.Definitions,
+            definition => definition.CapabilityId == WorkflowCapabilityIds.SampleWorkstationStartExistingTask);
+        Assert.Equal(WorkflowDeviceFamilyIds.SampleWorkstation, workstationCapability.DeviceFamily);
+        Assert.True(workstationCapability.Enabled);
+        Assert.True(workstationCapability.ControlEnabled);
     }
 
     [Fact]

@@ -2,7 +2,7 @@
 
 新会话先读 [2026-09-14 交接文件](SAMPLE-WORKSTATION-HANDOFF-2026-09-14.md)。本轮原始证据见 [归档目录](archives/sample-workstation/2026-09-14/README.md)。
 
-2026-09-16 最新进度：默认隐藏的 WPF 联调入口已通过真机验收。前两次在未完整初始化状态下没有进入运行，WPF 没有误判旧 Completed 或自动重发；用户从厂家主程序手动初始化后，第三次 WPF 单次启动于 08:53:50 进入 Running，08:56:20 完成，用户确认 WPF 显示“任务完成”。详见 [WPF 真机验收记录](diagnostics/2026-09-16-workstation-wpf-field-validation.md)。正式运行仍由后续完整工作流调度；厂家冷启动初始化、异常终态和任务空时间字段继续跟踪。
+2026-09-16 最新进度：默认隐藏的 WPF 联调入口已通过真机验收。前两次在未完整初始化状态下没有进入运行，WPF 没有误判旧 Completed 或自动重发；用户从厂家主程序手动初始化后，第三次 WPF 单次启动于 08:53:50 进入 Running，08:56:20 完成，用户确认 WPF 显示“任务完成”。详见 [WPF 真机验收记录](diagnostics/2026-09-16-workstation-wpf-field-validation.md)。在此基础上已实现正式工作流节点和默认关闭的 MES worker；厂家冷启动初始化、异常终态和任务空时间字段继续跟踪。
 
 日期：2026-09-14。范围：最小通讯模块的接入准备，不包含本次主工作区合并、工作流自动执行或真实设备启动。
 
@@ -26,6 +26,33 @@ $env:WPF_ENABLE_SAMPLE_WORKSTATION_TEST_CONTROL='true'
 
 该入口不提供初始化、建任务、轨迹、导入、暂停或停止。它只用于当前 WPF→MES→Adapter→真机链路测试，后续完整实验通过正式工作流节点和 MES worker 执行；正式工作流不调用 WPF 测试按钮。2026-09-16 真机验收已经通过，但也确认厂家主程序冷启动自动初始化不足；厂家修复前需先人工执行完整初始化。
 
+## 正式工作流节点
+
+正式节点为 `sample-workstation.execute-existing-task`，能力为 `sample-workstation.start-existing-task`。节点只配置：
+
+- `deviceId`：Profile 中的工作站设备。
+- `taskNo`：厂家主程序中已经存在的任务编号。
+
+发布时必须存在一条 `core.manual-confirmation` 成功控制边直接进入该节点；确认内容用于要求操作员先在厂家主程序完成整机初始化。缺少此前置节点、设备能力、控制权限或任务号时不能发布。
+
+MES worker 的行为是：Ready 前只读检查设备 Idle/0、错误码0和指定任务非 Running；认领后只发送一次 `StartTaskAsync`；收到确认后必须先观察到本轮 Running 证据，再以任务 Completed、设备 Idle/0、错误码0三项一致完成节点。旧 Completed 不算本轮完成，启动请求不自动重试。仅 Accepted 时 MES 重启转 Unknown；已经持久化 Running 后可只读恢复完成。
+
+worker 默认关闭：
+
+```json
+{
+  "WorkflowSampleWorkstationWorker": {
+    "Enabled": false,
+    "PollIntervalMs": 1000,
+    "ReadinessRetryIntervalMs": 2000,
+    "StartObservationTimeoutMs": 30000,
+    "CompletionTimeoutMs": 600000
+  }
+}
+```
+
+现场启用时需同时满足：Adapter 工作站 `Enabled=true`、`ControlEnabled=true`；MES Profile 设备 `controlEnabled=true` 且声明 `sample-workstation.start-existing-task`；最后再将 worker 的 `Enabled` 改为 `true`。正式节点不会调用 `InitializeAsync`，也没有任务创建或轨迹写入依赖。
+
 ## 模块边界
 
 ```text
@@ -42,7 +69,7 @@ $env:WPF_ENABLE_SAMPLE_WORKSTATION_TEST_CONTROL='true'
 - `ISampleWorkstationCapabilityReader`：查询当前配置允许的能力。
 - `ISampleWorkstationTaskImporter`：未来任务表导入端口，目前没有实现、服务注册或 HTTP 导入路由。
 
-本模块没有增加数据库表、后台轮询器、自动初始化或自动启动逻辑。工作流的等待/完成判定由现有中控负责。
+模块没有增加工作站专用数据库表，也不自动初始化。正式工作流复用现有节点和设备操作记录，并由默认关闭的 MES worker 负责单次启动与只读完成观察；WPF 联调入口仍由界面本地观察。
 
 ## 已约定的确认与取消边界
 
@@ -149,7 +176,7 @@ MES 与 Adapter 路径相同，前缀为 `/api/workstations/{deviceId}`：
 
 代码在隔离分支 `feature/sample-workstation-http-readonly`，已包含默认隐藏的 WPF 联调入口，但未合并到 `feature/wpf-ui-layout-optimization`。
 
-主工作区已有签名不同的 `ISampleWorkstationController`、`WorkflowSampleWorkstationWorker`、`SampleWorkstationControlledDriver` 等未提交工作。这里将最小命令端口命名为 `ISampleWorkstationCommands`，避免同名冲突；但不代表整个分支可无冲突覆盖。
+主工作区所在的另一条功能线包含签名不同的 `ISampleWorkstationController`、四阶段 `WorkflowSampleWorkstationWorker` 和 `SampleWorkstationControlledDriver`。这里将真机已验证的最小命令端口命名为 `ISampleWorkstationCommands`，且正式节点仅执行已有任务；两条功能线不能整批覆盖合并。
 
 后续合并时：
 
@@ -173,4 +200,4 @@ dotnet build MesControlAgv.sln --no-restore
 
 模块测试仅启动本机临时 HTTP 主机，厂家及 Adapter 上游均为内存响应替身；不访问真实设备。覆盖独立注册/路由、开关、命令确认、错误透传、超时与响应体停滞、禁用能力、配置覆盖及不重试。
 
-本次 WPF 联调入口验证结果：工作站相关 WPF 测试 25/25 通过；排除一个已确认无关的既有根目录用例后，WPF 测试 441/441 通过。若包含该用例则为 441/442，唯一失败是既有 `ShineLabHandoffRehearsalTests` 在链接工作区无法识别仓库根目录。解决方案构建通过，0 警告、0 错误。此前 Adapter 全量 270/270、MES 工作站 14/14 的基线保持不变。本轮自动验证没有启动本地服务，也没有访问真机。
+正式工作流实现后的验证结果：工作流契约测试 73/73、MES 全量 314/314 通过；WPF 排除一个已确认无关的既有根目录用例后 442/442 通过。若包含该用例则为 442/443，唯一失败仍是 `ShineLabHandoffRehearsalTests` 在链接工作区无法识别仓库根目录。解决方案构建通过，0 警告、0 错误。本轮自动验证没有启动本地服务，也没有访问真机。
