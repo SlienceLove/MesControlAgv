@@ -413,6 +413,76 @@ public sealed class WorkflowRunMonitorViewModelTests
     }
 
     [Fact]
+    public async Task Manual_confirmation_requires_permission_and_reason_then_advances_without_direct_device_control()
+    {
+        var fixture = WorkflowRunMonitorFixture.CreateManualConfirmation();
+        var client = new WorkflowRunMonitorClientStub(fixture)
+        {
+            DeviceOperations = [],
+            Timeline = []
+        };
+        var confirmation = new WorkflowRunControlConfirmationStub();
+        var monitor = new WorkflowRunMonitorViewModel(client, confirmation);
+
+        await monitor.LoadAsync(fixture.Run.ExecutionId);
+
+        Assert.True(monitor.HasPendingManualConfirmation);
+        Assert.Equal("确认厂家主程序已完成整机初始化", monitor.ManualConfirmationTitle);
+        Assert.Equal("已在厂家主程序完成整机初始化", monitor.ManualConfirmationPrompt);
+        Assert.False(monitor.CanCompleteManualConfirmation);
+        Assert.Contains(
+            WorkflowRunControlPermissions.CompleteManualTask,
+            monitor.ManualConfirmationUnavailableReason,
+            StringComparison.Ordinal);
+
+        client.GrantedPermissions = [WorkflowRunControlPermissions.CompleteManualTask];
+        monitor.CheckPermissionsCommand.Execute(null);
+        await WaitUntilAsync(() => monitor.ManualConfirmationUnavailableReason.Contains("原因", StringComparison.Ordinal));
+        Assert.Contains("原因", monitor.ManualConfirmationUnavailableReason, StringComparison.Ordinal);
+
+        monitor.ControlReason = "现场已完成初始化";
+        Assert.True(monitor.CanCompleteManualConfirmation);
+        monitor.ConfirmManualTaskCommand.Execute(null);
+        await WaitUntilAsync(() => client.ManualConfirmationRequests.Count == 1 && !monitor.IsBusy);
+
+        var submitted = Assert.Single(client.ManualConfirmationRequests);
+        Assert.Equal(fixture.Run.ExecutionId, submitted.WorkflowRunId);
+        Assert.Equal(fixture.NodeExecution.Id, submitted.NodeExecutionId);
+        Assert.NotEqual(Guid.Empty, submitted.Request.RequestId);
+        Assert.Equal("local-operator", submitted.Request.Actor);
+        Assert.Equal("现场已完成初始化", submitted.Request.Reason);
+        Assert.Equal(WorkflowManualConfirmationOutcome.Confirmed, submitted.Request.Outcome);
+        Assert.Contains("设备启动请求", Assert.Single(confirmation.Messages), StringComparison.Ordinal);
+        Assert.False(monitor.HasPendingManualConfirmation);
+        Assert.Empty(monitor.ControlReason);
+    }
+
+    [Fact]
+    public async Task Manual_confirmation_cancel_stops_future_steps_without_sending_a_device_stop()
+    {
+        var fixture = WorkflowRunMonitorFixture.CreateManualConfirmation();
+        var client = new WorkflowRunMonitorClientStub(fixture)
+        {
+            DeviceOperations = [],
+            Timeline = [],
+            GrantedPermissions = [WorkflowRunControlPermissions.CompleteManualTask]
+        };
+        var confirmation = new WorkflowRunControlConfirmationStub();
+        var monitor = new WorkflowRunMonitorViewModel(client, confirmation);
+        await monitor.LoadAsync(fixture.Run.ExecutionId);
+        monitor.ControlReason = "现场条件未满足";
+
+        monitor.CancelManualTaskCommand.Execute(null);
+        await WaitUntilAsync(() => client.ManualConfirmationRequests.Count == 1 && !monitor.IsBusy);
+
+        var submitted = Assert.Single(client.ManualConfirmationRequests);
+        Assert.Equal(WorkflowManualConfirmationOutcome.Cancelled, submitted.Request.Outcome);
+        Assert.Contains("不会向设备发送停止命令", Assert.Single(confirmation.Messages), StringComparison.Ordinal);
+        Assert.Equal(WorkflowRuntimeStatus.Completed, monitor.Run!.RuntimeStatus);
+        Assert.False(monitor.HasPendingManualConfirmation);
+    }
+
+    [Fact]
     public async Task Unknown_resolution_has_two_explicit_conclusions_and_confirmed_success_never_calls_retry()
     {
         var fixture = WorkflowRunMonitorFixture.Create();
@@ -862,6 +932,8 @@ internal sealed class WorkflowRunMonitorClientStub : IMesClient
     public List<WorkflowRunControlRequest> ResumeRequests { get; } = [];
     public List<WorkflowRunControlRequest> CancelRequests { get; } = [];
     public List<WorkflowUnknownResolutionRequest> UnknownResolutionRequests { get; } = [];
+    public List<(Guid WorkflowRunId, Guid NodeExecutionId, WorkflowManualConfirmationRequest Request)>
+        ManualConfirmationRequests { get; } = [];
     public List<CreateFieldNavigationAcceptanceRequest> CreatedAcceptanceRequests { get; } = [];
     public List<AuthorizeFieldNavigationAcceptanceRequest> AuthorizationRequests { get; } = [];
     public List<FieldNavigationAcceptanceResponse> AuthorizedAcceptances { get; } = [];
@@ -1036,6 +1108,42 @@ internal sealed class WorkflowRunMonitorClientStub : IMesClient
             ? operation with { Status = WorkflowDeviceOperationStatus.Succeeded }
             : operation).ToArray();
         return Task.FromResult(ControlResult(request.RequestId, WorkflowRunControlAction.ResolveUnknown));
+    }
+
+    public Task<WorkflowRuntimeInteractionResult> CompleteWorkflowManualConfirmationAsync(
+        Guid workflowRunId,
+        Guid nodeExecutionId,
+        WorkflowManualConfirmationRequest request,
+        CancellationToken cancellationToken)
+    {
+        ManualConfirmationRequests.Add((workflowRunId, nodeExecutionId, request));
+        var confirmed = request.Outcome == WorkflowManualConfirmationOutcome.Confirmed;
+        Nodes = Nodes.Select(node => node.Id == nodeExecutionId
+            ? node with
+            {
+                Status = confirmed
+                    ? WorkflowNodeExecutionStatus.Succeeded
+                    : WorkflowNodeExecutionStatus.Cancelled,
+                CompletedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            }
+            : node).ToArray();
+        Run = Run! with
+        {
+            RuntimeStatus = confirmed
+                ? WorkflowRuntimeStatus.Prepared
+                : WorkflowRuntimeStatus.Completed,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        return Task.FromResult(new WorkflowRuntimeInteractionResult
+        {
+            RequestId = request.RequestId,
+            WorkflowRunId = workflowRunId,
+            NodeExecutionId = nodeExecutionId,
+            InteractionType = WorkflowRuntimeInteractionType.ManualConfirmation,
+            Status = WorkflowRuntimeInteractionStatus.Applied,
+            Run = Run
+        });
     }
 
     private WorkflowRunControlResult ControlResult(Guid requestId, WorkflowRunControlAction action) => new()
@@ -1241,5 +1349,45 @@ internal sealed record WorkflowRunMonitorFixture(
             nodeExecution,
             deviceOperation,
             timelineEntry);
+    }
+
+    public static WorkflowRunMonitorFixture CreateManualConfirmation()
+    {
+        var fixture = Create();
+        var manualNode = fixture.Version.Definition.Nodes
+            .Single(node => node.Id == fixture.MoveNodeId) with
+        {
+            Type = WorkflowNodeType.Custom,
+            NodeTypeId = WorkflowGraphNodeTypeIds.ManualConfirmation,
+            Name = "确认厂家主程序已完成整机初始化",
+            Description = "操作员确认完整初始化",
+            TargetStation = null,
+            Configuration = new Dictionary<string, string?>
+            {
+                ["prompt"] = "已在厂家主程序完成整机初始化",
+                ["requireComment"] = "false"
+            }
+        };
+        var definition = fixture.Version.Definition with
+        {
+            Nodes = fixture.Version.Definition.Nodes
+                .Select(node => node.Id == fixture.MoveNodeId ? manualNode : node)
+                .ToArray()
+        };
+        return fixture with
+        {
+            Version = fixture.Version with { Definition = definition },
+            NodeExecution = fixture.NodeExecution with
+            {
+                NodeTypeId = WorkflowGraphNodeTypeIds.ManualConfirmation,
+                NodeName = manualNode.Name,
+                Status = WorkflowNodeExecutionStatus.WaitingForSignal,
+                Inputs = new Dictionary<string, string?>
+                {
+                    ["prompt"] = "已在厂家主程序完成整机初始化",
+                    ["requireComment"] = "false"
+                }
+            }
+        };
     }
 }

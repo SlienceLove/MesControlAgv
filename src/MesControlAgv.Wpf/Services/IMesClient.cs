@@ -429,6 +429,14 @@ public interface IMesClient
         CancellationToken cancellationToken) =>
         Task.FromResult(new WorkflowRunControlPermissionsSnapshot { Actor = actor });
 
+    Task<WorkflowRuntimeInteractionResult> CompleteWorkflowManualConfirmationAsync(
+        Guid workflowRunId,
+        Guid nodeExecutionId,
+        WorkflowManualConfirmationRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<WorkflowRuntimeInteractionResult>(
+            new NotSupportedException("Workflow manual confirmation is not supported by this MES client."));
+
     Task<WorkflowRunControlResult> PauseWorkflowRunAsync(
         Guid workflowRunId,
         WorkflowRunControlRequest request,

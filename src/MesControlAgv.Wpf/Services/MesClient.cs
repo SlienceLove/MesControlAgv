@@ -765,6 +765,18 @@ public sealed class MesClient(HttpClient client) : IMesClient
             $"api/workflow-run-controls/permissions?actor={Uri.EscapeDataString(actor)}",
             cancellationToken) ?? new WorkflowRunControlPermissionsSnapshot { Actor = actor };
 
+    public Task<WorkflowRuntimeInteractionResult> CompleteWorkflowManualConfirmationAsync(
+        Guid workflowRunId,
+        Guid nodeExecutionId,
+        WorkflowManualConfirmationRequest request,
+        CancellationToken cancellationToken) =>
+        PostWorkflowRunRequestAsync<WorkflowManualConfirmationRequest, WorkflowRuntimeInteractionResult>(
+            $"api/workflow-runs/{workflowRunId}/nodes/{nodeExecutionId}/manual-confirmation",
+            request,
+            "workflow manual confirmation result",
+            "workflow manual confirmation request",
+            cancellationToken);
+
     public Task<WorkflowRunControlResult> PauseWorkflowRunAsync(
         Guid workflowRunId,
         WorkflowRunControlRequest request,
@@ -804,13 +816,26 @@ public sealed class MesClient(HttpClient client) : IMesClient
     private async Task<WorkflowRunControlResult> PostWorkflowRunControlAsync<TRequest>(
         string route,
         TRequest request,
+        CancellationToken cancellationToken) =>
+        await PostWorkflowRunRequestAsync<TRequest, WorkflowRunControlResult>(
+            route,
+            request,
+            "workflow run control result",
+            "workflow run control request",
+            cancellationToken);
+
+    private async Task<TResponse> PostWorkflowRunRequestAsync<TRequest, TResponse>(
+        string route,
+        TRequest request,
+        string responseDescription,
+        string requestDescription,
         CancellationToken cancellationToken)
     {
         using var response = await client.PostAsJsonAsync(route, request, cancellationToken);
         if (response.IsSuccessStatusCode)
         {
-            return await response.Content.ReadFromJsonAsync<WorkflowRunControlResult>(cancellationToken) ??
-                   throw new InvalidOperationException("MES returned no workflow run control result.");
+            return await response.Content.ReadFromJsonAsync<TResponse>(cancellationToken) ??
+                   throw new InvalidOperationException($"MES returned no {responseDescription}.");
         }
 
         string? detail = null;
@@ -829,7 +854,7 @@ public sealed class MesClient(HttpClient client) : IMesClient
 
         throw new InvalidOperationException(
             string.IsNullOrWhiteSpace(detail)
-                ? $"MES rejected the workflow run control request ({(int)response.StatusCode})."
+                ? $"MES rejected the {requestDescription} ({(int)response.StatusCode})."
                 : detail);
     }
 
