@@ -162,7 +162,7 @@ MES 与 Adapter 路径相同，前缀为 `/api/workstations/{deviceId}`：
   "status": 502,
   "detail": "Sample workstation did not confirm task 'TEST-001' start: 启动失败",
   "errorCode": "workstation_command_unconfirmed",
-  "outcomeUnknown": true,
+  "outcomeUnknown": false,
   "vendorCode": 200,
   "vendorData": "启动失败"
 }
@@ -170,7 +170,7 @@ MES 与 Adapter 路径相同，前缀为 `/api/workstations/{deviceId}`：
 
 基本分类：参数错误 400、控制关闭 403、设备/任务不存在 404、配置不支持 501、厂家业务错误/异常响应 502、不可用 503、超时 504。厂家 HTTP 404 也映射为 502 的 `workstation_unsupported_operation`，避免与本地设备不存在混淆。
 
-`outcomeUnknown=true` 表示命令可能已进入厂家，结果未确认；不表示“肯定未发送”。“启动失败”、超时、断线均不自动重发。调用方取消等待也不会撤销厂家已收到的命令。下一步先只读查询并与现场核实。没有增加额外审核流程。
+厂家明确返回“启动失败”时使用 `outcomeUnknown=false`，作为已知拒绝处理；超时、断线、空响应或其他无法确认结果的响应使用 `outcomeUnknown=true`，表示命令可能已进入厂家，不表示“肯定未发送”。两类结果都不自动重发。调用方取消等待也不会撤销厂家已收到的命令；结果不明确时先只读查询并与现场核实。
 
 ## 与当前主工作区的衔接
 
@@ -200,4 +200,4 @@ dotnet build MesControlAgv.sln --no-restore
 
 模块测试仅启动本机临时 HTTP 主机，厂家及 Adapter 上游均为内存响应替身；不访问真实设备。覆盖独立注册/路由、开关、命令确认、错误透传、超时与响应体停滞、禁用能力、配置覆盖及不重试。
 
-正式工作流实现后的验证结果：工作流契约测试 73/73、MES 全量 314/314 通过；WPF 排除一个已确认无关的既有根目录用例后 442/442 通过。若包含该用例则为 442/443，唯一失败仍是 `ShineLabHandoffRehearsalTests` 在链接工作区无法识别仓库根目录。解决方案构建通过，0 警告、0 错误。本轮自动验证没有启动本地服务，也没有访问真机。
+正式工作流实现后的验证结果：工作流契约测试 73/73、MES 全量 319/319、工作站 Adapter 38/38 通过；WPF 排除一个已确认无关的既有根目录用例后 442/442 通过。若包含该用例则为 442/443，唯一失败仍是 `ShineLabHandoffRehearsalTests` 在链接工作区无法识别仓库根目录。解决方案构建通过，0 警告、0 错误。本轮自动验证没有启动本地服务，也没有访问真机。

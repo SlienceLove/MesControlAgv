@@ -212,8 +212,16 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
         }
         catch (SampleWorkstationProtocolException exception)
         {
+            var explicitlyRejected =
+                exception.ErrorCode == SampleWorkstationErrorCodes.CommandUnconfirmed &&
+                exception.VendorData is { ValueKind: System.Text.Json.JsonValueKind.String } data &&
+                string.Equals(data.GetString()?.Trim(), "启动失败", StringComparison.Ordinal);
             return Problem(exception.ErrorCode == SampleWorkstationErrorCodes.UnsupportedOperation ? 501 : 502,
-                exception.ErrorCode, exception.Message, isCommand, exception.VendorCode, exception.VendorData);
+                exception.ErrorCode,
+                exception.Message,
+                isCommand && !explicitlyRejected,
+                exception.VendorCode,
+                exception.VendorData);
         }
         catch (HttpRequestException exception)
         {

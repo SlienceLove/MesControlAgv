@@ -776,6 +776,9 @@ public sealed class WorkflowAuboProgramDispatcher(
                 DeviceOperationId = workItem.DeviceOperation?.OperationId,
                 Outcome = outcome,
                 Error = error,
+                UnknownReason = outcome == WorkflowStepCompletionOutcome.Unknown
+                    ? MesControlAgv.Contracts.Devices.UnknownReason.ManualReconciliationRequired
+                    : null,
                 Outputs = evidence
             },
             cancellationToken);

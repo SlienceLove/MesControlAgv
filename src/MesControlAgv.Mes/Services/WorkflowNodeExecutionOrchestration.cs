@@ -1,3 +1,4 @@
+using System.Data;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Mes.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -6,6 +7,8 @@ namespace MesControlAgv.Mes.Services;
 
 public sealed partial class WorkflowApplicationService
 {
+    private static readonly SemaphoreSlim SampleWorkstationClaimGate = new(1, 1);
+
     public async Task<IReadOnlyList<WorkflowNodeExecutionWorkItem>> ListSimulatorDispatchableNodesAsync(
         CancellationToken cancellationToken)
     {
@@ -155,6 +158,84 @@ public sealed partial class WorkflowApplicationService
             .ToArray();
     }
 
+    public async Task<WorkflowNodeExecutionWorkItem?> TryClaimSampleWorkstationNodeExecutionAsync(
+        Guid nodeExecutionId,
+        CancellationToken cancellationToken)
+    {
+        await SampleWorkstationClaimGate.WaitAsync(cancellationToken);
+        try
+        {
+            await using var transaction = await _database.Database.BeginTransactionAsync(
+                IsolationLevel.Serializable,
+                cancellationToken);
+            var node = await FindNodeExecutionAsync(nodeExecutionId, cancellationToken);
+            if (ParseNodeStatus(node.Status) != WorkflowNodeExecutionStatus.Ready ||
+                !IsNodeType(
+                    node.NodeTypeId,
+                    WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask))
+            {
+                return null;
+            }
+
+            var inputs = WorkflowPersistence.DeserializeDetails(node.InputJson);
+            inputs.TryGetValue(WorkflowNodeConfigurationKeys.DeviceId, out var configuredDeviceId);
+            if (!string.IsNullOrWhiteSpace(configuredDeviceId))
+            {
+                var normalizedDeviceId = configuredDeviceId.Trim();
+                var activeStatuses = new[]
+                {
+                    WorkflowDeviceOperationStatus.Prepared.ToString(),
+                    WorkflowDeviceOperationStatus.StartPending.ToString(),
+                    WorkflowDeviceOperationStatus.Accepted.ToString(),
+                    WorkflowDeviceOperationStatus.Running.ToString()
+                };
+                var deviceBusy = await _database.WorkflowDeviceOperations.AnyAsync(
+                    operation =>
+                        operation.NodeExecutionId != nodeExecutionId &&
+                        operation.CapabilityId == WorkflowCapabilityIds.SampleWorkstationStartExistingTask &&
+                        operation.DeviceId == normalizedDeviceId &&
+                        activeStatuses.Contains(operation.Status),
+                    cancellationToken);
+                if (deviceBusy) return null;
+            }
+
+            var claimed = await ClaimNodeExecutionAsync(nodeExecutionId, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return claimed;
+        }
+        finally
+        {
+            SampleWorkstationClaimGate.Release();
+        }
+    }
+
+    public async Task<bool> TryMarkDeviceOperationStartPendingAsync(
+        Guid nodeExecutionId,
+        Guid deviceOperationId,
+        CancellationToken cancellationToken)
+    {
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
+        var updated = await _database.WorkflowDeviceOperations
+            .Where(operation =>
+                operation.OperationId == deviceOperationId &&
+                operation.NodeExecutionId == nodeExecutionId &&
+                operation.Status == WorkflowDeviceOperationStatus.Prepared.ToString())
+            .ExecuteUpdateAsync(
+                setters => setters
+                    .SetProperty(
+                        operation => operation.Status,
+                        WorkflowDeviceOperationStatus.StartPending.ToString())
+                    .SetProperty(operation => operation.UpdatedAtUtc, now),
+                cancellationToken);
+        if (updated != 1) return false;
+
+        var tracked = _database.WorkflowDeviceOperations.Local.FirstOrDefault(operation =>
+            operation.OperationId == deviceOperationId);
+        if (tracked is not null)
+            await _database.Entry(tracked).ReloadAsync(cancellationToken);
+        return true;
+    }
+
     public async Task<WorkflowNodeExecutionWorkItem> ClaimNodeExecutionAsync(
         Guid nodeExecutionId,
         CancellationToken cancellationToken)
@@ -273,9 +354,7 @@ public sealed partial class WorkflowApplicationService
             TransportOperationId = compatibilityOperationId,
             Outcome = completion.Outcome,
             Error = completion.Error,
-            UnknownReason = completion.Outcome == WorkflowStepCompletionOutcome.Unknown
-                ? completion.UnknownReason ?? MesControlAgv.Contracts.Devices.UnknownReason.ManualReconciliationRequired
-                : completion.UnknownReason,
+            UnknownReason = completion.UnknownReason,
             VendorTaskId = completion.VendorTaskId,
             RawResponseSummary = completion.RawResponseSummary,
             Outputs = completion.Outputs
@@ -314,6 +393,7 @@ public sealed partial class WorkflowApplicationService
         }
 
         if (current is not WorkflowDeviceOperationStatus.Prepared and
+            not WorkflowDeviceOperationStatus.StartPending and
             not WorkflowDeviceOperationStatus.Accepted)
         {
             throw new InvalidOperationException($"Device operation progress cannot advance from '{current}'.");

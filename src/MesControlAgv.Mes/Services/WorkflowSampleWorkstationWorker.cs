@@ -37,15 +37,16 @@ public sealed class WorkflowSampleWorkstationDispatcher(
 
     public async Task ProcessAsync(CancellationToken cancellationToken)
     {
-        if (!CanUseProfile()) return;
+        if (!options.Enabled) return;
 
         foreach (var workItem in await workflows.ListSampleWorkstationDispatchableNodesAsync(cancellationToken))
         {
             if (!TryResolveInputs(workItem, out var deviceId, out var taskNo, out var inputError))
             {
-                var claimedInvalid = await workflows.ClaimNodeExecutionAsync(
+                var claimedInvalid = await workflows.TryClaimSampleWorkstationNodeExecutionAsync(
                     workItem.NodeExecution.Id,
                     cancellationToken);
+                if (claimedInvalid is null) continue;
                 await CompleteAsync(
                     claimedInvalid,
                     WorkflowStepCompletionOutcome.Failed,
@@ -58,16 +59,17 @@ public sealed class WorkflowSampleWorkstationDispatcher(
             if (readiness is null || !IsReady(readiness))
                 continue;
 
-            var claimed = await workflows.ClaimNodeExecutionAsync(
+            var claimed = await workflows.TryClaimSampleWorkstationNodeExecutionAsync(
                 workItem.NodeExecution.Id,
                 cancellationToken);
+            if (claimed is null) continue;
             await ExecuteClaimedAsync(claimed, deviceId, taskNo, cancellationToken);
         }
     }
 
     public async Task RecoverAsync(CancellationToken cancellationToken)
     {
-        if (!CanUseProfile()) return;
+        if (!options.Enabled) return;
 
         foreach (var workItem in await workflows.ListSampleWorkstationRecoverableNodesAsync(cancellationToken))
         {
@@ -88,7 +90,7 @@ public sealed class WorkflowSampleWorkstationDispatcher(
                 await CompleteAsync(
                     workItem,
                     WorkflowStepCompletionOutcome.Unknown,
-                    "The workstation start was accepted, but this MES instance did not persist Running evidence before restart; no command was replayed.",
+                    "The workstation operation has no durable Running evidence after restart; no command was replayed.",
                     cancellationToken,
                     unknownReason: UnknownReason.MissingResult);
                 continue;
@@ -102,19 +104,6 @@ public sealed class WorkflowSampleWorkstationDispatcher(
                 cancellationToken);
         }
     }
-
-    private bool CanUseProfile() =>
-        options.Enabled &&
-        profile.WorkflowDevices.Any(device =>
-            device.Enabled &&
-            device.ControlEnabled &&
-            string.Equals(
-                device.DeviceFamily,
-                WorkflowDeviceFamilyIds.SampleWorkstation,
-                StringComparison.OrdinalIgnoreCase) &&
-            device.CapabilityIds.Contains(
-                WorkflowCapabilityIds.SampleWorkstationStartExistingTask,
-                StringComparer.OrdinalIgnoreCase));
 
     private async Task ExecuteClaimedAsync(
         WorkflowNodeExecutionWorkItem workItem,
@@ -132,10 +121,19 @@ public sealed class WorkflowSampleWorkstationDispatcher(
             return;
         }
 
-        var startAttempted = false;
         try
         {
-            startAttempted = true;
+            if (!await workflows.TryMarkDeviceOperationStartPendingAsync(
+                    workItem.NodeExecution.Id,
+                    operation.OperationId,
+                    cancellationToken))
+            {
+                _logger?.LogInformation(
+                    "Workstation node {NodeExecutionId} did not acquire the one-shot start boundary; no command was sent.",
+                    workItem.NodeExecution.Id);
+                return;
+            }
+
             var response = await commands.StartTaskAsync(deviceId, taskNo, cancellationToken);
             if (!IsMatchingStartResponse(response, deviceId, taskNo))
             {
@@ -169,14 +167,11 @@ public sealed class WorkflowSampleWorkstationDispatcher(
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            if (!startAttempted) throw;
-            await CompleteAsync(
-                workItem,
-                WorkflowStepCompletionOutcome.Unknown,
-                "The workflow was cancelled after the workstation start call began; no stop or retry command was sent.",
-                CancellationToken.None,
-                taskNo,
-                UnknownReason.ManualReconciliationRequired);
+            // The hosted worker token represents MES shutdown, not an operator
+            // decision about the physical task. Preserve StartPending,
+            // Accepted, or Running so restart recovery can reconcile it
+            // without sending another start command.
+            throw;
         }
         catch (SampleWorkstationGatewayException exception)
         {
@@ -194,13 +189,11 @@ public sealed class WorkflowSampleWorkstationDispatcher(
         {
             await CompleteAsync(
                 workItem,
-                startAttempted
-                    ? WorkflowStepCompletionOutcome.Unknown
-                    : WorkflowStepCompletionOutcome.Failed,
+                WorkflowStepCompletionOutcome.Unknown,
                 exception.Message,
                 cancellationToken,
                 taskNo,
-                startAttempted ? UnknownReason.ManualReconciliationRequired : null);
+                UnknownReason.ManualReconciliationRequired);
         }
     }
 
@@ -476,8 +469,7 @@ public sealed class WorkflowSampleWorkstationDispatcher(
         string taskNo) =>
         string.Equals(response.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase) &&
         response.Operation == SampleWorkstationCommandOperation.StartTask &&
-        (string.IsNullOrWhiteSpace(response.TaskNo) ||
-         string.Equals(response.TaskNo, taskNo, StringComparison.Ordinal));
+        string.Equals(response.TaskNo, taskNo, StringComparison.Ordinal);
 
     private static bool HasMatchingIdentity(
         WorkstationObservation observation,
@@ -579,7 +571,9 @@ public sealed class WorkflowSampleWorkstationWorker(
             try
             {
                 using var scope = scopeFactory.CreateScope();
-                await CreateDispatcher(scope).ProcessAsync(stoppingToken);
+                var dispatcher = CreateDispatcher(scope);
+                await dispatcher.RecoverAsync(stoppingToken);
+                await dispatcher.ProcessAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {

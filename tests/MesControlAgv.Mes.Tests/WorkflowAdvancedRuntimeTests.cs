@@ -733,6 +733,9 @@ internal sealed class WorkflowAdvancedRuntimeFixture : IAsyncDisposable
             {
                 DeviceOperationId = claimed.DeviceOperation!.OperationId,
                 Outcome = outcome,
+                UnknownReason = outcome == WorkflowStepCompletionOutcome.Unknown
+                    ? MesControlAgv.Contracts.Devices.UnknownReason.ManualReconciliationRequired
+                    : null,
                 Error = error,
                 Outputs = outputs ?? new Dictionary<string, string?>()
             },

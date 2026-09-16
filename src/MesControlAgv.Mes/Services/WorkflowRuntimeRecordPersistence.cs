@@ -210,9 +210,8 @@ public sealed partial class WorkflowApplicationService
         DateTime now,
         CancellationToken cancellationToken)
     {
-        var unknownReason = completion.Outcome == WorkflowStepCompletionOutcome.Unknown
-            ? completion.UnknownReason ?? MesControlAgv.Contracts.Devices.UnknownReason.ManualReconciliationRequired
-            : completion.UnknownReason;
+        if (completion.Outcome == WorkflowStepCompletionOutcome.Unknown && completion.UnknownReason is null)
+            throw new ArgumentException("Unknown outcome requires a controlled UnknownReason.", nameof(completion));
         var node = await GetOrCreateNodeExecutionRecordAsync(
             run,
             completedStep,
@@ -266,7 +265,7 @@ public sealed partial class WorkflowApplicationService
             device.ResultSummaryJson = WorkflowPersistence.Serialize(outputs);
             device.VendorTaskId = completion.VendorTaskId;
             device.ResultFileReference = node.ResultFileReference;
-            device.UnknownReason = unknownReason?.ToString();
+            device.UnknownReason = completion.UnknownReason?.ToString();
             device.RawResponseSummaryJson = string.IsNullOrWhiteSpace(completion.RawResponseSummary)
                 ? null : completion.RawResponseSummary.Length > 8192 ? completion.RawResponseSummary[..8192] : completion.RawResponseSummary;
             device.LastError = node.LastError;

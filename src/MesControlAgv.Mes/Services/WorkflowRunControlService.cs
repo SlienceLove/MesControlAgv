@@ -525,6 +525,7 @@ public sealed partial class WorkflowApplicationService
             {
                 TransportOperationId = operationId,
                 Outcome = WorkflowStepCompletionOutcome.Unknown,
+                UnknownReason = MesControlAgv.Contracts.Devices.UnknownReason.ManualReconciliationRequired,
                 Error = run.LastError
             },
             nextStep: null,

@@ -131,6 +131,26 @@ public sealed class WorkflowSampleWorkstationWorkerTests
     }
 
     [Fact]
+    public async Task Known_adapter_start_rejection_fails_without_retry()
+    {
+        await using var fixture = await WorkstationFixture.CreateAsync();
+        var runId = await fixture.PublishExecuteAndConfirmAsync();
+        var gateway = fixture.CreateGateway(Observation.Idle(SampleWorkstationTaskState.Completed));
+        gateway.StartException = new SampleWorkstationGatewayException(
+            502,
+            SampleWorkstationErrorCodes.CommandUnconfirmed,
+            "启动失败",
+            outcomeUnknown: false,
+            vendorCode: 200);
+
+        await fixture.CreateDispatcher(gateway).ProcessAsync(CancellationToken.None);
+
+        Assert.Equal(1, gateway.StartCalls);
+        var run = await fixture.Workflows.GetExecutionAsync(runId, CancellationToken.None);
+        Assert.Equal(WorkflowRuntimeStatus.Failed, run!.RuntimeStatus);
+    }
+
+    [Fact]
     public async Task Post_start_read_outage_retries_reads_only_and_never_replays_start()
     {
         await using var fixture = await WorkstationFixture.CreateAsync();
@@ -215,6 +235,118 @@ public sealed class WorkflowSampleWorkstationWorkerTests
         Assert.Equal(WorkflowRuntimeStatus.Completed, run!.RuntimeStatus);
     }
 
+    [Fact]
+    public async Task One_shot_start_boundary_can_be_acquired_only_once()
+    {
+        await using var fixture = await WorkstationFixture.CreateAsync();
+        await fixture.PublishExecuteAndConfirmAsync();
+        var ready = Assert.Single(
+            await fixture.Workflows.ListSampleWorkstationDispatchableNodesAsync(CancellationToken.None));
+        var claimed = await fixture.Workflows.TryClaimSampleWorkstationNodeExecutionAsync(
+            ready.NodeExecution.Id,
+            CancellationToken.None);
+
+        Assert.NotNull(claimed);
+        Assert.True(await fixture.Workflows.TryMarkDeviceOperationStartPendingAsync(
+            claimed!.NodeExecution.Id,
+            claimed.DeviceOperation!.OperationId,
+            CancellationToken.None));
+        Assert.False(await fixture.Workflows.TryMarkDeviceOperationStartPendingAsync(
+            claimed.NodeExecution.Id,
+            claimed.DeviceOperation.OperationId,
+            CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Active_workstation_operation_blocks_a_second_run_on_the_same_device()
+    {
+        await using var fixture = await WorkstationFixture.CreateAsync();
+        await fixture.PublishExecuteAndConfirmAsync();
+        await fixture.PublishExecuteAndConfirmAsync();
+        var ready = await fixture.Workflows.ListSampleWorkstationDispatchableNodesAsync(CancellationToken.None);
+        Assert.Equal(2, ready.Count);
+
+        var first = await fixture.Workflows.TryClaimSampleWorkstationNodeExecutionAsync(
+            ready[0].NodeExecution.Id,
+            CancellationToken.None);
+        var second = await fixture.Workflows.TryClaimSampleWorkstationNodeExecutionAsync(
+            ready[1].NodeExecution.Id,
+            CancellationToken.None);
+
+        Assert.NotNull(first);
+        Assert.Null(second);
+        Assert.Single(await fixture.Workflows.ListDeviceOperationsAsync(
+            first!.NodeExecution.WorkflowRunId,
+            CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Profile_drift_during_restart_marks_running_unknown_without_reads_or_writes()
+    {
+        await using var fixture = await WorkstationFixture.CreateAsync();
+        var runId = await fixture.PublishExecuteAndConfirmAsync();
+        var ready = Assert.Single(
+            await fixture.Workflows.ListSampleWorkstationDispatchableNodesAsync(CancellationToken.None));
+        var claimed = await fixture.Workflows.ClaimNodeExecutionAsync(
+            ready.NodeExecution.Id,
+            CancellationToken.None);
+        await fixture.Workflows.RecordDeviceOperationProgressAsync(
+            claimed.NodeExecution.Id,
+            claimed.DeviceOperation!.OperationId,
+            WorkflowDeviceOperationStatus.Running,
+            null,
+            CancellationToken.None);
+        var disabledProfile = fixture.Profile with
+        {
+            WorkflowDevices = fixture.Profile.WorkflowDevices.Select(device =>
+                string.Equals(device.DeviceId, "SAMPLE-WORKSTATION-01", StringComparison.OrdinalIgnoreCase)
+                    ? device with { Enabled = false, ControlEnabled = false }
+                    : device).ToArray()
+        };
+        var gateway = fixture.CreateGateway(Observation.Idle(SampleWorkstationTaskState.Completed));
+
+        await fixture.CreateDispatcher(gateway, profile: disabledProfile)
+            .RecoverAsync(CancellationToken.None);
+
+        Assert.Equal(0, gateway.StartCalls);
+        Assert.Equal(0, gateway.ObservationCount);
+        var run = await fixture.Workflows.GetExecutionAsync(runId, CancellationToken.None);
+        Assert.Equal(WorkflowRuntimeStatus.Unknown, run!.RuntimeStatus);
+    }
+
+    [Fact]
+    public async Task Host_shutdown_preserves_running_for_read_only_restart_recovery()
+    {
+        await using var fixture = await WorkstationFixture.CreateAsync();
+        var runId = await fixture.PublishExecuteAndConfirmAsync();
+        var gateway = fixture.CreateGateway(
+            Observation.Idle(SampleWorkstationTaskState.Completed),
+            Observation.Running());
+        gateway.BlockStatusReadNumber = 3;
+        using var shutdown = new CancellationTokenSource();
+        var dispatch = fixture.CreateDispatcher(gateway).ProcessAsync(shutdown.Token);
+        await gateway.BlockedStatusRead.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        shutdown.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => dispatch);
+
+        var interrupted = Assert.Single(
+            await fixture.Workflows.ListDeviceOperationsAsync(runId, CancellationToken.None));
+        Assert.Equal(WorkflowDeviceOperationStatus.Running, interrupted.Status);
+        var interruptedNode = (await fixture.Workflows.ListNodeExecutionsAsync(runId, CancellationToken.None))
+            .Single(item => item.NodeTypeId == WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask);
+        Assert.Equal(WorkflowNodeExecutionStatus.Running, interruptedNode.Status);
+
+        var recoveryGateway = fixture.CreateGateway(
+            Observation.Idle(SampleWorkstationTaskState.Completed));
+        await fixture.CreateDispatcher(recoveryGateway).RecoverAsync(CancellationToken.None);
+
+        Assert.Equal(0, recoveryGateway.StartCalls);
+        Assert.Equal(
+            WorkflowRuntimeStatus.Completed,
+            (await fixture.Workflows.GetExecutionAsync(runId, CancellationToken.None))!.RuntimeStatus);
+    }
+
     private sealed record Observation(
         SampleWorkstationDeviceState DeviceState,
         int RawDeviceState,
@@ -246,9 +378,21 @@ public sealed class WorkflowSampleWorkstationWorkerTests
         public Exception? StartException { get; set; }
         public bool FailReadsAfterStart { get; set; }
         public int FailedStatusReads { get; private set; }
+        public int? BlockStatusReadNumber { get; set; }
+        public int StatusReadCalls { get; private set; }
+        public TaskCompletionSource<bool> BlockedStatusRead { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public Task<SampleWorkstationStatusResponse> GetStatusAsync(string deviceId, CancellationToken cancellationToken)
+        public async Task<SampleWorkstationStatusResponse> GetStatusAsync(
+            string deviceId,
+            CancellationToken cancellationToken)
         {
+            StatusReadCalls++;
+            if (BlockStatusReadNumber == StatusReadCalls)
+            {
+                BlockedStatusRead.TrySetResult(true);
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            }
             if (FailReadsAfterStart && StartCalls > 0)
             {
                 FailedStatusReads++;
@@ -257,13 +401,13 @@ public sealed class WorkflowSampleWorkstationWorkerTests
             }
             _current = _observations.Count > 0 ? _observations.Dequeue() : _current
                 ?? throw new InvalidOperationException("No workstation observation was configured.");
-            return Task.FromResult(new SampleWorkstationStatusResponse(
+            return new SampleWorkstationStatusResponse(
                 deviceId,
                 "CYC-001-1000",
                 _current.DeviceState != SampleWorkstationDeviceState.Offline,
                 _current.DeviceState,
                 _current.RawDeviceState,
-                clock.GetUtcNow()));
+                clock.GetUtcNow());
         }
 
         public Task<SampleWorkstationErrorResponse> GetErrorsAsync(string deviceId, CancellationToken cancellationToken) =>
@@ -412,11 +556,12 @@ public sealed class WorkflowSampleWorkstationWorkerTests
 
         public WorkflowSampleWorkstationDispatcher CreateDispatcher(
             RecordingWorkstation gateway,
-            int startObservationTimeoutMs = 100) => new(
+            int startObservationTimeoutMs = 100,
+            ProfileConfiguration? profile = null) => new(
             Workflows,
             gateway,
             gateway,
-            Profile,
+            profile ?? Profile,
             new WorkflowSampleWorkstationWorkerOptions
             {
                 Enabled = true,

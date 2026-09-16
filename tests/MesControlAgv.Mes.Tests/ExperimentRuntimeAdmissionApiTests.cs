@@ -201,6 +201,7 @@ public sealed class ExperimentRuntimeAdmissionApiTests
             {
                 DeviceOperationId = claimed.DeviceOperation!.OperationId,
                 Outcome = WorkflowStepCompletionOutcome.Unknown,
+                UnknownReason = MesControlAgv.Contracts.Devices.UnknownReason.ManualReconciliationRequired,
                 Error = "Adapter outcome could not be proven"
             },
             CancellationToken.None);

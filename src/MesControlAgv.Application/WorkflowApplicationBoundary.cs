@@ -131,6 +131,23 @@ public interface IWorkflowApplicationService : IWorkflowVersionReader, IWorkflow
     Task<IReadOnlyList<WorkflowNodeExecutionWorkItem>> ListSampleWorkstationRecoverableNodesAsync(
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Atomically claims one ready workstation attempt only when the same device has no active operation.
+    /// Returns null when another worker or workflow already owns the attempt/device.
+    /// </summary>
+    Task<WorkflowNodeExecutionWorkItem?> TryClaimSampleWorkstationNodeExecutionAsync(
+        Guid nodeExecutionId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Atomically grants the one-shot start boundary by changing Prepared to StartPending.
+    /// Only the caller receiving true may invoke the physical start command.
+    /// </summary>
+    Task<bool> TryMarkDeviceOperationStartPendingAsync(
+        Guid nodeExecutionId,
+        Guid deviceOperationId,
+        CancellationToken cancellationToken);
+
     /// <summary>Claims one durable node attempt without contacting a device.</summary>
     Task<WorkflowNodeExecutionWorkItem> ClaimNodeExecutionAsync(
         Guid nodeExecutionId,

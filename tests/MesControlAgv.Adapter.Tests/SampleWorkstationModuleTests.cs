@@ -40,10 +40,14 @@ public sealed class SampleWorkstationModuleTests
     }
 
     [Theory]
-    [InlineData("{\"Code\":200,\"Data\":\"启动失败\"}", "workstation_command_unconfirmed", 200)]
-    [InlineData("{\"Code\":202,\"Data\":\"vendor error\"}", "workstation_vendor_failure", 202)]
-    [InlineData("", "workstation_invalid_payload", null)]
-    public async Task Command_failures_preserve_reason_and_uncertainty_without_retries(string body, string code, int? vendorCode)
+    [InlineData("{\"Code\":200,\"Data\":\"启动失败\"}", "workstation_command_unconfirmed", 200, false)]
+    [InlineData("{\"Code\":202,\"Data\":\"vendor error\"}", "workstation_vendor_failure", 202, true)]
+    [InlineData("", "workstation_invalid_payload", null, true)]
+    public async Task Command_failures_preserve_reason_and_uncertainty_without_retries(
+        string body,
+        string code,
+        int? vendorCode,
+        bool outcomeUnknown)
     {
         using var vendor = new VendorHandler(body);
         await using var app = await CreateHostAsync(vendor, control: true);
@@ -52,7 +56,7 @@ public sealed class SampleWorkstationModuleTests
         Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(code, problem.GetProperty("errorCode").GetString());
-        Assert.True(problem.GetProperty("outcomeUnknown").GetBoolean());
+        Assert.Equal(outcomeUnknown, problem.GetProperty("outcomeUnknown").GetBoolean());
         if (vendorCode.HasValue)
             Assert.Equal(vendorCode.Value, problem.GetProperty("vendorCode").GetInt32());
         Assert.Equal(1, vendor.RequestCount);
