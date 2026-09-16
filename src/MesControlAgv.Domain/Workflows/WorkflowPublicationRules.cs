@@ -76,6 +76,9 @@ public static class WorkflowPublicationIssueCodes
     public const string NodeUnreachable = "WF-PATH-NODE-UNREACHABLE";
     public const string EndUnreachable = "WF-PATH-END-UNREACHABLE";
     public const string CycleUnsupported = "WF-PATH-CYCLE-UNSUPPORTED";
+    [Obsolete("The sample workstation manual-confirmation gate is optional. This legacy issue code is no longer emitted.")]
+    public const string SampleWorkstationManualConfirmationRequired =
+        "WF-SAMPLE-WORKSTATION-MANUAL-CONFIRMATION-REQUIRED";
 }
 
 internal static class WorkflowPublicationRules
