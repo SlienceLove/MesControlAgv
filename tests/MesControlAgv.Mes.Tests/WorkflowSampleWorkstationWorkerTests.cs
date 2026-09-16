@@ -197,6 +197,7 @@ public sealed class WorkflowSampleWorkstationWorkerTests
             null,
             CancellationToken.None);
         var gateway = fixture.CreateGateway(Observation.Idle(SampleWorkstationTaskState.Completed));
+        fixture.Clock.Advance(TimeSpan.FromMilliseconds(1001));
 
         await fixture.CreateDispatcher(gateway).RecoverAsync(CancellationToken.None);
 
@@ -262,7 +263,7 @@ public sealed class WorkflowSampleWorkstationWorkerTests
     {
         await using var fixture = await WorkstationFixture.CreateAsync();
         await fixture.PublishExecuteAndConfirmAsync();
-        await fixture.PublishExecuteAndConfirmAsync();
+        await fixture.PublishExecuteAndConfirmAsync("sample-workstation-01");
         var ready = await fixture.Workflows.ListSampleWorkstationDispatchableNodesAsync(CancellationToken.None);
         Assert.Equal(2, ready.Count);
 
@@ -278,6 +279,41 @@ public sealed class WorkflowSampleWorkstationWorkerTests
         Assert.Single(await fixture.Workflows.ListDeviceOperationsAsync(
             first!.NodeExecution.WorkflowRunId,
             CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Recovery_does_not_terminalize_a_fresh_start_pending_owner()
+    {
+        await using var fixture = await WorkstationFixture.CreateAsync();
+        var runId = await fixture.PublishExecuteAndConfirmAsync();
+        var ready = Assert.Single(
+            await fixture.Workflows.ListSampleWorkstationDispatchableNodesAsync(CancellationToken.None));
+        var claimed = await fixture.Workflows.TryClaimSampleWorkstationNodeExecutionAsync(
+            ready.NodeExecution.Id,
+            CancellationToken.None);
+        Assert.NotNull(claimed);
+        Assert.True(await fixture.Workflows.TryMarkDeviceOperationStartPendingAsync(
+            claimed!.NodeExecution.Id,
+            claimed.DeviceOperation!.OperationId,
+            CancellationToken.None));
+        var gateway = fixture.CreateGateway(Observation.Idle(SampleWorkstationTaskState.Completed));
+        var dispatcher = fixture.CreateDispatcher(gateway);
+
+        await dispatcher.RecoverAsync(CancellationToken.None);
+
+        Assert.Equal(
+            WorkflowRuntimeStatus.Running,
+            (await fixture.Workflows.GetExecutionAsync(runId, CancellationToken.None))!.RuntimeStatus);
+        Assert.Equal(
+            WorkflowDeviceOperationStatus.StartPending,
+            Assert.Single(await fixture.Workflows.ListDeviceOperationsAsync(runId, CancellationToken.None)).Status);
+        Assert.Equal(0, gateway.ObservationCount);
+
+        fixture.Clock.Advance(TimeSpan.FromMilliseconds(1001));
+        await dispatcher.RecoverAsync(CancellationToken.None);
+        Assert.Equal(
+            WorkflowRuntimeStatus.Unknown,
+            (await fixture.Workflows.GetExecutionAsync(runId, CancellationToken.None))!.RuntimeStatus);
     }
 
     [Fact]
@@ -572,16 +608,18 @@ public sealed class WorkflowSampleWorkstationWorkerTests
             },
             Clock);
 
-        public async Task<Guid> PublishExecuteAndConfirmAsync()
+        public async Task<Guid> PublishExecuteAndConfirmAsync(
+            string deviceId = "SAMPLE-WORKSTATION-01")
         {
-            var runId = await PublishAndExecuteAsync();
+            var runId = await PublishAndExecuteAsync(deviceId);
             await ConfirmAsync(runId);
             return runId;
         }
 
-        public async Task<Guid> PublishAndExecuteAsync()
+        public async Task<Guid> PublishAndExecuteAsync(
+            string deviceId = "SAMPLE-WORKSTATION-01")
         {
-            var definition = CreateWorkflow();
+            var definition = CreateWorkflow(deviceId);
             var draft = await Workflows.CreateDraftAsync(definition, "test", CancellationToken.None);
             var validation = await Workflows.ValidateVersionAsync(
                 draft.WorkflowId,
@@ -625,7 +663,7 @@ public sealed class WorkflowSampleWorkstationWorkerTests
             await _connection.DisposeAsync();
         }
 
-        private static WorkflowDefinition CreateWorkflow()
+        private static WorkflowDefinition CreateWorkflow(string deviceId)
         {
             var catalog = BuiltInWorkflowCatalog.Create();
             var start = Node(catalog, WorkflowGraphNodeTypeIds.Start, "开始", 1);
@@ -647,7 +685,7 @@ public sealed class WorkflowSampleWorkstationWorkerTests
                 3,
                 new Dictionary<string, string?>
                 {
-                    [WorkflowNodeConfigurationKeys.DeviceId] = "SAMPLE-WORKSTATION-01",
+                    [WorkflowNodeConfigurationKeys.DeviceId] = deviceId,
                     [WorkflowNodeConfigurationKeys.TaskNo] = "TEST-001"
                 });
             var end = Node(catalog, WorkflowGraphNodeTypeIds.End, "结束", 4);

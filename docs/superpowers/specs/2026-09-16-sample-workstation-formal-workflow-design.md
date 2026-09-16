@@ -134,7 +134,7 @@
 恢复只读取状态，绝不重放启动：
 
 - 设备操作记录已经持久化 Running 证据：可继续读取指定任务；三项终态一致时完成，否则保持观察或在恢复时限后 Unknown。
-- 设备操作记录只有 Accepted，没有 Running 证据：直接转 Unknown，需要人工核对，因为复用任务的旧 Completed 无法证明本轮完成。
+- 设备操作记录只有 Prepared、StartPending 或 Accepted，没有 Running 证据：绝不重放启动。若记录仍在本轮启动观察窗口内，先保留给可能仍存活的发令实例；窗口过期后转 Unknown，需要人工核对，因为复用任务的旧 Completed 无法证明本轮完成。
 - 缺少操作 ID、设备 ID 或任务号：转 Unknown。
 - 已 Failed、Unknown 或完成的节点不重新派发。
 

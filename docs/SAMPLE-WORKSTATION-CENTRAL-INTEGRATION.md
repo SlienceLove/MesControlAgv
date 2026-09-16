@@ -35,7 +35,7 @@ $env:WPF_ENABLE_SAMPLE_WORKSTATION_TEST_CONTROL='true'
 
 发布时必须存在一条 `core.manual-confirmation` 成功控制边直接进入该节点；确认内容用于要求操作员先在厂家主程序完成整机初始化。缺少此前置节点、设备能力、控制权限或任务号时不能发布。
 
-MES worker 的行为是：Ready 前只读检查设备 Idle/0、错误码0和指定任务非 Running；认领后只发送一次 `StartTaskAsync`；收到确认后必须先观察到本轮 Running 证据，再以任务 Completed、设备 Idle/0、错误码0三项一致完成节点。旧 Completed 不算本轮完成，启动请求不自动重试。仅 Accepted 时 MES 重启转 Unknown；已经持久化 Running 后可只读恢复完成。
+MES worker 的行为是：Ready 前只读检查设备 Idle/0、错误码0和指定任务非 Running；认领后只发送一次 `StartTaskAsync`；收到确认后必须先观察到本轮 Running 证据，再以任务 Completed、设备 Idle/0、错误码0三项一致完成节点。旧 Completed 不算本轮完成，启动请求不自动重试。仅有 Prepared/StartPending/Accepted 时绝不重发；新鲜记录先留给仍存活的发令实例，启动观察窗口过期后转 Unknown。已经持久化 Running 后可只读恢复完成。
 
 worker 默认关闭：
 
@@ -200,4 +200,4 @@ dotnet build MesControlAgv.sln --no-restore
 
 模块测试仅启动本机临时 HTTP 主机，厂家及 Adapter 上游均为内存响应替身；不访问真实设备。覆盖独立注册/路由、开关、命令确认、错误透传、超时与响应体停滞、禁用能力、配置覆盖及不重试。
 
-正式工作流实现后的验证结果：工作流契约测试 73/73、MES 全量 319/319、工作站 Adapter 38/38 通过；WPF 排除一个已确认无关的既有根目录用例后 442/442 通过。若包含该用例则为 442/443，唯一失败仍是 `ShineLabHandoffRehearsalTests` 在链接工作区无法识别仓库根目录。解决方案构建通过，0 警告、0 错误。本轮自动验证没有启动本地服务，也没有访问真机。
+正式工作流实现后的验证结果：工作流契约测试 73/73、MES 全量 320/320、工作站 Adapter 38/38 通过；WPF 排除一个已确认无关的既有根目录用例后 442/442 通过。若包含该用例则为 442/443，唯一失败仍是 `ShineLabHandoffRehearsalTests` 在链接工作区无法识别仓库根目录。解决方案构建通过，0 警告、0 错误。本轮自动验证没有启动本地服务，也没有访问真机。

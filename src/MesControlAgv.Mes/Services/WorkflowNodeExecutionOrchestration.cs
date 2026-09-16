@@ -181,7 +181,7 @@ public sealed partial class WorkflowApplicationService
             inputs.TryGetValue(WorkflowNodeConfigurationKeys.DeviceId, out var configuredDeviceId);
             if (!string.IsNullOrWhiteSpace(configuredDeviceId))
             {
-                var normalizedDeviceId = configuredDeviceId.Trim();
+                var normalizedDeviceId = configuredDeviceId.Trim().ToUpperInvariant();
                 var activeStatuses = new[]
                 {
                     WorkflowDeviceOperationStatus.Prepared.ToString(),
@@ -193,7 +193,8 @@ public sealed partial class WorkflowApplicationService
                     operation =>
                         operation.NodeExecutionId != nodeExecutionId &&
                         operation.CapabilityId == WorkflowCapabilityIds.SampleWorkstationStartExistingTask &&
-                        operation.DeviceId == normalizedDeviceId &&
+                        operation.DeviceId != null &&
+                        operation.DeviceId.ToUpper() == normalizedDeviceId &&
                         activeStatuses.Contains(operation.Status),
                     cancellationToken);
                 if (deviceBusy) return null;

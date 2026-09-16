@@ -85,14 +85,39 @@ public sealed class WorkflowSampleWorkstationDispatcher(
                 continue;
             }
 
-            if (operation.Status != WorkflowDeviceOperationStatus.Running)
+            if (operation.Status is WorkflowDeviceOperationStatus.Prepared or
+                WorkflowDeviceOperationStatus.StartPending or
+                WorkflowDeviceOperationStatus.Accepted)
             {
+                var recoveryGrace = TimeSpan.FromMilliseconds(
+                    Math.Max(1000, options.StartObservationTimeoutMs));
+                if (_timeProvider.GetUtcNow() - operation.UpdatedAt < recoveryGrace)
+                {
+                    _logger?.LogInformation(
+                        "Workstation operation {OperationId} remains {Status} within its start-observation lease; recovery will not interfere with its live owner.",
+                        operation.OperationId,
+                        operation.Status);
+                    continue;
+                }
+
                 await CompleteAsync(
                     workItem,
                     WorkflowStepCompletionOutcome.Unknown,
                     "The workstation operation has no durable Running evidence after restart; no command was replayed.",
                     cancellationToken,
                     unknownReason: UnknownReason.MissingResult);
+                continue;
+            }
+
+            if (operation.Status != WorkflowDeviceOperationStatus.Running)
+            {
+                await CompleteAsync(
+                    workItem,
+                    WorkflowStepCompletionOutcome.Unknown,
+                    $"The workstation operation has unsupported durable status '{operation.Status}' after restart; no command was replayed.",
+                    cancellationToken,
+                    taskNo,
+                    UnknownReason.ManualReconciliationRequired);
                 continue;
             }
 
