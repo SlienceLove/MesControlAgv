@@ -2,7 +2,7 @@
 
 新会话先读 [2026-09-14 交接文件](SAMPLE-WORKSTATION-HANDOFF-2026-09-14.md)。本轮原始证据见 [归档目录](archives/sample-workstation/2026-09-14/README.md)。
 
-2026-09-15 最新进度：16:32 使用 `DLHWorkstation_1625.exe` 再次完整验证正常路径，设备 Idle→Running→Idle、任务 Completed→Running→Completed、返回码 0→3→0，现场顶部运行提示与接口同步并在完成后清除。隔离分支已增加 WPF 默认隐藏的联调测试入口；正式运行仍由后续完整工作流调度。冷启动初始化、异常终态和任务空时间字段仍需跟踪。详见 [0915 诊断记录](diagnostics/2026-09-15-workstation-init-only.md) 与 [WPF 联调入口设计](superpowers/specs/2026-09-15-sample-workstation-wpf-test-control-design.md)。下文 09-14 内容保留为历史基线，以本段最新进展为准。
+2026-09-16 最新进度：默认隐藏的 WPF 联调入口已通过真机验收。前两次在未完整初始化状态下没有进入运行，WPF 没有误判旧 Completed 或自动重发；用户从厂家主程序手动初始化后，第三次 WPF 单次启动于 08:53:50 进入 Running，08:56:20 完成，用户确认 WPF 显示“任务完成”。详见 [WPF 真机验收记录](diagnostics/2026-09-16-workstation-wpf-field-validation.md)。正式运行仍由后续完整工作流调度；厂家冷启动初始化、异常终态和任务空时间字段继续跟踪。
 
 日期：2026-09-14。范围：最小通讯模块的接入准备，不包含本次主工作区合并、工作流自动执行或真实设备启动。
 
@@ -24,7 +24,7 @@ $env:WPF_ENABLE_SAMPLE_WORKSTATION_TEST_CONTROL='true'
 
 控制区只允许选择厂家已经存在的任务，经 WPF 二次确认后启动一次。取消确认不发送请求；确认后不自动重发。界面把 `Acknowledged=true` 显示为“设备已接收”，随后每 2 秒读取状态，必须先看到本轮 Running 证据，再以任务 Completed、设备 Idle/0、结果码0三项一致判定完成。观察最长 10 分钟，超时或关闭界面只停止本地观察，不停止设备。
 
-该入口不提供初始化、建任务、轨迹、导入、暂停或停止。它只用于当前 WPF→MES→Adapter→真机链路测试，后续完整实验通过正式工作流节点和 MES worker 执行；正式工作流不调用 WPF 测试按钮。
+该入口不提供初始化、建任务、轨迹、导入、暂停或停止。它只用于当前 WPF→MES→Adapter→真机链路测试，后续完整实验通过正式工作流节点和 MES worker 执行；正式工作流不调用 WPF 测试按钮。2026-09-16 真机验收已经通过，但也确认厂家主程序冷启动自动初始化不足；厂家修复前需先人工执行完整初始化。
 
 ## 模块边界
 
