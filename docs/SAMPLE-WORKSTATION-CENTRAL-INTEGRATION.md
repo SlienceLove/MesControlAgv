@@ -2,7 +2,7 @@
 
 新会话先读 [2026-09-14 交接文件](SAMPLE-WORKSTATION-HANDOFF-2026-09-14.md)。本轮原始证据见 [归档目录](archives/sample-workstation/2026-09-14/README.md)。
 
-2026-09-16 最新进度：默认隐藏的 WPF 联调入口、正式工作流节点和 WPF 人工确认操作均已通过真机闭环。执行 `ab5ad733-ad1a-4db3-ac4a-696bc141b143` 由 WPF 完成人工确认，worker 单次启动 `TEST-001`，观察到 Running 后于 15:00 完成。厂家新版本轮直接进入实验，未观察到明确初始化动作；因设备未确认断电或清除历史初始化状态，冷态自动初始化能力仍无结论。详见 [正式工作流交接](SAMPLE-WORKSTATION-FORMAL-WORKFLOW-HANDOFF-2026-09-16.md) 和 [WPF 真机验收记录](diagnostics/2026-09-16-workstation-wpf-field-validation.md)。
+2026-09-16 最新进度：默认隐藏的 WPF 联调入口、正式工作流节点和 WPF 人工确认操作均已通过真机闭环。执行 `2614a47e-baaa-471c-9b63-580c43f0540a` 在整机重启且未手动初始化的条件下，只发送一次 `TEST-001` 启动；厂家主程序先自动初始化，再自动继续实验，最终 Running→Completed。无人工门禁的正式流程 v2 已发布。详见 [正式工作流交接](SAMPLE-WORKSTATION-FORMAL-WORKFLOW-HANDOFF-2026-09-16.md) 和 [WPF 真机验收记录](diagnostics/2026-09-16-workstation-wpf-field-validation.md)。
 
 日期：2026-09-14。范围：最小通讯模块的接入准备，不包含本次主工作区合并、工作流自动执行或真实设备启动。
 
@@ -24,7 +24,7 @@ $env:WPF_ENABLE_SAMPLE_WORKSTATION_TEST_CONTROL='true'
 
 控制区只允许选择厂家已经存在的任务，经 WPF 二次确认后启动一次。取消确认不发送请求；确认后不自动重发。界面把 `Acknowledged=true` 显示为“设备已接收”，随后每 2 秒读取状态，必须先看到本轮 Running 证据，再以任务 Completed、设备 Idle/0、结果码0三项一致判定完成。观察最长 10 分钟，超时或关闭界面只停止本地观察，不停止设备。
 
-该入口不提供初始化、建任务、轨迹、导入、暂停或停止。它只用于当前 WPF→MES→Adapter→真机链路测试，后续完整实验通过正式工作流节点和 MES worker 执行；正式工作流不调用 WPF 测试按钮。2026-09-16 真机验收已经通过；厂家新版能否在明确冷态下自动完整初始化仍未证实，因此正式流程继续保留人工初始化确认。
+该入口不提供初始化、建任务、轨迹、导入、暂停或停止。它只用于当前 WPF→MES→Adapter→真机链路测试，后续完整实验通过正式工作流节点和 MES worker 执行；正式工作流不调用 WPF 测试按钮。厂家新版冷态自动初始化与继续实验已经验证，正式 v2 不再包含人工初始化确认。
 
 ## 正式工作流节点
 
@@ -33,7 +33,7 @@ $env:WPF_ENABLE_SAMPLE_WORKSTATION_TEST_CONTROL='true'
 - `deviceId`：Profile 中的工作站设备。
 - `taskNo`：厂家主程序中已经存在的任务编号。
 
-发布时必须存在一条 `core.manual-confirmation` 成功控制边直接进入该节点；确认内容用于要求操作员先在厂家主程序完成整机初始化。缺少此前置节点、设备能力、控制权限或任务号时不能发布。
+`core.manual-confirmation` 可按流程需要显式前置，但不再强制。缺少设备能力、控制权限或任务号时仍不能发布。当前已发布 v2 为：开始 → 开盖分液执行已有任务 → 结束。
 
 MES worker 的行为是：Ready 前只读检查设备 Idle/0、错误码0和指定任务非 Running；认领后只发送一次 `StartTaskAsync`；收到确认后必须先观察到本轮 Running 证据，再以任务 Completed、设备 Idle/0、错误码0三项一致完成节点。旧 Completed 不算本轮完成，启动请求不自动重试。仅有 Prepared/StartPending/Accepted 时绝不重发；新鲜记录先留给仍存活的发令实例，启动观察窗口过期后转 Unknown。已经持久化 Running 后可只读恢复完成。
 
@@ -213,6 +213,6 @@ dotnet build MesControlAgv.sln --no-restore
 - 操作原因同时写入审计 Reason 和人工 Comment，可满足 `requireComment=true`。
 - 失败保留人工节点和输入，不自动重试；不存在“最新 Run”自动切换。
 
-2026-09-16 真机执行 `ab5ad733-ad1a-4db3-ac4a-696bc141b143` 已通过 WPF 完成人工确认，并由 worker 单次启动 `TEST-001`，最终工作流 Completed。厂家新版是否能在明确冷态下自动完整初始化尚未验证，不应移除人工初始化门禁。
+2026-09-16 真机执行 `ab5ad733-ad1a-4db3-ac4a-696bc141b143` 已通过 WPF 完成人工确认，并由 worker 单次启动 `TEST-001`，最终工作流 Completed。随后冷态执行 `2614a47e-baaa-471c-9b63-580c43f0540a` 证实厂家新版会自动初始化并继续实验；开盖分液 v2 已移除强制人工门禁。
 
 人工确认 UI 完成后的 WPF 测试为 449/450；唯一失败仍是链接 worktree 根目录识别的既有用例。
