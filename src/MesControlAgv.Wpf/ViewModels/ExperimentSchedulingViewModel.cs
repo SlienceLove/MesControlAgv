@@ -981,7 +981,9 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
             : job.WorkflowSteps.Select(step => (step.WorkflowId, step.WorkflowVersion)).Distinct().ToArray();
         var versions = await Task.WhenAll(references.Select(reference =>
             _mes.GetWorkflowVersionAsync(reference.WorkflowId, reference.WorkflowVersion, _shutdown.Token)));
-        return versions.Where(version => version is not null).Any(version => version!.Definition.Nodes.Any(node =>
+        if (versions.Any(version => version is null))
+            throw new InvalidOperationException("无法确认固定工作流版本；运行准入已保守阻断。");
+        return versions.Any(version => version!.Definition.Nodes.Any(node =>
             string.Equals(node.NodeTypeId, WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask, StringComparison.Ordinal)));
     }
 
@@ -1030,7 +1032,14 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
         }
         catch
         {
-            // Retain the original write failure as the operator-visible error.
+            // The first write may already have invalidated the central snapshot.
+            // Never retain a cached Verified projection when authoritative reload
+            // cannot establish the current state.
+            if (IsCurrentSampleVerificationContext(jobId, loadVersion))
+            {
+                CurrentSampleVerification = null;
+                IsSampleVerificationRequirementResolved = false;
+            }
         }
     }
 

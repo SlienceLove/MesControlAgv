@@ -67,3 +67,10 @@ dotnet test tests/MesControlAgv.Mes.Tests/MesControlAgv.Mes.Tests.csproj --no-re
 dotnet test tests/MesControlAgv.Wpf.Tests/MesControlAgv.Wpf.Tests.csproj --no-restore --filter "FullyQualifiedName~MesClientExperimentSchedulingHttpContractTests|FullyQualifiedName~ExperimentSchedulingViewModelTests|FullyQualifiedName~ExperimentPlanningViewBindingTests"
 # Passed: 20 / 20
 ```
+
+## Fix round 2
+
+- Added a registration-API regression test proving a business-sample-identifier-only central update invalidates an already verified snapshot and is rejected by the verification gate.
+- Treat missing workflow versions as unresolved/error rather than ordinary tasks; failed post-registration authoritative reload now clears the cached verification and conservatively disables admission.
+
+Commands: `ExperimentSampleVerificationApiTests` 8/8; MES full 337/337; Task 4 WPF directional suite 20/20.

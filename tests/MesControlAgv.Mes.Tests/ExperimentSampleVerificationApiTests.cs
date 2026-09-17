@@ -119,6 +119,31 @@ public sealed class ExperimentSampleVerificationApiTests : IClassFixture<MesWebA
     }
 
     [Fact]
+    public async Task Business_sample_identifier_registration_drift_invalidates_verified_snapshot_and_gate_rejects_it()
+    {
+        var jobId = await AddJobAsync("B-BUSINESS-DRIFT");
+        var sample = await RegisterAsync("B-BUSINESS-DRIFT", "BUSINESS-1");
+        var saved = await SaveRowsAsync(jobId, [new ExperimentSampleTaskRow
+        {
+            RowId = Guid.NewGuid(), SampleId = sample.SampleId, BusinessSampleId = sample.BusinessSampleId,
+            SampleBarcode = sample.Barcode, Position = "A1", Order = 1
+        }]);
+        await VerifyAsync(jobId, saved);
+        var changed = new SaveExperimentSampleRequest
+        {
+            RequestId = Guid.NewGuid(), Actor = "operator", Reason = "correct business id",
+            Sample = sample with { BusinessSampleId = sample.BusinessSampleId + "-CORRECTED" }
+        };
+        (await _client.PutAsJsonAsync($"/api/experiment-samples/{sample.SampleId}", changed)).EnsureSuccessStatusCode();
+        var current = (await (await _client.GetAsync($"/api/experiment-jobs/{jobId}/sample-verifications/current")).Content.ReadFromJsonAsync<ExperimentSampleVerification>())!;
+        Assert.Equal(ExperimentSampleVerificationStatus.Invalidated, current.Status);
+        using var scope = _factory.Services.CreateScope();
+        var gate = scope.ServiceProvider.GetRequiredService<IExperimentSampleVerificationGate>();
+        var exception = await Assert.ThrowsAsync<ExperimentSampleVerificationException>(() => gate.RequireVerifiedCurrentAsync(jobId, saved.Revision, saved.SnapshotHash, CancellationToken.None));
+        Assert.Equal(ExperimentSampleVerificationIssueCodes.VerificationInvalidated, exception.Code);
+    }
+
+    [Fact]
     public async Task Verification_identity_tracks_business_id_barcode_position_and_order_but_not_display_name()
     {
         async Task<ExperimentSampleVerification> VerifiedAsync(string suffix)
