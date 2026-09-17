@@ -1109,6 +1109,52 @@ public sealed class MesClient(HttpClient client) : IMesClient
         throw await CreateExperimentApiExceptionAsync(response, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<ExperimentSample>> GetExperimentSamplesAsync(
+        string? batchId,
+        CancellationToken cancellationToken) =>
+        await GetExperimentAsync<IReadOnlyList<ExperimentSample>>(
+            $"api/experiment-samples{BuildExperimentQuery(("batchId", batchId))}",
+            cancellationToken) ?? [];
+
+    public Task<ExperimentSample> SaveExperimentSampleAsync(
+        Guid sampleId,
+        SaveExperimentSampleRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ExperimentSample>(
+            HttpMethod.Put,
+            $"api/experiment-samples/{sampleId}",
+            request,
+            cancellationToken);
+
+    public async Task<ExperimentSampleVerification?> GetCurrentExperimentSampleVerificationAsync(
+        Guid jobId,
+        CancellationToken cancellationToken) =>
+        await GetExperimentAsync<ExperimentSampleVerification>(
+            $"api/experiment-jobs/{jobId}/sample-verifications/current",
+            cancellationToken,
+            mapNotFoundToNull: true);
+
+    public Task<ExperimentSampleVerification> SaveCurrentExperimentSampleVerificationAsync(
+        Guid jobId,
+        SaveExperimentSampleVerificationRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ExperimentSampleVerification>(
+            HttpMethod.Put,
+            $"api/experiment-jobs/{jobId}/sample-verifications/current",
+            request,
+            cancellationToken);
+
+    public Task<ExperimentSampleVerification> CompleteExperimentSampleVerificationAsync(
+        Guid jobId,
+        int revision,
+        CompleteExperimentSampleVerificationRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ExperimentSampleVerification>(
+            HttpMethod.Post,
+            $"api/experiment-jobs/{jobId}/sample-verifications/{revision}/verify",
+            request,
+            cancellationToken);
+
     private async Task<DashboardTask> PostAsync(string path, object? body, CancellationToken cancellationToken)
     {
         using var response = await client.PostAsJsonAsync(path, body, cancellationToken);

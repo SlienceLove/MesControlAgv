@@ -1,0 +1,54 @@
+# Task 4 report: WPF 页内样品核对
+
+## Status
+
+Completed. The existing “任务排程” detail area now provides the minimal MES-backed manual sample-verification entry point. It does not add navigation, device access, scanner input, or a workstation-specific start action.
+
+## Implementation
+
+- Added the central-sample and current-verification HTTP operations to `IMesClient` and `MesClient`, including `404`-to-null handling for a missing current snapshot.
+- Added presentation models for snapshot rows and row-level MES validation results.
+- The scheduling ViewModel clears snapshot state on selection, loads the selected job's verification/sample data through `IMesClient`, and ignores late responses for a previously selected job.
+- It identifies a workstation workflow from its immutable MES workflow version, disables `CanAdmit` until the current snapshot is `Verified`, and shows an explicit reminder that the backend is authoritative. Non-workstation jobs retain the prior admission behavior.
+- Added central sample registration/edit + snapshot-row save, direct (no second confirmation) visual verification completion, verified-row read-only display, and an invalidation message after a changed verified snapshot is saved.
+- Added the page-inline “样品核对” panel with batch, revision, status, short snapshot summary, last verifier/time, ordered rows, row validation, and minimal editor. The completion message explicitly does not claim task-table upload or instrument arrival.
+
+## Changed files
+
+- `src/MesControlAgv.Wpf/Services/IMesClient.cs`
+- `src/MesControlAgv.Wpf/Services/MesClient.cs`
+- `src/MesControlAgv.Wpf/ViewModels/ExperimentSampleVerificationModels.cs` (new)
+- `src/MesControlAgv.Wpf/ViewModels/ExperimentSchedulingViewModel.cs`
+- `src/MesControlAgv.Wpf/Experiments/ExperimentSchedulingView.xaml`
+- `tests/MesControlAgv.Wpf.Tests/MesClientExperimentSchedulingHttpContractTests.cs`
+- `tests/MesControlAgv.Wpf.Tests/ExperimentSchedulingViewModelTests.cs`
+- `tests/MesControlAgv.Wpf.Tests/ExperimentPlanningViewBindingTests.cs`
+
+## Tests
+
+Command:
+
+```powershell
+dotnet test tests/MesControlAgv.Wpf.Tests/MesControlAgv.Wpf.Tests.csproj --no-restore --filter "FullyQualifiedName~MesClientExperimentSchedulingHttpContractTests|FullyQualifiedName~ExperimentSchedulingViewModelTests|FullyQualifiedName~ExperimentPlanningViewBindingTests"
+```
+
+Result: passed — 20 total, 20 passed, 0 failed, 0 skipped (1 s).
+
+An initial isolated-artifacts attempt did not start because a single shared `BaseIntermediateOutputPath` made projects share an incompatible `project.assets.json`; it performed no test execution. The final command used the normal existing build paths and completed successfully without stopping any process.
+
+## TDD evidence
+
+The new ViewModel test initially failed on selecting a scheduled task from the task-pool-only collection (`Sequence contains no matching element`); the test was corrected to switch via the existing refresh/select path. Review then identified real async-state defects: optimistic admission while workstation detection was pending, stale mutation response application after task switching, and save input/row data being read after a selection change. The ViewModel now blocks admission until the predicate resolves, checks the active job/load generation before applying write results, and freezes save intent before its first await; deterministic tests cover all three races. The focused suite then passed 20/20.
+
+## Self-review
+
+- All WPF operations cross the MES HTTP boundary through `IMesClient`; no SQLite, Adapter, vendor address, or device code was added.
+- Current verification load and mutation-result application are selection-version guarded to prevent stale data appearing after a task switch; save requests also snapshot the originating task's inputs/rows before I/O.
+- Workstation admission is conservatively disabled while its verification requirement is unknown or cannot be read.
+- Completion bypasses `IExperimentSchedulingConfirmation`; admission still preserves its existing confirmation and backend gate.
+- The XAML adds no scanner control and leaves navigation/field-acceptance surfaces untouched.
+- `git diff --check` completed without whitespace errors.
+
+## Concerns
+
+- The page’s workstation predicate is a timely UX hint based on the fetched immutable workflow version. MES runtime admission remains the final authority, including all concurrent-change checks.

@@ -422,6 +422,7 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
                 <TextBlock FontSize="15" FontWeight="SemiBold" Text="任务操作与审计" />
                 <StackPanel Grid.Row="1" Margin="0,6,0,6" Orientation="Horizontal">
@@ -444,7 +445,74 @@
                     <TextBlock Foreground="#475467" Text="{Binding StatusMessage}" TextWrapping="Wrap" />
                     <TextBlock Margin="0,3,0,0" Foreground="#B42318" Text="{Binding ErrorMessage}" TextWrapping="Wrap"
                                Visibility="{Binding HasError, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                    <TextBlock Margin="0,3,0,0" Foreground="#B42318" Text="{Binding AdmissionVerificationMessage}" TextWrapping="Wrap"
+                               Visibility="{Binding HasAdmissionVerificationMessage, Converter={StaticResource BooleanToVisibilityConverter}}" />
                 </StackPanel>
+                <Expander x:Name="SampleVerificationPanel" Grid.Row="4" Margin="0,8,0,0" IsExpanded="True"
+                          Header="样品核对">
+                    <StackPanel Margin="0,6,0,0">
+                        <Grid Margin="0,0,0,5">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="62" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBlock Foreground="#667085" Text="批次" />
+                            <TextBlock Grid.Column="1" Text="{Binding SelectedJob.SampleBatchId}" />
+                            <TextBlock Grid.Row="1" Foreground="#667085" Text="版本" />
+                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding VerificationRevision, StringFormat=rev {0}}" />
+                            <TextBlock Grid.Row="2" Foreground="#667085" Text="状态" />
+                            <TextBlock Grid.Row="2" Grid.Column="1" FontWeight="SemiBold" Text="{Binding VerificationStatus}" />
+                            <TextBlock Grid.Row="3" Foreground="#667085" Text="摘要" />
+                            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding VerificationSummary}" TextTrimming="CharacterEllipsis" />
+                        </Grid>
+                        <TextBlock Margin="0,0,0,5" Foreground="#667085" Text="{Binding VerificationLastVerified, StringFormat=最近核对：{0}}" />
+                        <DataGrid x:Name="SampleVerificationRowsGrid" AutomationProperties.AutomationId="ExperimentSampleVerificationRowsGrid"
+                                  Height="88" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True"
+                                  ItemsSource="{Binding SampleVerificationRows}" SelectedItem="{Binding SelectedSampleVerificationRow}">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Width="65" Header="样品编号" Binding="{Binding SampleNumber}" />
+                                <DataGridTextColumn Width="75" Header="条码" Binding="{Binding Barcode}" />
+                                <DataGridTextColumn Width="52" Header="位置" Binding="{Binding Position}" />
+                                <DataGridTextColumn Width="42" Header="顺序" Binding="{Binding Order}" />
+                                <DataGridTextColumn Width="*" Header="校验" Binding="{Binding Validation}" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <Grid Margin="0,6,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+                            <TextBox Margin="0,0,4,3" Padding="5,3" ToolTip="样品编号"
+                                     Text="{Binding VerificationSampleNumber, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox Grid.Column="1" Margin="4,0,0,3" Padding="5,3" ToolTip="条码"
+                                     Text="{Binding VerificationSampleBarcode, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox Grid.Row="1" Margin="0,0,4,3" Padding="5,3" ToolTip="样品名称（可选）"
+                                     Text="{Binding VerificationSampleDisplayName, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox Grid.Row="1" Grid.Column="1" Margin="4,0,0,3" Padding="5,3" ToolTip="位置"
+                                     Text="{Binding VerificationSamplePosition, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBox Grid.Row="2" Margin="0,0,4,0" Padding="5,3" ToolTip="顺序"
+                                     Text="{Binding VerificationSampleOrder, UpdateSourceTrigger=PropertyChanged}" />
+                            <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Button x:Name="SaveSampleRowButton" AutomationProperties.AutomationId="ExperimentSaveSampleRowButton"
+                                        Padding="8,4" Command="{Binding SaveSampleRowCommand}" Content="保存样品行" />
+                                <Button x:Name="CompleteSampleVerificationButton" AutomationProperties.AutomationId="ExperimentCompleteSampleVerificationButton"
+                                        Margin="6,0,0,0" Padding="8,4" Background="#027A48" Foreground="White"
+                                        Command="{Binding CompleteSampleVerificationCommand}" Content="核对完成" />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Expander>
             </Grid>
         </Grid>
     </Grid>

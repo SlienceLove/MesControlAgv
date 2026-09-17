@@ -316,6 +316,78 @@ public sealed class MesClientExperimentSchedulingHttpContractTests
         Assert.Contains(ExperimentSchedulingIssueCodes.ResourceCapacityInsufficient, admissionException.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task Sample_verification_uses_mes_routes_and_serializes_snapshot_metadata()
+    {
+        var jobId = Guid.NewGuid();
+        var sampleId = Guid.NewGuid();
+        var rowId = Guid.NewGuid();
+        var sample = new ExperimentSample
+        {
+            SampleId = sampleId,
+            BusinessSampleId = "S-1042",
+            BatchId = "B-1042",
+            Barcode = "BC-1042",
+            DisplayName = "样品 1042",
+            Status = ExperimentSampleStatus.Active
+        };
+        var row = new ExperimentSampleTaskRow
+        {
+            RowId = rowId,
+            SampleId = sampleId,
+            SampleBarcode = sample.Barcode,
+            Position = "A01",
+            DisplayName = sample.DisplayName,
+            Order = 1
+        };
+        var verification = new ExperimentSampleVerification
+        {
+            VerificationId = Guid.NewGuid(),
+            ExperimentJobId = jobId,
+            Revision = 3,
+            Status = ExperimentSampleVerificationStatus.ReadyForVerification,
+            Rows = [row],
+            SnapshotHash = "AABBCCDDEEFF"
+        };
+        var handler = new RecordingHandler(message =>
+        {
+            var path = message.RequestUri!.AbsolutePath;
+            if (message.Method == HttpMethod.Get && path == "/api/experiment-samples") return JsonResponse(new[] { sample });
+            if (message.Method == HttpMethod.Put && path == $"/api/experiment-samples/{sampleId}") return JsonResponse(sample);
+            if (message.Method == HttpMethod.Get && path.EndsWith("/current", StringComparison.Ordinal)) return JsonResponse(verification);
+            if (message.Method == HttpMethod.Put && path.EndsWith("/current", StringComparison.Ordinal)) return JsonResponse(verification);
+            if (message.Method == HttpMethod.Post && path.EndsWith("/verify", StringComparison.Ordinal))
+                return JsonResponse(verification with { Status = ExperimentSampleVerificationStatus.Verified });
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://mes.local/") };
+        var client = new MesClient(httpClient);
+
+        Assert.Equal(sampleId, Assert.Single(await client.GetExperimentSamplesAsync("B-1042", CancellationToken.None)).SampleId);
+        await client.SaveExperimentSampleAsync(sampleId, new SaveExperimentSampleRequest
+        {
+            RequestId = Guid.NewGuid(), Actor = "operator", Reason = "register", Sample = sample
+        }, CancellationToken.None);
+        Assert.Equal(3, (await client.GetCurrentExperimentSampleVerificationAsync(jobId, CancellationToken.None))!.Revision);
+        await client.SaveCurrentExperimentSampleVerificationAsync(jobId, new SaveExperimentSampleVerificationRequest
+        {
+            RequestId = Guid.NewGuid(), Actor = "operator", Reason = "rows", Rows = [row]
+        }, CancellationToken.None);
+        await client.CompleteExperimentSampleVerificationAsync(jobId, 3, new CompleteExperimentSampleVerificationRequest
+        {
+            RequestId = Guid.NewGuid(), Actor = "operator", Reason = "visual", Revision = 3, SnapshotHash = verification.SnapshotHash
+        }, CancellationToken.None);
+
+        Assert.Equal("B-1042", ParseQuery(handler.Requests[0].Uri)["batchId"]);
+        Assert.Equal(HttpMethod.Put, handler.Requests[3].Method);
+        using var saveRowsBody = JsonDocument.Parse(handler.Requests[3].Body!);
+        Assert.Equal("A01", saveRowsBody.RootElement.GetProperty("rows")[0].GetProperty("position").GetString());
+        Assert.Equal($"/api/experiment-jobs/{jobId}/sample-verifications/3/verify", handler.Requests[4].Uri.AbsolutePath);
+        using var verifyBody = JsonDocument.Parse(handler.Requests[4].Body!);
+        Assert.Equal(3, verifyBody.RootElement.GetProperty("revision").GetInt32());
+        Assert.Equal(verification.SnapshotHash, verifyBody.RootElement.GetProperty("snapshotHash").GetString());
+    }
+
     private static Dictionary<string, string> ParseQuery(Uri uri) =>
         uri.Query.TrimStart('?')
             .Split('&', StringSplitOptions.RemoveEmptyEntries)

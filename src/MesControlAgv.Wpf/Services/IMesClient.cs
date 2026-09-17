@@ -596,4 +596,33 @@ public interface IMesClient
         AdmitExperimentJobRequest request,
         CancellationToken cancellationToken) =>
         Task.FromException<ExperimentJobAdmissionResult>(new NotSupportedException("Experiment runtime admission APIs are not supported by this MES client."));
+
+    Task<IReadOnlyList<ExperimentSample>> GetExperimentSamplesAsync(
+        string? batchId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ExperimentSample>>([]);
+
+    Task<ExperimentSample> SaveExperimentSampleAsync(
+        Guid sampleId,
+        SaveExperimentSampleRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentSample>(new NotSupportedException("Experiment sample APIs are not supported by this MES client."));
+
+    Task<ExperimentSampleVerification?> GetCurrentExperimentSampleVerificationAsync(
+        Guid jobId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<ExperimentSampleVerification?>(null);
+
+    Task<ExperimentSampleVerification> SaveCurrentExperimentSampleVerificationAsync(
+        Guid jobId,
+        SaveExperimentSampleVerificationRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentSampleVerification>(new NotSupportedException("Experiment sample verification APIs are not supported by this MES client."));
+
+    Task<ExperimentSampleVerification> CompleteExperimentSampleVerificationAsync(
+        Guid jobId,
+        int revision,
+        CompleteExperimentSampleVerificationRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentSampleVerification>(new NotSupportedException("Experiment sample verification APIs are not supported by this MES client."));
 }
