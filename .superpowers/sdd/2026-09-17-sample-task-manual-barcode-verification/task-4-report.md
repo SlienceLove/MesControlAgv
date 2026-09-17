@@ -74,3 +74,10 @@ dotnet test tests/MesControlAgv.Wpf.Tests/MesControlAgv.Wpf.Tests.csproj --no-re
 - Treat missing workflow versions as unresolved/error rather than ordinary tasks; failed post-registration authoritative reload now clears the cached verification and conservatively disables admission.
 
 Commands: `ExperimentSampleVerificationApiTests` 8/8; MES full 337/337; Task 4 WPF directional suite 20/20.
+
+## Fix round 3
+
+- Added `Multi_row_sample_numbers_survive_save_and_completion`, proving row business identifiers remain intact after completion rather than falling back to display labels.
+- Extended `Saving_a_row_snapshots_old_task_inputs_before_selection_changes` to prove both MES write requests retain the actor/reason captured before the first await.
+
+Commands: `ExperimentSchedulingViewModelTests` 15/15; Task 4 WPF directional suite 21/21.

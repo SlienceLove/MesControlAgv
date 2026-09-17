@@ -625,10 +625,14 @@ public sealed class ExperimentSchedulingViewModelTests
         viewModel.VerificationSampleBarcode = "BC-SAVED";
         viewModel.VerificationSamplePosition = "B01";
         viewModel.VerificationSampleOrder = 2;
+        viewModel.OperatorName = "frozen operator";
+        viewModel.Reason = "frozen reason";
         fixture.Client.HoldSampleSaveRequest();
 
         var saving = viewModel.SaveSampleRowAsync();
         await fixture.Client.SampleSaveRequested!.Task;
+        viewModel.OperatorName = "changed operator";
+        viewModel.Reason = "changed reason";
         viewModel.SelectedJob = viewModel.TaskPool.Single(item => item.JobId == ordinaryJob.JobId);
         fixture.Client.ReleaseSampleSaveRequest();
         await saving;
@@ -638,8 +642,27 @@ public sealed class ExperimentSchedulingViewModelTests
         Assert.Equal("BC-SAVED", saved.SampleBarcode);
         Assert.Equal("B01", saved.Position);
         Assert.Equal(2, saved.Order);
+        Assert.Equal("frozen operator", fixture.Client.LastSampleSaveRequest!.Actor);
+        Assert.Equal("frozen reason", fixture.Client.LastSampleSaveRequest.Reason);
+        Assert.Equal("frozen operator", fixture.Client.LastSavedVerificationRequest!.Actor);
+        Assert.Equal("frozen reason", fixture.Client.LastSavedVerificationRequest.Reason);
         Assert.Equal(ordinaryJob.JobId, viewModel.SelectedJob!.JobId);
         Assert.Null(viewModel.CurrentSampleVerification);
+    }
+
+    [Fact]
+    public async Task Multi_row_sample_numbers_survive_save_and_completion()
+    {
+        var fixture = SchedulingFixture.Create();
+        var job = fixture.Client.AddJob("B-MULTI", ExperimentJobStatus.Scheduled, workstation: true);
+        fixture.Client.SetSchedule(Schedule(job.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        fixture.Client.SetVerification(job.JobId, fixture.Client.CreateTwoRowVerification(job, ExperimentSampleVerificationStatus.ReadyForVerification));
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "multi rows";
+        await viewModel.RefreshAsync(job.JobId);
+        Assert.Equal(["S-B-MULTI-1", "S-B-MULTI-2"], viewModel.SampleVerificationRows.Select(row => row.SampleNumber).ToArray());
+        await viewModel.CompleteSampleVerificationAsync();
+        Assert.Equal(["S-B-MULTI-1", "S-B-MULTI-2"], viewModel.SampleVerificationRows.Select(row => row.SampleNumber).ToArray());
     }
 
     private static ExperimentResourceReference ResourceRef(string type, string id) => new()
@@ -772,6 +795,8 @@ public sealed class ExperimentSchedulingViewModelTests
         public ExperimentSample? PendingSample { get; private set; }
         public Guid? LastSavedVerificationJobId { get; private set; }
         public IReadOnlyList<ExperimentSampleTaskRow>? LastSavedVerificationRows { get; private set; }
+        public SaveExperimentSampleRequest? LastSampleSaveRequest { get; private set; }
+        public SaveExperimentSampleVerificationRequest? LastSavedVerificationRequest { get; private set; }
 
         public void HoldWorkflowVersionRequest()
         {
@@ -854,6 +879,22 @@ public sealed class ExperimentSchedulingViewModelTests
             };
         }
 
+        public ExperimentSampleVerification CreateTwoRowVerification(ExperimentJob job, ExperimentSampleVerificationStatus status)
+        {
+            var first = CreateVerification(job, status);
+            var second = new ExperimentSample
+            {
+                SampleId = Guid.NewGuid(), BusinessSampleId = "S-" + job.SampleBatchId + "-2", BatchId = job.SampleBatchId,
+                Barcode = "BC-" + job.SampleBatchId + "-2", DisplayName = "second display", Status = ExperimentSampleStatus.Active
+            };
+            _samples[second.SampleId] = second;
+            return first with { Rows = [first.Rows[0] with { BusinessSampleId = "S-" + job.SampleBatchId + "-1" }, new ExperimentSampleTaskRow
+            {
+                RowId = Guid.NewGuid(), SampleId = second.SampleId, BusinessSampleId = second.BusinessSampleId, SampleBarcode = second.Barcode,
+                Position = "A02", DisplayName = second.DisplayName, Order = 2
+            }] };
+        }
+
         public void SetVerification(Guid jobId, ExperimentSampleVerification verification) => _verifications[jobId] = verification;
 
         public void SetSchedule(ScheduleEntry schedule)
@@ -913,6 +954,7 @@ public sealed class ExperimentSchedulingViewModelTests
 
         public Task<ExperimentSample> SaveExperimentSampleAsync(Guid sampleId, SaveExperimentSampleRequest request, CancellationToken cancellationToken)
         {
+            LastSampleSaveRequest = request;
             var sample = request.Sample with { SampleId = sampleId };
             if (PendingSampleSave is not null)
             {
@@ -929,6 +971,7 @@ public sealed class ExperimentSchedulingViewModelTests
 
         public Task<ExperimentSampleVerification> SaveCurrentExperimentSampleVerificationAsync(Guid jobId, SaveExperimentSampleVerificationRequest request, CancellationToken cancellationToken)
         {
+            LastSavedVerificationRequest = request;
             LastSavedVerificationJobId = jobId;
             LastSavedVerificationRows = request.Rows;
             var current = _verifications.GetValueOrDefault(jobId);
