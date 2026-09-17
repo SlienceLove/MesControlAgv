@@ -4,6 +4,8 @@
 
 2026-09-16 最新进度：默认隐藏的 WPF 联调入口、正式工作流节点和 WPF 人工确认操作均已通过真机闭环。执行 `2614a47e-baaa-471c-9b63-580c43f0540a` 在整机重启且未手动初始化的条件下，只发送一次 `TEST-001` 启动；厂家主程序先自动初始化，再自动继续实验，最终 Running→Completed。无人工门禁的正式流程 v2 已发布。详见 [正式工作流交接](SAMPLE-WORKSTATION-FORMAL-WORKFLOW-HANDOFF-2026-09-16.md) 和 [WPF 真机验收记录](diagnostics/2026-09-16-workstation-wpf-field-validation.md)。
 
+2026-09-17 最新归档：WPF 单次 Run admission 已完成计划 v1、任务、排程到工作流的真实业务链。请求 `0a1ca92c-7a19-46fd-b501-600fccccdab7` 对应 Run `eef3ad56-dead-4a35-a8e9-662d38c4e780`；本轮确有 Running 观察，最终 Job/Schedule/Workflow Completed、节点和唯一活动 Succeeded，并释放唯一工作站租约。详见 [单步骤业务链验证](diagnostics/2026-09-17-workstation-business-chain-validation.md)。
+
 日期：2026-09-14。范围：最小通讯模块的接入准备，不包含本次主工作区合并、工作流自动执行或真实设备启动。
 
 ## 当前结论
@@ -189,6 +191,18 @@ MES 与 Adapter 路径相同，前缀为 `/api/workstations/{deviceId}`：
 ## 任务表扩展
 
 未来实现 `ImportTasksAsync(deviceId, fileName, Stream, cancellationToken)`，由调用方拥有输入流；导入只创建任务，不隐式启动。拿到厂家样表、字段含义和实际上传格式后，再增加解析、Adapter 上传和 MES 导入路由，并将能力标记改为已支持。现有初始化、启动和查询接口无需改动。
+
+### 样品条码核对：当前已决策、尚未实现
+
+仪器扫码枪连接工作站 PC；中控 WPF 将运行在另一台 PC，因此当前阶段不读取
+仪器 USB 扫码枪，也不使用“最后一次扫码”的 HTTP 回传。运行后的实时
+`TrajectoryParameterDetails` 只显示 `SourceBarCode` / `TargetData` 配置，
+`SMTBarCode=null`，不能把它当作实际扫码证据。
+
+当前方案是中控页面的批次级人工目视比较：页面展示任务表条码和样品位，操作员点击非弹窗的“核对完成”；保存审计、版本及快照 hash，任何编辑立即使核对失效。该决定仅为已提交设计，**尚未实现**：
+[样品任务表人工条码核对设计](superpowers/specs/2026-09-17-sample-task-manual-barcode-verification-design.md)（`0d60bfe`）。
+
+厂家任务表上传格式/API 仍待交付；未来导入或准备只能创建/更新厂家任务，绝不得隐式启动设备。多步骤实验实体运行、动态任务创建和远程停止同样尚未实现。
 
 ## 离线验证
 
