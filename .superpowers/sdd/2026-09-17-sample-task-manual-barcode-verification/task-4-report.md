@@ -81,3 +81,25 @@ Commands: `ExperimentSampleVerificationApiTests` 8/8; MES full 337/337; Task 4 W
 - Extended `Saving_a_row_snapshots_old_task_inputs_before_selection_changes` to prove both MES write requests retain the actor/reason captured before the first await.
 
 Commands: `ExperimentSchedulingViewModelTests` 15/15; Task 4 WPF directional suite 21/21.
+
+## Fix round 4
+
+- Corrected `Multi_row_sample_numbers_survive_save_and_completion` so both legacy snapshot rows omit `BusinessSampleId`, their real sample numbers come from the complete central-sample map, and the test exercises both `SaveSampleRowAsync` and completion. It asserts each row number after save and again after completion.
+- Added `Failed_snapshot_save_and_failed_authoritative_reload_clears_cached_verified_state` for both current-verification and sample-list reload failures. Each case starts from `Verified`, proves both write stages were reached, and asserts that the cached verification is cleared, the requirement becomes unresolved, and admission stays blocked.
+- Added job-scoped operation ownership to every existing job-bound command (schedule, unschedule, cancel, admit, sample save, and verification completion). Selection changes release only the old job's busy ownership and clear its running text; stale continuations must still own both their operation ID and job ID before refreshing or publishing state.
+- Added deterministic operation-race tests `Old_job_failure_cannot_pollute_new_job_operation_or_release_its_busy_state`, `Old_job_success_leaves_no_status_text_after_selection_changes`, and `Old_scheduling_success_cannot_reselect_over_or_end_busy_for_the_new_job`.
+- Added predicate tests `Missing_workflow_version_keeps_sample_requirement_unresolved_and_blocks_admission`, `Workflow_version_errors_keep_sample_requirement_unresolved_and_block_admission` (ordinary exception and `NotSupportedException`), and `Ordinary_workflow_preserves_admission_without_loading_irrelevant_sample_projection` (including zero current/sample reads).
+- Red-state evidence: after adding the tests and before the production ownership fix, the focused suite reported 21 passed / 23 total; the two operation-ownership tests failed on stale busy and stale status respectively. Existing projection/reload/predicate code passed its new regression tests, so no unrelated production logic was changed.
+
+Commands/results:
+
+```powershell
+dotnet test tests/MesControlAgv.Wpf.Tests/MesControlAgv.Wpf.Tests.csproj --no-restore --filter "FullyQualifiedName~ExperimentSchedulingViewModelTests"
+# Passed: 24 / 24
+dotnet test tests/MesControlAgv.Wpf.Tests/MesControlAgv.Wpf.Tests.csproj --no-restore --filter "FullyQualifiedName~MesClientExperimentSchedulingHttpContractTests|FullyQualifiedName~ExperimentSchedulingViewModelTests|FullyQualifiedName~ExperimentPlanningViewBindingTests"
+# Passed: 30 / 30
+git diff --check
+# Passed: no whitespace errors
+```
+
+No MES production files changed in this round, so the MES full suite was not rerun. The MES backend remains the final admission authority.

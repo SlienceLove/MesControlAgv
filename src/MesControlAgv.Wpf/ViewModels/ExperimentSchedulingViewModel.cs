@@ -62,6 +62,9 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
     private bool _sampleVerificationInvalidatedByEdit;
     private int _sampleVerificationLoadVersion;
     private Task _sampleVerificationLoadTask = Task.CompletedTask;
+    private long _nextOperationId;
+    private long? _busyOperationId;
+    private Guid? _busyOperationJobId;
     private readonly Dictionary<Guid, ExperimentSample> _sampleVerificationSamples = [];
     private string _verificationSampleNumber = string.Empty;
     private string _verificationSampleBarcode = string.Empty;
@@ -133,6 +136,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
         set
         {
             if (!SetField(ref _selectedJob, value)) return;
+            ReleaseOldSelectionOperation(value?.JobId);
             ApplySelectedJob();
         }
     }
@@ -539,9 +543,10 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
             StatusMessage = $"实验任务 {job.JobId:N} 已进入待排任务池。";
         });
 
-    public Task ScheduleAsync() => RunOperationAsync(
+    public Task ScheduleAsync() => RunOwnedOperationAsync(
         "正在提交人工排程...",
-        async () =>
+        SelectedJob?.JobId,
+        async isCurrent =>
         {
             var job = SelectedJob?.Job ?? throw new InvalidOperationException("请选择待排任务。");
             var (start, end) = GetPlacementWindow();
@@ -561,7 +566,9 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
                         .ToArray()
                 },
                 _shutdown.Token);
-            await RefreshCoreAsync(job.JobId);
+            if (!isCurrent()) return;
+            await RefreshCoreAsync(job.JobId, isCurrent);
+            if (!isCurrent()) return;
             StatusMessage = schedule.Status == ScheduleEntryStatus.Blocked
                 ? $"排程已保存但被 {schedule.BlockingReasons.Count} 项原因阻塞。"
                 : $"任务 {job.JobId.ToString("N")[..8]} 已人工排程。";
@@ -571,12 +578,15 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
     {
         var jobId = SelectedJob?.JobId;
         if (jobId is null) return;
-        await RunOperationAsync(
+        await RunOwnedOperationAsync(
             "正在撤销排程...",
-            async () =>
+            jobId,
+            async isCurrent =>
             {
                 await _mes.UnscheduleExperimentJobAsync(jobId.Value, CreateActionRequest(), _shutdown.Token);
-                await RefreshCoreAsync(jobId);
+                if (!isCurrent()) return;
+                await RefreshCoreAsync(jobId, isCurrent);
+                if (!isCurrent()) return;
                 StatusMessage = $"任务 {jobId.Value.ToString("N")[..8]} 已返回待排任务池。";
             });
     }
@@ -591,12 +601,15 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
             return;
         }
 
-        await RunOperationAsync(
+        await RunOwnedOperationAsync(
             "正在取消实验任务...",
-            async () =>
+            selected.JobId,
+            async isCurrent =>
             {
                 await _mes.CancelExperimentJobAsync(selected.JobId, CreateActionRequest(), _shutdown.Token);
-                await RefreshCoreAsync(selected.JobId);
+                if (!isCurrent()) return;
+                await RefreshCoreAsync(selected.JobId, isCurrent);
+                if (!isCurrent()) return;
                 StatusMessage = $"任务 {selected.ShortId} 已取消。";
             });
     }
@@ -611,9 +624,10 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
             return;
         }
 
-        await RunOperationAsync(
+        await RunOwnedOperationAsync(
             "正在执行运行准入...",
-            async () =>
+            selected.JobId,
+            async isCurrent =>
             {
                 var result = await _mes.AdmitExperimentJobAsync(
                     selected.JobId,
@@ -624,7 +638,9 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
                         Reason = Reason.Trim()
                     },
                     _shutdown.Token);
-                await RefreshCoreAsync(selected.JobId);
+                if (!isCurrent()) return;
+                await RefreshCoreAsync(selected.JobId, isCurrent);
+                if (!isCurrent()) return;
                 if (result.IsRejected)
                 {
                     ErrorMessage = $"[{result.RejectionCode ?? "EXP-ADMISSION-REJECTED"}] {result.RejectionReason ?? "运行准入被拒绝。"}";
@@ -719,7 +735,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
             StatusMessage = _sampleVerificationInvalidatedByEdit
                 ? "已核对版本已失效，当前样品快照需要重新人工核对。"
                 : $"样品行已保存；当前核对版本为 rev {verification.Revision}。";
-        });
+        }, SelectedJob?.JobId);
 
     public Task CompleteSampleVerificationAsync() => RunOperationAsync(
         "正在记录人工样品核对...",
@@ -750,9 +766,9 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
             _sampleVerificationInvalidatedByEdit = false;
             OnPropertyChanged(nameof(VerificationStatus));
             StatusMessage = "样品快照已完成人工核对；这不表示任务表已上传或到达仪器。";
-        });
+        }, SelectedJob?.JobId);
 
-    private async Task RefreshCoreAsync(Guid? preferredJobId)
+    private async Task RefreshCoreAsync(Guid? preferredJobId, Func<bool>? canApply = null)
     {
         if (!TryGetBoardWindow(out var windowStart, out var windowEnd))
             throw new InvalidOperationException("请选择有效的排程日期与窗口。");
@@ -769,6 +785,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
         var availabilityTask = _mes.GetExperimentResourceAvailabilityAsync(windowStart, windowEnd, _shutdown.Token);
         var auditsTask = _mes.GetExperimentSchedulingAuditsAsync(null, null, null, 200, _shutdown.Token);
         await Task.WhenAll(plansTask, jobsTask, scheduleTask, availabilityTask, auditsTask);
+        if (canApply is not null && !canApply()) return;
 
         PublishedPlans.Clear();
         foreach (var plan in plansTask.Result)
@@ -1129,28 +1146,72 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
         Reason = Reason.Trim()
     };
 
-    private async Task RunOperationAsync(string runningMessage, Func<Task> operation)
+    private Task RunOperationAsync(
+        string runningMessage,
+        Func<Task> operation,
+        Guid? operationJobId = null) =>
+        RunOperationCoreAsync(runningMessage, _ => operation(), operationJobId);
+
+    private Task RunOwnedOperationAsync(
+        string runningMessage,
+        Guid? operationJobId,
+        Func<Func<bool>, Task> operation) =>
+        RunOperationCoreAsync(
+            runningMessage,
+            operationId => operation(() => OwnsOperation(operationId, operationJobId)),
+            operationJobId);
+
+    private async Task RunOperationCoreAsync(
+        string runningMessage,
+        Func<long, Task> operation,
+        Guid? operationJobId)
     {
         if (IsBusy) return;
+        var operationId = ++_nextOperationId;
+        _busyOperationId = operationId;
+        _busyOperationJobId = operationJobId;
         IsBusy = true;
         ErrorMessage = string.Empty;
         StatusMessage = runningMessage;
         try
         {
-            await operation();
+            await operation(operationId);
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
         {
         }
         catch (Exception exception)
         {
-            ErrorMessage = exception.Message;
-            StatusMessage = "排程操作失败。";
+            if (OwnsOperation(operationId, operationJobId))
+            {
+                ErrorMessage = exception.Message;
+                StatusMessage = "排程操作失败。";
+            }
         }
         finally
         {
-            IsBusy = false;
+            if (OwnsOperation(operationId, operationJobId))
+            {
+                _busyOperationId = null;
+                _busyOperationJobId = null;
+                IsBusy = false;
+            }
         }
+    }
+
+    private bool OwnsOperation(long operationId, Guid? operationJobId) =>
+        _busyOperationId == operationId &&
+        _busyOperationJobId == operationJobId &&
+        (operationJobId is null || SelectedJob?.JobId == operationJobId);
+
+    private void ReleaseOldSelectionOperation(Guid? selectedJobId)
+    {
+        if (_busyOperationJobId is not { } operationJobId || operationJobId == selectedJobId) return;
+        _busyOperationId = null;
+        _busyOperationJobId = null;
+        IsBusy = false;
+        ErrorMessage = string.Empty;
+        StatusMessage = string.Empty;
     }
 
     private void RaiseCommandStates()
