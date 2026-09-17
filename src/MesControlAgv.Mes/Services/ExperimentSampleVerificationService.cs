@@ -56,6 +56,14 @@ public sealed class ExperimentSampleVerificationService(
                  !string.Equals(record.Barcode.Trim(), sample.Barcode, StringComparison.Ordinal) ||
                  !string.Equals(record.BatchId, sample.BatchId, StringComparison.Ordinal) ||
                  !string.Equals(record.Status, sample.Status.ToString(), StringComparison.Ordinal));
+            var references = (await database.ExperimentSampleVerifications.ToListAsync(cancellationToken))
+                .Where(item => Rows(item).Any(row => row.SampleId == sampleId)).ToArray();
+            if (record is not null && (drifted || record.DisplayName != sample.DisplayName))
+            {
+                var jobIds = references.Select(item => item.ExperimentJobId).Distinct().ToArray();
+                foreach (var relatedJob in await database.ExperimentJobs.Where(item => jobIds.Contains(item.JobId)).ToListAsync(cancellationToken))
+                    EnsureMutable(relatedJob);
+            }
             if (record is null)
             {
                 record = new ExperimentSampleRecord { SampleId = sampleId, CreatedAtUtc = now };
@@ -70,9 +78,8 @@ public sealed class ExperimentSampleVerificationService(
 
             if (drifted)
             {
-                var verifications = await database.ExperimentSampleVerifications.ToListAsync(cancellationToken);
-                foreach (var verification in verifications.Where(item => Rows(item).Any(row => row.SampleId == sampleId)))
-                    Invalidate(verification, now, "Registered sample business identifier, barcode, batch, or status changed.");
+                foreach (var verification in references)
+                    InvalidateWithAudit(verification, now, "Registered sample business identifier, barcode, batch, or status changed.", metadata);
             }
 
             var result = MapSample(record);
@@ -104,6 +111,13 @@ public sealed class ExperimentSampleVerificationService(
             if (replay is not null) return replay;
             var job = await FindJobAsync(experimentJobId, cancellationToken);
             EnsureMutable(job);
+            var sampleIds = rows.Select(row => row.SampleId).Distinct().ToArray();
+            var registeredSamples = await database.ExperimentSamples.AsNoTracking()
+                .Where(item => sampleIds.Contains(item.SampleId)).ToDictionaryAsync(item => item.SampleId, cancellationToken);
+            rows = rows.Select(row => row with
+            {
+                BusinessSampleId = registeredSamples.TryGetValue(row.SampleId, out var registered) ? registered.BusinessSampleId : string.Empty
+            }).ToArray();
             var issues = await ValidateRowsAsync(job, rows, cancellationToken);
             var now = timeProvider.GetUtcNow().UtcDateTime;
             var rowsJson = ExperimentSchedulingPersistence.Serialize(rows);
@@ -119,6 +133,7 @@ public sealed class ExperimentSampleVerificationService(
                 .FirstOrDefaultAsync(cancellationToken);
             ExperimentSampleVerificationRecord result;
             if (current is not null &&
+                Rows(current).All(row => !string.IsNullOrWhiteSpace(row.BusinessSampleId)) &&
                 string.Equals(current.SnapshotHash, hash, StringComparison.Ordinal) &&
                 !string.Equals(current.Status, ExperimentSampleVerificationStatus.Invalidated.ToString(), StringComparison.Ordinal))
             {
@@ -134,7 +149,7 @@ public sealed class ExperimentSampleVerificationService(
             else
             {
                 if (current is not null && string.Equals(current.Status, ExperimentSampleVerificationStatus.Verified.ToString(), StringComparison.Ordinal))
-                    Invalidate(current, now, "Task sample rows changed.");
+                    InvalidateWithAudit(current, now, "Task sample rows changed.", metadata);
                 result = new ExperimentSampleVerificationRecord
                 {
                     VerificationId = Guid.NewGuid(), ExperimentJobId = experimentJobId,
@@ -159,25 +174,41 @@ public sealed class ExperimentSampleVerificationService(
         ExecuteMutationAsync(async () =>
         {
             var metadata = NormalizeMetadata(request?.RequestId ?? Guid.Empty, request?.Actor, request?.Reason);
-            if (revision <= 0 || request!.Revision != revision) throw Conflict("The requested verification revision does not match the route.", ExperimentSampleVerificationIssueCodes.VersionConflict);
-            var expectedHash = RequireText(request.SnapshotHash, nameof(request.SnapshotHash));
-            var fingerprint = CreateFingerprint("VerifyExperimentSampleVerification", metadata, new { ExperimentJobId = experimentJobId, revision, expectedHash, VerificationNote = NormalizeOptionalText(request.VerificationNote) });
+            var expectedHash = RequireText(request!.SnapshotHash, nameof(request.SnapshotHash));
+            // Preserve fingerprints for valid commands recorded before rejection replay was added.
+            object payload = request.Revision == revision
+                ? new { ExperimentJobId = experimentJobId, revision, expectedHash, VerificationNote = NormalizeOptionalText(request.VerificationNote) }
+                : new { ExperimentJobId = experimentJobId, revision, RequestRevision = request.Revision, expectedHash, VerificationNote = NormalizeOptionalText(request.VerificationNote) };
+            var fingerprint = CreateFingerprint("VerifyExperimentSampleVerification", metadata, payload);
             var replay = await TryReplayAsync<ExperimentSampleVerification>(metadata.RequestId, "ExperimentSampleVerificationVerified", fingerprint, cancellationToken);
             if (replay is not null) return replay;
             var job = await FindJobAsync(experimentJobId, cancellationToken);
-            EnsureMutable(job);
             var current = await database.ExperimentSampleVerifications.Where(item => item.ExperimentJobId == experimentJobId)
                 .OrderByDescending(item => item.Revision).FirstOrDefaultAsync(cancellationToken);
+            async Task<ExperimentSampleVerification> RejectAsync(string message, string code)
+            {
+                var details = VerificationDetails(current, metadata.RequestId);
+                details["requestedRevision"] = revision.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                details["requestedSnapshotHash"] = expectedHash;
+                details["code"] = code;
+                details["reason"] = message;
+                AddAudit(metadata, fingerprint, "ExperimentSampleVerificationVerified", new VerificationFailure(message, code), experimentJobId, details, "Rejected", code);
+                await database.SaveChangesAsync(cancellationToken);
+                throw Conflict(message, code);
+            }
+            if (revision <= 0 || request.Revision != revision)
+                return await RejectAsync("The requested verification revision does not match the route.", ExperimentSampleVerificationIssueCodes.VersionConflict);
+            try { EnsureMutable(job); }
+            catch (ExperimentSampleVerificationException exception) { return await RejectAsync(exception.Message, exception.Code); }
             if (current is null || current.Revision != revision || !string.Equals(current.SnapshotHash, expectedHash, StringComparison.Ordinal))
-                throw Conflict("The task sample snapshot has changed; refresh it before verifying.", ExperimentSampleVerificationIssueCodes.VersionConflict);
+                return await RejectAsync("The task sample snapshot has changed; refresh it before verifying.", ExperimentSampleVerificationIssueCodes.VersionConflict);
             if (!string.Equals(current.Status, ExperimentSampleVerificationStatus.ReadyForVerification.ToString(), StringComparison.Ordinal))
-                throw Conflict("The current task sample snapshot is not ready for verification.", ExperimentSampleVerificationIssueCodes.VerificationRequired);
+                return await RejectAsync("The current task sample snapshot is not ready for verification.", ExperimentSampleVerificationIssueCodes.VerificationRequired);
             var issues = await ValidateRowsAsync(job, Rows(current), cancellationToken);
             if (issues.Count != 0)
             {
-                Invalidate(current, timeProvider.GetUtcNow().UtcDateTime, "Registered sample data no longer matches the snapshot: " + string.Join("; ", issues.Select(issue => issue.Code)));
-                await database.SaveChangesAsync(cancellationToken);
-                throw Conflict("The task sample snapshot was invalidated by registered sample drift.", ExperimentSampleVerificationIssueCodes.VerificationInvalidated);
+                InvalidateWithAudit(current, timeProvider.GetUtcNow().UtcDateTime, "Registered sample data no longer matches the snapshot: " + string.Join("; ", issues.Select(issue => issue.Code)), metadata);
+                return await RejectAsync("The task sample snapshot was invalidated by registered sample drift.", ExperimentSampleVerificationIssueCodes.VerificationInvalidated);
             }
             var now = timeProvider.GetUtcNow().UtcDateTime;
             current.Status = ExperimentSampleVerificationStatus.Verified.ToString();
@@ -209,7 +240,8 @@ public sealed class ExperimentSampleVerificationService(
             var issues = await ValidateRowsAsync(job, Rows(current), cancellationToken);
             if (issues.Count != 0)
             {
-                Invalidate(current, timeProvider.GetUtcNow().UtcDateTime, "Registered sample data no longer matches the snapshot: " + string.Join("; ", issues.Select(issue => issue.Code)));
+                EnsureMutable(job);
+                InvalidateWithAudit(current, timeProvider.GetUtcNow().UtcDateTime, "Registered sample data no longer matches the snapshot: " + string.Join("; ", issues.Select(issue => issue.Code)), new NormalizedMetadata(Guid.NewGuid(), "MES admission gate", "Validate current sample snapshot"));
                 await database.SaveChangesAsync(cancellationToken);
                 throw Conflict("The verified sample snapshot was invalidated by registered sample drift.", ExperimentSampleVerificationIssueCodes.VerificationInvalidated);
             }
@@ -229,7 +261,7 @@ public sealed class ExperimentSampleVerificationService(
             var prefix = $"Row {row.Order}";
             if (row.RowId == Guid.Empty || !rowIds.Add(row.RowId)) issues.Add(Issue(row, "EXP-SAMPLE-ROW-ID-INVALID", $"{prefix}: row id is missing or duplicated."));
             if (row.SampleId == Guid.Empty || !samples.TryGetValue(row.SampleId, out var sample)) { issues.Add(Issue(row, ExperimentSampleVerificationIssueCodes.SampleNotFound, $"{prefix}: sample was not found.")); continue; }
-            if (!string.IsNullOrWhiteSpace(row.BusinessSampleId) && !string.Equals(row.BusinessSampleId.Trim(), sample.BusinessSampleId, StringComparison.Ordinal)) issues.Add(Issue(row, "EXP-SAMPLE-BUSINESS-ID-MISMATCH", $"{prefix}: business sample id does not match the registered sample."));
+            if (string.IsNullOrWhiteSpace(row.BusinessSampleId) || !string.Equals(row.BusinessSampleId.Trim(), sample.BusinessSampleId, StringComparison.Ordinal)) issues.Add(Issue(row, "EXP-SAMPLE-BUSINESS-ID-MISMATCH", $"{prefix}: business sample id is missing or does not match the registered sample; save a new revision."));
             if (string.IsNullOrWhiteSpace(row.SampleBarcode)) issues.Add(Issue(row, "EXP-SAMPLE-BARCODE-REQUIRED", $"{prefix}: barcode is required."));
             var barcode = row.SampleBarcode.Trim();
             if (!string.Equals(barcode, sample.NormalizedBarcode, StringComparison.Ordinal)) issues.Add(Issue(row, "EXP-SAMPLE-BARCODE-MISMATCH", $"{prefix}: barcode does not match the registered sample."));
@@ -287,6 +319,26 @@ public sealed class ExperimentSampleVerificationService(
         record.UpdatedAtUtc = now;
     }
 
+    private void InvalidateWithAudit(ExperimentSampleVerificationRecord record, DateTime now, string reason, NormalizedMetadata metadata)
+    {
+        if (record.Status == ExperimentSampleVerificationStatus.Invalidated.ToString()) return;
+        Invalidate(record, now, reason);
+        var details = VerificationDetails(record, metadata.RequestId);
+        details["reason"] = reason;
+        details["code"] = ExperimentSampleVerificationIssueCodes.VerificationInvalidated;
+        // The command keeps its unique request id; each affected task has a linked event of its own.
+        AddAudit(metadata with { RequestId = Guid.NewGuid() }, string.Empty, "ExperimentSampleVerificationInvalidated",
+            MapVerification(record), record.ExperimentJobId, details, code: ExperimentSampleVerificationIssueCodes.VerificationInvalidated);
+    }
+
+    private static Dictionary<string, string?> VerificationDetails(ExperimentSampleVerificationRecord? record, Guid requestId) => new()
+    {
+        ["verificationId"] = record?.VerificationId.ToString("D"),
+        ["revision"] = record?.Revision.ToString(System.Globalization.CultureInfo.InvariantCulture),
+        ["snapshotHash"] = record?.SnapshotHash,
+        ["requestId"] = requestId.ToString("D")
+    };
+
     private static ExperimentSampleVerificationValidationIssue Issue(ExperimentSampleTaskRow? row, string code, string message) => new()
     {
         RowId = row?.RowId == Guid.Empty ? null : row?.RowId,
@@ -304,12 +356,18 @@ public sealed class ExperimentSampleVerificationService(
         var audit = await database.ExperimentSchedulingAudits.AsNoTracking().SingleOrDefaultAsync(item => item.RequestId == requestId, cancellationToken);
         if (audit is null) return null;
         if (!string.Equals(audit.EventType, eventType, StringComparison.Ordinal) || !string.Equals(audit.RequestFingerprint, fingerprint, StringComparison.Ordinal)) throw Conflict($"Request id '{requestId}' was already used for a different action or payload.", ExperimentSampleVerificationIssueCodes.VersionConflict);
+        if (audit.Outcome == "Rejected")
+        {
+            var failure = ExperimentSchedulingPersistence.Deserialize<VerificationFailure?>(audit.ResultJson, null)
+                ?? throw new InvalidOperationException("The rejected verification audit has no replay result.");
+            throw Conflict(failure.Message, failure.Code);
+        }
         return ExperimentSchedulingPersistence.Deserialize<T?>(audit.ResultJson, null) ?? throw new InvalidOperationException($"Sample verification audit '{audit.Id}' does not contain a replay result.");
     }
 
-    private void AddAudit<T>(NormalizedMetadata metadata, string fingerprint, string eventType, T result, Guid? jobId = null, IReadOnlyDictionary<string, string?>? details = null) => database.ExperimentSchedulingAudits.Add(new ExperimentSchedulingAuditRecord
+    private void AddAudit<T>(NormalizedMetadata metadata, string fingerprint, string eventType, T result, Guid? jobId = null, IReadOnlyDictionary<string, string?>? details = null, string outcome = "Succeeded", string? code = null) => database.ExperimentSchedulingAudits.Add(new ExperimentSchedulingAuditRecord
     {
-        Id = Guid.NewGuid(), EventType = eventType, Outcome = "Succeeded", RequestId = metadata.RequestId, RequestFingerprint = fingerprint, Actor = metadata.Actor, Reason = metadata.Reason, ExperimentJobId = jobId,
+        Id = Guid.NewGuid(), EventType = eventType, Outcome = outcome, Code = code, RequestId = metadata.RequestId, RequestFingerprint = fingerprint, Actor = metadata.Actor, Reason = metadata.Reason, ExperimentJobId = jobId,
         DetailsJson = ExperimentSchedulingPersistence.Serialize(details ?? new Dictionary<string, string?>()), ResultJson = ExperimentSchedulingPersistence.Serialize(result), OccurredAtUtc = timeProvider.GetUtcNow().UtcDateTime
     });
 
@@ -321,4 +379,5 @@ public sealed class ExperimentSampleVerificationService(
     private static ExperimentSampleVerificationException Conflict(string message, string code) => new(message, code);
     private async Task<T> ExecuteMutationAsync<T>(Func<Task<T>> action, CancellationToken cancellationToken) { await mutationGate.EnterAsync(cancellationToken); try { return await action(); } finally { mutationGate.Exit(); } }
     private sealed record NormalizedMetadata(Guid RequestId, string Actor, string Reason);
+    private sealed record VerificationFailure(string Message, string Code);
 }

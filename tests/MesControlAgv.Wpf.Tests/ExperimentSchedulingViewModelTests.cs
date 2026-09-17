@@ -560,6 +560,87 @@ public sealed class ExperimentSchedulingViewModelTests
         Assert.True(viewModel.CanAdmit);
     }
 
+    [Theory]
+    [InlineData("business")]
+    [InlineData("barcode")]
+    [InlineData("position")]
+    [InlineData("order")]
+    public async Task Unsaved_identity_edits_immediately_block_admission_and_verification_and_reverting_restores_state(string field)
+    {
+        var fixture = SchedulingFixture.Create();
+        var job = fixture.Client.AddJob("B-UNSAVED", ExperimentJobStatus.Scheduled, workstation: true);
+        fixture.Client.SetSchedule(Schedule(job.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        var snapshot = fixture.Client.CreateVerification(job, ExperimentSampleVerificationStatus.Verified);
+        fixture.Client.SetVerification(job.JobId, snapshot);
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "check unsaved changes";
+        await viewModel.RefreshAsync(job.JobId);
+        viewModel.SelectedSampleVerificationRow = Assert.Single(viewModel.SampleVerificationRows);
+        var original = viewModel.SelectedSampleVerificationRow;
+        Assert.True(viewModel.CanAdmit);
+        void Edit(bool changed)
+        {
+            switch (field)
+            {
+                case "business": viewModel.VerificationSampleNumber = original.SampleNumber + (changed ? "-edit" : ""); break;
+                case "barcode": viewModel.VerificationSampleBarcode = original.Barcode + (changed ? "-edit" : ""); break;
+                case "position": viewModel.VerificationSamplePosition = original.Position + (changed ? "-edit" : ""); break;
+                default: viewModel.VerificationSampleOrder = original.Order + (changed ? 1 : 0); break;
+            }
+        }
+        Edit(true);
+        Assert.True(viewModel.HasUnsavedVerificationIdentityChanges);
+        Assert.False(viewModel.CanAdmit);
+        Assert.False(viewModel.AdmitCommand.CanExecute(null));
+        Assert.False(viewModel.CompleteSampleVerificationCommand.CanExecute(null));
+        Assert.Contains("未保存修改", viewModel.VerificationStatus, StringComparison.Ordinal);
+        Assert.Equal(ExperimentSampleVerificationStatus.Verified, viewModel.CurrentSampleVerification!.Status);
+        Assert.Null(fixture.Client.LastSavedVerificationRequest);
+        Edit(false);
+        Assert.False(viewModel.HasUnsavedVerificationIdentityChanges);
+        Assert.True(viewModel.CanAdmit);
+        Assert.Equal("已核对", viewModel.VerificationStatus);
+        fixture.Client.SetVerification(job.JobId, snapshot with { Status = ExperimentSampleVerificationStatus.ReadyForVerification });
+        await viewModel.RefreshAsync(job.JobId);
+        viewModel.SelectedSampleVerificationRow = Assert.Single(viewModel.SampleVerificationRows);
+        Assert.True(viewModel.CanCompleteSampleVerification);
+        Edit(true);
+        Assert.False(viewModel.CanCompleteSampleVerification);
+        Edit(false);
+        Assert.True(viewModel.CanCompleteSampleVerification);
+        viewModel.VerificationSampleDisplayName = "display only";
+        Assert.False(viewModel.HasUnsavedVerificationIdentityChanges);
+        Assert.True(viewModel.CanCompleteSampleVerification);
+        fixture.Client.SetVerification(job.JobId, snapshot);
+        await viewModel.RefreshAsync(job.JobId);
+        viewModel.SelectedSampleVerificationRow = Assert.Single(viewModel.SampleVerificationRows);
+        viewModel.VerificationSampleDisplayName = "another display name";
+        Assert.True(viewModel.CanAdmit);
+    }
+
+    [Theory]
+    [InlineData(ExperimentJobStatus.Admitted, ScheduleEntryStatus.Admitted)]
+    [InlineData(ExperimentJobStatus.Completed, ScheduleEntryStatus.Completed)]
+    [InlineData(ExperimentJobStatus.Running, ScheduleEntryStatus.Admitted)]
+    [InlineData(ExperimentJobStatus.Scheduled, ScheduleEntryStatus.Admitted)]
+    public async Task Protected_tasks_disable_sample_identity_editor_and_commands(ExperimentJobStatus jobStatus, ScheduleEntryStatus scheduleStatus)
+    {
+        var fixture = SchedulingFixture.Create();
+        var job = fixture.Client.AddJob("B-PROTECTED", jobStatus, workstation: true);
+        fixture.Client.SetSchedule(Schedule(job.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), scheduleStatus));
+        fixture.Client.SetVerification(job.JobId, fixture.Client.CreateVerification(job, ExperimentSampleVerificationStatus.ReadyForVerification));
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "late correction";
+        await viewModel.RefreshAsync(job.JobId);
+        viewModel.SelectedSampleVerificationRow = Assert.Single(viewModel.SampleVerificationRows);
+        Assert.False(viewModel.CanEditSampleIdentity);
+        Assert.False(viewModel.SaveSampleRowCommand.CanExecute(null));
+        Assert.False(viewModel.CompleteSampleVerificationCommand.CanExecute(null));
+        await viewModel.SaveSampleRowAsync();
+        Assert.Null(fixture.Client.LastSavedVerificationRequest);
+        Assert.Null(fixture.Client.LastSampleSaveRequest);
+    }
+
     [Fact]
     public async Task Pending_or_failed_workstation_detection_conservatively_blocks_admission()
     {

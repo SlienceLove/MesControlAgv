@@ -63,6 +63,9 @@ public sealed class ExperimentPlanningViewBindingTests
                 Assert.Same(scheduling.AdmitCommand, Assert.IsType<Button>(schedulingView.FindName("AdmitButton")).Command);
                 Assert.Same(scheduling.CancelJobCommand, Assert.IsType<Button>(schedulingView.FindName("CancelJobButton")).Command);
                 Assert.True(Assert.IsType<Expander>(schedulingView.FindName("SampleVerificationPanel")).IsExpanded);
+                var sampleEditor = Assert.IsType<Grid>(schedulingView.FindName("SampleIdentityEditor"));
+                Assert.Equal(nameof(ExperimentSchedulingViewModel.CanEditSampleIdentity), sampleEditor.GetBindingExpression(UIElement.IsEnabledProperty)!.ParentBinding.Path.Path);
+                Assert.Equal(scheduling.CanEditSampleIdentity, sampleEditor.IsEnabled);
                 Assert.Same(scheduling.SaveSampleRowCommand, Assert.IsType<Button>(schedulingView.FindName("SaveSampleRowButton")).Command);
                 Assert.Same(scheduling.CompleteSampleVerificationCommand, Assert.IsType<Button>(schedulingView.FindName("CompleteSampleVerificationButton")).Command);
                 Assert.Empty(Assert.IsType<DataGrid>(schedulingView.FindName("SampleVerificationRowsGrid")).Items);

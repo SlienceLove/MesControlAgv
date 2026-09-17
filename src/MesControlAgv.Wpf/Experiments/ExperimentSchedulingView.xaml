@@ -483,7 +483,7 @@
                                 <DataGridTextColumn Width="*" Header="校验" Binding="{Binding Validation}" />
                             </DataGrid.Columns>
                         </DataGrid>
-                        <Grid Margin="0,6,0,0">
+                        <Grid x:Name="SampleIdentityEditor" Margin="0,6,0,0" IsEnabled="{Binding CanEditSampleIdentity}">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
                                 <ColumnDefinition Width="*" />

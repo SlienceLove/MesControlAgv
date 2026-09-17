@@ -147,12 +147,13 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
         set
         {
             if (!SetField(ref _selectedSampleVerificationRow, value)) return;
-            if (value is null) return;
+            if (value is null) { ClearVerificationEditor(); RaiseCommandStates(); return; }
             VerificationSampleNumber = value.SampleNumber;
             VerificationSampleBarcode = value.Barcode;
             VerificationSampleDisplayName = value.DisplayName;
             VerificationSamplePosition = value.Position;
             VerificationSampleOrder = value.Order;
+            RaiseCommandStates();
         }
     }
 
@@ -454,6 +455,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
     {
         get
         {
+            if (HasUnsavedVerificationIdentityChanges) return "未保存修改（核对需重新确认）";
             if (_sampleVerificationInvalidatedByEdit) return "核对已失效（当前版本待核对）";
             return CurrentSampleVerification?.Status switch
             {
@@ -472,17 +474,28 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
         ? $"{CurrentSampleVerification.VerifiedBy ?? "-"} / {at.ToLocalTime():yyyy-MM-dd HH:mm}"
         : "-";
     public bool IsSampleVerificationReadOnly => CurrentSampleVerification?.Status == ExperimentSampleVerificationStatus.Verified;
-    public bool CanSaveSampleRow => !IsBusy && HasActionMetadata && SelectedJob is not null &&
+    public bool CanEditSampleIdentity => !IsBusy && IsSampleTaskMutable;
+    private bool IsSampleTaskMutable =>
+        SelectedJob?.Job.Status is ExperimentJobStatus.Draft or ExperimentJobStatus.Ready or ExperimentJobStatus.Scheduled or ExperimentJobStatus.Blocked &&
+        SelectedSchedule?.Status is null or ScheduleEntryStatus.Draft or ScheduleEntryStatus.Scheduled or ScheduleEntryStatus.Blocked;
+    public bool HasUnsavedVerificationIdentityChanges =>
+        VerificationSampleNumber.Trim() != (SelectedSampleVerificationRow?.SampleNumber.Trim() ?? string.Empty) ||
+        VerificationSampleBarcode.Trim() != (SelectedSampleVerificationRow?.Barcode.Trim() ?? string.Empty) ||
+        VerificationSamplePosition.Trim() != (SelectedSampleVerificationRow?.Position.Trim() ?? string.Empty) ||
+        VerificationSampleOrder != (SelectedSampleVerificationRow?.Order ?? 1);
+    public bool CanSaveSampleRow => CanEditSampleIdentity && HasActionMetadata && SelectedJob is not null &&
                                     !string.IsNullOrWhiteSpace(VerificationSampleNumber) &&
                                     !string.IsNullOrWhiteSpace(VerificationSampleBarcode) &&
                                     !string.IsNullOrWhiteSpace(VerificationSamplePosition) &&
                                     VerificationSampleOrder > 0;
-    public bool CanCompleteSampleVerification => !IsBusy && HasActionMetadata &&
+    public bool CanCompleteSampleVerification => CanEditSampleIdentity && HasActionMetadata && !HasUnsavedVerificationIdentityChanges &&
                                                  CurrentSampleVerification?.Status == ExperimentSampleVerificationStatus.ReadyForVerification;
     public bool HasAdmissionVerificationMessage => SelectedJob is not null &&
                                                    (!IsSampleVerificationRequirementResolved || SelectedJobRequiresSampleVerification);
     public string AdmissionVerificationMessage => !IsSampleVerificationRequirementResolved
         ? "正在确认任务是否需要样品核对；确认完成前不能运行准入，后端仍会最终裁决。"
+        : SelectedJobRequiresSampleVerification && HasUnsavedVerificationIdentityChanges
+            ? "样品身份有未保存修改，核对需重新确认；请先保存样品行。"
         : SelectedJobRequiresSampleVerification && CurrentSampleVerification?.Status != ExperimentSampleVerificationStatus.Verified
             ? "样品核对尚未完成：工作站任务需要当前快照为“已核对”；后端仍会最终裁决。"
             : string.Empty;
@@ -503,7 +516,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
                             SelectedSchedule?.Status == ScheduleEntryStatus.Scheduled &&
                             IsSampleVerificationRequirementResolved &&
                             (!SelectedJobRequiresSampleVerification ||
-                             CurrentSampleVerification?.Status == ExperimentSampleVerificationStatus.Verified);
+                             (!HasUnsavedVerificationIdentityChanges && CurrentSampleVerification?.Status == ExperimentSampleVerificationStatus.Verified));
     private bool HasActionMetadata =>
         !string.IsNullOrWhiteSpace(OperatorName) && !string.IsNullOrWhiteSpace(Reason);
 
@@ -656,6 +669,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
         "正在保存样品行...",
         async () =>
         {
+            if (!IsSampleTaskMutable) throw new InvalidOperationException("已准入、运行或结束的任务不能修改样品身份。");
             var job = SelectedJob?.Job ?? throw new InvalidOperationException("请选择实验任务。");
             var jobId = job.JobId;
             var loadVersion = _sampleVerificationLoadVersion;
@@ -729,6 +743,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
             if (!IsCurrentSampleVerificationContext(jobId, loadVersion)) return;
             _sampleVerificationSamples[sample.SampleId] = sample;
             ApplySampleVerification(verification, _sampleVerificationSamples.Values.ToArray());
+            SelectedSampleVerificationRow = SampleVerificationRows.FirstOrDefault(row => row.RowId == updatedRow.RowId);
             _sampleVerificationInvalidatedByEdit = prior?.Status == ExperimentSampleVerificationStatus.Verified &&
                                                    !string.Equals(prior.SnapshotHash, verification.SnapshotHash, StringComparison.Ordinal);
             OnPropertyChanged(nameof(VerificationStatus));
@@ -741,6 +756,8 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
         "正在记录人工样品核对...",
         async () =>
         {
+            if (!IsSampleTaskMutable || HasUnsavedVerificationIdentityChanges)
+                throw new InvalidOperationException("任务不可修改或存在未保存身份修改；请先保存并重新确认核对。");
             var job = SelectedJob?.Job ?? throw new InvalidOperationException("请选择实验任务。");
             var jobId = job.JobId;
             var loadVersion = _sampleVerificationLoadVersion;
@@ -1008,6 +1025,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
         ExperimentSampleVerification? verification,
         IReadOnlyList<ExperimentSample> samples)
     {
+        var selectedRowId = SelectedSampleVerificationRow?.RowId;
         CurrentSampleVerification = verification;
         foreach (var sample in samples) _sampleVerificationSamples[sample.SampleId] = sample;
         SampleVerificationRows.Clear();
@@ -1022,6 +1040,8 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
                 _sampleVerificationSamples.GetValueOrDefault(row.SampleId),
                 issues));
         }
+        SelectedSampleVerificationRow = SampleVerificationRows.FirstOrDefault(row => row.RowId == selectedRowId);
+        RaiseCommandStates();
     }
 
     private void ClearVerificationEditor()
@@ -1216,6 +1236,9 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
 
     private void RaiseCommandStates()
     {
+        OnPropertyChanged(nameof(CanEditSampleIdentity));
+        OnPropertyChanged(nameof(HasUnsavedVerificationIdentityChanges));
+        OnPropertyChanged(nameof(VerificationStatus));
         OnPropertyChanged(nameof(CanCreateJob));
         OnPropertyChanged(nameof(CanSchedule));
         OnPropertyChanged(nameof(CanUnschedule));
