@@ -86,6 +86,8 @@ public sealed class ExperimentSampleVerificationApiTests : IClassFixture<MesWebA
         var draft = await SaveRowsAsync(jobId, [new ExperimentSampleTaskRow { RowId = Guid.NewGuid(), SampleId = sample.SampleId, SampleBarcode = "wrong", Position = "A1", Order = 1 }]);
         Assert.Equal(ExperimentSampleVerificationStatus.Draft, draft.Status);
         Assert.Contains(draft.ValidationIssues, issue => issue.Code == "EXP-SAMPLE-BARCODE-MISMATCH" && issue.Order == 1);
+        var readDraft = (await (await _client.GetAsync($"/api/experiment-jobs/{jobId}/sample-verifications/current")).Content.ReadFromJsonAsync<ExperimentSampleVerification>())!;
+        Assert.Contains(readDraft.ValidationIssues, issue => issue.Code == "EXP-SAMPLE-BARCODE-MISMATCH" && issue.RowId == draft.Rows[0].RowId);
         var stale = await _client.PostAsJsonAsync($"/api/experiment-jobs/{jobId}/sample-verifications/{draft.Revision}/verify", new CompleteExperimentSampleVerificationRequest { RequestId = Guid.NewGuid(), Actor = "operator", Reason = "try stale", Revision = draft.Revision, SnapshotHash = "wrong" });
         Assert.Equal(HttpStatusCode.Conflict, stale.StatusCode);
 
@@ -144,6 +146,27 @@ public sealed class ExperimentSampleVerificationApiTests : IClassFixture<MesWebA
         ]);
         Assert.Equal(ExperimentSampleVerificationStatus.Draft, duplicateRows.Status);
         Assert.Contains(duplicateRows.ValidationIssues, issue => issue.Code == ExperimentSampleVerificationIssueCodes.BarcodeDuplicate && issue.Order == 5);
+    }
+
+    [Fact]
+    public async Task Request_replay_is_scoped_to_the_route_job_for_save_and_verify()
+    {
+        var firstJobId = await AddJobAsync("B-REPLAY");
+        var secondJobId = await AddJobAsync("B-REPLAY");
+        var sample = await RegisterAsync("B-REPLAY", "REPLAY-1");
+        var rows = new[] { new ExperimentSampleTaskRow { RowId = Guid.NewGuid(), SampleId = sample.SampleId, SampleBarcode = sample.Barcode, Position = "A1", Order = 1 } };
+        var saveRequest = new SaveExperimentSampleVerificationRequest { RequestId = Guid.NewGuid(), Actor = "operator", Reason = "same save", Rows = rows };
+        var firstSave = await _client.PutAsJsonAsync($"/api/experiment-jobs/{firstJobId}/sample-verifications/current", saveRequest);
+        firstSave.EnsureSuccessStatusCode();
+        var crossJobSave = await _client.PutAsJsonAsync($"/api/experiment-jobs/{secondJobId}/sample-verifications/current", saveRequest);
+        Assert.Equal(HttpStatusCode.Conflict, crossJobSave.StatusCode);
+
+        var first = (await firstSave.Content.ReadFromJsonAsync<ExperimentSampleVerification>())!;
+        var second = await SaveRowsAsync(secondJobId, rows);
+        var verifyRequest = new CompleteExperimentSampleVerificationRequest { RequestId = Guid.NewGuid(), Actor = "operator", Reason = "same verify", Revision = first.Revision, SnapshotHash = first.SnapshotHash };
+        (await _client.PostAsJsonAsync($"/api/experiment-jobs/{firstJobId}/sample-verifications/{first.Revision}/verify", verifyRequest)).EnsureSuccessStatusCode();
+        var crossJobVerify = await _client.PostAsJsonAsync($"/api/experiment-jobs/{secondJobId}/sample-verifications/{second.Revision}/verify", verifyRequest);
+        Assert.Equal(HttpStatusCode.Conflict, crossJobVerify.StatusCode);
     }
 
     private async Task<Guid> AddJobAsync(string batchId)

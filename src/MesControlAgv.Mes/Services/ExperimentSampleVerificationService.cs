@@ -76,10 +76,14 @@ public sealed class ExperimentSampleVerificationService(
     public async Task<ExperimentSampleVerification?> GetCurrentAsync(Guid experimentJobId, CancellationToken cancellationToken)
     {
         if (experimentJobId == Guid.Empty) throw new ArgumentException("A non-empty experiment job id is required.", nameof(experimentJobId));
+        var job = await FindJobAsync(experimentJobId, cancellationToken);
         var record = await database.ExperimentSampleVerifications.AsNoTracking()
             .Where(item => item.ExperimentJobId == experimentJobId).OrderByDescending(item => item.Revision)
             .FirstOrDefaultAsync(cancellationToken);
-        return record is null ? null : MapVerification(record);
+        if (record is null) return null;
+        var rows = Rows(record);
+        var issues = await ValidateRowsAsync(job, rows, cancellationToken);
+        return MapVerification(record) with { ValidationIssues = issues };
     }
 
     public Task<ExperimentSampleVerification> SaveCurrentAsync(Guid experimentJobId, SaveExperimentSampleVerificationRequest request, CancellationToken cancellationToken) =>
@@ -87,7 +91,7 @@ public sealed class ExperimentSampleVerificationService(
         {
             var metadata = NormalizeMetadata(request?.RequestId ?? Guid.Empty, request?.Actor, request?.Reason);
             var rows = CanonicalizeRows(request?.Rows);
-            var fingerprint = CreateFingerprint("SaveExperimentSampleVerification", metadata, rows);
+            var fingerprint = CreateFingerprint("SaveExperimentSampleVerification", metadata, new { ExperimentJobId = experimentJobId, Rows = rows });
             var replay = await TryReplayAsync<ExperimentSampleVerification>(metadata.RequestId, "ExperimentSampleVerificationSaved", fingerprint, cancellationToken);
             if (replay is not null) return replay;
             var job = await FindJobAsync(experimentJobId, cancellationToken);
@@ -143,7 +147,7 @@ public sealed class ExperimentSampleVerificationService(
             var metadata = NormalizeMetadata(request?.RequestId ?? Guid.Empty, request?.Actor, request?.Reason);
             if (revision <= 0 || request!.Revision != revision) throw Conflict("The requested verification revision does not match the route.", ExperimentSampleVerificationIssueCodes.VersionConflict);
             var expectedHash = RequireText(request.SnapshotHash, nameof(request.SnapshotHash));
-            var fingerprint = CreateFingerprint("VerifyExperimentSampleVerification", metadata, new { revision, expectedHash, VerificationNote = NormalizeOptionalText(request.VerificationNote) });
+            var fingerprint = CreateFingerprint("VerifyExperimentSampleVerification", metadata, new { ExperimentJobId = experimentJobId, revision, expectedHash, VerificationNote = NormalizeOptionalText(request.VerificationNote) });
             var replay = await TryReplayAsync<ExperimentSampleVerification>(metadata.RequestId, "ExperimentSampleVerificationVerified", fingerprint, cancellationToken);
             if (replay is not null) return replay;
             var job = await FindJobAsync(experimentJobId, cancellationToken);
