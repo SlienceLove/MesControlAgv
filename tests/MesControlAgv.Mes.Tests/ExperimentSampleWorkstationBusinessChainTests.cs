@@ -125,7 +125,33 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
         Assert.Empty(await database.WorkflowExecutions.ToListAsync());
         Assert.Empty(await database.WorkflowResourceLeases.ToListAsync());
+        Assert.Empty(await database.WorkflowDeviceOperations.ToListAsync());
         Assert.Single(await database.ExperimentSchedulingAudits.Where(audit => audit.RequestId == request.RequestId && audit.EventType == "ExperimentJobAdmissionRejected").ToListAsync());
+    }
+
+    [Fact]
+    public async Task Workstation_admission_rejects_verification_revision_and_hash_drift_without_runtime_side_effects()
+    {
+        var gateway = new RecordingWorkstation();
+        using var factory = ConfigureGateway(new PhysicalMesWebApplicationFactory(PhysicalProfile()), gateway, introduceVersionDrift: true);
+        using var client = factory.CreateClient();
+        var workflow = await PublishWorkflowAsync(client);
+        var plan = await CreatePublishedPlanAsync(client, workflow);
+        var scheduled = await CreateScheduledJobAsync(client, plan);
+        await VerifyCurrentSampleAsync(client, scheduled.JobId, "TEST-001");
+
+        var response = await client.PostAsJsonAsync($"/api/experiment-jobs/{scheduled.JobId}/admit", Action("Reject verification revision and hash drift"));
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var rejected = (await response.Content.ReadFromJsonAsync<ExperimentJobAdmissionResult>())!;
+        Assert.Equal(ExperimentSampleVerificationIssueCodes.VersionConflict, rejected.RejectionCode);
+        Assert.Null(rejected.WorkflowRunId);
+        Assert.Equal(0, gateway.StartCalls);
+        using var scope = factory.Services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+        Assert.Empty(await database.WorkflowExecutions.ToListAsync());
+        Assert.Empty(await database.WorkflowResourceLeases.ToListAsync());
+        Assert.Empty(await database.WorkflowDeviceOperations.ToListAsync());
     }
 
     [Theory]
@@ -199,11 +225,18 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         Assert.Empty(await verifyDatabase.WorkflowDeviceOperations.ToListAsync());
     }
 
-    private static WebApplicationFactory<Program> ConfigureGateway(WebApplicationFactory<Program> factory, RecordingWorkstation gateway) =>
+    private static WebApplicationFactory<Program> ConfigureGateway(WebApplicationFactory<Program> factory, RecordingWorkstation gateway, bool introduceVersionDrift = false) =>
         factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<ISampleWorkstationReader>(); services.RemoveAll<ISampleWorkstationCommands>();
             services.AddSingleton<ISampleWorkstationReader>(gateway); services.AddSingleton<ISampleWorkstationCommands>(gateway);
+            if (introduceVersionDrift)
+            {
+                services.RemoveAll<IExperimentSampleVerificationService>();
+                services.AddScoped<IExperimentSampleVerificationService>(serviceProvider => new VersionDriftVerificationService(
+                    serviceProvider.GetRequiredService<ExperimentSampleVerificationService>(),
+                    serviceProvider.GetRequiredService<MesDbContext>()));
+            }
         }));
 
     private static ProfileConfiguration PhysicalProfile() => ProfileConfiguration.Default with
@@ -303,6 +336,29 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
             string TaskNo,
             SampleWorkstationTaskState TaskState,
             string RawTaskState);
+    }
+
+    private sealed class VersionDriftVerificationService(
+        ExperimentSampleVerificationService inner,
+        MesDbContext database) : IExperimentSampleVerificationService
+    {
+        public Task<IReadOnlyList<ExperimentSample>> ListSamplesAsync(QueryExperimentSamplesRequest request, CancellationToken cancellationToken) => inner.ListSamplesAsync(request, cancellationToken);
+        public Task<ExperimentSample> SaveSampleAsync(Guid sampleId, SaveExperimentSampleRequest request, CancellationToken cancellationToken) => inner.SaveSampleAsync(sampleId, request, cancellationToken);
+        public async Task<ExperimentSampleVerification?> GetCurrentAsync(Guid experimentJobId, CancellationToken cancellationToken)
+        {
+            var current = await inner.GetCurrentAsync(experimentJobId, cancellationToken);
+            if (current is null) return null;
+            database.ExperimentSampleVerifications.Add(new ExperimentSampleVerificationRecord
+            {
+                VerificationId = Guid.NewGuid(), ExperimentJobId = current.ExperimentJobId, Revision = current.Revision + 1,
+                Status = ExperimentSampleVerificationStatus.ReadyForVerification.ToString(), RowsJson = JsonSerializer.Serialize(current.Rows),
+                SnapshotHash = "DRIFTED-" + current.SnapshotHash, CreatedAtUtc = DateTime.UtcNow, UpdatedAtUtc = DateTime.UtcNow
+            });
+            await database.SaveChangesAsync(cancellationToken);
+            return current;
+        }
+        public Task<ExperimentSampleVerification> SaveCurrentAsync(Guid experimentJobId, SaveExperimentSampleVerificationRequest request, CancellationToken cancellationToken) => inner.SaveCurrentAsync(experimentJobId, request, cancellationToken);
+        public Task<ExperimentSampleVerification> VerifyAsync(Guid experimentJobId, int revision, CompleteExperimentSampleVerificationRequest request, CancellationToken cancellationToken) => inner.VerifyAsync(experimentJobId, revision, request, cancellationToken);
     }
 
     private sealed class PhysicalMesWebApplicationFactory(ProfileConfiguration profile) : WebApplicationFactory<Program>
