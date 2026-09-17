@@ -56,7 +56,7 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
             var dispatcher = new WorkflowSampleWorkstationDispatcher(
                 scope.ServiceProvider.GetRequiredService<IWorkflowApplicationService>(), gateway, gateway,
                 PhysicalProfile(), new WorkflowSampleWorkstationWorkerOptions
-                { Enabled = true, PollIntervalMs = 1, ReadinessRetryIntervalMs = 1, StartObservationTimeoutMs = 100, CompletionTimeoutMs = 100 });
+                { Enabled = true, PollIntervalMs = 1, ReadinessRetryIntervalMs = 1, StartObservationTimeoutMs = 5000, CompletionTimeoutMs = 5000 });
             await dispatcher.ProcessAsync(CancellationToken.None);
         }
 

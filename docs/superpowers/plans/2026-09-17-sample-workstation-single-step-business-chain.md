@@ -238,7 +238,7 @@ MES Worker：
 3. 点击“运行准入”，在 WPF 确认框确认一次。
 4. 不使用隐藏联调入口，不直接调用厂家启动 API，不重复点击运行准入。
 5. 观察：
-   - Job/Schedule：Scheduled -> Admitted -> Running -> Completed。
+   - Job：Scheduled -> Admitted -> Running -> Completed；Schedule：Scheduled -> Admitted -> Completed。
    - Workflow：Running -> Completed。
    - 工作站节点：Ready -> Running -> Succeeded。
    - 设备操作：Prepared/StartPending/Accepted -> Running -> Succeeded。

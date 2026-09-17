@@ -24,7 +24,7 @@
 
 - WPF admission 审计 `ExperimentJobAdmitted / Admitted`：`2026-09-17T02:11:49.0921907Z`；同一事务已建立一个工作站租约。
 - Workflow 接受：`02:11:49.016073Z`；节点认领/Running：`02:11:49.620286Z`；设备操作 Accepted：`02:11:50.7563748Z`；Running 已观察：`02:11:52.8433461Z`。
-- 在 `2026-09-17T02:13:24Z` 的只读观察中，Job、Schedule、Workflow、节点、设备操作均为 Running，活动租约存在；设备 `Running/1`、`TEST-001` Running、厂家码 `3 / ExperimentStarted`。这不是由旧 Completed 状态推断。
+- 在 `2026-09-17T02:13:24Z` 的只读观察中，Job、Workflow、节点和设备操作为 Running，Schedule 为 Admitted，活动租约存在；设备 `Running/1`、`TEST-001` Running、厂家码 `3 / ExperimentStarted`。这不是由旧 Completed 状态推断。
 - 厂家完成观察：`02:14:18.2928729Z`；节点和操作成功完成：`02:14:18.3036037Z`；`WorkflowStepCompleted`：`02:14:18.3056354Z`。
 - Job/Schedule 完成：`2026-09-17T02:14:18.307331Z`；完成审计 `02:14:18.312017Z` 记录 `releasedLeaseCount=1`。最终排程 GET 为 `activeLeases=[]`，且仅一条目标活动，状态 Succeeded。
 
@@ -47,7 +47,9 @@
 - 多步骤实验实体运行、厂家任务表导入、动态任务创建和远程停止仍未实现。
 - 当前样品条码结论仅为设计、尚未实施：扫码枪在仪器工作站 PC，中控 WPF 在另一台 PC；不使用扫码枪或 last-scan HTTP 回传。实时 `TrajectoryParameterDetails` 显示 `SourceBarCode` / `TargetData` 配置而 `SMTBarCode=null`。中控将采用页面级人工目视比较与“核对完成”（无弹窗），审计及 revision/hash 锁定，编辑即失效。厂家任务表上传格式/API 待交付；导入/准备不得隐式启动。详见 [设计](../superpowers/specs/2026-09-17-sample-task-manual-barcode-verification-design.md)（提交 `0d60bfe`）。
 
-## 可复核来源
+## 归档范围与可复核来源
+
+已提交的本文档和交接文档保留了本次现场验收的主体 ID、状态和结果。详细的 Task 3–5 报告及原始 GET/日志材料保留在本次现场会话的本地、已忽略 SDD 工作区中；它们不会出现在新的检出中，也不是仓库已发布的工件。
 
 - `.superpowers/sdd/2026-09-17-sample-workstation-single-step-business-chain/task-1-report.md`
 - `.superpowers/sdd/2026-09-17-sample-workstation-single-step-business-chain/task-3-report.md`

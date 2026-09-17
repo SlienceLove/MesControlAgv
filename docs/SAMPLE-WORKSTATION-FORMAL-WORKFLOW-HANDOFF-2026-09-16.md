@@ -176,7 +176,7 @@ v`1`、任务 `3bfa15d6-77d4-4de9-9b5f-05db3c621b4e` 和排程
 `202170a0-eb2a-94f9-d646-c2f6f5ede152`。
 
 - 单次 `TEST-001` 启动已由持久化操作（attempt `1`）和 MES 出站日志共同证实；没有第二次启动、重试、初始化、取消或停止调用。
-- 本轮观察到 `Running`：`2026-09-17T02:13:24Z` 时 Job、Schedule、Workflow、节点和设备操作均为 Running，活动租约存在，设备为 `Running/1`、任务为 Running、厂家码为 `3 / ExperimentStarted`。
+- 本轮观察到 `Running`：`2026-09-17T02:13:24Z` 时 Job、Workflow、节点和设备操作为 Running，Schedule 为 Admitted，活动租约存在，设备为 `Running/1`、任务为 Running、厂家码为 `3 / ExperimentStarted`。
 - `2026-09-17T02:14:18.307331Z`，Job 和 Schedule 均为 Completed；Workflow 为 Completed，节点和设备操作均为 Succeeded，唯一排程活动为 Succeeded。完成审计记录 `releasedLeaseCount=1`，最终 `activeLeases=[]`。
 - 新增跨边界自动化用例提交 `055a966`，随后以提交 `951ebbb` 隔离其宿主；二者均为测试改动，**本次验收未发现且未实施产品代码修复**。定向用例 `1/1`、MES 全量 `321/321`；回归 `475/475`；隔离构建 20 个项目、0 警告、0 错误。
 
