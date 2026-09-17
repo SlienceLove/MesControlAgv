@@ -34,6 +34,7 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         var workflow = await PublishWorkflowAsync(client);
         var plan = await CreatePublishedPlanAsync(client, workflow);
         var scheduled = await CreateScheduledJobAsync(client, plan);
+        var verification = await VerifyCurrentSampleAsync(client, scheduled.JobId, "TEST-001");
 
         var admissionResponse = await client.PostAsJsonAsync($"/api/experiment-jobs/{scheduled.JobId}/admit", Action("Admit TEST-001"));
         Assert.Equal(HttpStatusCode.Accepted, admissionResponse.StatusCode);
@@ -49,6 +50,11 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
             Assert.Single(await db.WorkflowExecutions.AsNoTracking().ToListAsync());
             var lease = Assert.Single(await db.WorkflowResourceLeases.AsNoTracking().Where(x => x.ActiveResourceKey != null).ToListAsync());
             Assert.Equal(admitted.WorkflowRunId, lease.WorkflowRunId);
+            var admissionAudit = Assert.Single(await db.ExperimentSchedulingAudits.AsNoTracking()
+                .Where(audit => audit.RequestId == admitted.RequestId).ToListAsync());
+            Assert.Contains(verification.VerificationId.ToString("D"), admissionAudit.DetailsJson);
+            Assert.Contains(verification.Revision.ToString(), admissionAudit.DetailsJson);
+            Assert.Contains(verification.SnapshotHash, admissionAudit.DetailsJson);
         }
 
         using (var scope = factory.Services.CreateScope())
@@ -96,6 +102,32 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         Assert.NotNull(activity.ActualEnd);
     }
 
+    [Fact]
+    public async Task Workstation_admission_without_a_verified_snapshot_is_rejected_before_runtime_side_effects()
+    {
+        var gateway = new RecordingWorkstation();
+        using var factory = ConfigureGateway(new PhysicalMesWebApplicationFactory(PhysicalProfile()), gateway);
+        using var client = factory.CreateClient();
+        var workflow = await PublishWorkflowAsync(client);
+        var plan = await CreatePublishedPlanAsync(client, workflow);
+        var scheduled = await CreateScheduledJobAsync(client, plan);
+        var request = Action("Reject missing sample verification");
+
+        var response = await client.PostAsJsonAsync($"/api/experiment-jobs/{scheduled.JobId}/admit", request);
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var rejected = (await response.Content.ReadFromJsonAsync<ExperimentJobAdmissionResult>())!;
+        Assert.True(rejected.IsRejected);
+        Assert.Equal(ExperimentSampleVerificationIssueCodes.VerificationRequired, rejected.RejectionCode);
+        Assert.Null(rejected.WorkflowRunId);
+        Assert.Equal(0, gateway.StartCalls);
+        using var scope = factory.Services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+        Assert.Empty(await database.WorkflowExecutions.ToListAsync());
+        Assert.Empty(await database.WorkflowResourceLeases.ToListAsync());
+        Assert.Single(await database.ExperimentSchedulingAudits.Where(audit => audit.RequestId == request.RequestId && audit.EventType == "ExperimentJobAdmissionRejected").ToListAsync());
+    }
+
     private static WebApplicationFactory<Program> ConfigureGateway(WebApplicationFactory<Program> factory, RecordingWorkstation gateway) =>
         factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
         {
@@ -135,6 +167,29 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         var start = new DateTimeOffset(2026, 9, 17, 8, 0, 0, TimeSpan.Zero);
         var schedule = await client.PutAsJsonAsync($"/api/experiment-jobs/{job.JobId}/schedule", new ScheduleExperimentJobRequest { RequestId = Guid.NewGuid(), Actor = "test", Reason = "Schedule", PlannedStart = start, PlannedEnd = start.AddHours(1), Resources = [new ExperimentResourceReference { ResourceType = ExperimentResourceTypeIds.Workstation, ResourceId = "SAMPLE-WORKSTATION-01" }] }); schedule.EnsureSuccessStatusCode();
         return (job.JobId, (await schedule.Content.ReadFromJsonAsync<ScheduleEntry>())!.ScheduleEntryId);
+    }
+
+    private static async Task<ExperimentSampleVerification> VerifyCurrentSampleAsync(HttpClient client, Guid jobId, string batchId)
+    {
+        var sampleId = Guid.NewGuid();
+        (await client.PutAsJsonAsync($"/api/experiment-samples/{sampleId}", new SaveExperimentSampleRequest
+        {
+            RequestId = Guid.NewGuid(), Actor = "test", Reason = "Register workstation sample",
+            Sample = new ExperimentSample { SampleId = sampleId, BusinessSampleId = "S-" + sampleId.ToString("N"), BatchId = batchId, Barcode = "BC-" + sampleId.ToString("N"), Status = ExperimentSampleStatus.Active }
+        })).EnsureSuccessStatusCode();
+        var savedResponse = await client.PutAsJsonAsync($"/api/experiment-jobs/{jobId}/sample-verifications/current", new SaveExperimentSampleVerificationRequest
+        {
+            RequestId = Guid.NewGuid(), Actor = "test", Reason = "Snapshot workstation sample",
+            Rows = [new ExperimentSampleTaskRow { RowId = Guid.NewGuid(), SampleId = sampleId, SampleBarcode = "BC-" + sampleId.ToString("N"), Position = "A1", Order = 1 }]
+        });
+        savedResponse.EnsureSuccessStatusCode();
+        var saved = (await savedResponse.Content.ReadFromJsonAsync<ExperimentSampleVerification>())!;
+        var verifiedResponse = await client.PostAsJsonAsync($"/api/experiment-jobs/{jobId}/sample-verifications/{saved.Revision}/verify", new CompleteExperimentSampleVerificationRequest
+        {
+            RequestId = Guid.NewGuid(), Actor = "test", Reason = "Verify workstation sample", Revision = saved.Revision, SnapshotHash = saved.SnapshotHash
+        });
+        verifiedResponse.EnsureSuccessStatusCode();
+        return (await verifiedResponse.Content.ReadFromJsonAsync<ExperimentSampleVerification>())!;
     }
 
     private static ExperimentSchedulingActionRequest Action(string reason) => new() { RequestId = Guid.NewGuid(), Actor = "test", Reason = reason };

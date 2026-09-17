@@ -177,9 +177,8 @@ public sealed class ExperimentSampleVerificationService(
             return result;
         }, cancellationToken);
 
-    public Task<ExperimentSampleVerification> RequireVerifiedCurrentAsync(Guid experimentJobId, int revision, string snapshotHash, CancellationToken cancellationToken) =>
-        ExecuteMutationAsync(async () =>
-        {
+    public async Task<ExperimentSampleVerification> RequireVerifiedCurrentAsync(Guid experimentJobId, int revision, string snapshotHash, CancellationToken cancellationToken)
+    {
             var job = await FindJobAsync(experimentJobId, cancellationToken);
             var current = await database.ExperimentSampleVerifications.Where(item => item.ExperimentJobId == experimentJobId)
                 .OrderByDescending(item => item.Revision).FirstOrDefaultAsync(cancellationToken);
@@ -194,8 +193,8 @@ public sealed class ExperimentSampleVerificationService(
                 await database.SaveChangesAsync(cancellationToken);
                 throw Conflict("The verified sample snapshot was invalidated by registered sample drift.", ExperimentSampleVerificationIssueCodes.VerificationInvalidated);
             }
-            return MapVerification(current);
-        }, cancellationToken);
+        return MapVerification(current);
+    }
 
     private async Task<IReadOnlyList<ExperimentSampleVerificationValidationIssue>> ValidateRowsAsync(ExperimentJobRecord job, IReadOnlyList<ExperimentSampleTaskRow> rows, CancellationToken cancellationToken)
     {

@@ -17,6 +17,8 @@ namespace MesControlAgv.Mes.Services;
 public sealed class ExperimentRuntimeAdmissionService(
     MesDbContext database,
     IWorkflowApplicationService workflows,
+    IExperimentSampleVerificationService sampleVerificationService,
+    IExperimentSampleVerificationGate sampleVerificationGate,
     ExperimentResourceCatalog resourceCatalog,
     ExperimentSchedulingMutationGate mutationGate,
     ExperimentRuntimeLeaseLifecycle leaseLifecycle,
@@ -79,6 +81,9 @@ public sealed class ExperimentRuntimeAdmissionService(
 
             try
             {
+                var verification = await RequireSampleVerificationIfNeededAsync(
+                    job,
+                    cancellationToken);
                 return await AdmitInTransactionAsync(
                     job,
                     schedule!,
@@ -86,6 +91,20 @@ public sealed class ExperimentRuntimeAdmissionService(
                         reservation.Status == ResourceReservationStatus.Planned.ToString()).ToArray(),
                     metadata,
                     fingerprint,
+                    verification,
+                    cancellationToken);
+            }
+            catch (ExperimentSampleVerificationException exception)
+            {
+                database.ChangeTracker.Clear();
+                return await PersistRejectedAsync(
+                    experimentJobId,
+                    metadata,
+                    fingerprint,
+                    new AdmissionRejection(
+                        exception.Code,
+                        exception.Message,
+                        Array.Empty<ExperimentResourceReference>()),
                     cancellationToken);
             }
             catch (WorkflowAdmissionRejectedSignal signal)
@@ -127,6 +146,7 @@ public sealed class ExperimentRuntimeAdmissionService(
         IReadOnlyList<ResourceReservationRecord> plannedReservations,
         NormalizedMetadata metadata,
         string fingerprint,
+        ExperimentSampleVerification? verification,
         CancellationToken cancellationToken)
     {
         await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken);
@@ -196,7 +216,7 @@ public sealed class ExperimentRuntimeAdmissionService(
                 schedule,
                 plannedReservations,
                 leases);
-            var audit = AddAdmissionAudit(metadata, fingerprint, initialResult, job, schedule, leases);
+            var audit = AddAdmissionAudit(metadata, fingerprint, initialResult, job, schedule, leases, verification);
             await database.SaveChangesAsync(cancellationToken);
 
             var run = await database.WorkflowExecutions.SingleAsync(
@@ -374,6 +394,35 @@ public sealed class ExperimentRuntimeAdmissionService(
         return null;
     }
 
+    private async Task<ExperimentSampleVerification?> RequireSampleVerificationIfNeededAsync(
+        ExperimentJobRecord job,
+        CancellationToken cancellationToken)
+    {
+        var workflow = await database.WorkflowVersions.AsNoTracking().SingleAsync(
+            item => item.WorkflowId == job.WorkflowId && item.Version == job.WorkflowVersion,
+            cancellationToken);
+        var requiresVerification = WorkflowPersistence.DeserializeDefinition(workflow.DefinitionJson)
+            .Nodes.Any(node => string.Equals(
+                node.NodeTypeId,
+                WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask,
+                StringComparison.Ordinal));
+        if (!requiresVerification) return null;
+
+        var current = await sampleVerificationService.GetCurrentAsync(job.JobId, cancellationToken);
+        if (current is null)
+        {
+            throw new ExperimentSampleVerificationException(
+                "A verified current sample snapshot is required before workstation admission.",
+                ExperimentSampleVerificationIssueCodes.VerificationRequired);
+        }
+
+        return await sampleVerificationGate.RequireVerifiedCurrentAsync(
+            job.JobId,
+            current.Revision,
+            current.SnapshotHash,
+            cancellationToken);
+    }
+
     private async Task<ExperimentJobAdmissionResult?> TryReplayAsync(
         Guid requestId,
         string fingerprint,
@@ -437,7 +486,8 @@ public sealed class ExperimentRuntimeAdmissionService(
         ExperimentJobAdmissionResult result,
         ExperimentJobRecord job,
         ScheduleEntryRecord schedule,
-        IReadOnlyList<WorkflowResourceLeaseRecord> leases)
+        IReadOnlyList<WorkflowResourceLeaseRecord> leases,
+        ExperimentSampleVerification? verification)
     {
         var audit = AddAdmissionAudit(
             metadata,
@@ -447,7 +497,7 @@ public sealed class ExperimentRuntimeAdmissionService(
             ExperimentSchedulingPersistence.MapScheduleEntry(
                 schedule,
                 Array.Empty<ResourceReservation>()));
-        audit.DetailsJson = ExperimentSchedulingPersistence.Serialize(new Dictionary<string, string?>
+        var details = new Dictionary<string, string?>
         {
             ["workflowRunId"] = result.WorkflowRunId?.ToString(),
             ["leaseCount"] = leases.Count.ToString(),
@@ -455,7 +505,14 @@ public sealed class ExperimentRuntimeAdmissionService(
                 ",",
                 leases.Select(lease => $"{lease.ResourceType.ToUpperInvariant()}/{lease.ResourceId.ToUpperInvariant()}")
                     .OrderBy(value => value, StringComparer.Ordinal))
-        });
+        };
+        if (verification is not null)
+        {
+            details["verificationId"] = verification.VerificationId.ToString("D");
+            details["verificationRevision"] = verification.Revision.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            details["verificationSnapshotHash"] = verification.SnapshotHash;
+        }
+        audit.DetailsJson = ExperimentSchedulingPersistence.Serialize(details);
         return audit;
     }
 
