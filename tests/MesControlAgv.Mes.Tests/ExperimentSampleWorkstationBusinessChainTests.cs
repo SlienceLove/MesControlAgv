@@ -225,6 +225,94 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         Assert.Empty(await verifyDatabase.WorkflowDeviceOperations.ToListAsync());
     }
 
+    [Fact]
+    public async Task Unverified_drifted_and_reverified_sample_snapshot_gates_workstation_admission_without_gateway_start()
+    {
+        var gateway = new RecordingWorkstation();
+        using var factory = ConfigureGateway(new PhysicalMesWebApplicationFactory(PhysicalProfile()), gateway);
+        using var client = factory.CreateClient();
+        var workflow = await PublishWorkflowAsync(client);
+        var plan = await CreatePublishedPlanAsync(client, workflow);
+        var scheduled = await CreateScheduledJobAsync(client, plan);
+
+        var firstSample = await RegisterSampleAsync(client, "TEST-001", "S-CHAIN-01", "BC-CHAIN-01");
+        var secondSample = await RegisterSampleAsync(client, "TEST-001", "S-CHAIN-02", "BC-CHAIN-02");
+        var rows = new[]
+        {
+            new ExperimentSampleTaskRow { RowId = Guid.NewGuid(), SampleId = firstSample.SampleId, BusinessSampleId = firstSample.BusinessSampleId, SampleBarcode = firstSample.Barcode, Position = "A01", Order = 1 },
+            new ExperimentSampleTaskRow { RowId = Guid.NewGuid(), SampleId = secondSample.SampleId, BusinessSampleId = secondSample.BusinessSampleId, SampleBarcode = secondSample.Barcode, Position = "B01", Order = 2 }
+        };
+        var saved = await SaveRowsAsync(client, scheduled.JobId, rows, "Save two-row snapshot");
+        Assert.Equal(ExperimentSampleVerificationStatus.ReadyForVerification, saved.Status);
+        Assert.Equal(["S-CHAIN-01", "S-CHAIN-02"], saved.Rows.Select(row => row.BusinessSampleId));
+        Assert.Equal(["A01", "B01"], saved.Rows.Select(row => row.Position));
+        Assert.Equal([1, 2], saved.Rows.Select(row => row.Order));
+
+        var firstAdmissionRequest = Action("Reject unverified two-row snapshot");
+        var firstAdmissionResponse = await client.PostAsJsonAsync($"/api/experiment-jobs/{scheduled.JobId}/admit", firstAdmissionRequest);
+        Assert.Equal(HttpStatusCode.Conflict, firstAdmissionResponse.StatusCode);
+        var firstRejected = (await firstAdmissionResponse.Content.ReadFromJsonAsync<ExperimentJobAdmissionResult>())!;
+        Assert.Equal(ExperimentSampleVerificationIssueCodes.VerificationRequired, firstRejected.RejectionCode);
+        Assert.Null(firstRejected.WorkflowRunId);
+        await AssertNoRuntimeSideEffectsAsync(factory, gateway);
+
+        var firstVerified = await VerifyAsync(client, scheduled.JobId, saved, "sample-operator", "Visually verify two rows");
+        Assert.Equal(ExperimentSampleVerificationStatus.Verified, firstVerified.Status);
+        Assert.Equal("sample-operator", firstVerified.VerifiedBy);
+        Assert.NotNull(firstVerified.VerifiedAt);
+        Assert.Equal(saved.Revision, firstVerified.Revision);
+        Assert.Equal(saved.SnapshotHash, firstVerified.SnapshotHash);
+
+        var drifted = await SaveRowsAsync(
+            client,
+            scheduled.JobId,
+            rows.Select(row => row.Position == "B01" ? row with { Position = "C01" } : row).ToArray(),
+            "Correct second sample position");
+        Assert.Equal(firstVerified.Revision + 1, drifted.Revision);
+        Assert.Equal(ExperimentSampleVerificationStatus.ReadyForVerification, drifted.Status);
+        Assert.Equal("C01", drifted.Rows.Single(row => row.Order == 2).Position);
+        using (var invalidationScope = factory.Services.CreateScope())
+        {
+            var database = invalidationScope.ServiceProvider.GetRequiredService<MesDbContext>();
+            Assert.Equal(
+                ExperimentSampleVerificationStatus.Invalidated.ToString(),
+                (await database.ExperimentSampleVerifications.SingleAsync(item => item.VerificationId == firstVerified.VerificationId)).Status);
+        }
+
+        var secondAdmissionRequest = Action("Reject corrected but unverified snapshot");
+        var secondAdmissionResponse = await client.PostAsJsonAsync($"/api/experiment-jobs/{scheduled.JobId}/admit", secondAdmissionRequest);
+        Assert.Equal(HttpStatusCode.Conflict, secondAdmissionResponse.StatusCode);
+        var secondRejected = (await secondAdmissionResponse.Content.ReadFromJsonAsync<ExperimentJobAdmissionResult>())!;
+        Assert.Equal(ExperimentSampleVerificationIssueCodes.VerificationRequired, secondRejected.RejectionCode);
+        Assert.Null(secondRejected.WorkflowRunId);
+        await AssertNoRuntimeSideEffectsAsync(factory, gateway);
+
+        var reverified = await VerifyAsync(client, scheduled.JobId, drifted, "sample-operator", "Re-verify corrected two-row snapshot");
+        Assert.Equal(ExperimentSampleVerificationStatus.Verified, reverified.Status);
+        Assert.Equal("sample-operator", reverified.VerifiedBy);
+        Assert.NotNull(reverified.VerifiedAt);
+        Assert.Equal(drifted.Revision, reverified.Revision);
+        Assert.Equal(drifted.SnapshotHash, reverified.SnapshotHash);
+
+        var admittedResponse = await client.PostAsJsonAsync($"/api/experiment-jobs/{scheduled.JobId}/admit", Action("Admit re-verified snapshot"));
+        Assert.Equal(HttpStatusCode.Accepted, admittedResponse.StatusCode);
+        var admitted = (await admittedResponse.Content.ReadFromJsonAsync<ExperimentJobAdmissionResult>())!;
+        Assert.True(admitted.IsAdmitted);
+        Assert.NotNull(admitted.WorkflowRunId);
+        Assert.Equal(0, gateway.StartCalls);
+        using var admissionScope = factory.Services.CreateScope();
+        var admissionDatabase = admissionScope.ServiceProvider.GetRequiredService<MesDbContext>();
+        Assert.Single(await admissionDatabase.WorkflowExecutions.Where(run => run.ExecutionId == admitted.WorkflowRunId).ToListAsync());
+        var lease = Assert.Single(await admissionDatabase.WorkflowResourceLeases.Where(item => item.WorkflowRunId == admitted.WorkflowRunId).ToListAsync());
+        Assert.NotNull(lease.ActiveResourceKey);
+        Assert.Empty(await admissionDatabase.WorkflowDeviceOperations.Where(item => item.WorkflowRunId == admitted.WorkflowRunId).ToListAsync());
+        var audit = Assert.Single(await admissionDatabase.ExperimentSchedulingAudits.Where(item => item.RequestId == admitted.RequestId).ToListAsync());
+        var details = JsonSerializer.Deserialize<Dictionary<string, string?>>(audit.DetailsJson)!;
+        Assert.Equal(reverified.VerificationId.ToString("D"), details["verificationId"]);
+        Assert.Equal(reverified.Revision.ToString(System.Globalization.CultureInfo.InvariantCulture), details["verificationRevision"]);
+        Assert.Equal(reverified.SnapshotHash, details["verificationSnapshotHash"]);
+    }
+
     private static WebApplicationFactory<Program> ConfigureGateway(WebApplicationFactory<Program> factory, RecordingWorkstation gateway, bool introduceVersionDrift = false) =>
         factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
         {
@@ -294,6 +382,48 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         });
         verifiedResponse.EnsureSuccessStatusCode();
         return (await verifiedResponse.Content.ReadFromJsonAsync<ExperimentSampleVerification>())!;
+    }
+
+    private static async Task<ExperimentSample> RegisterSampleAsync(HttpClient client, string batchId, string businessSampleId, string barcode)
+    {
+        var sampleId = Guid.NewGuid();
+        var response = await client.PutAsJsonAsync($"/api/experiment-samples/{sampleId}", new SaveExperimentSampleRequest
+        {
+            RequestId = Guid.NewGuid(), Actor = "sample-operator", Reason = "Register two-row chain sample",
+            Sample = new ExperimentSample { SampleId = sampleId, BusinessSampleId = businessSampleId, BatchId = batchId, Barcode = barcode, Status = ExperimentSampleStatus.Active }
+        });
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<ExperimentSample>())!;
+    }
+
+    private static async Task<ExperimentSampleVerification> SaveRowsAsync(HttpClient client, Guid jobId, IReadOnlyList<ExperimentSampleTaskRow> rows, string reason)
+    {
+        var response = await client.PutAsJsonAsync($"/api/experiment-jobs/{jobId}/sample-verifications/current", new SaveExperimentSampleVerificationRequest
+        {
+            RequestId = Guid.NewGuid(), Actor = "sample-operator", Reason = reason, Rows = rows
+        });
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<ExperimentSampleVerification>())!;
+    }
+
+    private static async Task<ExperimentSampleVerification> VerifyAsync(HttpClient client, Guid jobId, ExperimentSampleVerification verification, string actor, string reason)
+    {
+        var response = await client.PostAsJsonAsync($"/api/experiment-jobs/{jobId}/sample-verifications/{verification.Revision}/verify", new CompleteExperimentSampleVerificationRequest
+        {
+            RequestId = Guid.NewGuid(), Actor = actor, Reason = reason, Revision = verification.Revision, SnapshotHash = verification.SnapshotHash
+        });
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<ExperimentSampleVerification>())!;
+    }
+
+    private static async Task AssertNoRuntimeSideEffectsAsync(WebApplicationFactory<Program> factory, RecordingWorkstation gateway)
+    {
+        Assert.Equal(0, gateway.StartCalls);
+        using var scope = factory.Services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+        Assert.Empty(await database.WorkflowExecutions.ToListAsync());
+        Assert.Empty(await database.WorkflowResourceLeases.ToListAsync());
+        Assert.Empty(await database.WorkflowDeviceOperations.ToListAsync());
     }
 
     private static ExperimentSchedulingActionRequest Action(string reason) => new() { RequestId = Guid.NewGuid(), Actor = "test", Reason = reason };

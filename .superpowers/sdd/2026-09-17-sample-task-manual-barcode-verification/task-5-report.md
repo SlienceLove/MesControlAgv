@@ -10,7 +10,7 @@
 
 - `docs/SAMPLE-WORKSTATION-CENTRAL-INTEGRATION.md` — API、状态机、问题码、WPF 操作、运行准入及现场边界。
 - `docs/SAMPLE-WORKSTATION-FORMAL-WORKFLOW-HANDOFF-2026-09-16.md` — 正式工作流交接中的核对/准入语义和未来导入边界。
-- `docs/diagnostics/2026-09-17-sample-verification-acceptance.md` — 完整离线业务链验收证据与命令。
+- `docs/diagnostics/2026-09-17-sample-verification-acceptance.md` — 离线验收证据、精确测试映射与命令。
 
 ## Commands and exact results
 
@@ -60,3 +60,37 @@ The solution restore/build wrote artifacts there rather than into a running site
 - The linked-worktree root-directory failure in that existing rehearsal test remains outside this task and was not changed.
 - No field validation was performed here by design; the recorded evidence is non-real-machine acceptance only.
 - The SDD ledger's deferred Task 4 test-polish and Task 2 row-validation minors were not expanded or repaired by this task.
+
+## Fix round 1/5 — continuous acceptance evidence
+
+Added `ExperimentSampleWorkstationBusinessChainTests.Unverified_drifted_and_reverified_sample_snapshot_gates_workstation_admission_without_gateway_start`. In one fresh SQLite database and one continuous test method, it creates the workstation workflow/job, registers two same-batch samples, saves two ordered positions, proves unverified admission has no runtime or gateway-start side effects, records verification metadata, changes a position and proves the old verification is invalidated while the new revision is rejected as unverified, then re-verifies and admits the current revision. The successful admission audit `DetailsJson` is deserialized and asserted by exact `verificationId`, `verificationRevision` and `verificationSnapshotHash` keys; the recording fake is not dispatched, so it records zero starts and creates no device operation.
+
+The diagnostics document now maps each requested acceptance step to that precise method. The page-level no-dialog WPF behavior remains separately evidenced by `ExperimentSchedulingViewModelTests.Sample_verification_loads_per_selected_job_gates_workstation_admission_and_never_confirms_twice`; it is no longer represented as having been exercised by the backend integration test.
+
+Fix-round commands and results:
+
+```powershell
+dotnet test tests\MesControlAgv.Mes.Tests\MesControlAgv.Mes.Tests.csproj --no-restore --filter "FullyQualifiedName~ExperimentSampleWorkstationBusinessChainTests.Unverified_drifted_and_reverified_sample_snapshot_gates_workstation_admission_without_gateway_start"
+# passed 1, failed 0, skipped 0; duration < 1 ms
+```
+
+The focused test used `PhysicalMesWebApplicationFactory` with a fresh temp SQLite path and `RecordingWorkstation`; it did not access a real workstation or field service.
+
+```powershell
+dotnet test tests\MesControlAgv.Mes.Tests\MesControlAgv.Mes.Tests.csproj --no-restore
+# passed 338, failed 0, skipped 0; duration 6 s
+
+dotnet test tests\MesControlAgv.WorkflowContract.Tests\MesControlAgv.WorkflowContract.Tests.csproj --no-restore
+# passed 74, failed 0, skipped 0; duration 113 ms
+
+dotnet test tests\MesControlAgv.Wpf.Tests\MesControlAgv.Wpf.Tests.csproj --no-restore --filter "FullyQualifiedName~ExperimentSampleVerification|FullyQualifiedName~ExperimentSchedulingViewModelTests|FullyQualifiedName~MesClientExperimentSchedulingHttpContractTests|FullyQualifiedName~ExperimentPlanningViewBindingTests"
+# passed 30, failed 0, skipped 0; duration 1 s
+
+$buildRoot = Join-Path $env:TEMP "mes-sample-verification-build"
+dotnet build MesControlAgv.sln --no-restore --artifacts-path "$buildRoot"
+# succeeded, 0 warnings, 0 errors; elapsed 00:00:08.54
+
+git diff --check
+```
+
+Results: all commands succeeded; `git diff --check` exited 0 with no whitespace errors. The isolated build path remains `C:\Users\33206\AppData\Local\Temp\mes-sample-verification-build`.
