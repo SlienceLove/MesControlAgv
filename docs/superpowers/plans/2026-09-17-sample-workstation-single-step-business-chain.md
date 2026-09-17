@@ -22,7 +22,7 @@
 
 随后在已有现场隔离运行数据中创建单步骤实验方案和任务，通过 WPF 正式页面执行一次真机验收。任何自动化测试都不得访问真实设备。
 
-## 3. Task 1：建立跨边界业务链自动化用例
+## Task 1：建立跨边界业务链自动化用例
 
 ### 文件
 
@@ -74,7 +74,7 @@ dotnet test tests/MesControlAgv.Mes.Tests/MesControlAgv.Mes.Tests.csproj --no-re
 test: cover workstation experiment business chain
 ```
 
-## 4. Task 2：仅按失败边界做最小修复
+## Task 2：仅按失败边界做最小修复
 
 本 Task 是条件任务。Task 1 直接通过时跳过，不制造无需求改动。
 
@@ -114,7 +114,7 @@ dotnet test tests/MesControlAgv.Wpf.Tests/MesControlAgv.Wpf.Tests.csproj --no-re
 fix: complete workstation experiment business chain
 ```
 
-## 5. Task 3：回归验证与构建
+## Task 3：回归验证与构建
 
 ### 测试
 
@@ -136,7 +136,7 @@ dotnet build MesControlAgv.sln --no-restore --artifacts-path "$buildRoot"
 
 如全量 WPF 测试仍只有既有 linked-worktree 仓库根目录识别失败，需在记录中明确区分，不把它归因于本阶段改动。
 
-## 6. Task 4：准备现场隔离运行实例
+## Task 4：准备现场隔离运行实例
 
 ### 边界
 
@@ -217,7 +217,7 @@ MES Worker：
 - 任务或排程不是 Scheduled。
 - WPF 的“运行准入”不可用且原因无法由缺少操作人/原因字段解释。
 
-## 7. Task 5：执行一次正式真机验收
+## Task 5：执行一次正式真机验收
 
 ### 发令前只读核对
 
@@ -271,7 +271,7 @@ MES Worker：
 - 租约释放状态。
 - WPF 运行监控和资源时间轴截图。
 
-## 8. Task 6：归档和交接
+## Task 6：归档和交接
 
 ### 文件
 
