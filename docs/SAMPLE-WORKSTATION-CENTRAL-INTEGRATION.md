@@ -192,17 +192,54 @@ MES 与 Adapter 路径相同，前缀为 `/api/workstations/{deviceId}`：
 
 未来实现 `ImportTasksAsync(deviceId, fileName, Stream, cancellationToken)`，由调用方拥有输入流；导入只创建任务，不隐式启动。拿到厂家样表、字段含义和实际上传格式后，再增加解析、Adapter 上传和 MES 导入路由，并将能力标记改为已支持。现有初始化、启动和查询接口无需改动。
 
-### 样品条码核对：当前已决策、尚未实现
+### 样品条码核对：原始决策（2026-09-17 已实施）
 
 仪器扫码枪连接工作站 PC；中控 WPF 将运行在另一台 PC，因此当前阶段不读取
 仪器 USB 扫码枪，也不使用“最后一次扫码”的 HTTP 回传。运行后的实时
 `TrajectoryParameterDetails` 只显示 `SourceBarCode` / `TargetData` 配置，
 `SMTBarCode=null`，不能把它当作实际扫码证据。
 
-当前方案是中控页面的批次级人工目视比较：页面展示任务表条码和样品位，操作员点击非弹窗的“核对完成”；保存审计、版本及快照 hash，任何编辑立即使核对失效。该决定仅为已提交设计，**尚未实现**：
-[样品任务表人工条码核对设计](superpowers/specs/2026-09-17-sample-task-manual-barcode-verification-design.md)（`0d60bfe`）。
+当前方案是中控页面的批次级人工目视比较：页面展示中控保存的任务样品条码和样品位，操作员点击非弹窗的“核对完成”；保存审计、版本及快照 hash，任何身份字段编辑立即使核对失效。原始设计见
+[样品任务表人工条码核对设计](superpowers/specs/2026-09-17-sample-task-manual-barcode-verification-design.md)（`0d60bfe`）；实施后的 API、状态机和运行门禁以本文件下方的“2026-09-17 样品任务行人工核对与运行准入门禁”为准。
 
 厂家任务表上传格式/API 仍待交付；未来导入或准备只能创建/更新厂家任务，绝不得隐式启动设备。多步骤实验实体运行、动态任务创建和远程停止同样尚未实现。
+
+## 2026-09-17 样品任务行人工核对与运行准入门禁
+
+此功能是中控保存的样品登记与任务行快照的人工目视核对。`Verified` 只表示操作员已对当前版本中的样品编号、条码、位置和顺序快照完成核对；**不**表示厂家任务表已上传、已到达仪器或已执行。
+
+### 中控 API
+
+| 方法 | 路径 | 作用 |
+| --- | --- | --- |
+| `GET` | `/api/experiment-samples?batchId={batchId}` | 查询中控已登记样品。 |
+| `PUT` | `/api/experiment-samples/{sampleId}` | 登记/更新样品编号、批次、条码和状态。 |
+| `GET` | `/api/experiment-jobs/{jobId}/sample-verifications/current` | 读取当前任务快照。 |
+| `PUT` | `/api/experiment-jobs/{jobId}/sample-verifications/current` | 保存有序任务样品行（`SampleId`、`BusinessSampleId`、`SampleBarcode`、`Position`、`Order`）。 |
+| `POST` | `/api/experiment-jobs/{jobId}/sample-verifications/{revision}/verify` | 以 `revision` 和 `snapshotHash` 记录当前快照已核对。 |
+
+所有写操作要求 `RequestId`、`Actor` 和 `Reason`；完成核对还要求 `Revision` 与 `SnapshotHash`。服务保存审计、`VerifiedBy`、`VerifiedAt`、`VerificationNote` 和可重放结果。
+
+### 状态机、问题码与失效规则
+
+```text
+保存行 → Draft（行校验失败）/ ReadyForVerification（行校验通过）
+ReadyForVerification + 操作员核对当前 revision/hash → Verified
+Verified + 快照身份字段变更或登记样品漂移 → Invalidated
+Invalidated + 保存修正后的行 → 新 revision（再次待核对）
+```
+
+快照身份包含业务样品编号、条码、位置和顺序；仅改显示名不会使已核对快照失效。行、条码、业务样品编号、位置或顺序变化，或登记样品的身份/批次/状态与快照不再一致，都会使旧 `Verified` 失效。已准入、运行或终态任务不允许再改行或再核对。
+
+主要问题码：`EXP-SAMPLE-NOT-FOUND`、`EXP-SAMPLE-BARCODE-DUPLICATE`、`EXP-SAMPLE-BATCH-MISMATCH`、`EXP-SAMPLE-POSITION-DUPLICATE`、`EXP-SAMPLE-VERIFICATION-VERSION-CONFLICT`、`EXP-SAMPLE-VERIFICATION-REQUIRED` 和 `EXP-SAMPLE-VERIFICATION-INVALIDATED`。行级校验还可返回 `EXP-SAMPLE-ROWS-REQUIRED`、`EXP-SAMPLE-ROW-ID-INVALID`、`EXP-SAMPLE-BUSINESS-ID-MISMATCH`、`EXP-SAMPLE-BARCODE-REQUIRED`、`EXP-SAMPLE-BARCODE-MISMATCH` 和 `EXP-SAMPLE-DISABLED`；API 并发/版本冲突返回 HTTP 409 和 `code`。
+
+### WPF 操作与运行准入边界
+
+在“任务排程”页选中含 `sample-workstation.execute-existing-task` 节点的任务后，展开“样品核对”：加载当前快照，保存样品行，目视比对后点页面内、无弹窗的“核对完成”。该操作只保存操作员、时间、版本和快照摘要，不向仪器发送请求。
+
+“运行准入”是独立动作。后端在创建 `WorkflowRun`、运行时资源租约或设备操作前重新读取并校验当前快照：未核对返回 `EXP-SAMPLE-VERIFICATION-REQUIRED`，已失效返回 `EXP-SAMPLE-VERIFICATION-INVALIDATED`，且拒绝结果不留下 `WorkflowRun`、运行租约或设备操作。重新核对不会启动流程；只有之后单独的准入动作才能创建 `WorkflowRun`。后续仍保持单次发令、Running 证据、Unknown 停止后续流程和只读恢复语义。
+
+当前没有厂家任务表上传、USB 扫码输入、last-scan 回传或远程停止。未来导入只能创建/准备任务，不得隐式发令或启动设备；运行仍必须经独立“运行准入”。离线验收证据见 [2026-09-17 样品核对验收](diagnostics/2026-09-17-sample-verification-acceptance.md)。
 
 ## 离线验证
 

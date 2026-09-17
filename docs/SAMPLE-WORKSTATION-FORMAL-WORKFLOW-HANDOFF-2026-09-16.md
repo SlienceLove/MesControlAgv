@@ -183,6 +183,16 @@ v`1`、任务 `3bfa15d6-77d4-4de9-9b5f-05db3c621b4e` 和排程
 完整的可复核 ID、时间线、原始 GET/日志证据及限制见
 [2026-09-17 工作站业务链验证](diagnostics/2026-09-17-workstation-business-chain-validation.md)。
 
+## 2026-09-17 样品核对集成交接
+
+在执行 `sample-workstation.execute-existing-task` 的任务上，中控现在要求当前样品快照为 `Verified`。此状态只记录操作员已对中控保存的样品编号、条码、位置和顺序快照进行人工比对；它不代表厂家任务表已上传、任务已到达仪器或设备已执行。
+
+状态迁移为 `Draft` → `ReadyForVerification` → `Verified`；行、业务样品编号、条码、位置、顺序或已登记样品的身份/批次/状态漂移会使旧核对变为 `Invalidated`。操作员在 WPF“任务排程”页的“样品核对”面板保存行后，目视比对并点击无弹窗的“核对完成”。此操作保存 `Actor`、时间、`Revision` 与 `SnapshotHash`，不发送仪器命令。
+
+准入独立于核对。运行时服务在创建 `WorkflowRun`、运行租约和设备操作前重新校验快照：缺失/未核对使用 `EXP-SAMPLE-VERIFICATION-REQUIRED`，无效使用 `EXP-SAMPLE-VERIFICATION-INVALIDATED`，拒绝不留下运行或设备操作。合格快照只使独立“运行准入”动作可执行；重新核对永不隐式启动流程。已准入或进入终态后不允许再修改或核对快照。
+
+任何以后的厂家任务表导入只能创建/准备任务，不得启动设备；运行仍由独立准入动作触发。当前不实现厂家任务表上传、USB 扫码输入、last-scan 回传或远程停止。既有单次发令、Running 证据、Unknown 停止后续流程和只读恢复语义保持不变。完整 API、状态机、问题码和离线验收见 [中控接入说明](SAMPLE-WORKSTATION-CENTRAL-INTEGRATION.md#2026-09-17-样品任务行人工核对与运行准入门禁) 与 [样品核对验收](diagnostics/2026-09-17-sample-verification-acceptance.md)。
+
 ## 后续边界
 
 - 厂家冷态自动初始化已验证；v2 已移除开盖分液专用人工门禁，WPF 通用人工确认能力仍保留。
