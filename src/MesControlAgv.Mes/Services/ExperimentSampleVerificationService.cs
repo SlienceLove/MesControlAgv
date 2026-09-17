@@ -8,11 +8,18 @@ using Microsoft.EntityFrameworkCore;
 
 namespace MesControlAgv.Mes.Services;
 
+/// <summary>Internal entry point for callers that already hold the scheduling mutation gate.</summary>
+internal interface IExperimentSampleVerificationGateCore
+{
+    Task<ExperimentSampleVerification> RequireVerifiedCurrentWhileMutationGateHeldAsync(
+        Guid experimentJobId, int revision, string snapshotHash, CancellationToken cancellationToken);
+}
+
 /// <summary>Persists centrally registered samples and append-only task-row snapshots.</summary>
 public sealed class ExperimentSampleVerificationService(
     MesDbContext database,
     ExperimentSchedulingMutationGate mutationGate,
-    TimeProvider timeProvider) : IExperimentSampleVerificationService, IExperimentSampleVerificationGate
+    TimeProvider timeProvider) : IExperimentSampleVerificationService, IExperimentSampleVerificationGate, IExperimentSampleVerificationGateCore
 {
     public async Task<IReadOnlyList<ExperimentSample>> ListSamplesAsync(
         QueryExperimentSamplesRequest request,
@@ -177,7 +184,13 @@ public sealed class ExperimentSampleVerificationService(
             return result;
         }, cancellationToken);
 
-    public async Task<ExperimentSampleVerification> RequireVerifiedCurrentAsync(Guid experimentJobId, int revision, string snapshotHash, CancellationToken cancellationToken)
+    public Task<ExperimentSampleVerification> RequireVerifiedCurrentAsync(Guid experimentJobId, int revision, string snapshotHash, CancellationToken cancellationToken) =>
+        ExecuteMutationAsync(
+            () => RequireVerifiedCurrentWhileMutationGateHeldAsync(experimentJobId, revision, snapshotHash, cancellationToken),
+            cancellationToken);
+
+    public async Task<ExperimentSampleVerification> RequireVerifiedCurrentWhileMutationGateHeldAsync(
+        Guid experimentJobId, int revision, string snapshotHash, CancellationToken cancellationToken)
     {
             var job = await FindJobAsync(experimentJobId, cancellationToken);
             var current = await database.ExperimentSampleVerifications.Where(item => item.ExperimentJobId == experimentJobId)

@@ -128,6 +128,77 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         Assert.Single(await database.ExperimentSchedulingAudits.Where(audit => audit.RequestId == request.RequestId && audit.EventType == "ExperimentJobAdmissionRejected").ToListAsync());
     }
 
+    [Theory]
+    [InlineData(ExperimentSampleVerificationStatus.Draft, ExperimentSampleVerificationIssueCodes.VerificationRequired)]
+    [InlineData(ExperimentSampleVerificationStatus.ReadyForVerification, ExperimentSampleVerificationIssueCodes.VerificationRequired)]
+    [InlineData(ExperimentSampleVerificationStatus.Invalidated, ExperimentSampleVerificationIssueCodes.VerificationInvalidated)]
+    public async Task Workstation_admission_rejects_non_verified_snapshot_states_without_runtime_side_effects(
+        ExperimentSampleVerificationStatus status,
+        string expectedCode)
+    {
+        var gateway = new RecordingWorkstation();
+        using var factory = ConfigureGateway(new PhysicalMesWebApplicationFactory(PhysicalProfile()), gateway);
+        using var client = factory.CreateClient();
+        var workflow = await PublishWorkflowAsync(client);
+        var plan = await CreatePublishedPlanAsync(client, workflow);
+        var scheduled = await CreateScheduledJobAsync(client, plan);
+        await VerifyCurrentSampleAsync(client, scheduled.JobId, "TEST-001");
+        using (var scope = factory.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            (await database.ExperimentSampleVerifications.SingleAsync(item => item.ExperimentJobId == scheduled.JobId)).Status = status.ToString();
+            await database.SaveChangesAsync();
+        }
+
+        var response = await client.PostAsJsonAsync($"/api/experiment-jobs/{scheduled.JobId}/admit", Action("Reject non-verified snapshot"));
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var rejected = (await response.Content.ReadFromJsonAsync<ExperimentJobAdmissionResult>())!;
+        Assert.Equal(expectedCode, rejected.RejectionCode);
+        Assert.Null(rejected.WorkflowRunId);
+        Assert.Equal(0, gateway.StartCalls);
+        using var verifyScope = factory.Services.CreateScope();
+        var verifyDatabase = verifyScope.ServiceProvider.GetRequiredService<MesDbContext>();
+        Assert.Empty(await verifyDatabase.WorkflowExecutions.ToListAsync());
+        Assert.Empty(await verifyDatabase.WorkflowResourceLeases.ToListAsync());
+        Assert.Empty(await verifyDatabase.WorkflowDeviceOperations.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Workstation_admission_rejects_registered_sample_drift_without_runtime_side_effects()
+    {
+        var gateway = new RecordingWorkstation();
+        using var factory = ConfigureGateway(new PhysicalMesWebApplicationFactory(PhysicalProfile()), gateway);
+        using var client = factory.CreateClient();
+        var workflow = await PublishWorkflowAsync(client);
+        var plan = await CreatePublishedPlanAsync(client, workflow);
+        var scheduled = await CreateScheduledJobAsync(client, plan);
+        await VerifyCurrentSampleAsync(client, scheduled.JobId, "TEST-001");
+        ExperimentSample sample;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            var record = await database.ExperimentSamples.SingleAsync();
+            sample = new ExperimentSample { SampleId = record.SampleId, BusinessSampleId = record.BusinessSampleId, BatchId = record.BatchId, Barcode = "DRIFTED", DisplayName = record.DisplayName, Status = ExperimentSampleStatus.Active };
+        }
+        (await client.PutAsJsonAsync($"/api/experiment-samples/{sample.SampleId}", new SaveExperimentSampleRequest
+        {
+            RequestId = Guid.NewGuid(), Actor = "test", Reason = "Cause registered sample drift", Sample = sample
+        })).EnsureSuccessStatusCode();
+
+        var response = await client.PostAsJsonAsync($"/api/experiment-jobs/{scheduled.JobId}/admit", Action("Reject registered sample drift"));
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        var rejected = (await response.Content.ReadFromJsonAsync<ExperimentJobAdmissionResult>())!;
+        Assert.Equal(ExperimentSampleVerificationIssueCodes.VerificationInvalidated, rejected.RejectionCode);
+        Assert.Equal(0, gateway.StartCalls);
+        using var verifyScope = factory.Services.CreateScope();
+        var verifyDatabase = verifyScope.ServiceProvider.GetRequiredService<MesDbContext>();
+        Assert.Empty(await verifyDatabase.WorkflowExecutions.ToListAsync());
+        Assert.Empty(await verifyDatabase.WorkflowResourceLeases.ToListAsync());
+        Assert.Empty(await verifyDatabase.WorkflowDeviceOperations.ToListAsync());
+    }
+
     private static WebApplicationFactory<Program> ConfigureGateway(WebApplicationFactory<Program> factory, RecordingWorkstation gateway) =>
         factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
         {

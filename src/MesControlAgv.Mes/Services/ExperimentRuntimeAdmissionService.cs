@@ -14,11 +14,11 @@ namespace MesControlAgv.Mes.Services;
 /// Converts one scheduled job into a workflow run and run-wide resource leases
 /// in one database transaction. It creates no adapter or device operation.
 /// </summary>
-public sealed class ExperimentRuntimeAdmissionService(
+internal sealed class ExperimentRuntimeAdmissionService(
     MesDbContext database,
     IWorkflowApplicationService workflows,
     IExperimentSampleVerificationService sampleVerificationService,
-    IExperimentSampleVerificationGate sampleVerificationGate,
+    IExperimentSampleVerificationGateCore sampleVerificationGate,
     ExperimentResourceCatalog resourceCatalog,
     ExperimentSchedulingMutationGate mutationGate,
     ExperimentRuntimeLeaseLifecycle leaseLifecycle,
@@ -62,28 +62,25 @@ public sealed class ExperimentRuntimeAdmissionService(
                     .ThenBy(reservation => reservation.ReservationId)
                     .ToListAsync(cancellationToken);
 
-            var rejection = await ValidateAdmissionAsync(
+            var validation = await ValidateAdmissionAsync(
                 job,
                 schedules,
                 schedule,
                 reservations,
                 metadata.RequestId,
                 cancellationToken);
-            if (rejection is not null)
+            if (validation.Rejection is not null)
             {
                 return await PersistRejectedAsync(
                     experimentJobId,
                     metadata,
                     fingerprint,
-                    rejection,
+                    validation.Rejection,
                     cancellationToken);
             }
 
             try
             {
-                var verification = await RequireSampleVerificationIfNeededAsync(
-                    job,
-                    cancellationToken);
                 return await AdmitInTransactionAsync(
                     job,
                     schedule!,
@@ -91,7 +88,7 @@ public sealed class ExperimentRuntimeAdmissionService(
                         reservation.Status == ResourceReservationStatus.Planned.ToString()).ToArray(),
                     metadata,
                     fingerprint,
-                    verification,
+                    validation.Verification,
                     cancellationToken);
             }
             catch (ExperimentSampleVerificationException exception)
@@ -253,7 +250,7 @@ public sealed class ExperimentRuntimeAdmissionService(
         }
     }
 
-    private async Task<AdmissionRejection?> ValidateAdmissionAsync(
+    private async Task<AdmissionValidation> ValidateAdmissionAsync(
         ExperimentJobRecord job,
         IReadOnlyList<ScheduleEntryRecord> schedules,
         ScheduleEntryRecord? schedule,
@@ -310,23 +307,52 @@ public sealed class ExperimentRuntimeAdmissionService(
             plan.WorkflowId,
             plan.WorkflowVersion,
             plan.PlanId);
+        var workflowReferences = planWorkflowSteps
+            .Select(step => new WorkflowReference(step.WorkflowId, step.WorkflowVersion))
+            .Distinct()
+            .ToArray();
+        var workflowIds = workflowReferences.Select(reference => reference.WorkflowId).Distinct().ToArray();
+        var workflowVersions = await database.WorkflowVersions.AsNoTracking()
+            .Where(item => workflowIds.Contains(item.WorkflowId))
+            .ToListAsync(cancellationToken);
+        var pinnedWorkflows = new List<WorkflowVersionRecord>();
+        foreach (var reference in workflowReferences)
+        {
+            var workflow = workflowVersions.SingleOrDefault(item =>
+                item.WorkflowId == reference.WorkflowId && item.Version == reference.Version);
+            if (workflow is null ||
+                !string.Equals(workflow.Status, "Published", StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(workflow.PublishStatus, "Published", StringComparison.OrdinalIgnoreCase))
+            {
+                return new AdmissionRejection(
+                    ExperimentSchedulingIssueCodes.WorkflowVersionNotPublished,
+                    "A fixed workflow version is not published.",
+                    Array.Empty<ExperimentResourceReference>());
+            }
+            pinnedWorkflows.Add(workflow);
+        }
+
+        // Apply the workstation gate before the current multi-step execution boundary.
+        ExperimentSampleVerification? verification;
+        try
+        {
+            verification = await RequireSampleVerificationIfNeededAsync(
+                job,
+                pinnedWorkflows,
+                cancellationToken);
+        }
+        catch (ExperimentSampleVerificationException exception)
+        {
+            return new AdmissionRejection(
+                exception.Code,
+                exception.Message,
+                Array.Empty<ExperimentResourceReference>());
+        }
         if (planWorkflowSteps.Count > 1)
         {
             return new AdmissionRejection(
                 ExperimentSchedulingIssueCodes.CompositeWorkflowNotSupported,
                 "This plan contains multiple workflow templates. Runtime composition must be enabled before admission.",
-                Array.Empty<ExperimentResourceReference>());
-        }
-        var workflow = await database.WorkflowVersions.AsNoTracking().SingleOrDefaultAsync(
-            item => item.WorkflowId == job.WorkflowId && item.Version == job.WorkflowVersion,
-            cancellationToken);
-        if (workflow is null ||
-            !string.Equals(workflow.Status, "Published", StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(workflow.PublishStatus, "Published", StringComparison.OrdinalIgnoreCase))
-        {
-            return new AdmissionRejection(
-                ExperimentSchedulingIssueCodes.WorkflowVersionNotPublished,
-                "The job's pinned workflow version is not published.",
                 Array.Empty<ExperimentResourceReference>());
         }
 
@@ -391,21 +417,19 @@ public sealed class ExperimentRuntimeAdmissionService(
                     ExperimentResourceKeys.Create(reference.ResourceType, reference.ResourceId),
                     StringComparer.Ordinal)).ToArray());
         }
-        return null;
+        return new AdmissionValidation(null, verification);
     }
 
     private async Task<ExperimentSampleVerification?> RequireSampleVerificationIfNeededAsync(
         ExperimentJobRecord job,
+        IReadOnlyList<WorkflowVersionRecord> pinnedWorkflows,
         CancellationToken cancellationToken)
     {
-        var workflow = await database.WorkflowVersions.AsNoTracking().SingleAsync(
-            item => item.WorkflowId == job.WorkflowId && item.Version == job.WorkflowVersion,
-            cancellationToken);
-        var requiresVerification = WorkflowPersistence.DeserializeDefinition(workflow.DefinitionJson)
-            .Nodes.Any(node => string.Equals(
+        var requiresVerification = pinnedWorkflows.Any(workflow =>
+            WorkflowPersistence.DeserializeDefinition(workflow.DefinitionJson).Nodes.Any(node => string.Equals(
                 node.NodeTypeId,
                 WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask,
-                StringComparison.Ordinal));
+                StringComparison.Ordinal)));
         if (!requiresVerification) return null;
 
         var current = await sampleVerificationService.GetCurrentAsync(job.JobId, cancellationToken);
@@ -416,7 +440,7 @@ public sealed class ExperimentRuntimeAdmissionService(
                 ExperimentSampleVerificationIssueCodes.VerificationRequired);
         }
 
-        return await sampleVerificationGate.RequireVerifiedCurrentAsync(
+        return await sampleVerificationGate.RequireVerifiedCurrentWhileMutationGateHeldAsync(
             job.JobId,
             current.Revision,
             current.SnapshotHash,
@@ -645,6 +669,16 @@ public sealed class ExperimentRuntimeAdmissionService(
         string Code,
         string Message,
         IReadOnlyList<ExperimentResourceReference> Resources);
+
+    private sealed record AdmissionValidation(
+        AdmissionRejection? Rejection,
+        ExperimentSampleVerification? Verification)
+    {
+        public static implicit operator AdmissionValidation(AdmissionRejection rejection) =>
+            new(rejection, null);
+    }
+
+    private sealed record WorkflowReference(Guid WorkflowId, int Version);
 
     private sealed class WorkflowAdmissionRejectedSignal(string code, string message) : Exception(message)
     {

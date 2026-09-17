@@ -129,6 +129,7 @@ builder.Services.AddScoped<IExperimentSchedulingCommandService, ExperimentSchedu
 builder.Services.AddScoped<ExperimentSampleVerificationService>();
 builder.Services.AddScoped<IExperimentSampleVerificationService>(services => services.GetRequiredService<ExperimentSampleVerificationService>());
 builder.Services.AddScoped<IExperimentSampleVerificationGate>(services => services.GetRequiredService<ExperimentSampleVerificationService>());
+builder.Services.AddScoped<IExperimentSampleVerificationGateCore>(services => services.GetRequiredService<ExperimentSampleVerificationService>());
 builder.Services.AddScoped<ExperimentRuntimeLeaseLifecycle>();
 builder.Services.AddScoped<ExperimentRuntimeAdmissionService>();
 builder.Services.AddScoped<IExperimentRuntimeAdmissionService>(services =>
