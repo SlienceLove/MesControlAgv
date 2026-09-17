@@ -29,6 +29,11 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
 
     public DbSet<ExperimentJobRecord> ExperimentJobs => Set<ExperimentJobRecord>();
 
+    public DbSet<ExperimentSampleRecord> ExperimentSamples => Set<ExperimentSampleRecord>();
+
+    public DbSet<ExperimentSampleVerificationRecord> ExperimentSampleVerifications =>
+        Set<ExperimentSampleVerificationRecord>();
+
     public DbSet<ExperimentRunRecord> ExperimentRuns => Set<ExperimentRunRecord>();
 
     public DbSet<ScheduleEntryRecord> ScheduleEntries => Set<ScheduleEntryRecord>();
@@ -49,6 +54,20 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
     public DbSet<ShineLabTaskEventRecord> ShineLabTaskEvents => Set<ShineLabTaskEventRecord>();
 
     public DbSet<PhysicalSafetyActionRecord> PhysicalSafetyActions => Set<PhysicalSafetyActionRecord>();
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        EnsureExperimentSampleVerificationSnapshotsAreAppendOnly();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(
+        bool acceptAllChangesOnSuccess,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureExperimentSampleVerificationSnapshotsAreAppendOnly();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -221,6 +240,35 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.HasIndex(job => job.WorkflowRunId).IsUnique();
         });
 
+        modelBuilder.Entity<ExperimentSampleRecord>(entity =>
+        {
+            entity.ToTable("ExperimentSamples");
+            entity.HasKey(sample => sample.SampleId);
+            entity.Property(sample => sample.BusinessSampleId).HasMaxLength(256);
+            entity.Property(sample => sample.BatchId).HasMaxLength(256);
+            entity.Property(sample => sample.Barcode).HasMaxLength(512);
+            entity.Property(sample => sample.NormalizedBarcode).HasMaxLength(512);
+            entity.Property(sample => sample.DisplayName).HasMaxLength(256);
+            entity.Property(sample => sample.Status).HasMaxLength(32);
+            entity.HasIndex(sample => sample.BusinessSampleId).IsUnique();
+            entity.HasIndex(sample => sample.NormalizedBarcode).IsUnique();
+            entity.HasIndex(sample => new { sample.BatchId, sample.Status });
+        });
+
+        modelBuilder.Entity<ExperimentSampleVerificationRecord>(entity =>
+        {
+            entity.ToTable("ExperimentSampleVerifications");
+            entity.HasKey(verification => verification.VerificationId);
+            entity.Property(verification => verification.Status).HasMaxLength(32);
+            entity.Property(verification => verification.RowsJson).HasMaxLength(65535);
+            entity.Property(verification => verification.SnapshotHash).HasMaxLength(128);
+            entity.Property(verification => verification.VerifiedBy).HasMaxLength(256);
+            entity.Property(verification => verification.VerificationNote).HasMaxLength(2048);
+            entity.Property(verification => verification.InvalidationReason).HasMaxLength(2048);
+            entity.HasIndex(verification => new { verification.ExperimentJobId, verification.Revision }).IsUnique();
+            entity.HasIndex(verification => new { verification.ExperimentJobId, verification.Status, verification.UpdatedAtUtc });
+        });
+
         modelBuilder.Entity<ExperimentRunRecord>(entity =>
         {
             entity.ToTable("ExperimentRuns");
@@ -374,5 +422,24 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.HasIndex(action => new { action.DeviceId, action.PreparedAtUtc });
             entity.Property(action => action.SupervisorInstanceId).HasMaxLength(128);
         });
+    }
+
+    private void EnsureExperimentSampleVerificationSnapshotsAreAppendOnly()
+    {
+        var changedSnapshot = ChangeTracker.Entries<ExperimentSampleVerificationRecord>()
+            .Any(entry =>
+                entry.State == EntityState.Deleted ||
+                (entry.State == EntityState.Modified &&
+                 (entry.Property(verification => verification.ExperimentJobId).IsModified ||
+                  entry.Property(verification => verification.Revision).IsModified ||
+                  entry.Property(verification => verification.RowsJson).IsModified ||
+                  entry.Property(verification => verification.SnapshotHash).IsModified ||
+                  entry.Property(verification => verification.CreatedAtUtc).IsModified)));
+
+        if (changedSnapshot)
+        {
+            throw new InvalidOperationException(
+                "Experiment sample verification snapshots are append-only and cannot be deleted.");
+        }
     }
 }

@@ -689,6 +689,36 @@ static async Task EnsureExperimentSchedulingTablesAsync(MesDbContext database)
         );
         """,
         """
+        CREATE TABLE IF NOT EXISTS ExperimentSamples (
+            SampleId TEXT NOT NULL PRIMARY KEY,
+            BusinessSampleId TEXT NOT NULL,
+            BatchId TEXT NOT NULL,
+            Barcode TEXT NOT NULL,
+            NormalizedBarcode TEXT NOT NULL,
+            DisplayName TEXT NOT NULL,
+            Status TEXT NOT NULL,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ExperimentSampleVerifications (
+            VerificationId TEXT NOT NULL PRIMARY KEY,
+            ExperimentJobId TEXT NOT NULL,
+            Revision INTEGER NOT NULL,
+            Status TEXT NOT NULL,
+            RowsJson TEXT NOT NULL,
+            SnapshotHash TEXT NOT NULL,
+            VerifiedBy TEXT NULL,
+            VerifiedAtUtc TEXT NULL,
+            VerificationNote TEXT NULL,
+            InvalidatedAtUtc TEXT NULL,
+            InvalidationReason TEXT NULL,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL
+        );
+        """,
+        """
         CREATE TABLE IF NOT EXISTS ScheduleEntries (
             ScheduleEntryId TEXT NOT NULL PRIMARY KEY,
             ExperimentJobId TEXT NOT NULL,
@@ -774,6 +804,11 @@ static async Task EnsureExperimentSchedulingTablesAsync(MesDbContext database)
         "CREATE INDEX IF NOT EXISTS IX_ExperimentJobs_Status_CreatedAtUtc ON ExperimentJobs (Status, CreatedAtUtc);",
         "CREATE INDEX IF NOT EXISTS IX_ExperimentJobs_PlanId_PlanVersion ON ExperimentJobs (PlanId, PlanVersion);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentJobs_WorkflowRunId ON ExperimentJobs (WorkflowRunId);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentSamples_BusinessSampleId ON ExperimentSamples (BusinessSampleId);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentSamples_NormalizedBarcode ON ExperimentSamples (NormalizedBarcode);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentSamples_BatchId_Status ON ExperimentSamples (BatchId, Status);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentSampleVerifications_ExperimentJobId_Revision ON ExperimentSampleVerifications (ExperimentJobId, Revision);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentSampleVerifications_ExperimentJobId_Status_UpdatedAtUtc ON ExperimentSampleVerifications (ExperimentJobId, Status, UpdatedAtUtc);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentRuns_ExperimentJobId ON ExperimentRuns (ExperimentJobId);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentRuns_AdmissionRequestId ON ExperimentRuns (AdmissionRequestId);",
         "CREATE INDEX IF NOT EXISTS IX_ExperimentRuns_Status_UpdatedAtUtc ON ExperimentRuns (Status, UpdatedAtUtc);",
