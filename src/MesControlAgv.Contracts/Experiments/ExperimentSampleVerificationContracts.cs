@@ -39,6 +39,15 @@ public sealed record ExperimentSampleTaskRow
     public int Order { get; init; }
 }
 
+/// <summary>One row-level reason a task snapshot remains a draft.</summary>
+public sealed record ExperimentSampleVerificationValidationIssue
+{
+    public Guid? RowId { get; init; }
+    public int? Order { get; init; }
+    public string Code { get; init; } = string.Empty;
+    public string Message { get; init; } = string.Empty;
+}
+
 /// <summary>
 /// Immutable task-sample snapshot. Later changes create a new revision rather
 /// than overwriting the rows that an operator verified.
@@ -50,6 +59,7 @@ public sealed record ExperimentSampleVerification
     public int Revision { get; init; }
     public ExperimentSampleVerificationStatus Status { get; init; }
     public IReadOnlyList<ExperimentSampleTaskRow> Rows { get; init; } = Array.Empty<ExperimentSampleTaskRow>();
+    public IReadOnlyList<ExperimentSampleVerificationValidationIssue> ValidationIssues { get; init; } = Array.Empty<ExperimentSampleVerificationValidationIssue>();
     public string SnapshotHash { get; init; } = string.Empty;
     public string? VerifiedBy { get; init; }
     public DateTimeOffset? VerifiedAt { get; init; }

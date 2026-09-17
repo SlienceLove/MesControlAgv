@@ -126,6 +126,9 @@ builder.Services.AddScoped<WorkflowApplicationService>();
 builder.Services.AddScoped<IWorkflowApplicationService>(services => services.GetRequiredService<WorkflowApplicationService>());
 builder.Services.AddScoped<IExperimentSchedulingQueryService, ExperimentSchedulingQueryService>();
 builder.Services.AddScoped<IExperimentSchedulingCommandService, ExperimentSchedulingCommandService>();
+builder.Services.AddScoped<ExperimentSampleVerificationService>();
+builder.Services.AddScoped<IExperimentSampleVerificationService>(services => services.GetRequiredService<ExperimentSampleVerificationService>());
+builder.Services.AddScoped<IExperimentSampleVerificationGate>(services => services.GetRequiredService<ExperimentSampleVerificationService>());
 builder.Services.AddScoped<ExperimentRuntimeLeaseLifecycle>();
 builder.Services.AddScoped<ExperimentRuntimeAdmissionService>();
 builder.Services.AddScoped<IExperimentRuntimeAdmissionService>(services =>
@@ -185,6 +188,7 @@ app.MapShineLabStatusEndpoints();
 app.MapMesWorkflowEndpoints();
 
 app.MapMesExperimentSchedulingEndpoints();
+app.MapMesExperimentSampleVerificationEndpoints();
 
 app.MapPost("/api/field-navigation-acceptances", async (
     CreateFieldNavigationAcceptanceRequest request,
