@@ -52,7 +52,8 @@ public sealed class ExperimentSampleVerificationService(
             var now = timeProvider.GetUtcNow().UtcDateTime;
             var record = await database.ExperimentSamples.SingleOrDefaultAsync(item => item.SampleId == sampleId, cancellationToken);
             var drifted = record is not null &&
-                (!string.Equals(record.Barcode.Trim(), sample.Barcode, StringComparison.Ordinal) ||
+                (!string.Equals(record.BusinessSampleId.Trim(), sample.BusinessSampleId, StringComparison.Ordinal) ||
+                 !string.Equals(record.Barcode.Trim(), sample.Barcode, StringComparison.Ordinal) ||
                  !string.Equals(record.BatchId, sample.BatchId, StringComparison.Ordinal) ||
                  !string.Equals(record.Status, sample.Status.ToString(), StringComparison.Ordinal));
             if (record is null)
@@ -71,7 +72,7 @@ public sealed class ExperimentSampleVerificationService(
             {
                 var verifications = await database.ExperimentSampleVerifications.ToListAsync(cancellationToken);
                 foreach (var verification in verifications.Where(item => Rows(item).Any(row => row.SampleId == sampleId)))
-                    Invalidate(verification, now, "Registered sample barcode, batch, or status changed.");
+                    Invalidate(verification, now, "Registered sample business identifier, barcode, batch, or status changed.");
             }
 
             var result = MapSample(record);
@@ -106,7 +107,13 @@ public sealed class ExperimentSampleVerificationService(
             var issues = await ValidateRowsAsync(job, rows, cancellationToken);
             var now = timeProvider.GetUtcNow().UtcDateTime;
             var rowsJson = ExperimentSchedulingPersistence.Serialize(rows);
-            var hash = Hash(rowsJson);
+            var hash = Hash(ExperimentSchedulingPersistence.Serialize(rows.Select(row => new
+            {
+                BusinessSampleId = row.BusinessSampleId,
+                row.SampleBarcode,
+                row.Position,
+                row.Order
+            }).ToArray()));
             var current = await database.ExperimentSampleVerifications
                 .Where(item => item.ExperimentJobId == experimentJobId).OrderByDescending(item => item.Revision)
                 .FirstOrDefaultAsync(cancellationToken);
@@ -222,6 +229,7 @@ public sealed class ExperimentSampleVerificationService(
             var prefix = $"Row {row.Order}";
             if (row.RowId == Guid.Empty || !rowIds.Add(row.RowId)) issues.Add(Issue(row, "EXP-SAMPLE-ROW-ID-INVALID", $"{prefix}: row id is missing or duplicated."));
             if (row.SampleId == Guid.Empty || !samples.TryGetValue(row.SampleId, out var sample)) { issues.Add(Issue(row, ExperimentSampleVerificationIssueCodes.SampleNotFound, $"{prefix}: sample was not found.")); continue; }
+            if (!string.IsNullOrWhiteSpace(row.BusinessSampleId) && !string.Equals(row.BusinessSampleId.Trim(), sample.BusinessSampleId, StringComparison.Ordinal)) issues.Add(Issue(row, "EXP-SAMPLE-BUSINESS-ID-MISMATCH", $"{prefix}: business sample id does not match the registered sample."));
             if (string.IsNullOrWhiteSpace(row.SampleBarcode)) issues.Add(Issue(row, "EXP-SAMPLE-BARCODE-REQUIRED", $"{prefix}: barcode is required."));
             var barcode = row.SampleBarcode.Trim();
             if (!string.Equals(barcode, sample.NormalizedBarcode, StringComparison.Ordinal)) issues.Add(Issue(row, "EXP-SAMPLE-BARCODE-MISMATCH", $"{prefix}: barcode does not match the registered sample."));
@@ -236,7 +244,7 @@ public sealed class ExperimentSampleVerificationService(
     }
 
     private static IReadOnlyList<ExperimentSampleTaskRow> CanonicalizeRows(IReadOnlyList<ExperimentSampleTaskRow>? source) => (source ?? [])
-        .Select(row => new ExperimentSampleTaskRow { RowId = row.RowId, SampleId = row.SampleId, SampleBarcode = row.SampleBarcode?.Trim() ?? string.Empty, Position = row.Position?.Trim() ?? string.Empty, DisplayName = row.DisplayName?.Trim() ?? string.Empty, Order = row.Order })
+        .Select(row => new ExperimentSampleTaskRow { RowId = row.RowId, SampleId = row.SampleId, BusinessSampleId = row.BusinessSampleId?.Trim() ?? string.Empty, SampleBarcode = row.SampleBarcode?.Trim() ?? string.Empty, Position = row.Position?.Trim() ?? string.Empty, DisplayName = row.DisplayName?.Trim() ?? string.Empty, Order = row.Order })
         .OrderBy(row => row.Order).ThenBy(row => row.RowId).ToArray();
 
     private static IReadOnlyList<ExperimentSampleTaskRow> Rows(ExperimentSampleVerificationRecord record) =>

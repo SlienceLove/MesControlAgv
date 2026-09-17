@@ -52,3 +52,18 @@ The new ViewModel test initially failed on selecting a scheduled task from the t
 ## Concerns
 
 - The page’s workstation predicate is a timely UX hint based on the fetched immutable workflow version. MES runtime admission remains the final authority, including all concurrent-change checks.
+
+## Fix round 1
+
+- Added the additive `BusinessSampleId` snapshot field. Snapshot identity now hashes only business sample identifier, barcode, position and order; `DisplayName` is retained for display but no longer causes invalidation. Existing JSON without the new field remains readable.
+- A registered business-identifier change now invalidates snapshots alongside existing registered-sample drift. Added API coverage proving each identity field changes a verified revision while a display-name-only row change reuses it.
+- WPF retains the complete batch sample map across save and completion projections, snapshots action actor/reason before I/O, refreshes the current verification after a failed second-stage snapshot save, and treats workflow-predicate/read failures as unresolved (therefore admission-blocking). Ordinary jobs resolve before optional verification projection calls.
+
+Commands/results:
+
+```powershell
+dotnet test tests/MesControlAgv.Mes.Tests/MesControlAgv.Mes.Tests.csproj --no-restore
+# Passed: 336 / 336
+dotnet test tests/MesControlAgv.Wpf.Tests/MesControlAgv.Wpf.Tests.csproj --no-restore --filter "FullyQualifiedName~MesClientExperimentSchedulingHttpContractTests|FullyQualifiedName~ExperimentSchedulingViewModelTests|FullyQualifiedName~ExperimentPlanningViewBindingTests"
+# Passed: 20 / 20
+```

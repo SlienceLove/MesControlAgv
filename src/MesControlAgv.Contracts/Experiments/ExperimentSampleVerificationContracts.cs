@@ -33,6 +33,8 @@ public sealed record ExperimentSampleTaskRow
 {
     public Guid RowId { get; init; }
     public Guid SampleId { get; init; }
+    /// <summary>Business sample identifier captured as part of verification identity.</summary>
+    public string BusinessSampleId { get; init; } = string.Empty;
     public string SampleBarcode { get; init; } = string.Empty;
     public string Position { get; init; } = string.Empty;
     public string DisplayName { get; init; } = string.Empty;

@@ -11,9 +11,9 @@ public sealed class ExperimentSampleVerificationRowViewModel(
     public ExperimentSampleTaskRow Row { get; } = row;
     public Guid RowId => Row.RowId;
     public Guid SampleId => Row.SampleId;
-    public string SampleNumber => string.IsNullOrWhiteSpace(sample?.BusinessSampleId)
-        ? Row.DisplayName
-        : sample.BusinessSampleId;
+    public string SampleNumber => !string.IsNullOrWhiteSpace(Row.BusinessSampleId)
+        ? Row.BusinessSampleId
+        : sample?.BusinessSampleId ?? string.Empty;
     public string Barcode => Row.SampleBarcode;
     public string Position => Row.Position;
     public string DisplayName => Row.DisplayName;

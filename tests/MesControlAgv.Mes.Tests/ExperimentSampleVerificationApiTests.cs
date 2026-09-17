@@ -119,6 +119,46 @@ public sealed class ExperimentSampleVerificationApiTests : IClassFixture<MesWebA
     }
 
     [Fact]
+    public async Task Verification_identity_tracks_business_id_barcode_position_and_order_but_not_display_name()
+    {
+        async Task<ExperimentSampleVerification> VerifiedAsync(string suffix)
+        {
+            var job = await AddJobAsync("B-SEM-" + suffix);
+            var sample = await RegisterAsync("B-SEM-" + suffix, "SEM-" + suffix);
+            var saved = await SaveRowsAsync(job, [new ExperimentSampleTaskRow
+            {
+                RowId = Guid.NewGuid(), SampleId = sample.SampleId, BusinessSampleId = sample.BusinessSampleId,
+                SampleBarcode = sample.Barcode, Position = "A1", DisplayName = "first", Order = 1
+            }]);
+            return await VerifyAsync(job, saved);
+        }
+
+        var display = await VerifiedAsync("DISPLAY");
+        var displayReplay = await SaveRowsAsync(display.ExperimentJobId, [display.Rows[0] with { DisplayName = "renamed only" }]);
+        Assert.Equal(display.Revision, displayReplay.Revision);
+        Assert.Equal(ExperimentSampleVerificationStatus.Verified, displayReplay.Status);
+
+        foreach (var field in new[] { "business", "barcode", "position", "order" })
+        {
+            var verified = await VerifiedAsync(field);
+            var row = verified.Rows[0];
+            var changed = field switch
+            {
+                "business" => row with { BusinessSampleId = row.BusinessSampleId + "-changed" },
+                "barcode" => row with { SampleBarcode = row.SampleBarcode + "-changed" },
+                "position" => row with { Position = "B1" },
+                _ => row with { Order = 2 }
+            };
+            var next = await SaveRowsAsync(verified.ExperimentJobId, [changed]);
+            Assert.Equal(verified.Revision + 1, next.Revision);
+            using var scope = _factory.Services.CreateScope();
+            var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            Assert.Equal(ExperimentSampleVerificationStatus.Invalidated.ToString(),
+                (await database.ExperimentSampleVerifications.SingleAsync(item => item.VerificationId == verified.VerificationId)).Status);
+        }
+    }
+
+    [Fact]
     public async Task Empty_unknown_cross_batch_disabled_and_duplicate_rows_remain_draft()
     {
         var jobId = await AddJobAsync("B-VALIDATE");

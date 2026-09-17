@@ -62,6 +62,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
     private bool _sampleVerificationInvalidatedByEdit;
     private int _sampleVerificationLoadVersion;
     private Task _sampleVerificationLoadTask = Task.CompletedTask;
+    private readonly Dictionary<Guid, ExperimentSample> _sampleVerificationSamples = [];
     private string _verificationSampleNumber = string.Empty;
     private string _verificationSampleBarcode = string.Empty;
     private string _verificationSampleDisplayName = string.Empty;
@@ -654,13 +655,15 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
             var samplePosition = VerificationSamplePosition.Trim();
             var sampleOrder = VerificationSampleOrder;
             var existingRows = SampleVerificationRows.Select(row => row.Row).ToArray();
+            var actor = OperatorName.Trim();
+            var reason = Reason.Trim();
             var sample = await _mes.SaveExperimentSampleAsync(
                 sampleId,
                 new SaveExperimentSampleRequest
                 {
                     RequestId = Guid.NewGuid(),
-                    Actor = OperatorName.Trim(),
-                    Reason = Reason.Trim(),
+                    Actor = actor,
+                    Reason = reason,
                     Sample = new ExperimentSample
                     {
                         SampleId = sampleId,
@@ -677,6 +680,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
             {
                 RowId = selectedRow?.RowId ?? Guid.NewGuid(),
                 SampleId = sample.SampleId,
+                BusinessSampleId = sample.BusinessSampleId,
                 SampleBarcode = sample.Barcode,
                 Position = samplePosition,
                 DisplayName = sample.DisplayName,
@@ -687,18 +691,28 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
                 .Append(updatedRow)
                 .OrderBy(row => row.Order)
                 .ToArray();
-            var verification = await _mes.SaveCurrentExperimentSampleVerificationAsync(
-                job.JobId,
-                new SaveExperimentSampleVerificationRequest
-                {
-                    RequestId = Guid.NewGuid(),
-                    Actor = OperatorName.Trim(),
-                    Reason = Reason.Trim(),
-                    Rows = rows
-                },
-                _shutdown.Token);
+            ExperimentSampleVerification verification;
+            try
+            {
+                verification = await _mes.SaveCurrentExperimentSampleVerificationAsync(
+                    job.JobId,
+                    new SaveExperimentSampleVerificationRequest
+                    {
+                        RequestId = Guid.NewGuid(),
+                        Actor = actor,
+                        Reason = reason,
+                        Rows = rows
+                    },
+                    _shutdown.Token);
+            }
+            catch
+            {
+                await ReloadSampleVerificationProjectionAsync(job, jobId, loadVersion);
+                throw;
+            }
             if (!IsCurrentSampleVerificationContext(jobId, loadVersion)) return;
-            ApplySampleVerification(verification, [sample]);
+            _sampleVerificationSamples[sample.SampleId] = sample;
+            ApplySampleVerification(verification, _sampleVerificationSamples.Values.ToArray());
             _sampleVerificationInvalidatedByEdit = prior?.Status == ExperimentSampleVerificationStatus.Verified &&
                                                    !string.Equals(prior.SnapshotHash, verification.SnapshotHash, StringComparison.Ordinal);
             OnPropertyChanged(nameof(VerificationStatus));
@@ -715,6 +729,8 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
             var jobId = job.JobId;
             var loadVersion = _sampleVerificationLoadVersion;
             var verification = CurrentSampleVerification ?? throw new InvalidOperationException("当前任务没有待核对的样品快照。");
+            var actor = OperatorName.Trim();
+            var reason = Reason.Trim();
             // This is deliberately direct: the operator's visual check is the action,
             // so no second confirmation dialog is shown.
             var completed = await _mes.CompleteExperimentSampleVerificationAsync(
@@ -723,14 +739,14 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
                 new CompleteExperimentSampleVerificationRequest
                 {
                     RequestId = Guid.NewGuid(),
-                    Actor = OperatorName.Trim(),
-                    Reason = Reason.Trim(),
+                    Actor = actor,
+                    Reason = reason,
                     Revision = verification.Revision,
                     SnapshotHash = verification.SnapshotHash
                 },
                 _shutdown.Token);
             if (!IsCurrentSampleVerificationContext(jobId, loadVersion)) return;
-            ApplySampleVerification(completed, []);
+            ApplySampleVerification(completed, _sampleVerificationSamples.Values.ToArray());
             _sampleVerificationInvalidatedByEdit = false;
             OnPropertyChanged(nameof(VerificationStatus));
             StatusMessage = "样品快照已完成人工核对；这不表示任务表已上传或到达仪器。";
@@ -921,6 +937,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
         SelectedJobRequiresSampleVerification = false;
         IsSampleVerificationRequirementResolved = job is null;
         SampleVerificationRows.Clear();
+        _sampleVerificationSamples.Clear();
         SelectedSampleVerificationRow = null;
         ClearVerificationEditor();
         _sampleVerificationLoadTask = job is null
@@ -932,12 +949,18 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
     {
         try
         {
+            var requiresVerification = await RequiresSampleVerificationAsync(job);
+            if (loadVersion != _sampleVerificationLoadVersion || SelectedJob?.JobId != job.JobId) return;
+            SelectedJobRequiresSampleVerification = requiresVerification;
+            if (!requiresVerification)
+            {
+                IsSampleVerificationRequirementResolved = true;
+                return;
+            }
             var verificationTask = _mes.GetCurrentExperimentSampleVerificationAsync(job.JobId, _shutdown.Token);
             var samplesTask = _mes.GetExperimentSamplesAsync(job.SampleBatchId, _shutdown.Token);
-            var workstationTask = RequiresSampleVerificationAsync(job);
-            await Task.WhenAll(verificationTask, samplesTask, workstationTask);
+            await Task.WhenAll(verificationTask, samplesTask);
             if (loadVersion != _sampleVerificationLoadVersion || SelectedJob?.JobId != job.JobId) return;
-            SelectedJobRequiresSampleVerification = workstationTask.Result;
             ApplySampleVerification(verificationTask.Result, samplesTask.Result);
             IsSampleVerificationRequirementResolved = true;
         }
@@ -947,8 +970,6 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
         catch (Exception exception)
         {
             if (loadVersion != _sampleVerificationLoadVersion || SelectedJob?.JobId != job.JobId) return;
-            // Scheduling remains available for unrelated tasks even when the
-            // optional verification projection cannot be read.
             ErrorMessage = exception.Message;
         }
     }
@@ -958,17 +979,10 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
         var references = job.WorkflowSteps.Count == 0
             ? [(job.WorkflowId, job.WorkflowVersion)]
             : job.WorkflowSteps.Select(step => (step.WorkflowId, step.WorkflowVersion)).Distinct().ToArray();
-        try
-        {
-            var versions = await Task.WhenAll(references.Select(reference =>
-                _mes.GetWorkflowVersionAsync(reference.WorkflowId, reference.WorkflowVersion, _shutdown.Token)));
-            return versions.Where(version => version is not null).Any(version => version!.Definition.Nodes.Any(node =>
-                string.Equals(node.NodeTypeId, WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask, StringComparison.Ordinal)));
-        }
-        catch (NotSupportedException)
-        {
-            return false;
-        }
+        var versions = await Task.WhenAll(references.Select(reference =>
+            _mes.GetWorkflowVersionAsync(reference.WorkflowId, reference.WorkflowVersion, _shutdown.Token)));
+        return versions.Where(version => version is not null).Any(version => version!.Definition.Nodes.Any(node =>
+            string.Equals(node.NodeTypeId, WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask, StringComparison.Ordinal)));
     }
 
     private void ApplySampleVerification(
@@ -976,9 +990,9 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
         IReadOnlyList<ExperimentSample> samples)
     {
         CurrentSampleVerification = verification;
+        foreach (var sample in samples) _sampleVerificationSamples[sample.SampleId] = sample;
         SampleVerificationRows.Clear();
         if (verification is null) return;
-        var sampleById = samples.ToDictionary(sample => sample.SampleId);
         foreach (var row in verification.Rows.OrderBy(row => row.Order))
         {
             var issues = verification.ValidationIssues
@@ -986,7 +1000,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
                 .ToArray();
             SampleVerificationRows.Add(new ExperimentSampleVerificationRowViewModel(
                 row,
-                sampleById.GetValueOrDefault(row.SampleId),
+                _sampleVerificationSamples.GetValueOrDefault(row.SampleId),
                 issues));
         }
     }
@@ -1002,6 +1016,23 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
 
     private bool IsCurrentSampleVerificationContext(Guid jobId, int loadVersion) =>
         loadVersion == _sampleVerificationLoadVersion && SelectedJob?.JobId == jobId;
+
+    private async Task ReloadSampleVerificationProjectionAsync(ExperimentJob job, Guid jobId, int loadVersion)
+    {
+        if (!IsCurrentSampleVerificationContext(jobId, loadVersion)) return;
+        try
+        {
+            var verificationTask = _mes.GetCurrentExperimentSampleVerificationAsync(jobId, _shutdown.Token);
+            var samplesTask = _mes.GetExperimentSamplesAsync(job.SampleBatchId, _shutdown.Token);
+            await Task.WhenAll(verificationTask, samplesTask);
+            if (IsCurrentSampleVerificationContext(jobId, loadVersion))
+                ApplySampleVerification(verificationTask.Result, samplesTask.Result);
+        }
+        catch
+        {
+            // Retain the original write failure as the operator-visible error.
+        }
+    }
 
     private ScheduleEntry? FindSchedule(Guid jobId) => _snapshot.Entries
         .Where(entry => entry.ExperimentJobId == jobId &&
