@@ -215,4 +215,6 @@ dotnet build MesControlAgv.sln --no-restore
 
 2026-09-16 真机执行 `ab5ad733-ad1a-4db3-ac4a-696bc141b143` 已通过 WPF 完成人工确认，并由 worker 单次启动 `TEST-001`，最终工作流 Completed。随后冷态执行 `2614a47e-baaa-471c-9b63-580c43f0540a` 证实厂家新版会自动初始化并继续实验；开盖分液 v2 已移除强制人工门禁。
 
+2026-09-17 v2 先通过 Dry Run `4227d813-051c-4ee1-bdc9-e8b364549b68`（设备操作0），随后真机执行 `9dda26e7-7f5c-4199-a27a-b1341bf9d5de`。本轮没有人工节点，worker 只创建1条设备操作，观察到 Running 后正常 Completed，证明无人工门禁的 v2 已可用于后续正式实验编排。
+
 人工确认 UI 完成后的 WPF 测试为 449/450；唯一失败仍是链接 worktree 根目录识别的既有用例。

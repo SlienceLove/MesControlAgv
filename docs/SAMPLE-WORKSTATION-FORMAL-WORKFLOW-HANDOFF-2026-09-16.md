@@ -134,6 +134,23 @@ WPF 人工确认真机闭环：
 - 人工确认：不包含；v1 保持不变
 - 发布警告：工作站 failure/timeout 未接线，仍为提示性警告；运行失败或 Unknown 会停止后续流程。
 
+v2 发布后先执行 Dry Run `4227d813-051c-4ee1-bdc9-e8b364549b68`，设备操作数为0，WPF 正确显示3个节点且无人工确认操作条。
+
+2026-09-17 完成 v2 真机闭环：
+
+- Execution ID：`9dda26e7-7f5c-4199-a27a-b1341bf9d5de`
+- Request ID：`fb25eb4a-fae7-4bc6-bb15-a99561e91dff`
+- Node Execution ID：`92f0e7c1-902d-46a7-b3e0-1d56050f314b`
+- Device Operation ID：`d206797b-e64b-4086-dbc5-c9c7c2aba5ed`
+- 08:20:25 接受 v2 执行；没有人工节点等待。
+- 08:20:26 worker 创建唯一设备操作并开始单次启动。
+- 08:20:50 观察到 Running：设备 Running/1、任务 Running、状态码3。
+- 08:23:18 观察到设备 Idle/0、任务 Completed、错误码0。
+- 08:23:19 工作流终态 Completed；节点和设备操作均 Succeeded。
+- 全程设备操作数为1，没有重复启动。
+
+结论：无人工门禁的 v2 已通过真实设备闭环，可以作为后续完整实验流程中的开盖分液节点使用。
+
 ## 验证结果
 
 - `MesControlAgv.WorkflowContract.Tests`：73/73 通过。
