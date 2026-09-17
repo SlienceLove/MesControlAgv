@@ -64,6 +64,13 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         Assert.Equal(0, gateway.InitializeCalls);
         Assert.Equal("SAMPLE-WORKSTATION-01", gateway.StartDeviceId);
         Assert.Equal("TEST-001", gateway.StartTaskNo);
+        Assert.Equal(
+        [
+            new RecordingWorkstation.ConsumedObservation("SAMPLE-WORKSTATION-01", "EQ-01", SampleWorkstationDeviceState.Idle, 0, 0, "TEST-001", SampleWorkstationTaskState.Completed, "Completed"),
+            new RecordingWorkstation.ConsumedObservation("SAMPLE-WORKSTATION-01", "EQ-01", SampleWorkstationDeviceState.Running, 1, 3, "TEST-001", SampleWorkstationTaskState.Running, "Running"),
+            new RecordingWorkstation.ConsumedObservation("SAMPLE-WORKSTATION-01", "EQ-01", SampleWorkstationDeviceState.Idle, 0, 0, "TEST-001", SampleWorkstationTaskState.Completed, "Completed")
+        ],
+        gateway.ConsumedObservations);
         using (var scope = factory.Services.CreateScope())
         {
             var db = scope.ServiceProvider.GetRequiredService<MesDbContext>();
@@ -146,15 +153,30 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
     {
         private int _observation; public int StartCalls { get; private set; } public int InitializeCalls { get; private set; }
         public string? StartDeviceId { get; private set; } public string? StartTaskNo { get; private set; }
+        public List<ConsumedObservation> ConsumedObservations { get; } = [];
         private (SampleWorkstationDeviceState State, int Raw, int Error, SampleWorkstationTaskState Task) Current => _observation++ switch { 0 => (SampleWorkstationDeviceState.Idle, 0, 0, SampleWorkstationTaskState.Completed), 1 => (SampleWorkstationDeviceState.Running, 1, 3, SampleWorkstationTaskState.Running), _ => (SampleWorkstationDeviceState.Idle, 0, 0, SampleWorkstationTaskState.Completed) };
         private (SampleWorkstationDeviceState State, int Raw, int Error, SampleWorkstationTaskState Task)? _snapshot;
         private (SampleWorkstationDeviceState State, int Raw, int Error, SampleWorkstationTaskState Task) Snapshot => _snapshot ??= Current;
         public Task<SampleWorkstationStatusResponse> GetStatusAsync(string id, CancellationToken ct) { _snapshot = Current; return Task.FromResult(new SampleWorkstationStatusResponse(id, "EQ-01", true, Snapshot.State, Snapshot.Raw, DateTimeOffset.UtcNow)); }
         public Task<SampleWorkstationErrorResponse> GetErrorsAsync(string id, CancellationToken ct) => Task.FromResult(new SampleWorkstationErrorResponse(id, Snapshot.Error, "result", true, DateTimeOffset.UtcNow));
-        public Task<SampleWorkstationTaskStateResponse> GetTaskStateAsync(string id, string task, CancellationToken ct) => Task.FromResult(new SampleWorkstationTaskStateResponse(id, task, Snapshot.Task, Snapshot.Task.ToString(), DateTimeOffset.UtcNow));
+        public Task<SampleWorkstationTaskStateResponse> GetTaskStateAsync(string id, string task, CancellationToken ct)
+        {
+            ConsumedObservations.Add(new ConsumedObservation(id, "EQ-01", Snapshot.State, Snapshot.Raw, Snapshot.Error, task, Snapshot.Task, Snapshot.Task.ToString()));
+            return Task.FromResult(new SampleWorkstationTaskStateResponse(id, task, Snapshot.Task, Snapshot.Task.ToString(), DateTimeOffset.UtcNow));
+        }
         public Task<SampleWorkstationCommandResponse> InitializeAsync(string id, CancellationToken ct) { InitializeCalls++; throw new InvalidOperationException(); }
         public Task<SampleWorkstationCommandResponse> StartTaskAsync(string id, string task, CancellationToken ct) { StartCalls++; StartDeviceId = id; StartTaskNo = task; using var json = JsonDocument.Parse("null"); return Task.FromResult(new SampleWorkstationCommandResponse(id, SampleWorkstationCommandOperation.StartTask, 0, json.RootElement.Clone(), DateTimeOffset.UtcNow) { TaskNo = task, Acknowledged = true }); }
         public Task<IReadOnlyList<SampleWorkstationTaskSummaryResponse>> GetTasksAsync(string id, SampleWorkstationTaskQuery query, CancellationToken ct) => throw new NotSupportedException(); public Task<SampleWorkstationTaskDetailsResponse> GetTaskDetailsAsync(string id, string task, CancellationToken ct) => throw new NotSupportedException(); public Task<SampleWorkstationProtocolResponse> GetProtocolReadAsync(string id, SampleWorkstationProtocolOperation op, SampleWorkstationProtocolReadQuery query, CancellationToken ct) => throw new NotSupportedException();
+
+        public sealed record ConsumedObservation(
+            string DeviceId,
+            string EquipmentId,
+            SampleWorkstationDeviceState DeviceState,
+            int RawDeviceState,
+            int ErrorCode,
+            string TaskNo,
+            SampleWorkstationTaskState TaskState,
+            string RawTaskState);
     }
 
     private sealed class PhysicalMesWebApplicationFactory(ProfileConfiguration profile) : WebApplicationFactory<Program>
@@ -165,6 +187,7 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
             builder.UseEnvironment("Testing");
             builder.ConfigureTestServices(services =>
             {
+                services.RemoveAll<IHostedService>();
                 services.RemoveAll<DbContextOptions<MesDbContext>>(); services.RemoveAll<MesDbContext>(); services.RemoveAll<IAgvGateway>();
                 services.AddDbContext<MesDbContext>(options => options.UseSqlite($"Data Source={_databasePath}"));
                 services.AddSingleton<IAgvGateway, TestAdapterClient>();

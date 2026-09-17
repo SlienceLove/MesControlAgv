@@ -45,3 +45,38 @@ Passed: 321/321, 0 failed, 0 skipped (5 s).
 ## Concerns
 
 No production behavior gap found. The initial RED run was a test compilation error rather than a behavioral failure; the brief permits an unchanged product path when the completed test passes. The final focused test passed 1/1 and the final full suite passed 321/321.
+
+## Review fix round
+
+### Changed files
+
+- `tests/MesControlAgv.Mes.Tests/ExperimentSampleWorkstationBusinessChainTests.cs`
+- `.superpowers/sdd/2026-09-17-sample-workstation-single-step-business-chain/task-1-report.md`
+
+### Finding 1: field-service isolation
+
+The test-local physical `WebApplicationFactory` now executes `services.RemoveAll<IHostedService>()` in test service configuration. This removes all application background-service registrations before host construction while retaining the in-memory HTTP test server. The workstation is still advanced solely through the explicit, manually constructed dispatcher invocation.
+
+### Finding 2: consumed observation proof
+
+The fake now records each complete snapshot when the dispatcher consumes its task state. The test asserts this exact ordered contract, including device/equipment identity, raw device state, error code, task number, task state, and raw task state:
+
+1. `SAMPLE-WORKSTATION-01`, `EQ-01`, Idle / `0` / error `0`, `TEST-001`, Completed / `Completed`
+2. `SAMPLE-WORKSTATION-01`, `EQ-01`, Running / `1` / error `3`, `TEST-001`, Running / `Running`
+3. `SAMPLE-WORKSTATION-01`, `EQ-01`, Idle / `0` / error `0`, `TEST-001`, Completed / `Completed`
+
+### Focused verification
+
+```powershell
+dotnet test tests/MesControlAgv.Mes.Tests/MesControlAgv.Mes.Tests.csproj --no-restore --filter "FullyQualifiedName~ExperimentSampleWorkstationBusinessChainTests"
+```
+
+Output: passed, failed `0`, passed `1`, skipped `0`, total `1`.
+
+### Full verification
+
+```powershell
+dotnet test tests/MesControlAgv.Mes.Tests/MesControlAgv.Mes.Tests.csproj --no-restore
+```
+
+Output: passed, failed `0`, passed `321`, skipped `0`, total `321` (6 s).
