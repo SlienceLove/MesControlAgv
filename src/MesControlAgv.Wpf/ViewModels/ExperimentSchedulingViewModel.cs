@@ -71,6 +71,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
     private string _verificationSampleDisplayName = string.Empty;
     private string _verificationSamplePosition = string.Empty;
     private int _verificationSampleOrder = 1;
+    private readonly ExperimentWorkstationPreparationViewModel _workstationPreparation;
 
     public ExperimentSchedulingViewModel(
         IMesClient mes,
@@ -91,6 +92,8 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
             RemoveJobParameter,
             item => !IsBusy && item is not null);
         _selectScheduleBlockCommand = new RelayCommand<ExperimentScheduleBlockViewModel>(SelectScheduleBlock);
+        _workstationPreparation = new ExperimentWorkstationPreparationViewModel(_mes, () => OperatorName.Trim(), () => Reason.Trim());
+        _workstationPreparation.PropertyChanged += (_, _) => RaiseCommandStates();
     }
 
     public ObservableCollection<ExperimentPublishedPlanOption> PublishedPlans { get; } = [];
@@ -102,6 +105,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
     public ObservableCollection<ExperimentSchedulingAuditItemViewModel> SelectedJobAudits { get; } = [];
     public ObservableCollection<ExperimentParameterEditorViewModel> JobParameters { get; } = [];
     public ObservableCollection<ExperimentSampleVerificationRowViewModel> SampleVerificationRows { get; } = [];
+    public ExperimentWorkstationPreparationViewModel WorkstationPreparation => _workstationPreparation;
 
     public IReadOnlyList<int> Hours { get; } = Enumerable.Range(0, 24).ToArray();
     public IReadOnlyList<int> MinuteOptions { get; } = [0, 15, 30, 45];
@@ -516,7 +520,10 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
                             SelectedSchedule?.Status == ScheduleEntryStatus.Scheduled &&
                             IsSampleVerificationRequirementResolved &&
                             (!SelectedJobRequiresSampleVerification ||
-                             (!HasUnsavedVerificationIdentityChanges && CurrentSampleVerification?.Status == ExperimentSampleVerificationStatus.Verified));
+                             (!HasUnsavedVerificationIdentityChanges && CurrentSampleVerification?.Status == ExperimentSampleVerificationStatus.Verified)) &&
+                            (!_workstationPreparation.RequiresPreparation ||
+                             (_workstationPreparation.IsResolved && !_workstationPreparation.IsDirty &&
+                              _workstationPreparation.Preparation?.Status == ExperimentWorkstationPreparationStatus.Imported));
     private bool HasActionMetadata =>
         !string.IsNullOrWhiteSpace(OperatorName) && !string.IsNullOrWhiteSpace(Reason);
 
@@ -747,6 +754,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
             _sampleVerificationInvalidatedByEdit = prior?.Status == ExperimentSampleVerificationStatus.Verified &&
                                                    !string.Equals(prior.SnapshotHash, verification.SnapshotHash, StringComparison.Ordinal);
             OnPropertyChanged(nameof(VerificationStatus));
+            await LoadWorkstationPreparationAsync(job, loadVersion);
             StatusMessage = _sampleVerificationInvalidatedByEdit
                 ? "已核对版本已失效，当前样品快照需要重新人工核对。"
                 : $"样品行已保存；当前核对版本为 rev {verification.Revision}。";
@@ -782,6 +790,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
             ApplySampleVerification(completed, _sampleVerificationSamples.Values.ToArray());
             _sampleVerificationInvalidatedByEdit = false;
             OnPropertyChanged(nameof(VerificationStatus));
+            await LoadWorkstationPreparationAsync(job, loadVersion);
             StatusMessage = "样品快照已完成人工核对；这不表示任务表已上传或到达仪器。";
         }, SelectedJob?.JobId);
 
@@ -997,6 +1006,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
             if (loadVersion != _sampleVerificationLoadVersion || SelectedJob?.JobId != job.JobId) return;
             ApplySampleVerification(verificationTask.Result, samplesTask.Result);
             IsSampleVerificationRequirementResolved = true;
+            await LoadWorkstationPreparationAsync(job, loadVersion);
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested)
         {
@@ -1006,6 +1016,22 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
             if (loadVersion != _sampleVerificationLoadVersion || SelectedJob?.JobId != job.JobId) return;
             ErrorMessage = exception.Message;
         }
+    }
+
+    private async Task LoadWorkstationPreparationAsync(ExperimentJob job, int loadVersion)
+    {
+        var workflow = await _mes.GetWorkflowVersionAsync(job.WorkflowId, job.WorkflowVersion, _shutdown.Token);
+        if (!IsCurrentSampleVerificationContext(job.JobId, loadVersion)) return;
+        var scheduled = _snapshot.Entries
+            .Where(entry => entry.ExperimentJobId == job.JobId && entry.Status == ScheduleEntryStatus.Scheduled)
+            .ToArray();
+        await _workstationPreparation.LoadAsync(
+            job,
+            scheduled.Length == 1 ? scheduled[0] : null,
+            workflow,
+            CurrentSampleVerification,
+            SampleVerificationRows.ToArray(),
+            _shutdown.Token);
     }
 
     private async Task<bool> RequiresSampleVerificationAsync(ExperimentJob job)

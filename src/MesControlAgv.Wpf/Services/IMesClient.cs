@@ -625,4 +625,28 @@ public interface IMesClient
         CompleteExperimentSampleVerificationRequest request,
         CancellationToken cancellationToken) =>
         Task.FromException<ExperimentSampleVerification>(new NotSupportedException("Experiment sample verification APIs are not supported by this MES client."));
+
+    Task<SampleWorkstationTemplateResponse> GetSampleWorkstationTemplateAsync(
+        string deviceId,
+        string taskNo,
+        CancellationToken cancellationToken) =>
+        Task.FromException<SampleWorkstationTemplateResponse>(new NotSupportedException("Sample workstation template APIs are not supported by this MES client."));
+
+    Task<ExperimentWorkstationPreparation?> GetCurrentExperimentWorkstationPreparationAsync(
+        Guid jobId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<ExperimentWorkstationPreparation?>(null);
+
+    Task<ExperimentWorkstationPreparation> PrepareExperimentWorkstationTaskAsync(
+        Guid jobId,
+        PrepareExperimentWorkstationTaskRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentWorkstationPreparation>(new NotSupportedException("Experiment workstation preparation APIs are not supported by this MES client."));
+
+    Task<ExperimentWorkstationPreparation> ImportExperimentWorkstationTaskAsync(
+        Guid jobId,
+        Guid preparationId,
+        ImportExperimentWorkstationTaskRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentWorkstationPreparation>(new NotSupportedException("Experiment workstation preparation APIs are not supported by this MES client."));
 }

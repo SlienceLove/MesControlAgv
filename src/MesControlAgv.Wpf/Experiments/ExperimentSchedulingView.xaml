@@ -359,6 +359,7 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
@@ -512,6 +513,52 @@
                             </StackPanel>
                         </Grid>
                     </StackPanel>
+                </Expander>
+                <Expander x:Name="WorkstationPreparationPanel" Grid.Row="5" Margin="0,8,0,0" IsExpanded="False"
+                          Header="工作站任务准备">
+                    <Grid Margin="0,6,0,0" DataContext="{Binding WorkstationPreparation}">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="110" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Foreground="#475467" Text="{Binding Message}" TextWrapping="Wrap" />
+                        <StackPanel Grid.Row="1" Margin="0,4,0,4" Orientation="Horizontal">
+                            <TextBlock Text="{Binding DeviceId}" />
+                            <TextBlock Margin="8,0,0,0" Text="{Binding SourceTaskNo}" />
+                            <TextBlock Margin="8,0,0,0" FontWeight="SemiBold" Text="{Binding PreparationStatus}" />
+                        </StackPanel>
+                        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                            <DataGrid x:Name="WorkstationTransferGrid" AutomationProperties.AutomationId="ExperimentWorkstationTransferGrid"
+                                      AutoGenerateColumns="False" CanUserAddRows="False" ItemsSource="{Binding Transfers}">
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Width="*" Header="来源" Binding="{Binding Source}" IsReadOnly="True" />
+                                    <DataGridTextColumn Width="70" Header="目标模块" Binding="{Binding TargetModule, UpdateSourceTrigger=PropertyChanged}" />
+                                    <DataGridTextColumn Width="40" Header="X" Binding="{Binding TargetX, UpdateSourceTrigger=PropertyChanged}" />
+                                    <DataGridTextColumn Width="40" Header="Y" Binding="{Binding TargetY, UpdateSourceTrigger=PropertyChanged}" />
+                                    <DataGridTextColumn Width="55" Header="体积" Binding="{Binding VolumeMicroliters, UpdateSourceTrigger=PropertyChanged}" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </ScrollViewer>
+                        <ItemsControl Grid.Row="3" ItemsSource="{Binding BottleBindings}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Margin="0,2">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="48" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                        <TextBlock VerticalAlignment="Center" Text="{Binding BottleNumber, StringFormat=槽位 {0}}" />
+                                        <ComboBox Grid.Column="1" Margin="3,0" ItemsSource="{Binding Samples}" DisplayMemberPath="SampleNumber" SelectedItem="{Binding SelectedSample}" />
+                                        <ComboBox Grid.Column="2" Margin="3,0" ItemsSource="{Binding Sources}" DisplayMemberPath="Display" SelectedItem="{Binding SelectedSource}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <StackPanel Grid.Row="4" Margin="0,6,0,0" Orientation="Horizontal">
+                            <Button x:Name="SaveWorkstationPreparationButton" AutomationProperties.AutomationId="ExperimentSaveWorkstationPreparationButton" Padding="8,4" Command="{Binding SaveCommand}" Content="保存准备" />
+                            <Button x:Name="ImportWorkstationPreparationButton" AutomationProperties.AutomationId="ExperimentImportWorkstationPreparationButton" Margin="6,0,0,0" Padding="8,4" Background="#027A48" Foreground="White" Command="{Binding ImportCommand}" Content="显式导入" />
+                        </StackPanel>
+                    </Grid>
                 </Expander>
             </Grid>
         </Grid>

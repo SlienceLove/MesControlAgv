@@ -4,12 +4,40 @@ using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text.Json;
 using MesControlAgv.Contracts.Experiments;
+using MesControlAgv.Contracts;
 using MesControlAgv.Wpf.Services;
 
 namespace MesControlAgv.Wpf.Tests;
 
 public sealed class MesClientExperimentSchedulingHttpContractTests
 {
+    [Fact]
+    public async Task Workstation_preparation_uses_explicit_template_prepare_and_import_routes()
+    {
+        var jobId = Guid.NewGuid();
+        var preparationId = Guid.NewGuid();
+        var preparation = new ExperimentWorkstationPreparation { PreparationId = preparationId, ExperimentJobId = jobId, Revision = 4, Status = ExperimentWorkstationPreparationStatus.Prepared };
+        var handler = new RecordingHandler(message =>
+        {
+            var path = message.RequestUri!.AbsolutePath;
+            if (message.Method == HttpMethod.Get && path == "/api/workstations/WS-1/tasks/TASK-1/template")
+                return JsonResponse(new SampleWorkstationTemplateResponse("WS-1", "task.xlsx", [], "hash", new SampleWorkstationTaskTemplate("TASK-1", "source", []), DateTimeOffset.UtcNow));
+            if (message.Method == HttpMethod.Get && path == $"/api/experiment-jobs/{jobId}/workstation-preparations/current") return new HttpResponseMessage(HttpStatusCode.NotFound);
+            if (message.Method == HttpMethod.Post && path.EndsWith("/prepare", StringComparison.Ordinal)) return JsonResponse(preparation, HttpStatusCode.Created);
+            if (message.Method == HttpMethod.Post && path.EndsWith($"/{preparationId}/import", StringComparison.Ordinal)) return JsonResponse(preparation with { Status = ExperimentWorkstationPreparationStatus.Imported });
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://mes.local/") };
+        var client = new MesClient(httpClient);
+        Assert.Equal("WS-1", (await client.GetSampleWorkstationTemplateAsync("WS-1", "TASK-1", CancellationToken.None)).DeviceId);
+        Assert.Null(await client.GetCurrentExperimentWorkstationPreparationAsync(jobId, CancellationToken.None));
+        await client.PrepareExperimentWorkstationTaskAsync(jobId, new PrepareExperimentWorkstationTaskRequest { RequestId = Guid.NewGuid(), Actor = "operator", Reason = "prepare", DeviceId = "WS-1", SourceTaskNo = "TASK-1" }, CancellationToken.None);
+        Assert.Equal(ExperimentWorkstationPreparationStatus.Imported, (await client.ImportExperimentWorkstationTaskAsync(jobId, preparationId, new ImportExperimentWorkstationTaskRequest { RequestId = Guid.NewGuid(), Actor = "operator", Reason = "import" }, CancellationToken.None)).Status);
+        Assert.Equal("/api/workstations/WS-1/tasks/TASK-1/template", handler.Requests[0].Uri.AbsolutePath);
+        Assert.Equal($"/api/experiment-jobs/{jobId}/workstation-preparations/prepare", handler.Requests[2].Uri.AbsolutePath);
+        Assert.Equal($"/api/experiment-jobs/{jobId}/workstation-preparations/{preparationId}/import", handler.Requests[3].Uri.AbsolutePath);
+    }
+
     [Fact]
     public async Task Plan_lifecycle_uses_existing_G5_routes_and_typed_payloads()
     {

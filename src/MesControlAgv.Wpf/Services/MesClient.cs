@@ -1155,6 +1155,41 @@ public sealed class MesClient(HttpClient client) : IMesClient
             request,
             cancellationToken);
 
+    public async Task<SampleWorkstationTemplateResponse> GetSampleWorkstationTemplateAsync(
+        string deviceId,
+        string taskNo,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync(
+            $"api/workstations/{Uri.EscapeDataString(deviceId)}/tasks/{Uri.EscapeDataString(taskNo)}/template",
+            cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw await CreateExperimentApiExceptionAsync(response, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<SampleWorkstationTemplateResponse>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no workstation task template.");
+    }
+
+    public async Task<ExperimentWorkstationPreparation?> GetCurrentExperimentWorkstationPreparationAsync(
+        Guid jobId,
+        CancellationToken cancellationToken) =>
+        await GetExperimentAsync<ExperimentWorkstationPreparation>(
+            $"api/experiment-jobs/{jobId}/workstation-preparations/current", cancellationToken, mapNotFoundToNull: true);
+
+    public Task<ExperimentWorkstationPreparation> PrepareExperimentWorkstationTaskAsync(
+        Guid jobId,
+        PrepareExperimentWorkstationTaskRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ExperimentWorkstationPreparation>(
+            HttpMethod.Post, $"api/experiment-jobs/{jobId}/workstation-preparations/prepare", request, cancellationToken);
+
+    public Task<ExperimentWorkstationPreparation> ImportExperimentWorkstationTaskAsync(
+        Guid jobId,
+        Guid preparationId,
+        ImportExperimentWorkstationTaskRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ExperimentWorkstationPreparation>(
+            HttpMethod.Post, $"api/experiment-jobs/{jobId}/workstation-preparations/{preparationId}/import", request, cancellationToken);
+
     private async Task<DashboardTask> PostAsync(string path, object? body, CancellationToken cancellationToken)
     {
         using var response = await client.PostAsJsonAsync(path, body, cancellationToken);
