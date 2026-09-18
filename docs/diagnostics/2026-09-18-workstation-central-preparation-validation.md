@@ -44,7 +44,7 @@ dotnet test tests/MesControlAgv.Adapter.Tests/MesControlAgv.Adapter.Tests.csproj
 dotnet test tests/MesControlAgv.WorkflowContract.Tests/MesControlAgv.WorkflowContract.Tests.csproj --no-restore --nologo -v minimal
 # 74 passed
 
-dotnet test tests/MesControlAgv.Wpf.Tests/MesControlAgv.Wpf.Tests.csproj --no-build --no-restore --nologo -v minimal --filter "FullyQualifiedName~ExperimentScheduling|FullyQualifiedName~ExperimentWorkstationPreparation|FullyQualifiedName~ExperimentPlanningViewBinding|FullyQualifiedName~MesClient" -p:BuildLocalServices=false -p:SkipLocalServiceCopy=true
+dotnet test tests/MesControlAgv.Wpf.Tests/MesControlAgv.Wpf.Tests.csproj --no-build --no-restore --nologo -v minimal --filter "FullyQualifiedName~ExperimentScheduling|FullyQualifiedName~ExperimentWorkstationPreparation|FullyQualifiedName~ExperimentPlanningViewBinding|FullyQualifiedName~MesClient"
 # 92 passed
 
 dotnet build MesControlAgv.sln -c Release --no-restore --artifacts-path C:/Users/33206/AppData/Local/Temp/mes-sample-field-20260918-build -p:SkipLocalServiceCopy=true --nologo -v minimal
@@ -56,6 +56,6 @@ dotnet build MesControlAgv.sln -c Release --no-restore --artifacts-path C:/Users
 - 未向最新 V1.02 厂家服务上传生成 XLSX、回读真实任务、写入真实条码或启动真实设备。
 - 未证明厂家逐孔/逐目标执行结果；当前协议只支撑任务级 Running/Completed 观察。
 - 未修改或重启现场进程，未修改已发布工作流定义。
-- 未合并到日常开发分支 `feature/wpf-ui-layout-optimization`；合并必须等现场验收通过并另行授权。
+- 未合并到日常开发分支 `feature/wpf-ui-layout-optimization`。用户已条件授权在真实验收成功后合并；成功即激活该既有授权，无需新的笼统合并批准。现场导入/运行仍各自需要当次授权，合并前仍须重新检查目标分支头和用户改动。
 
 现场步骤与停止条件见 [中控任务准备最新交接](../SAMPLE-WORKSTATION-CENTRAL-PREPARATION-HANDOFF-2026-09-18.md)。
