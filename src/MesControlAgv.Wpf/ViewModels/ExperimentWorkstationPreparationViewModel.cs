@@ -134,7 +134,7 @@ public sealed class ExperimentWorkstationPreparationViewModel : ExperimentBindab
         AddBottle(1); AddBottle(2); IsDirty = false; RaiseStates();
     }
 
-    private async Task SaveAsync()
+    public async Task SaveAsync()
     {
         if (_jobId is not { } jobId || _verification is null) return;
         var generation = _generation;
@@ -156,7 +156,7 @@ public sealed class ExperimentWorkstationPreparationViewModel : ExperimentBindab
         finally { if (generation == _generation && _jobId == jobId) IsBusy = false; }
     }
 
-    private async Task ImportAsync()
+    public async Task ImportAsync()
     {
         if (_jobId is not { } jobId || Preparation is null) return;
         var preparationId = Preparation.PreparationId;

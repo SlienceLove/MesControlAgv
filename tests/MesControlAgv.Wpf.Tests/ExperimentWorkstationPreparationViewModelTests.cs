@@ -50,6 +50,26 @@ public sealed class ExperimentWorkstationPreparationViewModelTests
         Assert.False(vm.CanImport);
     }
 
+    [Fact]
+    public async Task Save_and_import_commands_send_one_explicit_write_each_without_starting_or_admitting()
+    {
+        var client = new PreparationClient { DelayWrites = true };
+        var vm = new ExperimentWorkstationPreparationViewModel(client, () => "operator", () => "reason");
+        var (job, schedule, workflow, verification, samples) = Fixture();
+        await vm.LoadAsync(job, schedule, workflow, verification, samples, CancellationToken.None);
+        await vm.BeginTemplateModeAsync();
+        vm.BottleBindings[0].SelectedSample = samples[0]; vm.BottleBindings[1].SelectedSample = samples[0]; vm.BottleBindings[0].SelectedSource = vm.SourceKeys[0];
+        var save = vm.SaveAsync(); await client.PrepareRequested.Task;
+        Assert.Equal(job.JobId, client.LastJobId); Assert.Equal(1, client.PrepareCalls); Assert.Equal(verification.Revision, client.LastPrepare!.VerificationRevision);
+        client.PrepareGate.SetResult(Prepared(ExperimentWorkstationPreparationStatus.Prepared) with { ExperimentJobId = job.JobId, VerificationId = verification.VerificationId, VerificationRevision = verification.Revision, VerificationSnapshotHash = verification.SnapshotHash });
+        await save;
+        var import = vm.ImportAsync(); await client.ImportRequested.Task;
+        Assert.Equal(1, client.ImportCalls);
+        client.ImportGate.SetResult(vm.Preparation! with { Status = ExperimentWorkstationPreparationStatus.Imported });
+        await import;
+        Assert.Equal(0, client.StartOrAdmitCalls);
+    }
+
     private static (ExperimentJob, ScheduleEntry, WorkflowVersion, ExperimentSampleVerification, IReadOnlyList<ExperimentSampleVerificationRowViewModel>) Fixture()
     {
         var job = new ExperimentJob { JobId = Guid.NewGuid(), Status = ExperimentJobStatus.Scheduled };
@@ -64,8 +84,12 @@ public sealed class ExperimentWorkstationPreparationViewModelTests
     private sealed class PreparationClient : IMesClient
     {
         public int TemplateReads { get; private set; } public ExperimentWorkstationPreparation? Current { get; set; }
+        public bool DelayWrites { get; set; } public int PrepareCalls { get; private set; } public int ImportCalls { get; private set; } public int StartOrAdmitCalls { get; private set; } public Guid LastJobId { get; private set; } public PrepareExperimentWorkstationTaskRequest? LastPrepare { get; private set; }
+        public TaskCompletionSource<bool> PrepareRequested { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously); public TaskCompletionSource<bool> ImportRequested { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously); public TaskCompletionSource<ExperimentWorkstationPreparation> PrepareGate { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously); public TaskCompletionSource<ExperimentWorkstationPreparation> ImportGate { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<ExperimentWorkstationPreparation?> GetCurrentExperimentWorkstationPreparationAsync(Guid jobId, CancellationToken ct) => Task.FromResult(Current);
         public Task<SampleWorkstationTemplateResponse> GetSampleWorkstationTemplateAsync(string deviceId, string taskNo, CancellationToken ct) { TemplateReads++; return Task.FromResult(new SampleWorkstationTemplateResponse(deviceId, "t.xlsx", [], "h", new SampleWorkstationTaskTemplate(taskNo, "t", [new SampleWorkstationTransferRow("L", "T", 1, 1, "SRC", 1, 1, "OUT", 2, 2, 10)]), DateTimeOffset.UtcNow)); }
+        public Task<ExperimentWorkstationPreparation> PrepareExperimentWorkstationTaskAsync(Guid jobId, PrepareExperimentWorkstationTaskRequest request, CancellationToken ct) { PrepareCalls++; LastJobId = jobId; LastPrepare = request; PrepareRequested.TrySetResult(true); return DelayWrites ? PrepareGate.Task : Task.FromResult(Prepared(ExperimentWorkstationPreparationStatus.Prepared)); }
+        public Task<ExperimentWorkstationPreparation> ImportExperimentWorkstationTaskAsync(Guid jobId, Guid preparationId, ImportExperimentWorkstationTaskRequest request, CancellationToken ct) { ImportCalls++; ImportRequested.TrySetResult(true); return DelayWrites ? ImportGate.Task : Task.FromResult(Prepared(ExperimentWorkstationPreparationStatus.Imported)); }
         public Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken ct) => Task.FromResult<IReadOnlyList<DashboardTask>>([]);
         public Task<KpiDashboard> GetKpiDashboardAsync(DateOnly d, CancellationToken ct) => throw new NotSupportedException();
         public Task<DashboardTaskDetail?> GetTaskDetailAsync(Guid id, CancellationToken ct) => Task.FromResult<DashboardTaskDetail?>(null);
