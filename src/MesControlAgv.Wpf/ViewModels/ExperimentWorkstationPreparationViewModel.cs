@@ -213,12 +213,12 @@ public sealed record WorkstationTemplateSourceChoice(string Module, int X, int Y
 }
 public sealed class WorkstationPreparationBottleBindingViewModel : ExperimentBindableObject
 {
-    private ExperimentSampleVerificationRowViewModel? _sample; private WorkstationTemplateSourceChoice? _source; private readonly Action _changed;
-    public WorkstationPreparationBottleBindingViewModel(int number, IReadOnlyList<ExperimentSampleVerificationRowViewModel> samples, IReadOnlyList<WorkstationTemplateSourceChoice> sources, Guid? sampleId, WorkstationTemplateSourceChoice? source, Action changed) { BottleNumber = number; Samples = samples; Sources = sources; _sample = samples.FirstOrDefault(item => item.SampleId == sampleId); _source = source; _changed = changed; }
+    private ExperimentSampleVerificationRowViewModel? _sample; private WorkstationTemplateSourceChoice? _source; private readonly Action _changed; private readonly RelayCommand _clearSourceCommand;
+    public WorkstationPreparationBottleBindingViewModel(int number, IReadOnlyList<ExperimentSampleVerificationRowViewModel> samples, IReadOnlyList<WorkstationTemplateSourceChoice> sources, Guid? sampleId, WorkstationTemplateSourceChoice? source, Action changed) { BottleNumber = number; Samples = samples; Sources = sources; _sample = samples.FirstOrDefault(item => item.SampleId == sampleId); _source = source; _changed = changed; _clearSourceCommand = new RelayCommand(() => SelectedSource = null, () => SelectedSource is not null); }
     public int BottleNumber { get; } public IReadOnlyList<ExperimentSampleVerificationRowViewModel> Samples { get; } public IReadOnlyList<WorkstationTemplateSourceChoice> Sources { get; }
     public ExperimentSampleVerificationRowViewModel? SelectedSample { get => _sample; set { if (SetField(ref _sample, value)) _changed(); } }
-    public WorkstationTemplateSourceChoice? SelectedSource { get => _source; set { if (SetField(ref _source, value)) { OnPropertyChanged(nameof(SourceUseStatus)); _changed(); } } }
-    public ICommand ClearSourceCommand => new RelayCommand(() => SelectedSource = null, () => SelectedSource is not null);
+    public WorkstationTemplateSourceChoice? SelectedSource { get => _source; set { if (SetField(ref _source, value)) { OnPropertyChanged(nameof(SourceUseStatus)); _clearSourceCommand.RaiseCanExecuteChanged(); _changed(); } } }
+    public ICommand ClearSourceCommand => _clearSourceCommand;
     public string SourceUseStatus => SelectedSource is null ? "Unused barcode slot — not dispensed material" : "Template source binding";
 }
 public sealed class WorkstationPreparationTransferRowViewModel : ExperimentBindableObject

@@ -9,6 +9,24 @@ namespace MesControlAgv.Wpf.Tests;
 public sealed class ExperimentWorkstationPreparationViewModelTests
 {
     [Fact]
+    public void Clear_source_command_is_stable_and_notifies_as_a_source_is_selected_and_cleared()
+    {
+        var source = new WorkstationTemplateSourceChoice("SRC", 1, 1);
+        var binding = new WorkstationPreparationBottleBindingViewModel(2, [], [source], null, null, () => { });
+        var command = binding.ClearSourceCommand;
+        var notifications = 0;
+        command.CanExecuteChanged += (_, _) => notifications++;
+        Assert.Same(command, binding.ClearSourceCommand);
+        Assert.False(command.CanExecute(null));
+        binding.SelectedSource = source;
+        Assert.True(command.CanExecute(null));
+        Assert.Equal(1, notifications);
+        command.Execute(null);
+        Assert.False(command.CanExecute(null));
+        Assert.Equal(2, notifications);
+    }
+
+    [Fact]
     public async Task Configured_job_stays_legacy_until_operator_explicitly_enters_template_mode_and_requires_unique_sources()
     {
         var client = new PreparationClient();
