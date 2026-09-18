@@ -4,7 +4,8 @@
 
 - 隔离工作区：`D:\Project\Github\Mes-worktrees\sample-workstation-http-readonly`
 - 隔离分支：`feature/sample-workstation-http-readonly`
-- 已复审产品实现头：`4845a0e`
+- 最新自动化复审源代码头：`3c6302b`
+- `3c6302b` 补齐 WPF 选择切换同步失效和右侧详情滚动布局；这是自动化测试/编译证据，不是真机或现场验收结论。
 - 日常集成目标分支：`feature/wpf-ui-layout-optimization`，不是 `master`；现场验收前不要合并。该日常分支曾见 `201dbb4` 及无关用户改动，真正集成时必须重新检查，不能覆盖。
 - 自动化准备链已通过；证据见 [2026-09-18 中控准备链验证](diagnostics/2026-09-18-workstation-central-preparation-validation.md)。本阶段没有真实设备写入或现场进程操作。
 

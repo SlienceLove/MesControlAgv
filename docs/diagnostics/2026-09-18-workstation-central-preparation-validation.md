@@ -51,6 +51,20 @@ dotnet build MesControlAgv.sln -c Release --no-restore --artifacts-path C:/Users
 # 0 warnings / 0 errors
 ```
 
+## Final WPF fix ledger (`3c6302b`)
+
+The final WPF-only fixes synchronously invalidate preparation state on every selected-job transition and keep configured admission closed until the new preparation lookup resolves. The right-hand details pane now owns distinct sample/preparation rows inside a bounded vertical scroller; real measure/arrange coverage expands both panels, scrolls to preparation actions, and confirms that the timeline remains visible.
+
+```powershell
+dotnet test tests\MesControlAgv.Wpf.Tests\MesControlAgv.Wpf.Tests.csproj --no-restore --filter "FullyQualifiedName~ExperimentWorkstationPreparationViewModelTests|FullyQualifiedName~ExperimentSchedulingViewModelTests|FullyQualifiedName~MesClientExperimentSchedulingHttpContractTests|FullyQualifiedName~ExperimentPlanningViewBindingTests" -p:BuildLocalServices=false -p:SkipLocalServiceCopy=true
+# 61 passed / 0 failed / 0 skipped
+
+dotnet build MesControlAgv.sln -c Release --artifacts-path C:/Users/33206/AppData/Local/Temp/mes-workstation-final-fix-20260918-build -p:SkipLocalServiceCopy=true --nologo -v minimal
+# 0 warnings / 0 errors
+```
+
+This ledger is automated WPF and compile evidence only. It did not connect to a real workstation, write a real barcode, start a real task, operate a live process, or complete field acceptance.
+
 ## 尚未由本记录证明
 
 - 未向最新 V1.02 厂家服务上传生成 XLSX、回读真实任务、写入真实条码或启动真实设备。
