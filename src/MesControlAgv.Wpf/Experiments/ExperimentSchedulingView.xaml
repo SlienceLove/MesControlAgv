@@ -535,6 +535,7 @@
                                       AutoGenerateColumns="False" CanUserAddRows="False" ItemsSource="{Binding Transfers}">
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Width="*" Header="来源" Binding="{Binding Source}" IsReadOnly="True" />
+                                    <DataGridTextColumn Width="*" Header="来源ID / 条码" Binding="{Binding SourceIdentity}" IsReadOnly="True" />
                                     <DataGridTextColumn Width="70" Header="目标模块" Binding="{Binding TargetModule, UpdateSourceTrigger=PropertyChanged}" />
                                     <DataGridTextColumn Width="40" Header="X" Binding="{Binding TargetX, UpdateSourceTrigger=PropertyChanged}" />
                                     <DataGridTextColumn Width="40" Header="Y" Binding="{Binding TargetY, UpdateSourceTrigger=PropertyChanged}" />
@@ -546,15 +547,17 @@
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Grid Margin="0,2">
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="48" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="48" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="120" /></Grid.ColumnDefinitions>
                                         <TextBlock VerticalAlignment="Center" Text="{Binding BottleNumber, StringFormat=槽位 {0}}" />
                                         <ComboBox Grid.Column="1" Margin="3,0" ItemsSource="{Binding Samples}" DisplayMemberPath="SampleNumber" SelectedItem="{Binding SelectedSample}" />
                                         <ComboBox Grid.Column="2" Margin="3,0" ItemsSource="{Binding Sources}" DisplayMemberPath="Display" SelectedItem="{Binding SelectedSource}" />
+                                        <TextBlock Grid.Column="3" Margin="3,0" VerticalAlignment="Center" Foreground="#667085" Text="{Binding SourceUseStatus}" TextWrapping="Wrap" />
                                     </Grid>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <StackPanel Grid.Row="4" Margin="0,6,0,0" Orientation="Horizontal">
+                            <Button x:Name="BeginWorkstationTemplateModeButton" AutomationProperties.AutomationId="ExperimentBeginWorkstationTemplateModeButton" Padding="8,4" Command="{Binding BeginTemplateModeCommand}" Content="新建模板准备" />
                             <Button x:Name="SaveWorkstationPreparationButton" AutomationProperties.AutomationId="ExperimentSaveWorkstationPreparationButton" Padding="8,4" Command="{Binding SaveCommand}" Content="保存准备" />
                             <Button x:Name="ImportWorkstationPreparationButton" AutomationProperties.AutomationId="ExperimentImportWorkstationPreparationButton" Margin="6,0,0,0" Padding="8,4" Background="#027A48" Foreground="White" Command="{Binding ImportCommand}" Content="显式导入" />
                         </StackPanel>

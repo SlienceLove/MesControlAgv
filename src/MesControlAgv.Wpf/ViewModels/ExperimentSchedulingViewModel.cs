@@ -488,8 +488,8 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
         VerificationSamplePosition.Trim() != (SelectedSampleVerificationRow?.Position.Trim() ?? string.Empty) ||
         VerificationSampleOrder != (SelectedSampleVerificationRow?.Order ?? 1);
     public bool CanSaveSampleRow => CanEditSampleIdentity && HasActionMetadata && SelectedJob is not null &&
-                                    !string.IsNullOrWhiteSpace(VerificationSampleNumber) &&
-                                    !string.IsNullOrWhiteSpace(VerificationSampleBarcode) &&
+                                    (SelectedSampleVerificationRow is null ||
+                                     (!string.IsNullOrWhiteSpace(VerificationSampleNumber) && !string.IsNullOrWhiteSpace(VerificationSampleBarcode))) &&
                                     !string.IsNullOrWhiteSpace(VerificationSamplePosition) &&
                                     VerificationSampleOrder > 0;
     public bool CanCompleteSampleVerification => CanEditSampleIdentity && HasActionMetadata && !HasUnsavedVerificationIdentityChanges &&
@@ -678,6 +678,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
         {
             if (!IsSampleTaskMutable) throw new InvalidOperationException("已准入、运行或结束的任务不能修改样品身份。");
             var job = SelectedJob?.Job ?? throw new InvalidOperationException("请选择实验任务。");
+            EnsureGeneratedSampleIdentity(job);
             var jobId = job.JobId;
             var loadVersion = _sampleVerificationLoadVersion;
             var prior = CurrentSampleVerification;
@@ -1287,6 +1288,14 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
 
     private static string? NormalizeOptional(string value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private void EnsureGeneratedSampleIdentity(ExperimentJob job)
+    {
+        if (SelectedSampleVerificationRow is not null) return;
+        var suffix = Guid.NewGuid().ToString("N")[..10].ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(VerificationSampleNumber)) VerificationSampleNumber = $"AUTO-{job.SampleBatchId}-{suffix}";
+        if (string.IsNullOrWhiteSpace(VerificationSampleBarcode)) VerificationSampleBarcode = $"AUTO-BC-{suffix}";
+    }
 
     private static string GetWorkflowStepName(ExperimentPlanWorkflowStep step) =>
         string.IsNullOrWhiteSpace(step.Name) ? $"流程 v{step.WorkflowVersion}" : step.Name;
