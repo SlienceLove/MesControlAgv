@@ -71,6 +71,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
     private string _verificationSampleDisplayName = string.Empty;
     private string _verificationSamplePosition = string.Empty;
     private int _verificationSampleOrder = 1;
+    private Guid? _pendingNewVerificationSampleId;
     private readonly ExperimentWorkstationPreparationViewModel _workstationPreparation;
 
     public ExperimentSchedulingViewModel(
@@ -521,9 +522,11 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
                             IsSampleVerificationRequirementResolved &&
                             (!SelectedJobRequiresSampleVerification ||
                              (!HasUnsavedVerificationIdentityChanges && CurrentSampleVerification?.Status == ExperimentSampleVerificationStatus.Verified)) &&
-                            (!_workstationPreparation.RequiresPreparation ||
-                             (_workstationPreparation.IsResolved && !_workstationPreparation.IsDirty &&
-                              _workstationPreparation.Preparation?.Status == ExperimentWorkstationPreparationStatus.Imported));
+                            (!_workstationPreparation.IsApplicable ||
+                             (_workstationPreparation.IsResolved &&
+                              (!_workstationPreparation.RequiresPreparation ||
+                               (!_workstationPreparation.IsDirty && _workstationPreparation.IsVerificationCurrent &&
+                                _workstationPreparation.Preparation?.Status == ExperimentWorkstationPreparationStatus.Imported))));
     private bool HasActionMetadata =>
         !string.IsNullOrWhiteSpace(OperatorName) && !string.IsNullOrWhiteSpace(Reason);
 
@@ -683,7 +686,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
             var loadVersion = _sampleVerificationLoadVersion;
             var prior = CurrentSampleVerification;
             var selectedRow = SelectedSampleVerificationRow;
-            var sampleId = selectedRow?.SampleId ?? Guid.NewGuid();
+            var sampleId = selectedRow?.SampleId ?? (_pendingNewVerificationSampleId ??= Guid.NewGuid());
             // Selection remains responsive while MES writes. Capture the complete
             // old-task intent before the first await so a later selection cannot
             // leak another task's editor or row state into this request.
@@ -752,6 +755,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
             _sampleVerificationSamples[sample.SampleId] = sample;
             ApplySampleVerification(verification, _sampleVerificationSamples.Values.ToArray());
             SelectedSampleVerificationRow = SampleVerificationRows.FirstOrDefault(row => row.RowId == updatedRow.RowId);
+            _pendingNewVerificationSampleId = null;
             _sampleVerificationInvalidatedByEdit = prior?.Status == ExperimentSampleVerificationStatus.Verified &&
                                                    !string.Equals(prior.SnapshotHash, verification.SnapshotHash, StringComparison.Ordinal);
             OnPropertyChanged(nameof(VerificationStatus));
@@ -977,6 +981,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
     {
         var loadVersion = ++_sampleVerificationLoadVersion;
         _sampleVerificationInvalidatedByEdit = false;
+        _pendingNewVerificationSampleId = null;
         CurrentSampleVerification = null;
         SelectedJobRequiresSampleVerification = false;
         IsSampleVerificationRequirementResolved = job is null;

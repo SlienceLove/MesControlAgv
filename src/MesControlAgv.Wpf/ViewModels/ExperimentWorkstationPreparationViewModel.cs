@@ -103,9 +103,9 @@ public sealed class ExperimentWorkstationPreparationViewModel : ExperimentBindab
             if (current is not null) { RequiresPreparation = true; IsTemplateMode = true; ApplyPrepared(current); }
             if (generation == _generation) Message = current is null ? "Legacy mode: explicitly choose new template preparation when required." : $"Current preparation: {PreparationStatus}.";
         }
-        catch (Exception exception) when (generation == _generation)
+        catch (Exception exception)
         {
-            Message = exception.Message;
+            if (generation == _generation && _jobId == job.JobId) Message = exception.Message;
         }
         finally { if (generation == _generation) IsResolved = true; }
     }
@@ -119,7 +119,7 @@ public sealed class ExperimentWorkstationPreparationViewModel : ExperimentBindab
         RequiresPreparation = true;
         IsTemplateMode = true;
         try { await LoadTemplateAsync(generation, CancellationToken.None); }
-        catch (Exception exception) when (generation == _generation) { Message = $"Template read failed; legacy admission remains unavailable in preparation mode. {exception.Message}"; }
+        catch (Exception exception) { if (generation == _generation) Message = $"Template read failed; legacy admission remains unavailable in preparation mode. {exception.Message}"; }
     }
 
     private async Task LoadTemplateAsync(int generation, CancellationToken cancellationToken)
@@ -152,7 +152,7 @@ public sealed class ExperimentWorkstationPreparationViewModel : ExperimentBindab
             if (generation != _generation || _jobId != jobId || !ReferenceEquals(verification, _verification)) return;
             Preparation = prepared; ApplyPrepared(prepared); IsDirty = false; Message = "Preparation saved; it has not been imported or started.";
         }
-        catch (Exception exception) when (generation == _generation && _jobId == jobId) { Message = $"Preparation was not saved. Retry only after resolving: {exception.Message}"; }
+        catch (Exception exception) { if (generation == _generation && _jobId == jobId) Message = $"Preparation was not saved. Retry only after resolving: {exception.Message}"; }
         finally { if (generation == _generation && _jobId == jobId) IsBusy = false; }
     }
 
@@ -169,14 +169,21 @@ public sealed class ExperimentWorkstationPreparationViewModel : ExperimentBindab
             if (generation != _generation || _jobId != jobId || Preparation?.PreparationId != preparationId || Preparation.Revision != revision) return;
             Preparation = imported; ApplyPrepared(imported); Message = imported.Status == ExperimentWorkstationPreparationStatus.Imported ? "Template imported; no task was started." : $"Import requires reconciliation: {imported.Status}.";
         }
-        catch (Exception exception) when (generation == _generation && _jobId == jobId && Preparation?.PreparationId == preparationId && Preparation.Revision == revision) { Message = $"Import outcome was not accepted. Do not automatically retry; reconcile the instrument state. {exception.Message}"; }
+        catch (Exception exception) { if (generation == _generation && _jobId == jobId && Preparation?.PreparationId == preparationId && Preparation.Revision == revision) Message = $"Import outcome was not accepted. Do not automatically retry; reconcile the instrument state. {exception.Message}"; }
         finally { if (generation == _generation && _jobId == jobId && Preparation?.PreparationId == preparationId && Preparation.Revision == revision) IsBusy = false; }
     }
 
     private void ApplyPrepared(ExperimentWorkstationPreparation value)
     {
         Transfers.Clear(); SourceKeys.Clear(); BottleBindings.Clear();
-        foreach (var row in value.Payload.Transfers) Transfers.Add(new WorkstationPreparationTransferRowViewModel(row.Transfer, MarkDirty));
+        foreach (var row in value.Payload.Transfers)
+        {
+            var item = new WorkstationPreparationTransferRowViewModel(row.Transfer, MarkDirty)
+            {
+                SourceIdentity = $"{row.SourceBusinessSampleId} / {row.SourceSampleBarcode}"
+            };
+            Transfers.Add(item);
+        }
         foreach (var source in value.Payload.Transfers.Select(row => new WorkstationTemplateSourceChoice(row.Transfer.SourceModule, row.Transfer.SourceX, row.Transfer.SourceY)).Distinct()) SourceKeys.Add(source);
         foreach (var binding in value.Payload.BottleBindings.OrderBy(item => item.BottleNumber)) AddBottle(binding.BottleNumber, binding.SampleId, binding.TemplateSource is null ? null : new WorkstationTemplateSourceChoice(binding.TemplateSource.Module, binding.TemplateSource.X, binding.TemplateSource.Y));
         IsDirty = false;
@@ -193,7 +200,7 @@ public sealed class ExperimentWorkstationPreparationViewModel : ExperimentBindab
         IsDirty = true;
         RaiseStates();
     }
-    private void Reset() { IsApplicable = false; CanMutate = false; IsTemplateMode = false; RequiresPreparation = false; IsResolved = false; IsDirty = false; Preparation = null; Transfers.Clear(); SourceKeys.Clear(); BottleBindings.Clear(); VerifiedSamples.Clear(); }
+    private void Reset() { IsBusy = false; IsApplicable = false; CanMutate = false; IsTemplateMode = false; RequiresPreparation = false; IsResolved = false; IsDirty = false; Preparation = null; Transfers.Clear(); SourceKeys.Clear(); BottleBindings.Clear(); VerifiedSamples.Clear(); }
     private void RaiseStates() { OnPropertyChanged(nameof(CanSave)); OnPropertyChanged(nameof(CanImport)); OnPropertyChanged(nameof(IsVerificationCurrent)); OnPropertyChanged(nameof(BlocksNewTemplateMode)); _saveCommand.RaiseCanExecuteChanged(); _importCommand.RaiseCanExecuteChanged(); _beginTemplateModeCommand.RaiseCanExecuteChanged(); }
     private static string Read(WorkflowNode node, string key) => node.Configuration.TryGetValue(key, out var value) ? value?.Trim() ?? string.Empty : string.Empty;
 }
@@ -210,6 +217,7 @@ public sealed class WorkstationPreparationBottleBindingViewModel : ExperimentBin
     public int BottleNumber { get; } public IReadOnlyList<ExperimentSampleVerificationRowViewModel> Samples { get; } public IReadOnlyList<WorkstationTemplateSourceChoice> Sources { get; }
     public ExperimentSampleVerificationRowViewModel? SelectedSample { get => _sample; set { if (SetField(ref _sample, value)) _changed(); } }
     public WorkstationTemplateSourceChoice? SelectedSource { get => _source; set { if (SetField(ref _source, value)) { OnPropertyChanged(nameof(SourceUseStatus)); _changed(); } } }
+    public ICommand ClearSourceCommand => new RelayCommand(() => SelectedSource = null, () => SelectedSource is not null);
     public string SourceUseStatus => SelectedSource is null ? "Unused barcode slot — not dispensed material" : "Template source binding";
 }
 public sealed class WorkstationPreparationTransferRowViewModel : ExperimentBindableObject
