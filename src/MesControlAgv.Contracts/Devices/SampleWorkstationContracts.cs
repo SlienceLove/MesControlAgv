@@ -29,7 +29,8 @@ public enum SampleWorkstationCommandOperation
 {
     Initialize,
     StartTask,
-    UpdateTaskBarcodes
+    UpdateTaskBarcodes,
+    ImportTasks
 }
 
 /// <summary>V1.02 identities for the two source bottles, not module/rack codes.</summary>
@@ -135,7 +136,12 @@ public sealed record SampleWorkstationCapabilitiesResponse(
 public sealed record SampleWorkstationTaskImportResponse(
     string DeviceId,
     IReadOnlyList<string> TaskNos,
-    DateTimeOffset ObservedAtUtc);
+    DateTimeOffset ObservedAtUtc)
+{
+    public bool ReadbackVerified { get; init; }
+    public string? FileSha256 { get; init; }
+    public SampleWorkstationTaskTemplate? Template { get; init; }
+}
 
 public static class SampleWorkstationErrorCodes
 {
@@ -148,6 +154,7 @@ public static class SampleWorkstationErrorCodes
     public const string InvalidPayload = "workstation_invalid_payload";
     public const string CommandUnconfirmed = "workstation_command_unconfirmed";
     public const string CommandRejected = "workstation_command_rejected";
+    public const string TemplateMismatch = "workstation_template_mismatch";
     public const string Timeout = "workstation_timeout";
     public const string Unavailable = "workstation_unavailable";
 }

@@ -53,6 +53,27 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
 
     public void MapEndpoints(IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapGet("/api/workstations/{deviceId}/tasks/{taskNo}/template", async (
+            string deviceId, string taskNo, HttpRequest request, ISampleWorkstationDriver driver,
+            DeviceOperationPolicy policy, CancellationToken cancellationToken) =>
+            await ExecuteAsync(async () =>
+            {
+                EnsureWorkstation(policy.EnsureReadEnabled(deviceId));
+                taskNo = SampleWorkstationTaskRoute.ReadCommandTaskNo(request.HttpContext.Features.Get<IHttpRequestFeature>()?.RawTarget, taskNo);
+                return await driver.GetTaskTemplateAsync(deviceId, taskNo, cancellationToken);
+            }));
+
+        endpoints.MapPost("/api/workstations/{deviceId}/tasks/import", async (
+            string deviceId, string fileName, HttpRequest request, ISampleWorkstationDriver driver,
+            DeviceOperationPolicy policy, CancellationToken cancellationToken) =>
+            await ExecuteAsync(async () =>
+            {
+                EnsureWorkstation(policy.EnsureControlEnabled(deviceId));
+                if (!string.Equals(request.ContentType?.Split(';')[0].Trim(), "application/octet-stream", StringComparison.OrdinalIgnoreCase))
+                    throw new ArgumentException("Template import requires application/octet-stream XLSX content.");
+                return await driver.ImportTasksAsync(deviceId, fileName, request.Body, cancellationToken);
+            }, isCommand: true));
+
         endpoints.MapGet("/api/workstations/{deviceId}/capabilities", async (
             string deviceId, ISampleWorkstationDriver driver, CancellationToken cancellationToken) =>
             await ExecuteAsync(() => driver.GetCapabilitiesAsync(deviceId, cancellationToken)));

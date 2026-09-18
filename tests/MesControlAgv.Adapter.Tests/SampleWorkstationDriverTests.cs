@@ -273,14 +273,14 @@ public sealed class SampleWorkstationDriverTests
     }
 
     [Fact]
-    public async Task Capabilities_are_offline_metadata_and_do_not_advertise_missing_vendor_apis_or_import()
+    public async Task Capabilities_are_offline_metadata_and_do_not_advertise_missing_vendor_reads()
     {
         var handler = new StubHttpHandler();
         var driver = CreateDriver(handler);
         var capabilities = await driver.GetCapabilitiesAsync("SAMPLE-WORKSTATION-01", CancellationToken.None);
         Assert.Equal("AdapterConfiguration", capabilities.Source);
         Assert.Empty(capabilities.Commands);
-        Assert.False(capabilities.TaskImportSupported);
+        Assert.True(capabilities.TaskImportSupported);
         Assert.DoesNotContain(SampleWorkstationProtocolOperation.WorkflowList, capabilities.ProtocolReads);
         Assert.Contains(SampleWorkstationProtocolOperation.SolventParameterList, capabilities.ProtocolReads);
         var exception = await Assert.ThrowsAsync<SampleWorkstationProtocolException>(() => driver.GetProtocolReadAsync(

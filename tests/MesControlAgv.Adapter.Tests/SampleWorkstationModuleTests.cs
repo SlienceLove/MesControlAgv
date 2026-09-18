@@ -5,6 +5,7 @@ using System.Text.Json;
 using MesControlAgv.Adapter.Modules;
 using MesControlAgv.Adapter.Modules.SampleWorkstation;
 using MesControlAgv.Contracts;
+using MesControlAgv.Application;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,6 +15,39 @@ namespace MesControlAgv.Adapter.Tests;
 
 public sealed class SampleWorkstationModuleTests
 {
+    [Fact]
+    public async Task Import_rejects_wrong_media_type_without_sending_a_command()
+    {
+        using var vendor = new VendorHandler("{}");
+        await using var app = await CreateHostAsync(vendor, control: true);
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using var response = await client.PostAsync("/api/workstations/WS-01/tasks/import?fileName=task.xlsx", new StringContent("not an xlsx"));
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(0, vendor.RequestCount);
+    }
+
+    [Fact]
+    public async Task Import_http_endpoint_accepts_xlsx_and_returns_verified_task_without_start()
+    {
+        var file = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Fixtures", "workstation-test-001.xlsx"));
+        using var vendor = new VendorHandler("")
+        {
+            ResponseFactory = request => request.Method == HttpMethod.Post
+                ? """{"Code":200,"Data":"导入成功"}"""
+                : JsonSerializer.Serialize(new { Code = 200, Data = new { FileName = "task.xlsx", FileData = Convert.ToBase64String(file) } })
+        };
+        await using var app = await CreateHostAsync(vendor, control: true);
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using var content = new ByteArrayContent(file);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        using var response = await client.PostAsync("/api/workstations/WS-01/tasks/import?fileName=task.xlsx", content);
+        response.EnsureSuccessStatusCode();
+        var result = (await response.Content.ReadFromJsonAsync<SampleWorkstationTaskImportResponse>())!;
+        Assert.True(result.ReadbackVerified);
+        Assert.Equal("TEST-001", result.Template!.TaskNo);
+        Assert.Equal(["/Service/ImportExperimentalTask", "/Service/GetExperimentalTaskTemplate"], vendor.Paths);
+    }
+
     [Theory]
     [InlineData("TASK/01", false)]
     [InlineData("TASK%2F01", false)]
@@ -97,11 +131,11 @@ public sealed class SampleWorkstationModuleTests
         using var unsupported = await client.GetAsync("/api/workstations/WS-01/protocol/WorkflowList");
         Assert.Equal(HttpStatusCode.NotImplemented, unsupported.StatusCode);
         var capabilities = await client.GetFromJsonAsync<SampleWorkstationCapabilitiesResponse>("/api/workstations/WS-01/capabilities");
-        Assert.False(capabilities!.TaskImportSupported);
+        Assert.True(capabilities!.TaskImportSupported);
         Assert.Empty(capabilities.Commands);
         Assert.Equal(10, capabilities.ProtocolReads.Count);
-        using var import = await client.PostAsync("/api/workstations/WS-01/tasks/import", null);
-        Assert.Equal(HttpStatusCode.MethodNotAllowed, import.StatusCode);
+        using var import = await client.PostAsync("/api/workstations/WS-01/tasks/import?fileName=task.xlsx", null);
+        Assert.Equal(HttpStatusCode.Forbidden, import.StatusCode);
         Assert.Equal(0, vendor.RequestCount);
     }
 
@@ -206,15 +240,18 @@ public sealed class SampleWorkstationModuleTests
         public int RequestCount { get; private set; }
         public Uri? LastUri { get; private set; }
         public HttpMethod? LastMethod { get; private set; }
+        public Func<HttpRequestMessage, string>? ResponseFactory { get; init; }
+        public List<string> Paths { get; } = [];
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             RequestCount++;
             LastUri = request.RequestUri;
             LastMethod = request.Method;
+            Paths.Add(request.RequestUri!.AbsolutePath);
             return exception is not null ? Task.FromException<HttpResponseMessage>(exception)
                 : Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new StringContent(body, Encoding.UTF8, "application/octet-stream")
+                    Content = new StringContent(ResponseFactory?.Invoke(request) ?? body, Encoding.UTF8, "application/octet-stream")
                 });
         }
     }

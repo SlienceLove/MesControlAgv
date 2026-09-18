@@ -9,7 +9,7 @@ namespace MesControlAgv.Mes.Services;
 
 public sealed class SampleWorkstationAdapterClient(HttpClient client)
     : ISampleWorkstationReader, ISampleWorkstationCommands, ISampleWorkstationCapabilityReader,
-      ISampleWorkstationBarcodeCommands
+      ISampleWorkstationBarcodeCommands, ISampleWorkstationTemplateReader, ISampleWorkstationTaskImporter
 {
     public Task<SampleWorkstationCapabilitiesResponse> GetCapabilitiesAsync(
         string deviceId, CancellationToken cancellationToken) =>
@@ -51,6 +51,32 @@ public sealed class SampleWorkstationAdapterClient(HttpClient client)
         var path = $"api/workstations/{EscapeRequired(deviceId, nameof(deviceId))}/tasks/{EscapeRequired(taskNo, nameof(taskNo))}/{action}";
         return SendAsync<SampleWorkstationCommandResponse>(HttpMethod.Post, path,
             JsonContent.Create(barcodes), cancellationToken);
+    }
+
+    public Task<SampleWorkstationTemplateResponse> GetTaskTemplateAsync(
+        string deviceId, string taskNo, CancellationToken cancellationToken) =>
+        GetAsync<SampleWorkstationTemplateResponse>(
+            $"api/workstations/{EscapeRequired(deviceId, nameof(deviceId))}/tasks/{EscapeRequired(taskNo, nameof(taskNo))}/template",
+            cancellationToken);
+
+    public async Task<SampleWorkstationTaskImportResponse> ImportTasksAsync(
+        string deviceId, string fileName, Stream content, CancellationToken cancellationToken)
+    {
+        var bytes = await SampleWorkstationTemplateFile.ReadBytesAsync(content, cancellationToken);
+        var expected = SampleWorkstationTemplateFile.Read(bytes);
+        _ = SampleWorkstationTemplateFile.EncodeUpload(fileName, bytes); // Validate filename before HTTP.
+        var path = QueryHelpers.AddQueryString($"api/workstations/{EscapeRequired(deviceId, nameof(deviceId))}/tasks/import", "fileName", fileName);
+        using var body = new ByteArrayContent(bytes);
+        body.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        var response = await SendAsync<SampleWorkstationTaskImportResponse>(HttpMethod.Post, path, body, cancellationToken);
+        if (!response.ReadbackVerified || response.Template is null || response.TaskNos is null ||
+            !string.Equals(response.DeviceId, deviceId.Trim(), StringComparison.OrdinalIgnoreCase) ||
+            !response.TaskNos.SequenceEqual(new[] { expected.TaskNo }) ||
+            !SampleWorkstationTemplateFile.SameContent(expected, response.Template) ||
+            response.FileSha256 != Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)))
+            throw new SampleWorkstationGatewayException(502, SampleWorkstationErrorCodes.TemplateMismatch,
+                "Adapter did not confirm the exact imported task snapshot.", outcomeUnknown: true);
+        return response;
     }
 
     public Task<SampleWorkstationStatusResponse> GetStatusAsync(

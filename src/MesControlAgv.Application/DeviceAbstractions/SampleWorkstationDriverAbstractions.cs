@@ -70,9 +70,8 @@ public interface ISampleWorkstationBarcodeCommands
 }
 
 /// <summary>
-/// Future task-table import port. The caller owns the readable stream.
-/// No implementation/HTTP import route is registered until the vendor format is confirmed.
-/// Import creates tasks only; it must not start them.
+/// Task-table import port. The caller owns the readable stream.
+/// Import must not start tasks; success requires matching downloaded task content.
 /// </summary>
 public interface ISampleWorkstationTaskImporter
 {
@@ -82,4 +81,10 @@ public interface ISampleWorkstationTaskImporter
 
 public interface ISampleWorkstationDriver
     : ISampleWorkstationReader, ISampleWorkstationCommands, ISampleWorkstationCapabilityReader,
-      ISampleWorkstationBarcodeCommands;
+      ISampleWorkstationBarcodeCommands, ISampleWorkstationTaskImporter, ISampleWorkstationTemplateReader;
+
+public interface ISampleWorkstationTemplateReader
+{
+    Task<SampleWorkstationTemplateResponse> GetTaskTemplateAsync(
+        string deviceId, string taskNo, CancellationToken cancellationToken);
+}

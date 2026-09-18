@@ -6,7 +6,7 @@ using MesControlAgv.Contracts;
 
 namespace MesControlAgv.Adapter.Modules.SampleWorkstation;
 
-public sealed class SampleWorkstationDriver(
+public sealed partial class SampleWorkstationDriver(
     VendorSampleWorkstationHttpClient vendor,
     SampleWorkstationOptions options,
     TimeProvider timeProvider) : ISampleWorkstationDriver
@@ -127,7 +127,7 @@ public sealed class SampleWorkstationDriver(
         EnsureDeviceId(deviceId, requireEnabled: false);
         cancellationToken.ThrowIfCancellationRequested();
         return Task.FromResult(new SampleWorkstationCapabilitiesResponse(
-            options.DeviceId, options.Enabled, options.ControlEnabled, false,
+            options.DeviceId, options.Enabled, options.ControlEnabled, true,
             options.Enabled && options.ControlEnabled
                 ? Enum.GetValues<SampleWorkstationCommandOperation>() : [],
             options.Enabled

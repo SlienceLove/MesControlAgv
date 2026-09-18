@@ -10,6 +10,13 @@ public static class SampleWorkstationEndpointRouteBuilderExtensions
 {
     public static IEndpointRouteBuilder MapSampleWorkstationEndpoints(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapGet("/api/workstations/{deviceId}/tasks/{taskNo}/template", async (
+            string deviceId, string taskNo, HttpRequest request, ISampleWorkstationTemplateReader reader,
+            CancellationToken cancellationToken) =>
+            await ExecuteAsync(() => reader.GetTaskTemplateAsync(deviceId,
+                SampleWorkstationTaskRoute.ReadCommandTaskNo(request.HttpContext.Features.Get<IHttpRequestFeature>()?.RawTarget, taskNo),
+                cancellationToken), cancellationToken));
+
         endpoints.MapGet("/api/workstations/{deviceId}/capabilities", async (
             string deviceId, ISampleWorkstationCapabilityReader reader, CancellationToken cancellationToken) =>
             await ExecuteAsync(() => reader.GetCapabilitiesAsync(deviceId, cancellationToken), cancellationToken));

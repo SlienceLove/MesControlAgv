@@ -60,7 +60,7 @@ public sealed class SampleWorkstationGatewayModuleTests
         using var scope = app.Services.CreateScope();
         Assert.IsType<SampleWorkstationAdapterClient>(scope.ServiceProvider.GetRequiredService<ISampleWorkstationReader>());
         Assert.IsType<SampleWorkstationAdapterClient>(scope.ServiceProvider.GetRequiredService<ISampleWorkstationCommands>());
-        Assert.Null(scope.ServiceProvider.GetService<ISampleWorkstationTaskImporter>());
+        Assert.IsType<SampleWorkstationAdapterClient>(scope.ServiceProvider.GetRequiredService<ISampleWorkstationTaskImporter>());
     }
 
     [Fact]

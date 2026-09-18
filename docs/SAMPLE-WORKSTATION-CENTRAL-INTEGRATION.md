@@ -69,7 +69,7 @@ worker 默认关闭：
 - `ISampleWorkstationReader`：状态、错误、任务和协议只读查询。
 - `ISampleWorkstationCommands`：初始化、启动已有任务；不负责任务调度。
 - `ISampleWorkstationCapabilityReader`：查询当前配置允许的能力。
-- `ISampleWorkstationTaskImporter`：未来任务表导入端口，目前没有实现、服务注册或 HTTP 导入路由。
+- `ISampleWorkstationTaskImporter`：2026-09-18已实现实测双表xlsx导入与回读校验。Adapter有导入路由，MES只注册内部端口，尚未开放绕过任务核对门禁的通用导入写路由。
 
 模块没有增加工作站专用数据库表，也不自动初始化。正式工作流复用现有节点和设备操作记录，并由默认关闭的 MES worker 负责单次启动与只读完成观察；WPF 联调入口仍由界面本地观察。
 
@@ -146,7 +146,7 @@ MES 与 Adapter 路径相同，前缀为 `/api/workstations/{deviceId}`：
 
 任务列表查询支持 `state=Waiting/Running/Completed`、`startDate/endDate=yyyy-MM-dd`、`startNo`（从 1 开始）和 `recordNum`（默认 50）。协议分页沿用这些日期和分页参数；详情操作用 `key`。
 
-`capabilities.source` 固定为 `AdapterConfiguration`，`commands` 由配置开关决定，`protocolReads` 只列扩展协议读取项，不包含上表单独列出的基础状态/任务查询。它不是在线探测，更不能证明厂家已修复远程启动。`taskImportSupported` 当前固定为 `false`。
+`capabilities.source` 固定为 `AdapterConfiguration`，`commands` 由配置开关决定，`protocolReads` 只列扩展协议读取项，不包含上表单独列出的基础状态/任务查询。它不是在线探测，更不能证明厂家已修复远程启动。新Adapter的 `taskImportSupported=true` 表示代码实现了文件导入，不代表已在当前厂家版本通过真实上传验收，也不表示MES/WPF已有完整导入入口。
 
 当前 DLL 缺少的七项扩展读取默认不发送，返回 501：`WorkflowList`、`WorkflowDetails`、`WorkflowTemplate`、`MaterialTypeList`、`PlatformLayoutList`、`PlatformLayoutDetails`、`PlatformLayoutTemplate`。其他十项仅表示可尝试调用，不代表全部已通过现场验收（例如物料参数详情仍有已知厂家实现问题）。
 
@@ -206,7 +206,21 @@ MES 与 Adapter 路径相同，前缀为 `/api/workstations/{deviceId}`：
 1/2号大瓶。后续按实际模板建立明确的大瓶位置绑定、冻结来源 ID 和分液表，再接入正式
 流程；当前不可据此宣称已完成来源→小瓶位置溯源或模板上传。
 `SourceBarCode` / `TargetBarCode` 是模板中的模块参数编码，与两个样品来源 ID 不同。
-任务导入仍未开放（`taskImportSupported=false`）。
+本段描述的是条码通讯提交时状态；之后的文件导入进度见下节。
+
+### 2026-09-18 实际模板与导入回读
+
+已直接下载 `TEST-001` 的Excel样表并固化测试fixture。增加：
+
+- MES/Adapter `GET /api/workstations/{deviceId}/tasks/{taskNo}/template`：返回文件、SHA256和强类型分液表，并核对Excel内任务号，避免厂家找不到任务时返回其他任务模板。
+- Adapter `POST /api/workstations/{deviceId}/tasks/import?fileName=task.xlsx`：请求体为原始xlsx字节；控制开关生效，内部编码为厂家实际的Base64原始报文，发送一次后下载同任务回读，全部分液行一致才返回 `readbackVerified=true`。
+- `SampleWorkstationTemplateFile`：解析/生成实测两表格式（单任务，11列移液参数），不依赖本机Excel。
+- MES `ISampleWorkstationTaskImporter`：内部复用端口，检查返回任务、分液表、文件hash及回读标记；当前不增加通用上传HTTP写入口。业务入口后续必须连接样品核对gate及快照审计。
+
+厂家侧POST原始体为 `Base64(单字节的文件名Base64长度) + Base64(UTF8文件名) + Base64(xlsx)`，其自带测试工具使用 `application/json` 标记这一原始体，不能再JSON序列化或包装普通multipart。新版真实上传仍待现场验收。
+旧服务的分液导入实现存在来源行合并风险，回读不同必须阻止后续启动，不能因为Code200/导入成功就认为内容一致。任一失败不自动重试或删除重建任务。
+
+文件层保留模块编码与坐标；业务样品ID及1/2号大瓶绑定尚需和正式核对快照、WPF导入操作整合。本轮没有向真机上传、写码或启动，也没有修改现场进程。
 
 代码在隔离分支 `feature/sample-workstation-http-readonly`，已包含默认隐藏的 WPF 联调入口，但未合并到 `feature/wpf-ui-layout-optimization`。
 
@@ -222,7 +236,7 @@ MES 与 Adapter 路径相同，前缀为 `/api/workstations/{deviceId}`：
 
 ## 任务表扩展
 
-未来实现 `ImportTasksAsync(deviceId, fileName, Stream, cancellationToken)`，由调用方拥有输入流；导入只创建任务，不隐式启动。拿到厂家样表、字段含义和实际上传格式后，再增加解析、Adapter 上传和 MES 导入路由，并将能力标记改为已支持。现有初始化、启动和查询接口无需改动。
+`ImportTasksAsync(deviceId, fileName, Stream, cancellationToken)` 已于2026-09-18按实测模板和厂家客户端编码实现，输入流仍由调用方拥有；导入不隐式启动。Adapter上传与回读已具备，MES任务级门禁/来源绑定和WPF操作入口尚待整合，不能把底层接口完成当作完整业务链已验收。
 
 ### 样品条码核对：原始决策（2026-09-17 已实施）
 
@@ -234,7 +248,7 @@ MES 与 Adapter 路径相同，前缀为 `/api/workstations/{deviceId}`：
 当前方案是中控页面的批次级人工目视比较：页面展示中控保存的任务样品条码和样品位，操作员点击非弹窗的“核对完成”；保存审计、版本及快照 hash，任何身份字段编辑立即使核对失效。原始设计见
 [样品任务表人工条码核对设计](superpowers/specs/2026-09-17-sample-task-manual-barcode-verification-design.md)（`0d60bfe`）；实施后的 API、状态机和运行门禁以本文件下方的“2026-09-17 样品任务行人工核对与运行准入门禁”为准。
 
-厂家任务表上传格式/API 仍待交付；未来导入或准备只能创建/更新厂家任务，绝不得隐式启动设备。多步骤实验实体运行、动态任务创建和远程停止同样尚未实现。
+原决策时厂家任务表上传格式/API 待交付；2026-09-18已取得真实样表并实现文件层导入，详见上方更新。导入或准备只能创建/更新厂家任务，绝不得隐式启动设备。多步骤实验实体运行和远程停止仍未实现。
 
 ## 2026-09-17 样品任务行人工核对与运行准入门禁
 
@@ -271,7 +285,7 @@ Invalidated + 保存修正后的行 → 新 revision（再次待核对）
 
 “运行准入”是独立动作。后端在创建 `WorkflowRun`、运行时资源租约或设备操作前重新读取并校验当前快照：未核对返回 `EXP-SAMPLE-VERIFICATION-REQUIRED`，已失效返回 `EXP-SAMPLE-VERIFICATION-INVALIDATED`，且拒绝结果不留下 `WorkflowRun`、运行租约或设备操作。重新核对不会启动流程；只有之后单独的准入动作才能创建 `WorkflowRun`。后续仍保持单次发令、Running 证据、Unknown 停止后续流程和只读恢复语义。
 
-当前没有厂家任务表上传、USB 扫码输入、last-scan 回传或远程停止。未来导入只能创建/准备任务，不得隐式发令或启动设备；运行仍必须经独立“运行准入”。离线验收证据见 [2026-09-17 样品核对验收](diagnostics/2026-09-17-sample-verification-acceptance.md)。
+此处2026-09-17验收未含厂家任务表上传、USB扫码、last-scan或远程停止。2026-09-18模板文件层进度见上方更新；导入仍只准备任务，不得隐式发令或启动设备，运行必须经独立“运行准入”。既有离线核对验收见 [2026-09-17 样品核对验收](diagnostics/2026-09-17-sample-verification-acceptance.md)。
 
 ## 离线验证
 
