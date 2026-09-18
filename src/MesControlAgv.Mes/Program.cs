@@ -130,6 +130,10 @@ builder.Services.AddScoped<ExperimentSampleVerificationService>();
 builder.Services.AddScoped<IExperimentSampleVerificationService>(services => services.GetRequiredService<ExperimentSampleVerificationService>());
 builder.Services.AddScoped<IExperimentSampleVerificationGate>(services => services.GetRequiredService<ExperimentSampleVerificationService>());
 builder.Services.AddScoped<IExperimentSampleVerificationGateCore>(services => services.GetRequiredService<ExperimentSampleVerificationService>());
+builder.Services.AddScoped<ExperimentWorkstationPreparationService>();
+builder.Services.AddScoped<IExperimentWorkstationPreparationService>(services =>
+    services.GetRequiredService<ExperimentWorkstationPreparationService>());
+builder.Services.AddScoped<IExperimentWorkstationRuntimeBindingValidator, ExperimentWorkstationRuntimeBindingValidator>();
 builder.Services.AddScoped<ExperimentRuntimeLeaseLifecycle>();
 builder.Services.AddScoped<ExperimentRuntimeAdmissionService>();
 builder.Services.AddScoped<IExperimentRuntimeAdmissionService>(services =>
@@ -190,6 +194,7 @@ app.MapMesWorkflowEndpoints();
 
 app.MapMesExperimentSchedulingEndpoints();
 app.MapMesExperimentSampleVerificationEndpoints();
+app.MapMesExperimentWorkstationPreparationEndpoints();
 
 app.MapPost("/api/field-navigation-acceptances", async (
     CreateFieldNavigationAcceptanceRequest request,
@@ -724,6 +729,27 @@ static async Task EnsureExperimentSchedulingTablesAsync(MesDbContext database)
         );
         """,
         """
+        CREATE TABLE IF NOT EXISTS ExperimentWorkstationPreparations (
+            PreparationId TEXT NOT NULL PRIMARY KEY,
+            ExperimentJobId TEXT NOT NULL,
+            DeviceId TEXT NOT NULL,
+            VendorTaskNo TEXT NOT NULL,
+            VerificationId TEXT NOT NULL,
+            VerificationRevision INTEGER NOT NULL,
+            VerificationSnapshotHash TEXT NOT NULL,
+            PayloadJson TEXT NOT NULL,
+            PayloadHash TEXT NOT NULL,
+            Status TEXT NOT NULL,
+            PreparedRequestId TEXT NOT NULL,
+            ImportRequestId TEXT NULL,
+            PreparedAtUtc TEXT NOT NULL,
+            ImportingAtUtc TEXT NULL,
+            ImportedAtUtc TEXT NULL,
+            UnknownAtUtc TEXT NULL,
+            LastError TEXT NULL
+        );
+        """,
+        """
         CREATE TABLE IF NOT EXISTS ScheduleEntries (
             ScheduleEntryId TEXT NOT NULL PRIMARY KEY,
             ExperimentJobId TEXT NOT NULL,
@@ -814,6 +840,9 @@ static async Task EnsureExperimentSchedulingTablesAsync(MesDbContext database)
         "CREATE INDEX IF NOT EXISTS IX_ExperimentSamples_BatchId_Status ON ExperimentSamples (BatchId, Status);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentSampleVerifications_ExperimentJobId_Revision ON ExperimentSampleVerifications (ExperimentJobId, Revision);",
         "CREATE INDEX IF NOT EXISTS IX_ExperimentSampleVerifications_ExperimentJobId_Status_UpdatedAtUtc ON ExperimentSampleVerifications (ExperimentJobId, Status, UpdatedAtUtc);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentWorkstationPreparations_VendorTaskNo ON ExperimentWorkstationPreparations (VendorTaskNo);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentWorkstationPreparations_ExperimentJobId_PreparedAtUtc ON ExperimentWorkstationPreparations (ExperimentJobId, PreparedAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentWorkstationPreparations_DeviceId_Status_PreparedAtUtc ON ExperimentWorkstationPreparations (DeviceId, Status, PreparedAtUtc);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentRuns_ExperimentJobId ON ExperimentRuns (ExperimentJobId);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentRuns_AdmissionRequestId ON ExperimentRuns (AdmissionRequestId);",
         "CREATE INDEX IF NOT EXISTS IX_ExperimentRuns_Status_UpdatedAtUtc ON ExperimentRuns (Status, UpdatedAtUtc);",

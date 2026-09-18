@@ -96,6 +96,26 @@ public sealed class WorkflowRuntimeSchemaUpgradeTests
             await Assert.ThrowsAsync<InvalidOperationException>(() => database.SaveChangesAsync());
             database.ChangeTracker.Clear();
 
+            database.ExperimentWorkstationPreparations.Add(new ExperimentWorkstationPreparationRecord
+            {
+                PreparationId = Guid.NewGuid(), ExperimentJobId = jobId, DeviceId = "WS-01",
+                VendorTaskNo = "MES-APPEND-ONLY", VerificationId = Guid.NewGuid(), VerificationRevision = 1,
+                VerificationSnapshotHash = "verification-hash", PayloadJson = "{}", PayloadHash = "payload-hash",
+                Status = "Prepared", PreparedRequestId = Guid.NewGuid(), PreparedAtUtc = now
+            });
+            await database.SaveChangesAsync();
+            var preparation = database.ExperimentWorkstationPreparations.Local.Single();
+            preparation.PayloadJson = "{\"changed\":true}";
+            await Assert.ThrowsAsync<InvalidOperationException>(() => database.SaveChangesAsync());
+            database.ChangeTracker.Clear();
+            preparation = await database.ExperimentWorkstationPreparations.SingleAsync();
+            preparation.Status = "Imported";
+            preparation.ImportedAtUtc = now.AddMinutes(2);
+            await database.SaveChangesAsync();
+            database.ExperimentWorkstationPreparations.Remove(preparation);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => database.SaveChangesAsync());
+            database.ChangeTracker.Clear();
+
             database.ExperimentSampleVerifications.Add(new ExperimentSampleVerificationRecord
             {
                 VerificationId = Guid.NewGuid(),
@@ -192,6 +212,7 @@ public sealed class WorkflowRuntimeSchemaUpgradeTests
                     OccurredAtUtc = DateTime.UtcNow
                 });
                 await setup.SaveChangesAsync();
+                await setup.Database.ExecuteSqlRawAsync("DROP TABLE ExperimentWorkstationPreparations;");
                 await setup.Database.ExecuteSqlRawAsync("DROP TABLE ExperimentSampleVerifications;");
                 await setup.Database.ExecuteSqlRawAsync("DROP TABLE ExperimentSamples;");
             }
@@ -208,9 +229,12 @@ public sealed class WorkflowRuntimeSchemaUpgradeTests
 
                 Assert.Contains("ExperimentSamples", tables);
                 Assert.Contains("ExperimentSampleVerifications", tables);
+                Assert.Contains("ExperimentWorkstationPreparations", tables);
                 Assert.Contains("IX_ExperimentSamples_BusinessSampleId", indexes);
                 Assert.Contains("IX_ExperimentSamples_NormalizedBarcode", indexes);
                 Assert.Contains("IX_ExperimentSampleVerifications_ExperimentJobId_Revision", indexes);
+                Assert.Contains("IX_ExperimentWorkstationPreparations_VendorTaskNo", indexes);
+                Assert.Contains("IX_ExperimentWorkstationPreparations_ExperimentJobId_PreparedAtUtc", indexes);
 
                 await using var count = connection.CreateCommand();
                 count.CommandText = "SELECT COUNT(*) FROM ExperimentPlans;";

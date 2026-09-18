@@ -51,6 +51,15 @@ public static class WorkflowNodeConfigurationKeys
     public const string SubflowVersion = "workflowVersion";
 }
 
+/// <summary>MES-owned inputs frozen into an admitted run and verified by the worker.</summary>
+public static class WorkflowTrustedWorkstationInputKeys
+{
+    public const string PreparationId = "__mesWorkstationPreparationId";
+    public const string PreparationPayloadHash = "__mesWorkstationPreparationPayloadHash";
+    public const string SampleBarcode1 = "__mesWorkstationSampleBarcode1";
+    public const string SampleBarcode2 = "__mesWorkstationSampleBarcode2";
+}
+
 public enum WorkflowSchemaValueType
 {
     String,

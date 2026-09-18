@@ -30,7 +30,9 @@ public sealed class WorkflowSampleWorkstationDispatcher(
     ProfileConfiguration profile,
     WorkflowSampleWorkstationWorkerOptions options,
     TimeProvider? timeProvider = null,
-    ILogger? logger = null)
+    ILogger? logger = null,
+    ISampleWorkstationBarcodeCommands? barcodeCommands = null,
+    IExperimentWorkstationRuntimeBindingValidator? runtimeBindingValidator = null)
 {
     private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private readonly ILogger? _logger = logger;
@@ -41,8 +43,12 @@ public sealed class WorkflowSampleWorkstationDispatcher(
 
         foreach (var workItem in await workflows.ListSampleWorkstationDispatchableNodesAsync(cancellationToken))
         {
-            if (!TryResolveInputs(workItem, out var deviceId, out var taskNo, out var inputError))
+            var inputsValid = TryResolveInputs(workItem, out var deviceId, out var taskNo, out var prepared, out var inputError);
+            var bindingTrusted = inputsValid && await IsTrustedPreparedBindingAsync(workItem, deviceId, taskNo, prepared, cancellationToken);
+            if (!inputsValid || !bindingTrusted)
             {
+                if (inputsValid && !bindingTrusted)
+                    inputError = "The frozen workstation preparation binding is not trusted for this admitted run.";
                 var claimedInvalid = await workflows.TryClaimSampleWorkstationNodeExecutionAsync(
                     workItem.NodeExecution.Id,
                     cancellationToken);
@@ -63,7 +69,7 @@ public sealed class WorkflowSampleWorkstationDispatcher(
                 workItem.NodeExecution.Id,
                 cancellationToken);
             if (claimed is null) continue;
-            await ExecuteClaimedAsync(claimed, deviceId, taskNo, cancellationToken);
+            await ExecuteClaimedAsync(claimed, deviceId, taskNo, prepared, cancellationToken);
         }
     }
 
@@ -73,7 +79,8 @@ public sealed class WorkflowSampleWorkstationDispatcher(
 
         foreach (var workItem in await workflows.ListSampleWorkstationRecoverableNodesAsync(cancellationToken))
         {
-            if (!TryResolveInputs(workItem, out var deviceId, out var taskNo, out var inputError) ||
+            if (!TryResolveInputs(workItem, out var deviceId, out var taskNo, out var prepared, out var inputError) ||
+                !await IsTrustedPreparedBindingAsync(workItem, deviceId, taskNo, prepared, cancellationToken) ||
                 workItem.DeviceOperation is not { } operation)
             {
                 await CompleteAsync(
@@ -134,6 +141,7 @@ public sealed class WorkflowSampleWorkstationDispatcher(
         WorkflowNodeExecutionWorkItem workItem,
         string deviceId,
         string taskNo,
+        PreparedStartBinding? prepared,
         CancellationToken cancellationToken)
     {
         if (workItem.DeviceOperation is not { } operation)
@@ -159,7 +167,19 @@ public sealed class WorkflowSampleWorkstationDispatcher(
                 return;
             }
 
-            var response = await commands.StartTaskAsync(deviceId, taskNo, cancellationToken);
+            var response = prepared is null
+                ? await commands.StartTaskAsync(deviceId, taskNo, cancellationToken)
+                : barcodeCommands is null
+                    ? throw new InvalidOperationException("The prepared workstation barcode command boundary is unavailable.")
+                    : await barcodeCommands.StartTaskAsync(
+                        deviceId,
+                        taskNo,
+                        new SampleWorkstationTaskBarcodes
+                        {
+                            SampleBarcode1 = prepared.SampleBarcode1,
+                            SampleBarcode2 = prepared.SampleBarcode2
+                        },
+                        cancellationToken);
             if (!IsMatchingStartResponse(response, deviceId, taskNo))
             {
                 await CompleteAsync(
@@ -435,14 +455,32 @@ public sealed class WorkflowSampleWorkstationDispatcher(
         WorkflowNodeExecutionWorkItem workItem,
         out string deviceId,
         out string taskNo,
+        out PreparedStartBinding? prepared,
         out string? error)
     {
         deviceId = ReadRequired(workItem.NodeExecution.Inputs, WorkflowNodeConfigurationKeys.DeviceId);
         taskNo = ReadRequired(workItem.NodeExecution.Inputs, WorkflowNodeConfigurationKeys.TaskNo);
+        prepared = null;
         if (string.IsNullOrWhiteSpace(deviceId) || string.IsNullOrWhiteSpace(taskNo))
         {
             error = "The workstation node requires configured deviceId and taskNo values.";
             return false;
+        }
+
+        var preparationIdText = ReadRequired(workItem.NodeExecution.Inputs, WorkflowTrustedWorkstationInputKeys.PreparationId);
+        var payloadHash = ReadRequired(workItem.NodeExecution.Inputs, WorkflowTrustedWorkstationInputKeys.PreparationPayloadHash);
+        var barcode1 = ReadRequired(workItem.NodeExecution.Inputs, WorkflowTrustedWorkstationInputKeys.SampleBarcode1);
+        var barcode2 = ReadRequired(workItem.NodeExecution.Inputs, WorkflowTrustedWorkstationInputKeys.SampleBarcode2);
+        var hasPreparedValue = preparationIdText.Length > 0 || payloadHash.Length > 0 || barcode1.Length > 0 || barcode2.Length > 0;
+        if (hasPreparedValue)
+        {
+            if (!Guid.TryParse(preparationIdText, out var preparationId) || preparationId == Guid.Empty ||
+                payloadHash.Length == 0 || barcode1.Length == 0 || barcode2.Length == 0)
+            {
+                error = "The frozen workstation preparation binding is incomplete.";
+                return false;
+            }
+            prepared = new PreparedStartBinding(preparationId, payloadHash, barcode1, barcode2);
         }
 
         var resolvedDeviceId = deviceId;
@@ -461,6 +499,25 @@ public sealed class WorkflowSampleWorkstationDispatcher(
             ? null
             : $"Sample workstation '{deviceId}' is not enabled for existing-task workflow control.";
         return configured;
+    }
+
+    private async Task<bool> IsTrustedPreparedBindingAsync(
+        WorkflowNodeExecutionWorkItem workItem,
+        string deviceId,
+        string taskNo,
+        PreparedStartBinding? prepared,
+        CancellationToken cancellationToken)
+    {
+        if (prepared is null) return true;
+        return runtimeBindingValidator is not null && await runtimeBindingValidator.IsTrustedAsync(
+            workItem.NodeExecution.WorkflowRunId,
+            prepared.PreparationId,
+            prepared.PayloadHash,
+            deviceId,
+            taskNo,
+            prepared.SampleBarcode1,
+            prepared.SampleBarcode2,
+            cancellationToken);
     }
 
     private async Task CompleteAsync(
@@ -556,6 +613,12 @@ public sealed class WorkflowSampleWorkstationDispatcher(
             ? value.Trim()
             : string.Empty;
 
+    private sealed record PreparedStartBinding(
+        Guid PreparationId,
+        string PayloadHash,
+        string SampleBarcode1,
+        string SampleBarcode2);
+
     private sealed record WorkstationObservation(
         SampleWorkstationStatusResponse Status,
         SampleWorkstationErrorResponse Error,
@@ -629,5 +692,7 @@ public sealed class WorkflowSampleWorkstationWorker(
         profile,
         options,
         timeProvider,
-        logger);
+        logger,
+        scope.ServiceProvider.GetRequiredService<ISampleWorkstationBarcodeCommands>(),
+        scope.ServiceProvider.GetRequiredService<IExperimentWorkstationRuntimeBindingValidator>());
 }

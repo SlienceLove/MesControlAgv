@@ -134,7 +134,11 @@ public static class SampleWorkstationTemplateFile
         {
             void Add(string path, XDocument document)
             {
-                using var stream = zip.CreateEntry(path).Open();
+                var entry = zip.CreateEntry(path);
+                // ZIP's default timestamp is wall-clock time. Fixing it makes the
+                // generated instrument file hash stable across preparation/import.
+                entry.LastWriteTime = new DateTimeOffset(1980, 1, 1, 0, 0, 0, TimeSpan.Zero);
+                using var stream = entry.Open();
                 document.Save(stream);
             }
             XNamespace types = "http://schemas.openxmlformats.org/package/2006/content-types";

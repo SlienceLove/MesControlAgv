@@ -131,6 +131,25 @@ public interface IExperimentSampleVerificationGate
     Task<ExperimentSampleVerification> RequireVerifiedCurrentAsync(Guid experimentJobId, int revision, string snapshotHash, CancellationToken cancellationToken);
 }
 
+/// <summary>Prepares and imports a verified workstation task without ever starting it.</summary>
+public interface IExperimentWorkstationPreparationService
+{
+    Task<ExperimentWorkstationPreparation?> GetCurrentAsync(
+        Guid experimentJobId,
+        CancellationToken cancellationToken);
+
+    Task<ExperimentWorkstationPreparation> PrepareAsync(
+        Guid experimentJobId,
+        PrepareExperimentWorkstationTaskRequest request,
+        CancellationToken cancellationToken);
+
+    Task<ExperimentWorkstationPreparation> ImportAsync(
+        Guid experimentJobId,
+        Guid preparationId,
+        ImportExperimentWorkstationTaskRequest request,
+        CancellationToken cancellationToken);
+}
+
 /// <summary>
 /// Device-free persistence boundary for a composed experiment run. It only
 /// materializes the pinned plan/step snapshot; child workflow admission and

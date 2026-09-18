@@ -495,16 +495,30 @@ public sealed partial class WorkflowApplicationService
 
     private static IReadOnlyDictionary<string, string?> CreateDeviceRequestSummary(
         WorkflowNextStepRequest step,
-        Guid nodeExecutionId) => new Dictionary<string, string?>
+        Guid nodeExecutionId)
     {
-        ["nodeExecutionId"] = nodeExecutionId.ToString(),
-        ["nodeId"] = step.NodeId.ToString(),
-        ["stepRequestId"] = step.StepRequestId.ToString(),
-        ["targetStation"] = step.TargetStation,
-        ["deviceId"] = ResolveDeviceId(step),
-        ["programName"] = ResolveProgramName(step),
-        ["taskNo"] = ResolveTaskNo(step)
-    };
+        var summary = new Dictionary<string, string?>
+        {
+            ["nodeExecutionId"] = nodeExecutionId.ToString(),
+            ["nodeId"] = step.NodeId.ToString(),
+            ["stepRequestId"] = step.StepRequestId.ToString(),
+            ["targetStation"] = step.TargetStation,
+            ["deviceId"] = ResolveDeviceId(step),
+            ["programName"] = ResolveProgramName(step),
+            ["taskNo"] = ResolveTaskNo(step)
+        };
+        foreach (var key in new[]
+        {
+            WorkflowTrustedWorkstationInputKeys.PreparationId,
+            WorkflowTrustedWorkstationInputKeys.PreparationPayloadHash,
+            WorkflowTrustedWorkstationInputKeys.SampleBarcode1,
+            WorkflowTrustedWorkstationInputKeys.SampleBarcode2
+        })
+        {
+            if (step.Parameters.TryGetValue(key, out var value)) summary[key] = value;
+        }
+        return summary;
+    }
 
     private static bool IsDeviceStep(WorkflowNextStepRequest step) =>
         step.NodeType is WorkflowNodeType.Move or WorkflowNodeType.RobotProgram ||

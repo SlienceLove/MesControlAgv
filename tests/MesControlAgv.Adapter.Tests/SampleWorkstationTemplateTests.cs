@@ -17,6 +17,13 @@ public sealed class SampleWorkstationTemplateTests
     private static SampleWorkstationTaskTemplate Example() => SampleWorkstationTemplateFile.Read(Fixture());
 
     [Fact]
+    public void Generated_template_bytes_are_deterministic_for_durable_import_hashes()
+    {
+        var template = Example();
+        Assert.Equal(SampleWorkstationTemplateFile.Write(template), SampleWorkstationTemplateFile.Write(template));
+    }
+
+    [Fact]
     public void Captured_template_matches_actual_source_and_target_and_roundtrips_with_new_identity()
     {
         var bytes = Fixture();

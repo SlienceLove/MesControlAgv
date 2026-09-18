@@ -34,6 +34,9 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
     public DbSet<ExperimentSampleVerificationRecord> ExperimentSampleVerifications =>
         Set<ExperimentSampleVerificationRecord>();
 
+    public DbSet<ExperimentWorkstationPreparationRecord> ExperimentWorkstationPreparations =>
+        Set<ExperimentWorkstationPreparationRecord>();
+
     public DbSet<ExperimentRunRecord> ExperimentRuns => Set<ExperimentRunRecord>();
 
     public DbSet<ScheduleEntryRecord> ScheduleEntries => Set<ScheduleEntryRecord>();
@@ -269,6 +272,22 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.HasIndex(verification => new { verification.ExperimentJobId, verification.Status, verification.UpdatedAtUtc });
         });
 
+        modelBuilder.Entity<ExperimentWorkstationPreparationRecord>(entity =>
+        {
+            entity.ToTable("ExperimentWorkstationPreparations");
+            entity.HasKey(preparation => preparation.PreparationId);
+            entity.Property(preparation => preparation.DeviceId).HasMaxLength(128);
+            entity.Property(preparation => preparation.VendorTaskNo).HasMaxLength(256);
+            entity.Property(preparation => preparation.VerificationSnapshotHash).HasMaxLength(128);
+            entity.Property(preparation => preparation.PayloadJson).HasMaxLength(262144);
+            entity.Property(preparation => preparation.PayloadHash).HasMaxLength(128);
+            entity.Property(preparation => preparation.Status).HasMaxLength(32);
+            entity.Property(preparation => preparation.LastError).HasMaxLength(2048);
+            entity.HasIndex(preparation => preparation.VendorTaskNo).IsUnique();
+            entity.HasIndex(preparation => new { preparation.ExperimentJobId, preparation.PreparedAtUtc });
+            entity.HasIndex(preparation => new { preparation.DeviceId, preparation.Status, preparation.PreparedAtUtc });
+        });
+
         modelBuilder.Entity<ExperimentRunRecord>(entity =>
         {
             entity.ToTable("ExperimentRuns");
@@ -440,6 +459,28 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
         {
             throw new InvalidOperationException(
                 "Experiment sample verification snapshots are append-only and cannot be deleted.");
+        }
+
+
+        var changedPreparationPayload = ChangeTracker.Entries<ExperimentWorkstationPreparationRecord>()
+            .Any(entry =>
+                entry.State == EntityState.Deleted ||
+                (entry.State == EntityState.Modified &&
+                 (entry.Property(preparation => preparation.ExperimentJobId).IsModified ||
+                  entry.Property(preparation => preparation.DeviceId).IsModified ||
+                  entry.Property(preparation => preparation.VendorTaskNo).IsModified ||
+                  entry.Property(preparation => preparation.VerificationId).IsModified ||
+                  entry.Property(preparation => preparation.VerificationRevision).IsModified ||
+                  entry.Property(preparation => preparation.VerificationSnapshotHash).IsModified ||
+                  entry.Property(preparation => preparation.PayloadJson).IsModified ||
+                  entry.Property(preparation => preparation.PayloadHash).IsModified ||
+                  entry.Property(preparation => preparation.PreparedRequestId).IsModified ||
+                  entry.Property(preparation => preparation.PreparedAtUtc).IsModified)));
+
+        if (changedPreparationPayload)
+        {
+            throw new InvalidOperationException(
+                "Experiment workstation preparation payloads are append-only and cannot be deleted.");
         }
     }
 }
