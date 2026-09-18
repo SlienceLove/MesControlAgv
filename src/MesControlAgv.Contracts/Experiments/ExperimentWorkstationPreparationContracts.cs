@@ -95,6 +95,10 @@ public sealed record ExperimentWorkstationPreparation
 {
     public Guid PreparationId { get; init; }
     public Guid ExperimentJobId { get; init; }
+    public long Revision { get; init; }
+    public Guid WorkflowId { get; init; }
+    public int WorkflowVersion { get; init; }
+    public Guid ScheduleEntryId { get; init; }
     public string DeviceId { get; init; } = string.Empty;
     public string VendorTaskNo { get; init; } = string.Empty;
     public Guid VerificationId { get; init; }

@@ -380,6 +380,13 @@ internal sealed class ExperimentRuntimeAdmissionService(
                 "The prepared workstation is not the fixed workstation resource reserved by this schedule.",
                 requestedResources);
         }
+        if (workstationPreparation is not null && workstationPreparation.ScheduleEntryId != schedule.ScheduleEntryId)
+        {
+            return new AdmissionRejection(
+                ExperimentWorkstationPreparationIssueCodes.RuntimeBindingInvalid,
+                "The schedule entry changed after workstation preparation.",
+                requestedResources);
+        }
         var requestedKeys = requestedResources
             .Select(reference => ExperimentResourceKeys.Create(reference.ResourceType, reference.ResourceId))
             .ToArray();
@@ -455,12 +462,15 @@ internal sealed class ExperimentRuntimeAdmissionService(
 
         var preparations = await database.ExperimentWorkstationPreparations
             .Where(item => item.ExperimentJobId == job.JobId)
-            .OrderByDescending(item => item.PreparedAtUtc)
-            .ThenByDescending(item => item.PreparationId)
+            .OrderByDescending(item => item.Revision)
             .ToListAsync(cancellationToken);
         if (preparations.Count > 0)
         {
             var preparation = preparations[0];
+            if (preparation.WorkflowId != job.WorkflowId || preparation.WorkflowVersion != job.WorkflowVersion)
+                throw new ExperimentSampleVerificationException(
+                    "The job workflow changed after workstation preparation.",
+                    ExperimentWorkstationPreparationIssueCodes.RuntimeBindingInvalid);
             if (!string.Equals(preparation.Status, ExperimentWorkstationPreparationStatus.Imported.ToString(), StringComparison.Ordinal))
                 throw new ExperimentSampleVerificationException(
                     "The current workstation preparation has not been imported successfully.",

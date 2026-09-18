@@ -76,6 +76,26 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         Assert.Equal(1, gateway.ImportCalls);
         Assert.Equal(1, gateway.BarcodeUpdateCalls);
 
+        var bypassPrepare = await client.PostAsJsonAsync(
+            $"/api/experiment-jobs/{scheduled.JobId}/workstation-preparations/prepare",
+            new PrepareExperimentWorkstationTaskRequest
+            {
+                RequestId = Guid.NewGuid(), Actor = "test", Reason = "Must not bypass unknown on another device",
+                DeviceId = "SAMPLE-WORKSTATION-02", SourceTaskNo = prepared.Payload.SourceTemplate.TaskNo,
+                VerificationRevision = prepared.VerificationRevision,
+                VerificationSnapshotHash = prepared.VerificationSnapshotHash,
+                BottleBindings = prepared.Payload.BottleBindings.Select(binding => new PrepareWorkstationBottleBinding
+                {
+                    BottleNumber = binding.BottleNumber,
+                    SampleId = binding.SampleId,
+                    TemplateSource = binding.TemplateSource
+                }).ToArray()
+            });
+        Assert.Equal(HttpStatusCode.Conflict, bypassPrepare.StatusCode);
+        using (var problem = JsonDocument.Parse(await bypassPrepare.Content.ReadAsStringAsync()))
+            Assert.Equal(ExperimentWorkstationPreparationIssueCodes.ImportOutcomeUnknown, problem.RootElement.GetProperty("code").GetString());
+        Assert.Equal(1, gateway.TemplateReadCalls);
+
         var secondImport = await client.PostAsJsonAsync(
             $"/api/experiment-jobs/{scheduled.JobId}/workstation-preparations/{prepared.PreparationId}/import",
             new ImportExperimentWorkstationTaskRequest { RequestId = Guid.NewGuid(), Actor = "test", Reason = "Must not retry unknown write" });
@@ -90,6 +110,114 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         Assert.Equal(0, gateway.StartCalls + gateway.BarcodeStartCalls);
         using var scope = factory.Services.CreateScope();
         Assert.Empty(await scope.ServiceProvider.GetRequiredService<MesDbContext>().WorkflowExecutions.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Preparation_scope_is_pinned_and_drift_rejects_before_adapter_io()
+    {
+        var gateway = new RecordingWorkstation();
+        using var factory = ConfigureGateway(new PhysicalMesWebApplicationFactory(PhysicalProfile()), gateway);
+        using var client = factory.CreateClient();
+        var workflow = await PublishWorkflowAsync(client);
+        var plan = await CreatePublishedPlanAsync(client, workflow);
+        var scheduled = await CreateScheduledJobAsync(client, plan);
+        var sample1 = await RegisterSampleAsync(client, "TEST-001", "PIN-1", "PIN-BC-1");
+        var sample2 = await RegisterSampleAsync(client, "TEST-001", "PIN-2", "PIN-BC-2");
+        var saved = await SaveRowsAsync(client, scheduled.JobId,
+        [
+            new ExperimentSampleTaskRow { RowId = Guid.NewGuid(), SampleId = sample1.SampleId, SampleBarcode = sample1.Barcode, Position = "A1", Order = 1 },
+            new ExperimentSampleTaskRow { RowId = Guid.NewGuid(), SampleId = sample2.SampleId, SampleBarcode = sample2.Barcode, Position = "A2", Order = 2 }
+        ], "Snapshot pin test sources");
+        var verified = await VerifyAsync(client, scheduled.JobId, saved, "test", "Verify pin test sources");
+        PrepareExperimentWorkstationTaskRequest Request(string deviceId, string reason) => new()
+        {
+            RequestId = Guid.NewGuid(), Actor = "test", Reason = reason, DeviceId = deviceId, SourceTaskNo = "TEST-001",
+            VerificationRevision = verified.Revision, VerificationSnapshotHash = verified.SnapshotHash,
+            BottleBindings =
+            [
+                new PrepareWorkstationBottleBinding { BottleNumber = 1, SampleId = sample1.SampleId, TemplateSource = new WorkstationTemplateSourceKey { Module = "SOURCE-A", X = 1, Y = 1 } },
+                new PrepareWorkstationBottleBinding { BottleNumber = 2, SampleId = sample2.SampleId, TemplateSource = new WorkstationTemplateSourceKey { Module = "SOURCE-B", X = 2, Y = 1 } }
+            ]
+        };
+
+        var wrongDevice = await client.PostAsJsonAsync(
+            $"/api/experiment-jobs/{scheduled.JobId}/workstation-preparations/prepare",
+            Request("SAMPLE-WORKSTATION-02", "Reject non-workflow device"));
+        Assert.Equal(HttpStatusCode.Conflict, wrongDevice.StatusCode);
+        Assert.Equal(0, gateway.TemplateReadCalls);
+
+        var prepare = await client.PostAsJsonAsync(
+            $"/api/experiment-jobs/{scheduled.JobId}/workstation-preparations/prepare",
+            Request("SAMPLE-WORKSTATION-01", "Pin workflow and schedule"));
+        Assert.Equal(HttpStatusCode.Created, prepare.StatusCode);
+        var prepared = (await prepare.Content.ReadFromJsonAsync<ExperimentWorkstationPreparation>())!;
+        Assert.Equal(1, prepared.Revision);
+        Assert.Equal(workflow.WorkflowId, prepared.WorkflowId);
+        Assert.Equal(workflow.Version, prepared.WorkflowVersion);
+        Assert.Equal(scheduled.ScheduleId, prepared.ScheduleEntryId);
+        Assert.Equal(1, gateway.TemplateReadCalls);
+
+        var driftedResourcesJson = JsonSerializer.Serialize(new[]
+        {
+            new ExperimentResourceReference { ResourceType = ExperimentResourceTypeIds.Workstation, ResourceId = "SAMPLE-WORKSTATION-02" }
+        });
+        using (var scope = factory.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            await database.ScheduleEntries.Where(entry => entry.ScheduleEntryId == scheduled.ScheduleId)
+                .ExecuteUpdateAsync(update => update.SetProperty(
+                    entry => entry.RequestedResourcesJson,
+                    driftedResourcesJson));
+        }
+        var scheduleDrift = await client.PostAsJsonAsync(
+            $"/api/experiment-jobs/{scheduled.JobId}/workstation-preparations/{prepared.PreparationId}/import",
+            new ImportExperimentWorkstationTaskRequest { RequestId = Guid.NewGuid(), Actor = "test", Reason = "Reject schedule drift" });
+        Assert.Equal(HttpStatusCode.Conflict, scheduleDrift.StatusCode);
+        Assert.Equal(0, gateway.ImportCalls);
+        Assert.Equal(0, gateway.BarcodeUpdateCalls);
+    }
+
+    [Fact]
+    public async Task Fixed_clock_consecutive_preparations_use_monotonic_revision_for_current()
+    {
+        var gateway = new RecordingWorkstation();
+        var clock = new FixedClock(new DateTimeOffset(2026, 9, 18, 10, 0, 0, TimeSpan.Zero));
+        using var factory = ConfigureGateway(new PhysicalMesWebApplicationFactory(PhysicalProfile()), gateway, timeProvider: clock);
+        using var client = factory.CreateClient();
+        var workflow = await PublishWorkflowAsync(client);
+        var plan = await CreatePublishedPlanAsync(client, workflow);
+        var scheduled = await CreateScheduledJobAsync(client, plan);
+        var sample1 = await RegisterSampleAsync(client, "TEST-001", "REV-1", "REV-BC-1");
+        var sample2 = await RegisterSampleAsync(client, "TEST-001", "REV-2", "REV-BC-2");
+        var saved = await SaveRowsAsync(client, scheduled.JobId,
+        [
+            new ExperimentSampleTaskRow { RowId = Guid.NewGuid(), SampleId = sample1.SampleId, SampleBarcode = sample1.Barcode, Position = "A1", Order = 1 },
+            new ExperimentSampleTaskRow { RowId = Guid.NewGuid(), SampleId = sample2.SampleId, SampleBarcode = sample2.Barcode, Position = "A2", Order = 2 }
+        ], "Snapshot fixed-clock sources");
+        var verified = await VerifyAsync(client, scheduled.JobId, saved, "test", "Verify fixed-clock sources");
+        PrepareExperimentWorkstationTaskRequest Request(string reason) => new()
+        {
+            RequestId = Guid.NewGuid(), Actor = "test", Reason = reason,
+            DeviceId = "SAMPLE-WORKSTATION-01", SourceTaskNo = "TEST-001",
+            VerificationRevision = verified.Revision, VerificationSnapshotHash = verified.SnapshotHash,
+            BottleBindings =
+            [
+                new PrepareWorkstationBottleBinding { BottleNumber = 1, SampleId = sample1.SampleId, TemplateSource = new WorkstationTemplateSourceKey { Module = "SOURCE-A", X = 1, Y = 1 } },
+                new PrepareWorkstationBottleBinding { BottleNumber = 2, SampleId = sample2.SampleId, TemplateSource = new WorkstationTemplateSourceKey { Module = "SOURCE-B", X = 2, Y = 1 } }
+            ]
+        };
+        var firstResponse = await client.PostAsJsonAsync($"/api/experiment-jobs/{scheduled.JobId}/workstation-preparations/prepare", Request("Prepare revision one"));
+        var secondResponse = await client.PostAsJsonAsync($"/api/experiment-jobs/{scheduled.JobId}/workstation-preparations/prepare", Request("Prepare revision two"));
+        firstResponse.EnsureSuccessStatusCode();
+        secondResponse.EnsureSuccessStatusCode();
+        var first = (await firstResponse.Content.ReadFromJsonAsync<ExperimentWorkstationPreparation>())!;
+        var second = (await secondResponse.Content.ReadFromJsonAsync<ExperimentWorkstationPreparation>())!;
+        var current = (await client.GetFromJsonAsync<ExperimentWorkstationPreparation>($"/api/experiment-jobs/{scheduled.JobId}/workstation-preparations/current"))!;
+        Assert.Equal(first.PreparedAt, second.PreparedAt);
+        Assert.Equal(1, first.Revision);
+        Assert.Equal(2, second.Revision);
+        Assert.Equal(second.PreparationId, current.PreparationId);
+        Assert.Equal(2, current.Revision);
     }
 
     [Fact]
@@ -468,7 +596,11 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         Assert.Equal(reverified.SnapshotHash, details["verificationSnapshotHash"]);
     }
 
-    private static WebApplicationFactory<Program> ConfigureGateway(WebApplicationFactory<Program> factory, RecordingWorkstation gateway, bool introduceVersionDrift = false) =>
+    private static WebApplicationFactory<Program> ConfigureGateway(
+        WebApplicationFactory<Program> factory,
+        RecordingWorkstation gateway,
+        bool introduceVersionDrift = false,
+        TimeProvider? timeProvider = null) =>
         factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<ISampleWorkstationReader>(); services.RemoveAll<ISampleWorkstationCommands>();
@@ -477,6 +609,11 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
             services.AddSingleton<ISampleWorkstationReader>(gateway); services.AddSingleton<ISampleWorkstationCommands>(gateway);
             services.AddSingleton<ISampleWorkstationTemplateReader>(gateway); services.AddSingleton<ISampleWorkstationTaskImporter>(gateway);
             services.AddSingleton<ISampleWorkstationBarcodeCommands>(gateway);
+            if (timeProvider is not null)
+            {
+                services.RemoveAll<TimeProvider>();
+                services.AddSingleton(timeProvider);
+            }
             if (introduceVersionDrift)
             {
                 services.RemoveAll<IExperimentSampleVerificationService>();
@@ -702,6 +839,11 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         }
         public Task<ExperimentSampleVerification> SaveCurrentAsync(Guid experimentJobId, SaveExperimentSampleVerificationRequest request, CancellationToken cancellationToken) => inner.SaveCurrentAsync(experimentJobId, request, cancellationToken);
         public Task<ExperimentSampleVerification> VerifyAsync(Guid experimentJobId, int revision, CompleteExperimentSampleVerificationRequest request, CancellationToken cancellationToken) => inner.VerifyAsync(experimentJobId, revision, request, cancellationToken);
+    }
+
+    private sealed class FixedClock(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
 
     private sealed class PhysicalMesWebApplicationFactory(ProfileConfiguration profile) : WebApplicationFactory<Program>

@@ -55,7 +55,9 @@ internal sealed class ExperimentWorkstationPreparationService(
 
         var job = await FindJobAsync(experimentJobId, cancellationToken);
         EnsureJobMutable(job);
-        await EnsureDeviceAvailableAsync(normalized.DeviceId, null, cancellationToken);
+        await EnsureNoUnresolvedPreparationAsync(experimentJobId, normalized.DeviceId, null, cancellationToken);
+        var scopePin = await RequirePreparationScopeAsync(job, normalized.DeviceId, cancellationToken);
+        await EnsureDeviceAvailableAsync(normalized.DeviceId, cancellationToken);
         var verification = await verificationGate.RequireVerifiedCurrentWhileMutationGateHeldAsync(
             experimentJobId,
             normalized.VerificationRevision,
@@ -83,10 +85,18 @@ internal sealed class ExperimentWorkstationPreparationService(
         var payloadJson = ExperimentSchedulingPersistence.Serialize(payload);
         var payloadHash = Hash(payloadJson);
         var now = timeProvider.GetUtcNow().UtcDateTime;
+        var revision = (await database.ExperimentWorkstationPreparations
+            .Where(item => item.ExperimentJobId == experimentJobId)
+            .Select(item => (long?)item.Revision)
+            .MaxAsync(cancellationToken) ?? 0) + 1;
         var record = new ExperimentWorkstationPreparationRecord
         {
             PreparationId = Guid.NewGuid(),
             ExperimentJobId = experimentJobId,
+            Revision = revision,
+            WorkflowId = scopePin.WorkflowId,
+            WorkflowVersion = scopePin.WorkflowVersion,
+            ScheduleEntryId = scopePin.ScheduleEntryId,
             DeviceId = normalized.DeviceId,
             VendorTaskNo = vendorTaskNo,
             VerificationId = verification.VerificationId,
@@ -131,7 +141,14 @@ internal sealed class ExperimentWorkstationPreparationService(
                     ? ExperimentWorkstationPreparationIssueCodes.ImportOutcomeUnknown
                     : ExperimentWorkstationPreparationIssueCodes.VersionConflict);
 
-        await EnsureDeviceAvailableAsync(current.DeviceId, current.PreparationId, cancellationToken);
+        await EnsureNoUnresolvedPreparationAsync(experimentJobId, current.DeviceId, current.PreparationId, cancellationToken);
+        var scopePin = await RequirePreparationScopeAsync(job, current.DeviceId, cancellationToken);
+        if (current.WorkflowId != scopePin.WorkflowId ||
+            current.WorkflowVersion != scopePin.WorkflowVersion ||
+            current.ScheduleEntryId != scopePin.ScheduleEntryId)
+            throw Conflict("The job workflow or scheduled workstation changed after preparation; prepare a new task after resolving any uncertain import.",
+                ExperimentWorkstationPreparationIssueCodes.RuntimeBindingInvalid);
+        await EnsureDeviceAvailableAsync(current.DeviceId, cancellationToken);
         _ = await verificationGate.RequireVerifiedCurrentWhileMutationGateHeldAsync(
             experimentJobId,
             current.VerificationRevision,
@@ -192,9 +209,90 @@ internal sealed class ExperimentWorkstationPreparationService(
         }
     }, cancellationToken);
 
-    private async Task EnsureDeviceAvailableAsync(
+    private async Task EnsureNoUnresolvedPreparationAsync(
+        Guid experimentJobId,
         string deviceId,
         Guid? ownPreparationId,
+        CancellationToken cancellationToken)
+    {
+        var unresolvedStatuses = new[]
+        {
+            ExperimentWorkstationPreparationStatus.Importing.ToString(),
+            ExperimentWorkstationPreparationStatus.Unknown.ToString()
+        };
+        var normalizedDeviceId = deviceId.ToUpper();
+        var unresolved = await database.ExperimentWorkstationPreparations.AsNoTracking()
+            .Where(preparation =>
+                (!ownPreparationId.HasValue || preparation.PreparationId != ownPreparationId.Value) &&
+                unresolvedStatuses.Contains(preparation.Status) &&
+                (preparation.ExperimentJobId == experimentJobId ||
+                 preparation.DeviceId.ToUpper() == normalizedDeviceId))
+            .OrderByDescending(preparation => preparation.Revision)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (unresolved is null) return;
+        var unknown = string.Equals(
+            unresolved.Status,
+            ExperimentWorkstationPreparationStatus.Unknown.ToString(),
+            StringComparison.Ordinal);
+        throw Conflict(
+            $"Preparation '{unresolved.PreparationId}' remains {unresolved.Status}; resolve it before preparing or importing another task for this job or device.",
+            unknown
+                ? ExperimentWorkstationPreparationIssueCodes.ImportOutcomeUnknown
+                : ExperimentWorkstationPreparationIssueCodes.DeviceBusy);
+    }
+
+    private async Task<PreparationScopePin> RequirePreparationScopeAsync(
+        ExperimentJobRecord job,
+        string deviceId,
+        CancellationToken cancellationToken)
+    {
+        var workflow = await database.WorkflowVersions.AsNoTracking().SingleOrDefaultAsync(
+            item => item.WorkflowId == job.WorkflowId && item.Version == job.WorkflowVersion,
+            cancellationToken);
+        if (workflow is null ||
+            !string.Equals(workflow.Status, WorkflowVersionStatus.Published.ToString(), StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(workflow.PublishStatus, WorkflowPublishStatus.Published.ToString(), StringComparison.OrdinalIgnoreCase))
+            throw Conflict("The job's fixed workflow version is missing or not published.",
+                ExperimentWorkstationPreparationIssueCodes.RuntimeBindingInvalid);
+        var workstationNodes = WorkflowPersistence.DeserializeDefinition(workflow.DefinitionJson).Nodes
+            .Where(node => string.Equals(
+                node.NodeTypeId,
+                WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask,
+                StringComparison.Ordinal))
+            .ToArray();
+        if (workstationNodes.Length != 1 ||
+            !workstationNodes[0].Configuration.TryGetValue(WorkflowNodeConfigurationKeys.DeviceId, out var configuredDeviceId) ||
+            !string.Equals(configuredDeviceId?.Trim(), deviceId, StringComparison.OrdinalIgnoreCase))
+            throw Conflict("Preparation requires exactly one workstation node fixed to the requested device.",
+                ExperimentWorkstationPreparationIssueCodes.RuntimeBindingInvalid);
+
+        var schedules = await database.ScheduleEntries.AsNoTracking()
+            .Where(entry => entry.ExperimentJobId == job.JobId)
+            .ToListAsync(cancellationToken);
+        if (schedules.Count != 1 ||
+            !string.Equals(schedules[0].Status, ScheduleEntryStatus.Scheduled.ToString(), StringComparison.Ordinal))
+            throw Conflict("Preparation requires exactly one Scheduled entry for the job.",
+                ExperimentWorkstationPreparationIssueCodes.RuntimeBindingInvalid);
+        var workstationResources = ExperimentSchedulingPersistence.Deserialize(
+                schedules[0].RequestedResourcesJson,
+                Array.Empty<ExperimentResourceReference>())
+            .Where(resource => string.Equals(
+                resource.ResourceType,
+                ExperimentResourceTypeIds.Workstation,
+                StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (workstationResources.Length != 1 ||
+            !string.Equals(workstationResources[0].ResourceId, deviceId, StringComparison.OrdinalIgnoreCase))
+            throw Conflict("The scheduled workstation does not match the requested preparation device.",
+                ExperimentWorkstationPreparationIssueCodes.RuntimeBindingInvalid);
+        return new PreparationScopePin(
+            workflow.WorkflowId,
+            workflow.Version,
+            schedules[0].ScheduleEntryId);
+    }
+
+    private async Task EnsureDeviceAvailableAsync(
+        string deviceId,
         CancellationToken cancellationToken)
     {
         var configured = (profile.WorkflowDevices ?? []).SingleOrDefault(device =>
@@ -222,12 +320,7 @@ internal sealed class ExperimentWorkstationPreparationService(
                 operation.CapabilityId == WorkflowCapabilityIds.SampleWorkstationStartExistingTask &&
                 activeOperationStatuses.Contains(operation.Status),
             cancellationToken);
-        var otherImport = await database.ExperimentWorkstationPreparations.AsNoTracking().AnyAsync(
-            preparation => preparation.DeviceId.ToUpper() == deviceId.ToUpper() &&
-                preparation.PreparationId != ownPreparationId &&
-                preparation.Status == ExperimentWorkstationPreparationStatus.Importing.ToString(),
-            cancellationToken);
-        if (activeLease || activeOperation || otherImport)
+        if (activeLease || activeOperation)
             throw Conflict($"Sample workstation '{deviceId}' is reserved by an active run or import.",
                 ExperimentWorkstationPreparationIssueCodes.DeviceBusy);
     }
@@ -387,6 +480,10 @@ internal sealed class ExperimentWorkstationPreparationService(
             DetailsJson = ExperimentSchedulingPersistence.Serialize(new
             {
                 record.PreparationId,
+                record.Revision,
+                record.WorkflowId,
+                record.WorkflowVersion,
+                record.ScheduleEntryId,
                 record.DeviceId,
                 record.VendorTaskNo,
                 record.VerificationId,
@@ -445,8 +542,7 @@ internal sealed class ExperimentWorkstationPreparationService(
             ? database.ExperimentWorkstationPreparations.AsQueryable()
             : database.ExperimentWorkstationPreparations.AsNoTracking();
         return query.Where(item => item.ExperimentJobId == experimentJobId)
-            .OrderByDescending(item => item.PreparedAtUtc)
-            .ThenByDescending(item => item.PreparationId)
+            .OrderByDescending(item => item.Revision)
             .FirstOrDefaultAsync(cancellationToken);
     }
 
@@ -489,6 +585,10 @@ internal sealed class ExperimentWorkstationPreparationService(
     {
         PreparationId = record.PreparationId,
         ExperimentJobId = record.ExperimentJobId,
+        Revision = record.Revision,
+        WorkflowId = record.WorkflowId,
+        WorkflowVersion = record.WorkflowVersion,
+        ScheduleEntryId = record.ScheduleEntryId,
         DeviceId = record.DeviceId,
         VendorTaskNo = record.VendorTaskNo,
         VerificationId = record.VerificationId,
@@ -534,4 +634,5 @@ internal sealed class ExperimentWorkstationPreparationService(
     }
 
     private sealed record Metadata(Guid RequestId, string Actor, string Reason);
+    private sealed record PreparationScopePin(Guid WorkflowId, int WorkflowVersion, Guid ScheduleEntryId);
 }

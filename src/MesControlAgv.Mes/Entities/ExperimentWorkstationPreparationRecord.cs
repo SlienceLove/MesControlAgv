@@ -4,6 +4,10 @@ public sealed class ExperimentWorkstationPreparationRecord
 {
     public Guid PreparationId { get; set; }
     public Guid ExperimentJobId { get; set; }
+    public long Revision { get; set; }
+    public Guid WorkflowId { get; set; }
+    public int WorkflowVersion { get; set; }
+    public Guid ScheduleEntryId { get; set; }
     public string DeviceId { get; set; } = string.Empty;
     public string VendorTaskNo { get; set; } = string.Empty;
     public Guid VerificationId { get; set; }

@@ -98,6 +98,10 @@ public sealed record ExperimentWorkstationPreparation
 {
     Guid PreparationId;
     Guid ExperimentJobId;
+    long Revision;
+    Guid WorkflowId;
+    int WorkflowVersion;
+    Guid ScheduleEntryId;
     string DeviceId;
     string VendorTaskNo;
     Guid VerificationId;
@@ -121,7 +125,8 @@ public sealed record ExperimentWorkstationPreparation
 
 Suggested WPF button rules:
 
-- Save/prepare only with a current `Verified` sample snapshot and explicit bindings for slots 1 and 2.
+- Save/prepare only after the job has exactly one `Scheduled` entry whose workstation matches the sole fixed workstation node, and with a current `Verified` sample snapshot plus explicit bindings for slots 1 and 2.
+- Treat `Revision` as the monotonic preparation version used to identify the current record. Showing it to the operator is optional, but stale async results should compare it (and `PreparationId`) before replacing UI state.
 - Disable import while local edits are dirty; backend still treats persisted preparation as authoritative.
 - Enable import only for `Prepared` current records.
 - Enable job admission only for `Imported` current records. `Importing` and `Unknown` require operator/manual reconciliation; there is intentionally no retry/reconcile command in this task.
@@ -141,3 +146,27 @@ All tests use local temporary SQLite databases and in-process workstation fakes;
 
 - `Importing` after a process crash and `Unknown` after uncertain/partial I/O intentionally remain fail-closed. A future manually authorized reconciliation feature may inspect the instrument and append a resolution, but automatic retry is unsafe and is not implemented here.
 - The WPF should display the two barcode slots separately from used-template provenance so `IsUsedByTemplate=false` is not presented as a dispensed source.
+
+## Fix round 1 (review findings 1, 2, and 4)
+
+- `Importing` and `Unknown` now block every new prepare/import that shares either the experiment job or workstation device. An uncertain job cannot bypass the gate by creating a preparation for another device, and another job cannot reuse a device with unresolved write evidence.
+- Prepare validates the job's published fixed workflow, exactly one workstation node/device, and exactly one matching `Scheduled` entry before the read-only template call. The preparation persistently pins `WorkflowId`, `WorkflowVersion`, and `ScheduleEntryId`; import revalidates all three before external I/O, and admission rechecks the pins.
+- `Revision` is a monotonic per-job value and is the sole current-record ordering key. The additive startup upgrade adds the pin/revision columns, deterministically backfills legacy revisions by `PreparedAtUtc` then SQLite insertion order, and adds the unique `(ExperimentJobId, Revision)` index.
+- Approved optional editable `Transfers` behavior is unchanged.
+
+Exact covering tests:
+
+- `Partial_barcode_update_failure_becomes_unknown_and_blocks_import_reissue_and_admission` covers `Unknown` blocking a new preparation requested for another device, with no extra template/import/barcode/start call.
+- `Preparation_scope_is_pinned_and_drift_rejects_before_adapter_io` covers wrong-device prepare rejection before template read, persisted workflow/schedule pins, and schedule drift rejection before import/barcode I/O.
+- `Fixed_clock_consecutive_preparations_use_monotonic_revision_for_current` covers equal `PreparedAt` values, revisions 1/2, and revision 2 returned as current.
+- `Existing_experiment_database_adds_sample_verification_tables_and_retains_prior_records` covers the additive legacy-table upgrade, pin columns, deterministic revision backfill `[1, 2]`, and the new unique index.
+- Existing workstation business-chain tests continue to cover import/readback/barcode update without start, replay, snapshot drift, prepared runtime binding, actual barcode start, and legacy task-number-only execution.
+
+Fix verification commands and output:
+
+- `dotnet build src/MesControlAgv.Mes/MesControlAgv.Mes.csproj --no-restore` — passed, 0 warnings/errors.
+- `dotnet test tests/MesControlAgv.Mes.Tests/MesControlAgv.Mes.Tests.csproj --no-restore --filter "FullyQualifiedName~ExperimentSampleWorkstationBusinessChainTests|FullyQualifiedName~WorkflowRuntimeSchemaUpgradeTests.Existing_experiment_database|FullyQualifiedName~WorkflowRuntimeSchemaUpgradeTests.Fresh_database"` — passed, 15/15.
+- `dotnet test tests/MesControlAgv.Mes.Tests/MesControlAgv.Mes.Tests.csproj --no-restore` — passed, 371/371.
+- `dotnet test tests/MesControlAgv.WorkflowContract.Tests/MesControlAgv.WorkflowContract.Tests.csproj --no-restore` — passed, 74/74.
+
+No real adapter endpoint, IP, service, or device was contacted.

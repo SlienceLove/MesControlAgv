@@ -98,7 +98,8 @@ public sealed class WorkflowRuntimeSchemaUpgradeTests
 
             database.ExperimentWorkstationPreparations.Add(new ExperimentWorkstationPreparationRecord
             {
-                PreparationId = Guid.NewGuid(), ExperimentJobId = jobId, DeviceId = "WS-01",
+                PreparationId = Guid.NewGuid(), ExperimentJobId = jobId, Revision = 1,
+                WorkflowId = Guid.NewGuid(), WorkflowVersion = 1, ScheduleEntryId = Guid.NewGuid(), DeviceId = "WS-01",
                 VendorTaskNo = "MES-APPEND-ONLY", VerificationId = Guid.NewGuid(), VerificationRevision = 1,
                 VerificationSnapshotHash = "verification-hash", PayloadJson = "{}", PayloadHash = "payload-hash",
                 Status = "Prepared", PreparedRequestId = Guid.NewGuid(), PreparedAtUtc = now
@@ -213,6 +214,42 @@ public sealed class WorkflowRuntimeSchemaUpgradeTests
                 });
                 await setup.SaveChangesAsync();
                 await setup.Database.ExecuteSqlRawAsync("DROP TABLE ExperimentWorkstationPreparations;");
+                await setup.Database.ExecuteSqlRawAsync(
+                    """
+                    CREATE TABLE ExperimentWorkstationPreparations (
+                        PreparationId TEXT NOT NULL PRIMARY KEY,
+                        ExperimentJobId TEXT NOT NULL,
+                        DeviceId TEXT NOT NULL,
+                        VendorTaskNo TEXT NOT NULL,
+                        VerificationId TEXT NOT NULL,
+                        VerificationRevision INTEGER NOT NULL,
+                        VerificationSnapshotHash TEXT NOT NULL,
+                        PayloadJson TEXT NOT NULL,
+                        PayloadHash TEXT NOT NULL,
+                        Status TEXT NOT NULL,
+                        PreparedRequestId TEXT NOT NULL,
+                        ImportRequestId TEXT NULL,
+                        PreparedAtUtc TEXT NOT NULL,
+                        ImportingAtUtc TEXT NULL,
+                        ImportedAtUtc TEXT NULL,
+                        UnknownAtUtc TEXT NULL,
+                        LastError TEXT NULL
+                    );
+                    """);
+                var samePreparedAt = new DateTime(2026, 9, 18, 10, 0, 0, DateTimeKind.Utc);
+                foreach (var taskNo in new[] { "LEGACY-PREP-1", "LEGACY-PREP-2" })
+                {
+                    await setup.Database.ExecuteSqlRawAsync(
+                        """
+                        INSERT INTO ExperimentWorkstationPreparations (
+                            PreparationId, ExperimentJobId, DeviceId, VendorTaskNo,
+                            VerificationId, VerificationRevision, VerificationSnapshotHash,
+                            PayloadJson, PayloadHash, Status, PreparedRequestId, PreparedAtUtc)
+                        VALUES ({0}, {1}, {2}, {3}, {4}, 1, {5}, {6}, {7}, {8}, {9}, {10});
+                        """,
+                        Guid.NewGuid(), jobId, "WS-01", taskNo, Guid.NewGuid(),
+                        "legacy-verification", "{}", "legacy-payload", "Prepared", Guid.NewGuid(), samePreparedAt);
+                }
                 await setup.Database.ExecuteSqlRawAsync("DROP TABLE ExperimentSampleVerifications;");
                 await setup.Database.ExecuteSqlRawAsync("DROP TABLE ExperimentSamples;");
             }
@@ -234,7 +271,19 @@ public sealed class WorkflowRuntimeSchemaUpgradeTests
                 Assert.Contains("IX_ExperimentSamples_NormalizedBarcode", indexes);
                 Assert.Contains("IX_ExperimentSampleVerifications_ExperimentJobId_Revision", indexes);
                 Assert.Contains("IX_ExperimentWorkstationPreparations_VendorTaskNo", indexes);
+                Assert.Contains("IX_ExperimentWorkstationPreparations_ExperimentJobId_Revision", indexes);
                 Assert.Contains("IX_ExperimentWorkstationPreparations_ExperimentJobId_PreparedAtUtc", indexes);
+                var preparationColumns = await ReadNamesAsync(connection, "SELECT name FROM pragma_table_info('ExperimentWorkstationPreparations');");
+                Assert.Contains("Revision", preparationColumns);
+                Assert.Contains("WorkflowId", preparationColumns);
+                Assert.Contains("WorkflowVersion", preparationColumns);
+                Assert.Contains("ScheduleEntryId", preparationColumns);
+                await using var revisions = connection.CreateCommand();
+                revisions.CommandText = "SELECT Revision FROM ExperimentWorkstationPreparations ORDER BY rowid;";
+                var backfilled = new List<long>();
+                await using (var reader = await revisions.ExecuteReaderAsync())
+                    while (await reader.ReadAsync()) backfilled.Add(reader.GetInt64(0));
+                Assert.Equal([1L, 2L], backfilled);
 
                 await using var count = connection.CreateCommand();
                 count.CommandText = "SELECT COUNT(*) FROM ExperimentPlans;";

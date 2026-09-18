@@ -284,6 +284,7 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.Property(preparation => preparation.Status).HasMaxLength(32);
             entity.Property(preparation => preparation.LastError).HasMaxLength(2048);
             entity.HasIndex(preparation => preparation.VendorTaskNo).IsUnique();
+            entity.HasIndex(preparation => new { preparation.ExperimentJobId, preparation.Revision }).IsUnique();
             entity.HasIndex(preparation => new { preparation.ExperimentJobId, preparation.PreparedAtUtc });
             entity.HasIndex(preparation => new { preparation.DeviceId, preparation.Status, preparation.PreparedAtUtc });
         });
@@ -467,6 +468,10 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
                 entry.State == EntityState.Deleted ||
                 (entry.State == EntityState.Modified &&
                  (entry.Property(preparation => preparation.ExperimentJobId).IsModified ||
+                  entry.Property(preparation => preparation.Revision).IsModified ||
+                  entry.Property(preparation => preparation.WorkflowId).IsModified ||
+                  entry.Property(preparation => preparation.WorkflowVersion).IsModified ||
+                  entry.Property(preparation => preparation.ScheduleEntryId).IsModified ||
                   entry.Property(preparation => preparation.DeviceId).IsModified ||
                   entry.Property(preparation => preparation.VendorTaskNo).IsModified ||
                   entry.Property(preparation => preparation.VerificationId).IsModified ||

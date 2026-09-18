@@ -732,6 +732,10 @@ static async Task EnsureExperimentSchedulingTablesAsync(MesDbContext database)
         CREATE TABLE IF NOT EXISTS ExperimentWorkstationPreparations (
             PreparationId TEXT NOT NULL PRIMARY KEY,
             ExperimentJobId TEXT NOT NULL,
+            Revision INTEGER NOT NULL,
+            WorkflowId TEXT NOT NULL,
+            WorkflowVersion INTEGER NOT NULL,
+            ScheduleEntryId TEXT NOT NULL,
             DeviceId TEXT NOT NULL,
             VendorTaskNo TEXT NOT NULL,
             VerificationId TEXT NOT NULL,
@@ -827,6 +831,7 @@ static async Task EnsureExperimentSchedulingTablesAsync(MesDbContext database)
     }
 
     await EnsureExperimentSchedulingColumnsAsync(connection);
+    await BackfillWorkstationPreparationRevisionsAsync(connection);
 
     var indexStatements = new[]
     {
@@ -841,6 +846,7 @@ static async Task EnsureExperimentSchedulingTablesAsync(MesDbContext database)
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentSampleVerifications_ExperimentJobId_Revision ON ExperimentSampleVerifications (ExperimentJobId, Revision);",
         "CREATE INDEX IF NOT EXISTS IX_ExperimentSampleVerifications_ExperimentJobId_Status_UpdatedAtUtc ON ExperimentSampleVerifications (ExperimentJobId, Status, UpdatedAtUtc);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentWorkstationPreparations_VendorTaskNo ON ExperimentWorkstationPreparations (VendorTaskNo);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentWorkstationPreparations_ExperimentJobId_Revision ON ExperimentWorkstationPreparations (ExperimentJobId, Revision);",
         "CREATE INDEX IF NOT EXISTS IX_ExperimentWorkstationPreparations_ExperimentJobId_PreparedAtUtc ON ExperimentWorkstationPreparations (ExperimentJobId, PreparedAtUtc);",
         "CREATE INDEX IF NOT EXISTS IX_ExperimentWorkstationPreparations_DeviceId_Status_PreparedAtUtc ON ExperimentWorkstationPreparations (DeviceId, Status, PreparedAtUtc);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentRuns_ExperimentJobId ON ExperimentRuns (ExperimentJobId);",
@@ -890,6 +896,45 @@ static async Task EnsureExperimentSchedulingColumnsAsync(System.Data.Common.DbCo
         [
             (Name: "WorkflowStepsJson", Sql: "TEXT NOT NULL DEFAULT '[]'")
         ]);
+    await EnsureColumnsAsync(
+        connection,
+        "ExperimentWorkstationPreparations",
+        [
+            (Name: "Revision", Sql: "INTEGER NOT NULL DEFAULT 0"),
+            (Name: "WorkflowId", Sql: "TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'"),
+            (Name: "WorkflowVersion", Sql: "INTEGER NOT NULL DEFAULT 0"),
+            (Name: "ScheduleEntryId", Sql: "TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'")
+        ]);
+}
+
+static async Task BackfillWorkstationPreparationRevisionsAsync(System.Data.Common.DbConnection connection)
+{
+    await using var command = connection.CreateCommand();
+    command.CommandText =
+        """
+        WITH ranked AS (
+            SELECT legacy.PreparationId,
+                   COALESCE((
+                       SELECT MAX(existing.Revision)
+                       FROM ExperimentWorkstationPreparations AS existing
+                       WHERE existing.ExperimentJobId = legacy.ExperimentJobId
+                         AND existing.Revision > 0
+                   ), 0) + ROW_NUMBER() OVER (
+                       PARTITION BY legacy.ExperimentJobId
+                       ORDER BY legacy.PreparedAtUtc, legacy.rowid
+                   ) AS BackfilledRevision
+            FROM ExperimentWorkstationPreparations AS legacy
+            WHERE legacy.Revision = 0
+        )
+        UPDATE ExperimentWorkstationPreparations
+        SET Revision = (
+            SELECT ranked.BackfilledRevision
+            FROM ranked
+            WHERE ranked.PreparationId = ExperimentWorkstationPreparations.PreparationId
+        )
+        WHERE Revision = 0;
+        """;
+    await command.ExecuteNonQueryAsync();
 }
 
 static async Task EnsureColumnsAsync(
