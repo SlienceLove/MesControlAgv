@@ -54,6 +54,7 @@ public sealed class ExperimentWorkstationPreparationViewModel : ExperimentBindab
     public bool RequiresPreparation { get => _isRequired; private set { if (SetField(ref _isRequired, value)) RaiseStates(); } }
     public bool IsResolved { get => _isResolved; private set { if (SetField(ref _isResolved, value)) RaiseStates(); } }
     public bool IsDirty { get => _isDirty; private set { if (SetField(ref _isDirty, value)) RaiseStates(); } }
+    public bool CanEdit => CanMutate && !IsBusy;
     public string DeviceId { get => _deviceId; private set => SetField(ref _deviceId, value); }
     public string SourceTaskNo { get => _sourceTaskNo; private set => SetField(ref _sourceTaskNo, value); }
     public string Message { get => _message; private set => SetField(ref _message, value); }
@@ -102,12 +103,12 @@ public sealed class ExperimentWorkstationPreparationViewModel : ExperimentBindab
             Preparation = current;
             if (current is not null) { RequiresPreparation = true; IsTemplateMode = true; ApplyPrepared(current); }
             if (generation == _generation) Message = current is null ? "Legacy mode: explicitly choose new template preparation when required." : $"Current preparation: {PreparationStatus}.";
+            IsResolved = true;
         }
         catch (Exception exception)
         {
             if (generation == _generation && _jobId == job.JobId) Message = exception.Message;
         }
-        finally { if (generation == _generation) IsResolved = true; }
     }
 
     public async Task LoadTemplateAsync() => await LoadTemplateAsync(_generation, CancellationToken.None);
@@ -136,7 +137,7 @@ public sealed class ExperimentWorkstationPreparationViewModel : ExperimentBindab
 
     public async Task SaveAsync()
     {
-        if (_jobId is not { } jobId || _verification is null) return;
+        if (!CanSave || _jobId is not { } jobId || _verification is null) return;
         var generation = _generation;
         var verification = _verification;
         IsBusy = true;
@@ -158,7 +159,7 @@ public sealed class ExperimentWorkstationPreparationViewModel : ExperimentBindab
 
     public async Task ImportAsync()
     {
-        if (_jobId is not { } jobId || Preparation is null) return;
+        if (!CanImport || _jobId is not { } jobId || Preparation is null) return;
         var preparationId = Preparation.PreparationId;
         var revision = Preparation.Revision;
         var generation = _generation;
@@ -201,7 +202,7 @@ public sealed class ExperimentWorkstationPreparationViewModel : ExperimentBindab
         RaiseStates();
     }
     private void Reset() { IsBusy = false; IsApplicable = false; CanMutate = false; IsTemplateMode = false; RequiresPreparation = false; IsResolved = false; IsDirty = false; Preparation = null; Transfers.Clear(); SourceKeys.Clear(); BottleBindings.Clear(); VerifiedSamples.Clear(); }
-    private void RaiseStates() { OnPropertyChanged(nameof(CanSave)); OnPropertyChanged(nameof(CanImport)); OnPropertyChanged(nameof(IsVerificationCurrent)); OnPropertyChanged(nameof(BlocksNewTemplateMode)); _saveCommand.RaiseCanExecuteChanged(); _importCommand.RaiseCanExecuteChanged(); _beginTemplateModeCommand.RaiseCanExecuteChanged(); }
+    private void RaiseStates() { OnPropertyChanged(nameof(CanEdit)); OnPropertyChanged(nameof(CanSave)); OnPropertyChanged(nameof(CanImport)); OnPropertyChanged(nameof(IsVerificationCurrent)); OnPropertyChanged(nameof(BlocksNewTemplateMode)); _saveCommand.RaiseCanExecuteChanged(); _importCommand.RaiseCanExecuteChanged(); _beginTemplateModeCommand.RaiseCanExecuteChanged(); }
     private static string Read(WorkflowNode node, string key) => node.Configuration.TryGetValue(key, out var value) ? value?.Trim() ?? string.Empty : string.Empty;
 }
 

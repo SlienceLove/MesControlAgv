@@ -72,7 +72,10 @@ public sealed class ExperimentPlanningViewBindingTests
                 Assert.False(Assert.IsType<Expander>(schedulingView.FindName("WorkstationPreparationPanel")).IsExpanded);
                 Assert.Same(scheduling.WorkstationPreparation.SaveCommand, Assert.IsType<Button>(schedulingView.FindName("SaveWorkstationPreparationButton")).Command);
                 Assert.Same(scheduling.WorkstationPreparation.ImportCommand, Assert.IsType<Button>(schedulingView.FindName("ImportWorkstationPreparationButton")).Command);
-                Assert.Empty(Assert.IsType<DataGrid>(schedulingView.FindName("WorkstationTransferGrid")).Items);
+                var workstationTransfers = Assert.IsType<DataGrid>(schedulingView.FindName("WorkstationTransferGrid"));
+                Assert.Equal(nameof(ExperimentWorkstationPreparationViewModel.CanEdit), workstationTransfers.GetBindingExpression(UIElement.IsEnabledProperty)!.ParentBinding.Path.Path);
+                Assert.Equal(scheduling.WorkstationPreparation.CanEdit, workstationTransfers.IsEnabled);
+                Assert.Empty(workstationTransfers.Items);
                 var focusButton = Assert.IsType<ToggleButton>(schedulingView.FindName("TimelineFocusButton"));
                 Assert.Equal(scheduling.TimelineFocusButtonText, focusButton.Content);
                 Assert.Single(Assert.IsType<DataGrid>(schedulingView.FindName("TaskPoolGrid")).Items);

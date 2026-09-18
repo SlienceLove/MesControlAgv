@@ -532,7 +532,7 @@
                         </StackPanel>
                         <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
                             <DataGrid x:Name="WorkstationTransferGrid" AutomationProperties.AutomationId="ExperimentWorkstationTransferGrid"
-                                      AutoGenerateColumns="False" CanUserAddRows="False" ItemsSource="{Binding Transfers}">
+                                      AutoGenerateColumns="False" CanUserAddRows="False" IsEnabled="{Binding CanEdit}" ItemsSource="{Binding Transfers}">
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Width="*" Header="来源" Binding="{Binding Source}" IsReadOnly="True" />
                                     <DataGridTextColumn Width="*" Header="来源ID / 条码" Binding="{Binding SourceIdentity}" IsReadOnly="True" />
@@ -543,7 +543,7 @@
                                 </DataGrid.Columns>
                             </DataGrid>
                         </ScrollViewer>
-                        <ItemsControl Grid.Row="3" ItemsSource="{Binding BottleBindings}">
+                        <ItemsControl Grid.Row="3" IsEnabled="{Binding CanEdit}" ItemsSource="{Binding BottleBindings}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
                                     <Grid Margin="0,2">

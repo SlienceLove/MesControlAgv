@@ -1,3 +1,4 @@
+using MesControlAgv.Contracts;
 using MesControlAgv.Contracts.Experiments;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Wpf.Services;
@@ -935,6 +936,131 @@ public sealed class ExperimentSchedulingViewModelTests
         Assert.False(viewModel.IsBusy);
     }
 
+    [Fact]
+    public async Task Configured_legacy_preparation_lookup_blocks_admission_while_pending_and_after_failure_but_confirmed_absence_restores_it()
+    {
+        var fixture = SchedulingFixture.Create();
+        fixture.Client.ConfigureWorkstationPreparation = true;
+        var job = fixture.Client.AddJob("B-PREPARATION-LOOKUP", ExperimentJobStatus.Scheduled, workstation: true);
+        fixture.Client.SetSchedule(Schedule(job.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        fixture.Client.SetVerification(job.JobId, fixture.Client.CreateVerification(job, ExperimentSampleVerificationStatus.Verified));
+        fixture.Client.HoldCurrentPreparationRequest();
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Configured legacy lookup gate";
+
+        var refresh = viewModel.RefreshAsync(job.JobId);
+        await fixture.Client.CurrentPreparationRequested!.Task;
+        Assert.True(viewModel.WorkstationPreparation.IsApplicable);
+        Assert.False(viewModel.WorkstationPreparation.IsResolved);
+        Assert.False(viewModel.CanAdmit);
+        Assert.False(viewModel.AdmitCommand.CanExecute(null));
+        Assert.Equal(0, fixture.Client.AdmitCalls);
+
+        fixture.Client.FailCurrentPreparationRequest(new InvalidOperationException("current preparation failed"));
+        await refresh;
+        Assert.False(viewModel.WorkstationPreparation.IsResolved);
+        Assert.False(viewModel.CanAdmit);
+        Assert.False(viewModel.AdmitCommand.CanExecute(null));
+        Assert.Contains("current preparation failed", viewModel.WorkstationPreparation.Message, StringComparison.Ordinal);
+
+        fixture.Client.ClearCurrentPreparationHold();
+        await viewModel.RefreshAsync(job.JobId);
+        Assert.True(viewModel.WorkstationPreparation.IsResolved);
+        Assert.False(viewModel.WorkstationPreparation.RequiresPreparation);
+        Assert.True(viewModel.CanAdmit);
+        Assert.True(viewModel.AdmitCommand.CanExecute(null));
+        Assert.Equal(0, fixture.Client.AdmitCalls);
+        Assert.Equal(0, fixture.Client.WorkflowExecuteCalls);
+        Assert.Equal(0, fixture.Client.DeviceCommandCalls);
+    }
+
+    [Fact]
+    public async Task Imported_matching_preparation_allows_admission_but_each_pin_or_dirty_transfer_independently_blocks_without_actions()
+    {
+        var fixture = SchedulingFixture.Create();
+        fixture.Client.ConfigureWorkstationPreparation = true;
+        var job = fixture.Client.AddJob("B-IMPORTED-GATES", ExperimentJobStatus.Scheduled, workstation: true);
+        fixture.Client.SetSchedule(Schedule(job.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        var verified = fixture.Client.CreateVerification(job, ExperimentSampleVerificationStatus.Verified);
+        fixture.Client.SetVerification(job.JobId, verified);
+        fixture.Client.SetPreparation(job.JobId, fixture.Client.CreatePreparation(job, verified, ExperimentWorkstationPreparationStatus.Imported));
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Imported preparation gates";
+
+        await viewModel.RefreshAsync(job.JobId);
+        Assert.True(viewModel.WorkstationPreparation.IsVerificationCurrent);
+        Assert.True(viewModel.CanAdmit);
+
+        foreach (var drifted in new[]
+                 {
+                     verified with { VerificationId = Guid.NewGuid() },
+                     verified with { Revision = verified.Revision + 1 },
+                     verified with { SnapshotHash = verified.SnapshotHash + "-changed" }
+                 })
+        {
+            fixture.Client.SetVerification(job.JobId, drifted);
+            await viewModel.RefreshAsync(job.JobId);
+            Assert.False(viewModel.WorkstationPreparation.IsVerificationCurrent);
+            Assert.False(viewModel.CanAdmit);
+            fixture.Client.SetVerification(job.JobId, verified);
+            await viewModel.RefreshAsync(job.JobId);
+            Assert.True(viewModel.CanAdmit);
+        }
+
+        Assert.NotEmpty(viewModel.WorkstationPreparation.Transfers);
+        viewModel.WorkstationPreparation.Transfers[0].VolumeMicroliters++;
+        Assert.True(viewModel.WorkstationPreparation.IsDirty);
+        Assert.False(viewModel.CanAdmit);
+        await viewModel.RefreshAsync(job.JobId);
+        Assert.False(viewModel.WorkstationPreparation.IsDirty);
+        Assert.True(viewModel.CanAdmit);
+        Assert.Equal(0, fixture.Client.AdmitCalls);
+        Assert.Equal(0, fixture.Client.WorkflowExecuteCalls);
+        Assert.Equal(0, fixture.Client.DeviceCommandCalls);
+    }
+
+    [Fact]
+    public async Task Blank_sample_registration_keeps_one_identity_across_snapshot_failure_retry_and_later_row_edit()
+    {
+        var fixture = SchedulingFixture.Create();
+        var job = fixture.Client.AddJob("B-STABLE-BLANK", ExperimentJobStatus.Scheduled, workstation: true);
+        fixture.Client.SetSchedule(Schedule(job.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Stable generated identity";
+        await viewModel.RefreshAsync(job.JobId);
+        viewModel.VerificationSamplePosition = "A01";
+        viewModel.VerificationSampleOrder = 1;
+        fixture.Client.SnapshotSaveException = new InvalidOperationException("snapshot stage failed");
+
+        await viewModel.SaveSampleRowAsync();
+
+        var first = Assert.Single(fixture.Client.SampleSaveHistory);
+        Assert.NotEqual(Guid.Empty, first.Sample.SampleId);
+        Assert.False(string.IsNullOrWhiteSpace(first.Sample.BusinessSampleId));
+        Assert.False(string.IsNullOrWhiteSpace(first.Sample.Barcode));
+        Assert.Contains("snapshot stage failed", viewModel.ErrorMessage, StringComparison.Ordinal);
+
+        fixture.Client.SnapshotSaveException = null;
+        await viewModel.SaveSampleRowAsync();
+        var second = fixture.Client.SampleSaveHistory[1];
+        Assert.Equal(first.Sample.SampleId, second.Sample.SampleId);
+        Assert.Equal(first.Sample.BusinessSampleId, second.Sample.BusinessSampleId);
+        Assert.Equal(first.Sample.Barcode, second.Sample.Barcode);
+        Assert.Equal(1, fixture.Client.RegisteredSampleCount);
+        Assert.Single(viewModel.SampleVerificationRows);
+
+        viewModel.VerificationSamplePosition = "A02";
+        await viewModel.SaveSampleRowAsync();
+        var third = fixture.Client.SampleSaveHistory[2];
+        Assert.Equal(first.Sample.SampleId, third.Sample.SampleId);
+        Assert.Equal(first.Sample.BusinessSampleId, third.Sample.BusinessSampleId);
+        Assert.Equal(first.Sample.Barcode, third.Sample.Barcode);
+        Assert.Equal(1, fixture.Client.RegisteredSampleCount);
+        var finalRow = Assert.Single(fixture.Client.LastSavedVerificationRows!);
+        Assert.Equal(first.Sample.SampleId, finalRow.SampleId);
+        Assert.Equal("A02", finalRow.Position);
+    }
+
     private static ExperimentResourceReference ResourceRef(string type, string id) => new()
     {
         ResourceType = type,
@@ -1018,6 +1144,7 @@ public sealed class ExperimentSchedulingViewModelTests
         private readonly List<ScheduleEntry> _schedules = [];
         private readonly Dictionary<Guid, ExperimentSampleVerification> _verifications = [];
         private readonly Dictionary<Guid, ExperimentSample> _samples = [];
+        private readonly Dictionary<Guid, ExperimentWorkstationPreparation?> _preparations = [];
         private readonly HashSet<Guid> _workstationWorkflowIds = [];
         private readonly ExperimentPlan _plan;
         private readonly ExperimentResourceAvailability _availability;
@@ -1078,11 +1205,31 @@ public sealed class ExperimentSchedulingViewModelTests
         public Exception? SnapshotSaveException { get; set; }
         public bool FailCurrentVerificationReloadAfterSave { get; set; }
         public bool FailSampleReloadAfterSave { get; set; }
+        public bool ConfigureWorkstationPreparation { get; set; }
+        public TaskCompletionSource<ExperimentWorkstationPreparation?>? PendingCurrentPreparation { get; private set; }
+        public TaskCompletionSource<bool>? CurrentPreparationRequested { get; private set; }
+        public List<SaveExperimentSampleRequest> SampleSaveHistory { get; } = [];
+        public int RegisteredSampleCount => _samples.Count;
 
         public void HoldWorkflowVersionRequest()
         {
             PendingWorkflowVersion = new(TaskCreationOptions.RunContinuationsAsynchronously);
             WorkflowVersionRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        public void HoldCurrentPreparationRequest()
+        {
+            PendingCurrentPreparation = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            CurrentPreparationRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        public void FailCurrentPreparationRequest(Exception exception) =>
+            PendingCurrentPreparation!.SetException(exception);
+
+        public void ClearCurrentPreparationHold()
+        {
+            PendingCurrentPreparation = null;
+            CurrentPreparationRequested = null;
         }
 
         public void ReleaseWorkflowVersionRequest(Guid workflowId, int version) =>
@@ -1194,6 +1341,54 @@ public sealed class ExperimentSchedulingViewModelTests
 
         public void SetVerification(Guid jobId, ExperimentSampleVerification verification) => _verifications[jobId] = verification;
 
+        public ExperimentWorkstationPreparation CreatePreparation(
+            ExperimentJob job,
+            ExperimentSampleVerification verification,
+            ExperimentWorkstationPreparationStatus status)
+        {
+            var row = verification.Rows.Single();
+            var sample = _samples[row.SampleId];
+            var transfer = new SampleWorkstationTransferRow("L", "T", 1, 1, "SRC", 1, 1, "OUT", 2, 2, 10);
+            var source = new WorkstationTemplateSourceKey { Module = transfer.SourceModule, X = transfer.SourceX, Y = transfer.SourceY };
+            return new ExperimentWorkstationPreparation
+            {
+                PreparationId = Guid.NewGuid(),
+                ExperimentJobId = job.JobId,
+                Revision = 1,
+                VerificationId = verification.VerificationId,
+                VerificationRevision = verification.Revision,
+                VerificationSnapshotHash = verification.SnapshotHash,
+                Status = status,
+                Payload = new ExperimentWorkstationPreparationPayload
+                {
+                    Transfers = [new PreparedWorkstationTransfer
+                    {
+                        Order = 1, Transfer = transfer, BottleNumber = 1, VerificationRowId = row.RowId,
+                        SourceSampleId = sample.SampleId, SourceBusinessSampleId = sample.BusinessSampleId,
+                        SourceSampleBarcode = sample.Barcode
+                    }],
+                    BottleBindings =
+                    [
+                        new PreparedWorkstationBottleBinding
+                        {
+                            BottleNumber = 1, IsUsedByTemplate = true, TemplateSource = source,
+                            VerificationRowId = row.RowId, SampleId = sample.SampleId,
+                            BusinessSampleId = sample.BusinessSampleId, SampleBarcode = sample.Barcode
+                        },
+                        new PreparedWorkstationBottleBinding
+                        {
+                            BottleNumber = 2, IsUsedByTemplate = false, VerificationRowId = row.RowId,
+                            SampleId = sample.SampleId, BusinessSampleId = sample.BusinessSampleId,
+                            SampleBarcode = sample.Barcode
+                        }
+                    ]
+                }
+            };
+        }
+
+        public void SetPreparation(Guid jobId, ExperimentWorkstationPreparation? preparation) =>
+            _preparations[jobId] = preparation;
+
         public void SetSchedule(ScheduleEntry schedule)
         {
             _schedules.RemoveAll(item => item.ExperimentJobId == schedule.ExperimentJobId);
@@ -1245,7 +1440,17 @@ public sealed class ExperimentSchedulingViewModelTests
             {
                 Id = workflowId,
                 Nodes = _workstationWorkflowIds.Contains(workflowId)
-                    ? [new WorkflowNode { NodeTypeId = WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask }]
+                    ? [new WorkflowNode
+                    {
+                        NodeTypeId = WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask,
+                        Configuration = ConfigureWorkstationPreparation
+                            ? new Dictionary<string, string?>
+                            {
+                                [WorkflowNodeConfigurationKeys.DeviceId] = "WS-1",
+                                [WorkflowNodeConfigurationKeys.TaskNo] = "TASK-1"
+                            }
+                            : new Dictionary<string, string?>()
+                    }]
                     : []
             }
         };
@@ -1262,6 +1467,7 @@ public sealed class ExperimentSchedulingViewModelTests
         public Task<ExperimentSample> SaveExperimentSampleAsync(Guid sampleId, SaveExperimentSampleRequest request, CancellationToken cancellationToken)
         {
             LastSampleSaveRequest = request;
+            SampleSaveHistory.Add(request);
             var sample = request.Sample with { SampleId = sampleId };
             if (PendingSampleSave is not null)
             {
@@ -1279,6 +1485,16 @@ public sealed class ExperimentSchedulingViewModelTests
             if (ThrowOnVerificationProjectionRead || (FailCurrentVerificationReloadAfterSave && LastSavedVerificationRequest is not null))
                 return Task.FromException<ExperimentSampleVerification?>(new InvalidOperationException("verification reload failed"));
             return Task.FromResult(_verifications.GetValueOrDefault(jobId));
+        }
+
+        public Task<ExperimentWorkstationPreparation?> GetCurrentExperimentWorkstationPreparationAsync(Guid jobId, CancellationToken cancellationToken)
+        {
+            if (PendingCurrentPreparation is not null)
+            {
+                CurrentPreparationRequested!.TrySetResult(true);
+                return PendingCurrentPreparation.Task;
+            }
+            return Task.FromResult(_preparations.GetValueOrDefault(jobId));
         }
 
         public Task<ExperimentSampleVerification> SaveCurrentExperimentSampleVerificationAsync(Guid jobId, SaveExperimentSampleVerificationRequest request, CancellationToken cancellationToken)
