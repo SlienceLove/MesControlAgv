@@ -1061,6 +1061,147 @@ public sealed class ExperimentSchedulingViewModelTests
         Assert.Equal("A02", finalRow.Position);
     }
 
+    [Theory]
+    [InlineData("ordinary")]
+    [InlineData("null")]
+    [InlineData("delayed-workstation")]
+    public async Task Selection_transition_synchronously_clears_the_previous_preparation_and_disables_stale_writes(string transition)
+    {
+        var fixture = SchedulingFixture.Create();
+        fixture.Client.ConfigureWorkstationPreparation = true;
+        var a = fixture.Client.AddJob("B-PREP-A", ExperimentJobStatus.Scheduled, workstation: true);
+        var ordinary = fixture.Client.AddJob("B-ORDINARY", ExperimentJobStatus.Ready);
+        var b = fixture.Client.AddJob("B-PREP-B", ExperimentJobStatus.Scheduled, workstation: true);
+        fixture.Client.SetSchedule(Schedule(a.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        fixture.Client.SetSchedule(Schedule(b.JobId, fixture.Resource, fixture.WindowStart.AddHours(2), fixture.WindowStart.AddHours(3), ScheduleEntryStatus.Scheduled));
+        var verificationA = fixture.Client.CreateVerification(a, ExperimentSampleVerificationStatus.Verified);
+        fixture.Client.SetVerification(a.JobId, verificationA);
+        fixture.Client.SetVerification(b.JobId, fixture.Client.CreateVerification(b, ExperimentSampleVerificationStatus.Verified));
+        fixture.Client.SetPreparation(a.JobId, fixture.Client.CreatePreparation(a, verificationA, ExperimentWorkstationPreparationStatus.Prepared));
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Selection invalidation";
+        await viewModel.RefreshAsync(a.JobId);
+        Assert.True(viewModel.WorkstationPreparation.ImportCommand.CanExecute(null));
+
+        Task? delayedRefresh = null;
+        switch (transition)
+        {
+            case "ordinary":
+                viewModel.SelectedJob = viewModel.TaskPool.Single(item => item.JobId == ordinary.JobId);
+                break;
+            case "null":
+                viewModel.SelectedJob = null;
+                break;
+            default:
+                fixture.Client.HoldWorkflowVersionRequest();
+                delayedRefresh = viewModel.RefreshAsync(b.JobId);
+                await fixture.Client.WorkflowVersionRequested!.Task;
+                break;
+        }
+
+        Assert.Null(viewModel.WorkstationPreparation.Preparation);
+        Assert.Empty(viewModel.WorkstationPreparation.Transfers);
+        Assert.False(viewModel.WorkstationPreparation.SaveCommand.CanExecute(null));
+        Assert.False(viewModel.WorkstationPreparation.ImportCommand.CanExecute(null));
+        Assert.False(viewModel.CanAdmit);
+        await viewModel.WorkstationPreparation.SaveAsync();
+        await viewModel.WorkstationPreparation.ImportAsync();
+        Assert.Equal(0, fixture.Client.PrepareCalls);
+        Assert.Equal(0, fixture.Client.ImportCalls);
+
+        if (delayedRefresh is not null)
+        {
+            fixture.Client.ReleaseWorkflowVersionRequest(b.WorkflowId, b.WorkflowVersion);
+            await delayedRefresh;
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Late_A_save_after_selecting_delayed_B_cannot_restore_state_enable_buttons_or_clear_B_ownership(bool staleFailure)
+    {
+        var fixture = SchedulingFixture.Create();
+        fixture.Client.ConfigureWorkstationPreparation = true;
+        var a = fixture.Client.AddJob("B-SAVE-A", ExperimentJobStatus.Scheduled, workstation: true);
+        var b = fixture.Client.AddJob("B-SAVE-B", ExperimentJobStatus.Scheduled, workstation: true);
+        fixture.Client.SetSchedule(Schedule(a.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        fixture.Client.SetSchedule(Schedule(b.JobId, fixture.Resource, fixture.WindowStart.AddHours(2), fixture.WindowStart.AddHours(3), ScheduleEntryStatus.Scheduled));
+        var verificationA = fixture.Client.CreateVerification(a, ExperimentSampleVerificationStatus.Verified);
+        fixture.Client.SetVerification(a.JobId, verificationA);
+        fixture.Client.SetVerification(b.JobId, fixture.Client.CreateVerification(b, ExperimentSampleVerificationStatus.Verified));
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Stale save ownership";
+        await viewModel.RefreshAsync(a.JobId);
+        await viewModel.WorkstationPreparation.BeginTemplateModeAsync();
+        var sample = Assert.Single(viewModel.SampleVerificationRows);
+        viewModel.WorkstationPreparation.BottleBindings[0].SelectedSample = sample;
+        viewModel.WorkstationPreparation.BottleBindings[1].SelectedSample = sample;
+        viewModel.WorkstationPreparation.BottleBindings[0].SelectedSource = Assert.Single(viewModel.WorkstationPreparation.SourceKeys);
+        var pendingSave = fixture.Client.HoldNextPrepare();
+        var save = viewModel.WorkstationPreparation.SaveAsync();
+        await pendingSave.Requested.Task;
+
+        fixture.Client.HoldWorkflowVersionRequest();
+        var refreshB = viewModel.RefreshAsync(b.JobId);
+        await fixture.Client.WorkflowVersionRequested!.Task;
+        Assert.Null(viewModel.WorkstationPreparation.Preparation);
+        Assert.False(viewModel.WorkstationPreparation.IsResolved);
+        Assert.False(viewModel.CanAdmit);
+        var bMessage = viewModel.WorkstationPreparation.Message;
+
+        if (staleFailure) pendingSave.Gate.SetException(new InvalidOperationException("late A save failure"));
+        else pendingSave.Gate.SetResult(fixture.Client.CreatePreparation(a, verificationA, ExperimentWorkstationPreparationStatus.Prepared));
+        await save;
+        Assert.Null(viewModel.WorkstationPreparation.Preparation);
+        Assert.False(viewModel.WorkstationPreparation.SaveCommand.CanExecute(null));
+        Assert.False(viewModel.WorkstationPreparation.ImportCommand.CanExecute(null));
+        Assert.Equal(bMessage, viewModel.WorkstationPreparation.Message);
+        Assert.Equal(1, fixture.Client.PrepareCalls);
+
+        fixture.Client.ReleaseWorkflowVersionRequest(b.WorkflowId, b.WorkflowVersion);
+        await refreshB;
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Late_A_import_after_selecting_ordinary_job_cannot_restore_state_enable_buttons_or_write_again(bool staleFailure)
+    {
+        var fixture = SchedulingFixture.Create();
+        fixture.Client.ConfigureWorkstationPreparation = true;
+        var a = fixture.Client.AddJob("B-IMPORT-A", ExperimentJobStatus.Scheduled, workstation: true);
+        var ordinary = fixture.Client.AddJob("B-IMPORT-ORDINARY", ExperimentJobStatus.Ready);
+        fixture.Client.SetSchedule(Schedule(a.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        var verificationA = fixture.Client.CreateVerification(a, ExperimentSampleVerificationStatus.Verified);
+        var preparationA = fixture.Client.CreatePreparation(a, verificationA, ExperimentWorkstationPreparationStatus.Prepared);
+        fixture.Client.SetVerification(a.JobId, verificationA);
+        fixture.Client.SetPreparation(a.JobId, preparationA);
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Stale import ownership";
+        await viewModel.RefreshAsync(a.JobId);
+        var pendingImport = fixture.Client.HoldNextImport();
+        var import = viewModel.WorkstationPreparation.ImportAsync();
+        await pendingImport.Requested.Task;
+
+        viewModel.SelectedJob = viewModel.TaskPool.Single(item => item.JobId == ordinary.JobId);
+        Assert.Null(viewModel.WorkstationPreparation.Preparation);
+        Assert.False(viewModel.WorkstationPreparation.ImportCommand.CanExecute(null));
+        var ordinaryMessage = viewModel.WorkstationPreparation.Message;
+        if (staleFailure) pendingImport.Gate.SetException(new InvalidOperationException("late A import failure"));
+        else pendingImport.Gate.SetResult(preparationA with { Status = ExperimentWorkstationPreparationStatus.Imported });
+        await import;
+
+        Assert.Null(viewModel.WorkstationPreparation.Preparation);
+        Assert.Empty(viewModel.WorkstationPreparation.Transfers);
+        Assert.False(viewModel.WorkstationPreparation.SaveCommand.CanExecute(null));
+        Assert.False(viewModel.WorkstationPreparation.ImportCommand.CanExecute(null));
+        Assert.Equal(ordinaryMessage, viewModel.WorkstationPreparation.Message);
+        Assert.Equal(1, fixture.Client.ImportCalls);
+        await viewModel.WorkstationPreparation.ImportAsync();
+        Assert.Equal(1, fixture.Client.ImportCalls);
+    }
+
     private static ExperimentResourceReference ResourceRef(string type, string id) => new()
     {
         ResourceType = type,
@@ -1138,6 +1279,12 @@ public sealed class ExperimentSchedulingViewModelTests
         }
     }
 
+    private sealed class PendingPreparationWrite
+    {
+        public TaskCompletionSource Requested { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<ExperimentWorkstationPreparation> Gate { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
     private sealed class SchedulingClientStub : IMesClient
     {
         private readonly List<ExperimentJob> _jobs = [];
@@ -1145,6 +1292,8 @@ public sealed class ExperimentSchedulingViewModelTests
         private readonly Dictionary<Guid, ExperimentSampleVerification> _verifications = [];
         private readonly Dictionary<Guid, ExperimentSample> _samples = [];
         private readonly Dictionary<Guid, ExperimentWorkstationPreparation?> _preparations = [];
+        private readonly Queue<PendingPreparationWrite> _pendingPrepareWrites = [];
+        private readonly Queue<PendingPreparationWrite> _pendingImportWrites = [];
         private readonly HashSet<Guid> _workstationWorkflowIds = [];
         private readonly ExperimentPlan _plan;
         private readonly ExperimentResourceAvailability _availability;
@@ -1181,6 +1330,8 @@ public sealed class ExperimentSchedulingViewModelTests
         public int AdmitCalls { get; private set; }
         public int WorkflowExecuteCalls { get; private set; }
         public int DeviceCommandCalls { get; private set; }
+        public int PrepareCalls { get; private set; }
+        public int ImportCalls { get; private set; }
         public bool RejectAdmission { get; set; }
         public Guid AdmittedRunId { get; } = Guid.NewGuid();
         public TaskCompletionSource<WorkflowVersion?>? PendingWorkflowVersion { get; private set; }
@@ -1221,6 +1372,20 @@ public sealed class ExperimentSchedulingViewModelTests
         {
             PendingCurrentPreparation = new(TaskCreationOptions.RunContinuationsAsynchronously);
             CurrentPreparationRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        public PendingPreparationWrite HoldNextPrepare()
+        {
+            var pending = new PendingPreparationWrite();
+            _pendingPrepareWrites.Enqueue(pending);
+            return pending;
+        }
+
+        public PendingPreparationWrite HoldNextImport()
+        {
+            var pending = new PendingPreparationWrite();
+            _pendingImportWrites.Enqueue(pending);
+            return pending;
         }
 
         public void FailCurrentPreparationRequest(Exception exception) =>
@@ -1495,6 +1660,31 @@ public sealed class ExperimentSchedulingViewModelTests
                 return PendingCurrentPreparation.Task;
             }
             return Task.FromResult(_preparations.GetValueOrDefault(jobId));
+        }
+
+        public Task<SampleWorkstationTemplateResponse> GetSampleWorkstationTemplateAsync(string deviceId, string taskNo, CancellationToken cancellationToken) =>
+            Task.FromResult(new SampleWorkstationTemplateResponse(
+                deviceId,
+                "task.xlsx",
+                [],
+                "template-hash",
+                new SampleWorkstationTaskTemplate(taskNo, "test", [new SampleWorkstationTransferRow("L", "T", 1, 1, "SRC", 1, 1, "OUT", 2, 2, 10)]),
+                DateTimeOffset.UtcNow));
+
+        public Task<ExperimentWorkstationPreparation> PrepareExperimentWorkstationTaskAsync(Guid jobId, PrepareExperimentWorkstationTaskRequest request, CancellationToken cancellationToken)
+        {
+            PrepareCalls++;
+            var pending = _pendingPrepareWrites.Dequeue();
+            pending.Requested.TrySetResult();
+            return pending.Gate.Task;
+        }
+
+        public Task<ExperimentWorkstationPreparation> ImportExperimentWorkstationTaskAsync(Guid jobId, Guid preparationId, ImportExperimentWorkstationTaskRequest request, CancellationToken cancellationToken)
+        {
+            ImportCalls++;
+            var pending = _pendingImportWrites.Dequeue();
+            pending.Requested.TrySetResult();
+            return pending.Gate.Task;
         }
 
         public Task<ExperimentSampleVerification> SaveCurrentExperimentSampleVerificationAsync(Guid jobId, SaveExperimentSampleVerificationRequest request, CancellationToken cancellationToken)

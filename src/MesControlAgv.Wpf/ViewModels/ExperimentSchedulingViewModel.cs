@@ -522,11 +522,11 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
                             IsSampleVerificationRequirementResolved &&
                             (!SelectedJobRequiresSampleVerification ||
                              (!HasUnsavedVerificationIdentityChanges && CurrentSampleVerification?.Status == ExperimentSampleVerificationStatus.Verified)) &&
+                            _workstationPreparation.IsResolved &&
                             (!_workstationPreparation.IsApplicable ||
-                             (_workstationPreparation.IsResolved &&
-                              (!_workstationPreparation.RequiresPreparation ||
-                               (!_workstationPreparation.IsDirty && _workstationPreparation.IsVerificationCurrent &&
-                                _workstationPreparation.Preparation?.Status == ExperimentWorkstationPreparationStatus.Imported))));
+                             (!_workstationPreparation.RequiresPreparation ||
+                              (!_workstationPreparation.IsDirty && _workstationPreparation.IsVerificationCurrent &&
+                               _workstationPreparation.Preparation?.Status == ExperimentWorkstationPreparationStatus.Imported)));
     private bool HasActionMetadata =>
         !string.IsNullOrWhiteSpace(OperatorName) && !string.IsNullOrWhiteSpace(Reason);
 
@@ -980,6 +980,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
     private void BeginSampleVerificationLoad(ExperimentJob? job)
     {
         var loadVersion = ++_sampleVerificationLoadVersion;
+        _workstationPreparation.Invalidate();
         _sampleVerificationInvalidatedByEdit = false;
         _pendingNewVerificationSampleId = null;
         CurrentSampleVerification = null;
@@ -1003,6 +1004,7 @@ public sealed class ExperimentSchedulingViewModel : ExperimentBindableObject, ID
             SelectedJobRequiresSampleVerification = requiresVerification;
             if (!requiresVerification)
             {
+                _workstationPreparation.ResolveNotApplicable();
                 IsSampleVerificationRequirementResolved = true;
                 return;
             }

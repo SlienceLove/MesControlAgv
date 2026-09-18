@@ -62,14 +62,16 @@ public sealed class ExperimentPlanningViewBindingTests
                 Assert.Same(scheduling.UnscheduleCommand, Assert.IsType<Button>(schedulingView.FindName("UnscheduleButton")).Command);
                 Assert.Same(scheduling.AdmitCommand, Assert.IsType<Button>(schedulingView.FindName("AdmitButton")).Command);
                 Assert.Same(scheduling.CancelJobCommand, Assert.IsType<Button>(schedulingView.FindName("CancelJobButton")).Command);
-                Assert.True(Assert.IsType<Expander>(schedulingView.FindName("SampleVerificationPanel")).IsExpanded);
+                var sampleVerificationPanel = Assert.IsType<Expander>(schedulingView.FindName("SampleVerificationPanel"));
+                Assert.True(sampleVerificationPanel.IsExpanded);
                 var sampleEditor = Assert.IsType<Grid>(schedulingView.FindName("SampleIdentityEditor"));
                 Assert.Equal(nameof(ExperimentSchedulingViewModel.CanEditSampleIdentity), sampleEditor.GetBindingExpression(UIElement.IsEnabledProperty)!.ParentBinding.Path.Path);
                 Assert.Equal(scheduling.CanEditSampleIdentity, sampleEditor.IsEnabled);
                 Assert.Same(scheduling.SaveSampleRowCommand, Assert.IsType<Button>(schedulingView.FindName("SaveSampleRowButton")).Command);
                 Assert.Same(scheduling.CompleteSampleVerificationCommand, Assert.IsType<Button>(schedulingView.FindName("CompleteSampleVerificationButton")).Command);
                 Assert.Empty(Assert.IsType<DataGrid>(schedulingView.FindName("SampleVerificationRowsGrid")).Items);
-                Assert.False(Assert.IsType<Expander>(schedulingView.FindName("WorkstationPreparationPanel")).IsExpanded);
+                var workstationPreparationPanel = Assert.IsType<Expander>(schedulingView.FindName("WorkstationPreparationPanel"));
+                Assert.False(workstationPreparationPanel.IsExpanded);
                 Assert.Same(scheduling.WorkstationPreparation.SaveCommand, Assert.IsType<Button>(schedulingView.FindName("SaveWorkstationPreparationButton")).Command);
                 Assert.Same(scheduling.WorkstationPreparation.ImportCommand, Assert.IsType<Button>(schedulingView.FindName("ImportWorkstationPreparationButton")).Command);
                 var workstationTransfers = Assert.IsType<DataGrid>(schedulingView.FindName("WorkstationTransferGrid"));
@@ -83,8 +85,35 @@ public sealed class ExperimentPlanningViewBindingTests
                 var timeline = Assert.IsType<ScrollViewer>(schedulingView.FindName("ResourceTimeline"));
                 Assert.True(timeline.ActualWidth > 0);
                 Assert.True(timeline.ActualHeight > 0);
+                var timelineHeight = timeline.ActualHeight;
                 Assert.Single(scheduling.ResourceLanes);
                 Assert.Contains(scheduling.ResourceLanes[0].Blocks, block => block.JobId == client.Job.JobId);
+
+                workstationPreparationPanel.IsExpanded = true;
+                schedulingWindow.UpdateLayout();
+                PumpDispatcher(schedulingView.Dispatcher);
+                var actionsGrid = Assert.IsType<Grid>(schedulingView.FindName("SchedulingActionsGrid"));
+                var actionsScroll = Assert.IsType<ScrollViewer>(schedulingView.FindName("SchedulingActionsScrollViewer"));
+                Assert.Equal(4, Grid.GetRow(sampleVerificationPanel));
+                Assert.Equal(5, Grid.GetRow(workstationPreparationPanel));
+                var sampleBounds = sampleVerificationPanel.TransformToAncestor(actionsGrid)
+                    .TransformBounds(new Rect(new Point(), sampleVerificationPanel.RenderSize));
+                var preparationBounds = workstationPreparationPanel.TransformToAncestor(actionsGrid)
+                    .TransformBounds(new Rect(new Point(), workstationPreparationPanel.RenderSize));
+                Assert.True(sampleBounds.Height > 0);
+                Assert.True(preparationBounds.Height > 0);
+                Assert.True(sampleBounds.Bottom <= preparationBounds.Top);
+                Assert.True(actionsScroll.ScrollableHeight > 0);
+                actionsScroll.ScrollToEnd();
+                schedulingWindow.UpdateLayout();
+                PumpDispatcher(schedulingView.Dispatcher);
+                var preparationButton = Assert.IsType<Button>(schedulingView.FindName("SaveWorkstationPreparationButton"));
+                var buttonBounds = preparationButton.TransformToAncestor(actionsScroll)
+                    .TransformBounds(new Rect(new Point(), preparationButton.RenderSize));
+                Assert.True(buttonBounds.Bottom > 0 && buttonBounds.Top < actionsScroll.ActualHeight);
+                Assert.True(timeline.IsVisible);
+                Assert.Equal(timelineHeight, timeline.ActualHeight, 3);
+
                 schedulingView.Dispatcher.Invoke(() => scheduling.IsTimelineFocusMode = true);
                 PumpDispatcher(schedulingView.Dispatcher);
                 Assert.Equal(Visibility.Collapsed, Assert.IsType<Grid>(schedulingView.FindName("SchedulingTaskPoolPane")).Visibility);

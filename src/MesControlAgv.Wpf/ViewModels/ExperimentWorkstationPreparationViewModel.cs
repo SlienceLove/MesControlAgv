@@ -68,6 +68,21 @@ public sealed class ExperimentWorkstationPreparationViewModel : ExperimentBindab
     public ObservableCollection<ExperimentSampleVerificationRowViewModel> VerifiedSamples { get; } = [];
     public ICommand BeginTemplateModeCommand => _beginTemplateModeCommand;
 
+    internal void Invalidate()
+    {
+        _generation++;
+        Reset();
+        _jobId = null;
+        _verification = null;
+        _verificationId = null;
+        Message = "Select a scheduled workstation task.";
+    }
+
+    internal void ResolveNotApplicable()
+    {
+        IsResolved = true;
+    }
+
     public async Task LoadAsync(ExperimentJob? job, ScheduleEntry? schedule, WorkflowVersion? workflow, ExperimentSampleVerification? verification, IReadOnlyList<ExperimentSampleVerificationRowViewModel> samples, CancellationToken cancellationToken)
     {
         var generation = ++_generation;
