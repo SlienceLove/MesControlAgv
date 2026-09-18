@@ -1,5 +1,7 @@
 # 实际任务模板与导入实现（2026-09-18）
 
+> 本文保留文件层实现时的证据与测试计数。后续中控任务级准备、来源绑定和 WPF 入口已完成，见 [中控准备链验证](2026-09-18-workstation-central-preparation-validation.md) 与 [最新交接](../SAMPLE-WORKSTATION-CENTRAL-PREPARATION-HANDOFF-2026-09-18.md)；V1.02 真机写入验收仍未执行。
+
 ## 已取得实例
 
 从原有工作站Adapter只读下载 `TEST-001`：

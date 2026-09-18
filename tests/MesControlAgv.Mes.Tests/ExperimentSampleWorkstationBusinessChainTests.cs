@@ -221,7 +221,7 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
     }
 
     [Fact]
-    public async Task Prepared_task_import_is_idempotent_and_worker_uses_frozen_task_and_barcodes_once()
+    public async Task Prepared_task_import_is_idempotent_and_closes_with_frozen_task_and_barcodes_once()
     {
         var gateway = new RecordingWorkstation();
         using var factory = ConfigureGateway(new PhysicalMesWebApplicationFactory(PhysicalProfile()), gateway);
@@ -306,6 +306,28 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         Assert.Equal(1, gateway.BarcodeStartCalls);
         Assert.Equal(prepared.VendorTaskNo, gateway.StartTaskNo);
         Assert.Equal(new SampleWorkstationTaskBarcodes { SampleBarcode1 = "BARCODE-1", SampleBarcode2 = "BARCODE-2" }, gateway.StartBarcodes);
+        Assert.Equal(
+        [
+            new RecordingWorkstation.ConsumedObservation("SAMPLE-WORKSTATION-01", "EQ-01", SampleWorkstationDeviceState.Idle, 0, 0, prepared.VendorTaskNo, SampleWorkstationTaskState.Completed, "Completed"),
+            new RecordingWorkstation.ConsumedObservation("SAMPLE-WORKSTATION-01", "EQ-01", SampleWorkstationDeviceState.Running, 1, 3, prepared.VendorTaskNo, SampleWorkstationTaskState.Running, "Running"),
+            new RecordingWorkstation.ConsumedObservation("SAMPLE-WORKSTATION-01", "EQ-01", SampleWorkstationDeviceState.Idle, 0, 0, prepared.VendorTaskNo, SampleWorkstationTaskState.Completed, "Completed")
+        ],
+        gateway.ConsumedObservations);
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            var run = await db.WorkflowExecutions.AsNoTracking().SingleAsync(x => x.ExecutionId == admitted.WorkflowRunId);
+            Assert.Equal(WorkflowRuntimeStatus.Completed.ToString(), run.RuntimeStatus);
+            Assert.Equal(WorkflowNodeExecutionStatus.Succeeded.ToString(), (await db.WorkflowNodeExecutions.SingleAsync(x => x.WorkflowRunId == run.ExecutionId && x.NodeTypeId == WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask)).Status);
+            var operation = Assert.Single(await db.WorkflowDeviceOperations.AsNoTracking().Where(x => x.WorkflowRunId == run.ExecutionId).ToListAsync());
+            Assert.Equal(WorkflowDeviceOperationStatus.Succeeded.ToString(), operation.Status);
+            Assert.Equal(ExperimentJobStatus.Completed.ToString(), (await db.ExperimentJobs.SingleAsync(x => x.JobId == scheduled.JobId)).Status);
+            Assert.Equal(ScheduleEntryStatus.Completed.ToString(), (await db.ScheduleEntries.SingleAsync(x => x.ScheduleEntryId == scheduled.ScheduleId)).Status);
+            var lease = await db.WorkflowResourceLeases.SingleAsync(x => x.WorkflowRunId == run.ExecutionId);
+            Assert.Equal(ResourceLeaseStatus.Released.ToString(), lease.Status);
+            Assert.Null(lease.ActiveResourceKey);
+        }
     }
 
     [Fact]
