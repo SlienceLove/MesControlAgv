@@ -65,6 +65,16 @@ dotnet build MesControlAgv.sln -c Release --artifacts-path C:/Users/33206/AppDat
 
 This ledger is automated WPF and compile evidence only. It did not connect to a real workstation, write a real barcode, start a real task, operate a live process, or complete field acceptance.
 
+## 最终复审补记
+
+截至产品提交 `3c6302b`，整体审查中的父/子任务切换隔离及面板重叠问题均已修复，针对性复审无剩余 Critical/Important。扩大 WPF 回归再次执行并通过 99/99：
+
+```powershell
+dotnet test tests/MesControlAgv.Wpf.Tests/MesControlAgv.Wpf.Tests.csproj --no-build --no-restore --nologo -v minimal --filter "FullyQualifiedName~ExperimentScheduling|FullyQualifiedName~ExperimentWorkstationPreparation|FullyQualifiedName~ExperimentPlanningViewBinding|FullyQualifiedName~MesClient"
+```
+
+另有一项已记录、未修复的 Minor：人工放置区行高顺序需从 `Auto, Auto, Auto, *` 恢复为原有 `Auto, Auto, *, Auto`，避免多资源列表挤占排程按钮。已排程任务的准备/导入/运行逻辑不受该布局项影响；多资源人工排程验收及合并前仍需收尾，详见最新交接。
+
 ## 尚未由本记录证明
 
 - 未向最新 V1.02 厂家服务上传生成 XLSX、回读真实任务、写入真实条码或启动真实设备。
