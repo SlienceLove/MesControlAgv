@@ -15,7 +15,7 @@ Admission识别已准备任务且只能Imported当前快照通过；冻结准备
 
 ## Task 2: WPF task-table preparation in scheduling
 
-按Task1提交的契约扩展IMesClient/MesClient；任务排程页内提供指定任务模板读取、分液表编辑、双大瓶样品与来源位置选择、保存准备、显式导入及导入状态。不要新增顶层导航或专用启动。
+按Task1提交的契约扩展IMesClient/MesClient；任务排程页内提供指定任务模板读取、分液表展示/编辑、来源ID绑定、保存准备、显式导入及导入状态。大瓶→小瓶位置关系直接从模板提取，不重复录入位置；只需把中控来源ID关联到模板大瓶位置。不要新增顶层导航或专用启动。
 已有样品登记和核对保持独立；空来源ID可通过现有登记流程生成唯一默认值，重复修改不得自动换ID。模板源位置和来源ID明确对应。
 UI选中任务加载current preparation；有未保存编辑、核对漂移或非Imported时阻断新模板模式准入。两种模式明确，不让旧接口回退掩盖导入失败。保存/导入无隐式运行；当前已有运行准入确认照旧。
 保持任务切换/operation ownership守卫；折叠和滚动布局确保时间线可见。补HTTP、VM、XAML定向测试。仅修改WPF相关文件与测试，提交报告到task-2-report.md。
