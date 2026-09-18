@@ -8,7 +8,8 @@ using Microsoft.AspNetCore.WebUtilities;
 namespace MesControlAgv.Mes.Services;
 
 public sealed class SampleWorkstationAdapterClient(HttpClient client)
-    : ISampleWorkstationReader, ISampleWorkstationCommands, ISampleWorkstationCapabilityReader
+    : ISampleWorkstationReader, ISampleWorkstationCommands, ISampleWorkstationCapabilityReader,
+      ISampleWorkstationBarcodeCommands
 {
     public Task<SampleWorkstationCapabilitiesResponse> GetCapabilitiesAsync(
         string deviceId, CancellationToken cancellationToken) =>
@@ -29,6 +30,28 @@ public sealed class SampleWorkstationAdapterClient(HttpClient client)
         PostAsync<SampleWorkstationCommandResponse>(
             $"api/workstations/{EscapeRequired(deviceId, nameof(deviceId))}/tasks/{EscapeRequired(taskNo, nameof(taskNo))}/start",
             cancellationToken);
+
+    public Task<SampleWorkstationCommandResponse> StartTaskAsync(
+        string deviceId, string taskNo, SampleWorkstationTaskBarcodes barcodes,
+        CancellationToken cancellationToken) =>
+        SendBarcodesAsync(deviceId, taskNo, "start", barcodes, cancellationToken);
+
+    public Task<SampleWorkstationCommandResponse> UpdateTaskBarcodesAsync(
+        string deviceId, string taskNo, SampleWorkstationTaskBarcodes barcodes,
+        CancellationToken cancellationToken) =>
+        SendBarcodesAsync(deviceId, taskNo, "barcodes", barcodes, cancellationToken);
+
+    private Task<SampleWorkstationCommandResponse> SendBarcodesAsync(
+        string deviceId, string taskNo, string action, SampleWorkstationTaskBarcodes barcodes,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(barcodes);
+        ArgumentException.ThrowIfNullOrWhiteSpace(barcodes.SampleBarcode1);
+        ArgumentException.ThrowIfNullOrWhiteSpace(barcodes.SampleBarcode2);
+        var path = $"api/workstations/{EscapeRequired(deviceId, nameof(deviceId))}/tasks/{EscapeRequired(taskNo, nameof(taskNo))}/{action}";
+        return SendAsync<SampleWorkstationCommandResponse>(HttpMethod.Post, path,
+            JsonContent.Create(barcodes), cancellationToken);
+    }
 
     public Task<SampleWorkstationStatusResponse> GetStatusAsync(
         string deviceId,

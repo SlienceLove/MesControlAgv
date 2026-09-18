@@ -57,6 +57,18 @@ public interface ISampleWorkstationCapabilityReader
         string deviceId, CancellationToken cancellationToken);
 }
 
+/// <summary>Explicit V1.02 commands; updating barcodes never starts a task.</summary>
+public interface ISampleWorkstationBarcodeCommands
+{
+    Task<SampleWorkstationCommandResponse> UpdateTaskBarcodesAsync(
+        string deviceId, string taskNo, SampleWorkstationTaskBarcodes barcodes,
+        CancellationToken cancellationToken);
+
+    Task<SampleWorkstationCommandResponse> StartTaskAsync(
+        string deviceId, string taskNo, SampleWorkstationTaskBarcodes barcodes,
+        CancellationToken cancellationToken);
+}
+
 /// <summary>
 /// Future task-table import port. The caller owns the readable stream.
 /// No implementation/HTTP import route is registered until the vendor format is confirmed.
@@ -69,4 +81,5 @@ public interface ISampleWorkstationTaskImporter
 }
 
 public interface ISampleWorkstationDriver
-    : ISampleWorkstationReader, ISampleWorkstationCommands, ISampleWorkstationCapabilityReader;
+    : ISampleWorkstationReader, ISampleWorkstationCommands, ISampleWorkstationCapabilityReader,
+      ISampleWorkstationBarcodeCommands;

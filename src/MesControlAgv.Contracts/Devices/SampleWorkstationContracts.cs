@@ -28,7 +28,15 @@ public enum SampleWorkstationTaskState
 public enum SampleWorkstationCommandOperation
 {
     Initialize,
-    StartTask
+    StartTask,
+    UpdateTaskBarcodes
+}
+
+/// <summary>V1.02 identities for the two source bottles, not module/rack codes.</summary>
+public sealed record SampleWorkstationTaskBarcodes
+{
+    public string SampleBarcode1 { get; init; } = string.Empty;
+    public string SampleBarcode2 { get; init; } = string.Empty;
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -139,6 +147,7 @@ public static class SampleWorkstationErrorCodes
     public const string VendorFailure = "workstation_vendor_failure";
     public const string InvalidPayload = "workstation_invalid_payload";
     public const string CommandUnconfirmed = "workstation_command_unconfirmed";
+    public const string CommandRejected = "workstation_command_rejected";
     public const string Timeout = "workstation_timeout";
     public const string Unavailable = "workstation_unavailable";
 }

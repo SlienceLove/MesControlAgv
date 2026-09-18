@@ -2,6 +2,7 @@ using MesControlAgv.Application;
 using MesControlAgv.Contracts;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -92,13 +93,29 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
         endpoints.MapPost("/api/workstations/{deviceId}/tasks/{taskNo}/start", async (
             string deviceId,
             string taskNo,
+            SampleWorkstationTaskBarcodes? barcodes,
+            HttpRequest request,
             ISampleWorkstationDriver driver,
             DeviceOperationPolicy policy,
             CancellationToken cancellationToken) =>
             await ExecuteAsync(async () =>
             {
                 EnsureWorkstation(policy.EnsureControlEnabled(deviceId));
-                return await driver.StartTaskAsync(deviceId, taskNo, cancellationToken);
+                taskNo = SampleWorkstationTaskRoute.ReadCommandTaskNo(request.HttpContext.Features.Get<IHttpRequestFeature>()?.RawTarget, taskNo);
+                return barcodes is null
+                    ? await driver.StartTaskAsync(deviceId, taskNo, cancellationToken)
+                    : await driver.StartTaskAsync(deviceId, taskNo, barcodes, cancellationToken);
+            }, isCommand: true));
+
+        endpoints.MapPost("/api/workstations/{deviceId}/tasks/{taskNo}/barcodes", async (
+            string deviceId, string taskNo, SampleWorkstationTaskBarcodes barcodes,
+            HttpRequest request,
+            ISampleWorkstationDriver driver, DeviceOperationPolicy policy, CancellationToken cancellationToken) =>
+            await ExecuteAsync(async () =>
+            {
+                EnsureWorkstation(policy.EnsureControlEnabled(deviceId));
+                taskNo = SampleWorkstationTaskRoute.ReadCommandTaskNo(request.HttpContext.Features.Get<IHttpRequestFeature>()?.RawTarget, taskNo);
+                return await driver.UpdateTaskBarcodesAsync(deviceId, taskNo, barcodes, cancellationToken);
             }, isCommand: true));
 
         endpoints.MapGet("/api/workstations/{deviceId}/tasks", async (
@@ -212,7 +229,7 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
         }
         catch (SampleWorkstationProtocolException exception)
         {
-            var explicitlyRejected =
+            var explicitlyRejected = exception.ErrorCode == SampleWorkstationErrorCodes.CommandRejected ||
                 exception.ErrorCode == SampleWorkstationErrorCodes.CommandUnconfirmed &&
                 exception.VendorData is { ValueKind: System.Text.Json.JsonValueKind.String } data &&
                 string.Equals(data.GetString()?.Trim(), "启动失败", StringComparison.Ordinal);

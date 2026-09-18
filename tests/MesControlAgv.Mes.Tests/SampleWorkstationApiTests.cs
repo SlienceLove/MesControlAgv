@@ -4,6 +4,8 @@ using System.Text.Json;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
@@ -96,15 +98,80 @@ public sealed class SampleWorkstationApiTests(MesWebApplicationFactory factory)
             {
                 services.RemoveAll<ISampleWorkstationCommands>();
                 services.AddSingleton(controller);
+                if (controller is ISampleWorkstationBarcodeCommands barcodeController)
+                {
+                    services.RemoveAll<ISampleWorkstationBarcodeCommands>();
+                    services.AddSingleton(barcodeController);
+                }
             }
         }));
 
-    private sealed class StubController : ISampleWorkstationCommands
+    [Theory]
+    [InlineData("TASK-01")]
+    [InlineData("TASK/01")]
+    [InlineData("TASK%2F01")]
+    [InlineData("任务 A&+?#/01")]
+    public async Task V102_routes_keep_barcode_update_separate_from_start_and_preserve_both_identities(string taskNo)
+    {
+        var controller = new StubController();
+        using var configuredFactory = ConfigureReader(new StubReader(), controller);
+        var barcodes = new SampleWorkstationTaskBarcodes { SampleBarcode1 = "A&来源1", SampleBarcode2 = "b+2" };
+        var update = await SendCommand("barcodes");
+        Assert.Equal(200, update.Response.StatusCode);
+        Assert.Equal([$"barcodes:{taskNo}"], controller.Calls);
+        Assert.Equal(barcodes, controller.LastBarcodes);
+        var start = await SendCommand("start");
+        Assert.Equal(200, start.Response.StatusCode);
+        Assert.Equal([$"barcodes:{taskNo}", $"start-with-barcodes:{taskNo}"], controller.Calls);
+        Assert.Equal(barcodes, controller.LastBarcodes);
+
+        Task<HttpContext> SendCommand(string action)
+        {
+            var path = $"/api/workstations/SAMPLE-WORKSTATION-01/tasks/{Uri.EscapeDataString(taskNo)}/{action}";
+            var body = JsonSerializer.SerializeToUtf8Bytes(barcodes);
+            return configuredFactory.Server.SendAsync(context =>
+            {
+                // HttpClient-backed TestServer omits RawTarget; populate the original
+                // target as Kestrel does, so '%2F' and '/' remain distinguishable.
+                context.Request.Method = "POST";
+                context.Request.Path = PathString.FromUriComponent(path);
+                context.Features.Get<IHttpRequestFeature>()!.RawTarget = path;
+                context.Request.ContentType = "application/json";
+                context.Request.ContentLength = body.Length;
+                context.Request.Body = new MemoryStream(body);
+                context.Features.Set<IHttpRequestBodyDetectionFeature>(new RequestWithBody());
+            });
+        }
+    }
+
+    private sealed class RequestWithBody : IHttpRequestBodyDetectionFeature
+    {
+        public bool CanHaveBody => true;
+    }
+
+    private sealed class StubController : ISampleWorkstationCommands, ISampleWorkstationBarcodeCommands
     {
         private static readonly DateTimeOffset ObservedAt =
             new(2026, 9, 11, 8, 0, 0, TimeSpan.Zero);
 
         public List<string> Calls { get; } = [];
+        public SampleWorkstationTaskBarcodes? LastBarcodes { get; private set; }
+
+        public Task<SampleWorkstationCommandResponse> StartTaskAsync(
+            string deviceId, string taskNo, SampleWorkstationTaskBarcodes barcodes, CancellationToken cancellationToken)
+        {
+            LastBarcodes = barcodes;
+            Calls.Add($"start-with-barcodes:{taskNo}");
+            return Task.FromResult(Response(deviceId, SampleWorkstationCommandOperation.StartTask));
+        }
+
+        public Task<SampleWorkstationCommandResponse> UpdateTaskBarcodesAsync(
+            string deviceId, string taskNo, SampleWorkstationTaskBarcodes barcodes, CancellationToken cancellationToken)
+        {
+            LastBarcodes = barcodes;
+            Calls.Add($"barcodes:{taskNo}");
+            return Task.FromResult(Response(deviceId, SampleWorkstationCommandOperation.UpdateTaskBarcodes));
+        }
 
         public Task<SampleWorkstationCommandResponse> InitializeAsync(
             string deviceId,

@@ -14,6 +14,72 @@ namespace MesControlAgv.Adapter.Tests;
 
 public sealed class SampleWorkstationModuleTests
 {
+    [Theory]
+    [InlineData("TASK/01", false)]
+    [InlineData("TASK%2F01", false)]
+    [InlineData("任务 A&+?#/01", false)]
+    [InlineData("TASK/01", true)]
+    [InlineData("TASK%2F01", true)]
+    [InlineData("任务 A&+?#/01", true)]
+    public async Task V102_route_preserves_exact_task_number(string taskNo, bool start)
+    {
+        using var vendor = new VendorHandler(JsonSerializer.Serialize(new { Code = 200, Data = start ? "启动成功" : "更新成功" }));
+        await using var app = await CreateHostAsync(vendor, control: true);
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using var response = await client.PostAsJsonAsync($"/api/workstations/WS-01/tasks/{Uri.EscapeDataString(taskNo)}/{(start ? "start" : "barcodes")}",
+            new SampleWorkstationTaskBarcodes { SampleBarcode1 = "A", SampleBarcode2 = "B" });
+        response.EnsureSuccessStatusCode();
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(vendor.LastUri!.Query);
+        Assert.Equal(taskNo, query["TaskNo"].ToString());
+        Assert.Equal(1, vendor.RequestCount);
+    }
+
+    [Theory]
+    [InlineData("start", "启动成功", "/Service/StartExperiment", true)]
+    [InlineData("barcodes", "更新成功", "/Service/UpdateTaskBarcode", true)]
+    [InlineData("barcodes", "更新成功", "/Service/UpdateTaskBarcode", false)]
+    public async Task V102_json_body_binds_both_barcodes_and_respects_control_policy(
+        string action, string ack, string vendorPath, bool enabled)
+    {
+        using var vendor = new VendorHandler(JsonSerializer.Serialize(new { Code = 200, Data = ack }));
+        await using var app = await CreateHostAsync(vendor, control: enabled);
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using var response = await client.PostAsJsonAsync($"/api/workstations/WS-01/tasks/TASK-01/{action}",
+            new SampleWorkstationTaskBarcodes { SampleBarcode1 = "来源+A&1", SampleBarcode2 = "B/2" });
+        if (!enabled)
+        {
+            Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+            Assert.Equal(0, vendor.RequestCount);
+            return;
+        }
+        response.EnsureSuccessStatusCode();
+        Assert.Equal(1, vendor.RequestCount);
+        Assert.Equal(vendorPath, vendor.LastUri!.AbsolutePath);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(vendor.LastUri.Query);
+        Assert.Equal("来源+A&1", query["SampleBarcode1"]);
+        Assert.Equal("B/2", query["SampleBarcode2"]);
+    }
+
+    [Theory]
+    [InlineData("{\"Code\":201,\"Data\":\"更新失败\"}", false, false)]
+    [InlineData("{\"Code\":200,\"Data\":\"更新失败\"}", false, false)]
+    [InlineData("{\"Code\":200,\"Data\":\"启动成功\"}", false, true)]
+    [InlineData("", true, true)]
+    public async Task Barcode_failure_preserves_known_rejection_or_unknown_outcome_without_start(
+        string body, bool timeout, bool unknown)
+    {
+        using var vendor = new VendorHandler(body, timeout ? new TaskCanceledException("timeout") : null);
+        await using var app = await CreateHostAsync(vendor, control: true);
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using var response = await client.PostAsJsonAsync("/api/workstations/WS-01/tasks/TASK-01/barcodes",
+            new SampleWorkstationTaskBarcodes { SampleBarcode1 = "A", SampleBarcode2 = "B" });
+        Assert.Equal(timeout ? HttpStatusCode.GatewayTimeout : HttpStatusCode.BadGateway, response.StatusCode);
+        var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(unknown, problem.GetProperty("outcomeUnknown").GetBoolean());
+        Assert.Equal(1, vendor.RequestCount);
+        Assert.Equal("/Service/UpdateTaskBarcode", vendor.LastUri!.AbsolutePath);
+    }
+
     [Fact]
     public async Task Disabled_controls_and_unsupported_reads_never_reach_vendor()
     {

@@ -47,16 +47,29 @@ public sealed class SampleWorkstationDriver(
         return ToCommandResponse(SampleWorkstationCommandOperation.Initialize, response);
     }
 
-    public async Task<SampleWorkstationCommandResponse> StartTaskAsync(
+    public Task<SampleWorkstationCommandResponse> StartTaskAsync(
         string deviceId,
         string taskNo,
+        CancellationToken cancellationToken) =>
+        StartTaskCoreAsync(deviceId, taskNo, null, cancellationToken);
+
+    public Task<SampleWorkstationCommandResponse> StartTaskAsync(
+        string deviceId, string taskNo, SampleWorkstationTaskBarcodes barcodes,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(barcodes);
+        return StartTaskCoreAsync(deviceId, taskNo, barcodes, cancellationToken);
+    }
+
+    private async Task<SampleWorkstationCommandResponse> StartTaskCoreAsync(
+        string deviceId, string taskNo, SampleWorkstationTaskBarcodes? barcodes,
         CancellationToken cancellationToken)
     {
         EnsureControlEnabled(deviceId);
         taskNo = RequireTaskNo(taskNo);
         var response = await vendor.ExecuteCommandAsync(
             "StartExperiment",
-            new Dictionary<string, string?> { ["TaskNo"] = taskNo },
+            CreateTaskQuery(taskNo, barcodes),
             cancellationToken);
         if (response.Data.ValueKind == JsonValueKind.String
             && string.Equals(response.Data.GetString()?.Trim(), "启动失败", StringComparison.Ordinal))
@@ -67,6 +80,45 @@ public sealed class SampleWorkstationDriver(
         }
 
         return ToCommandResponse(SampleWorkstationCommandOperation.StartTask, response, taskNo);
+    }
+
+    public async Task<SampleWorkstationCommandResponse> UpdateTaskBarcodesAsync(
+        string deviceId, string taskNo, SampleWorkstationTaskBarcodes barcodes,
+        CancellationToken cancellationToken)
+    {
+        EnsureControlEnabled(deviceId);
+        taskNo = RequireTaskNo(taskNo);
+        ArgumentNullException.ThrowIfNull(barcodes);
+        VendorSampleWorkstationResponse response;
+        try
+        {
+            response = await vendor.ExecuteCommandAsync(
+                "UpdateTaskBarcode", CreateTaskQuery(taskNo, barcodes), cancellationToken);
+        }
+        catch (SampleWorkstationProtocolException exception) when (
+            exception.VendorCode == 201 ||
+            exception.VendorData is { ValueKind: JsonValueKind.String } data && data.GetString()?.Trim() == "更新失败")
+        {
+            // A missing task or explicit update failure is a known rejection.
+            throw new SampleWorkstationProtocolException(exception.Message,
+                SampleWorkstationErrorCodes.CommandRejected, exception.VendorCode, exception.VendorData);
+        }
+        if (response.Data.ValueKind == JsonValueKind.String && response.Data.GetString()?.Trim() == "更新失败")
+            throw new SampleWorkstationProtocolException("The workstation rejected the barcode update.",
+                SampleWorkstationErrorCodes.CommandRejected, response.Code, response.Data);
+        return ToCommandResponse(SampleWorkstationCommandOperation.UpdateTaskBarcodes, response, taskNo);
+    }
+
+    private static Dictionary<string, string?> CreateTaskQuery(
+        string taskNo, SampleWorkstationTaskBarcodes? barcodes)
+    {
+        var query = new Dictionary<string, string?> { ["TaskNo"] = taskNo };
+        if (barcodes is null) return query;
+        ArgumentException.ThrowIfNullOrWhiteSpace(barcodes.SampleBarcode1);
+        ArgumentException.ThrowIfNullOrWhiteSpace(barcodes.SampleBarcode2);
+        query["SampleBarcode1"] = barcodes.SampleBarcode1.Trim();
+        query["SampleBarcode2"] = barcodes.SampleBarcode2.Trim();
+        return query;
     }
 
     public Task<SampleWorkstationCapabilitiesResponse> GetCapabilitiesAsync(
@@ -361,9 +413,13 @@ public sealed class SampleWorkstationDriver(
         string? taskNo = null)
     {
         var text = response.Data.ValueKind == JsonValueKind.String ? response.Data.GetString()?.Trim() : null;
-        var acknowledged = operation == SampleWorkstationCommandOperation.StartTask
-            ? text == "启动成功"
-            : text is "正在进行初始化" or "初始化成功";
+        var acknowledged = operation switch
+        {
+            SampleWorkstationCommandOperation.StartTask => text == "启动成功",
+            SampleWorkstationCommandOperation.UpdateTaskBarcodes => text == "更新成功",
+            SampleWorkstationCommandOperation.Initialize => text is "正在进行初始化" or "初始化成功",
+            _ => false
+        };
         if (!acknowledged)
             throw new SampleWorkstationProtocolException(
                 "The workstation returned no recognized command acknowledgement; query state before taking further action.",

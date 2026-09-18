@@ -23,6 +23,7 @@ public static class SampleWorkstationServiceCollectionExtensions
         }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         services.AddScoped<ISampleWorkstationReader>(provider => provider.GetRequiredService<SampleWorkstationAdapterClient>());
         services.AddScoped<ISampleWorkstationCommands>(provider => provider.GetRequiredService<SampleWorkstationAdapterClient>());
+        services.AddScoped<ISampleWorkstationBarcodeCommands>(provider => provider.GetRequiredService<SampleWorkstationAdapterClient>());
         services.AddScoped<ISampleWorkstationCapabilityReader>(provider => provider.GetRequiredService<SampleWorkstationAdapterClient>());
         return services;
     }

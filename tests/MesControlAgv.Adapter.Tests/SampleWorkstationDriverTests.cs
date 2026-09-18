@@ -10,6 +10,74 @@ namespace MesControlAgv.Adapter.Tests;
 public sealed class SampleWorkstationDriverTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task V102_commands_encode_both_bottle_ids_and_send_only_the_requested_command(bool start)
+    {
+        var handler = new StubHttpHandler(start
+            ? """{"Code":200,"Data":"启动成功"}"""
+            : """{"Code":200,"Data":"更新成功"}""");
+        var driver = CreateDriver(handler, controlEnabled: true);
+        var barcodes = new SampleWorkstationTaskBarcodes
+        {
+            SampleBarcode1 = " 来源 A&+?#/001 ", SampleBarcode2 = "source-b%002"
+        };
+        var result = start
+            ? await driver.StartTaskAsync("SAMPLE-WORKSTATION-01", " TASK&01 ", barcodes, CancellationToken.None)
+            : await driver.UpdateTaskBarcodesAsync("SAMPLE-WORKSTATION-01", " TASK&01 ", barcodes, CancellationToken.None);
+
+        Assert.True(result.Acknowledged);
+        Assert.Equal(start ? SampleWorkstationCommandOperation.StartTask : SampleWorkstationCommandOperation.UpdateTaskBarcodes,
+            result.Operation);
+        Assert.Equal("TASK&01", result.TaskNo);
+        var sent = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Get, sent.Method);
+        Assert.Equal(start ? "/Service/StartExperiment" : "/Service/UpdateTaskBarcode", sent.Uri.AbsolutePath);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(sent.Uri.Query);
+        Assert.Equal(3, query.Count);
+        Assert.Equal("TASK&01", query["TaskNo"]);
+        Assert.Equal("来源 A&+?#/001", query["SampleBarcode1"]);
+        Assert.Equal("source-b%002", query["SampleBarcode2"]);
+        Assert.True(sent.NoCache);
+        Assert.True(sent.NoStore);
+    }
+
+    [Theory]
+    [InlineData("", "B")]
+    [InlineData("A", " ")]
+    [InlineData(null, "B")]
+    public async Task Empty_bottle_identity_is_rejected_before_either_command(string? first, string second)
+    {
+        var handler = new StubHttpHandler();
+        var driver = CreateDriver(handler, controlEnabled: true);
+        var barcodes = new SampleWorkstationTaskBarcodes { SampleBarcode1 = first!, SampleBarcode2 = second };
+        await Assert.ThrowsAnyAsync<ArgumentException>(() => driver.UpdateTaskBarcodesAsync(
+            "SAMPLE-WORKSTATION-01", "TASK-01", barcodes, CancellationToken.None));
+        await Assert.ThrowsAnyAsync<ArgumentException>(() => driver.StartTaskAsync(
+            "SAMPLE-WORKSTATION-01", "TASK-01", barcodes, CancellationToken.None));
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(200, "\"更新失败\"", "workstation_command_rejected")]
+    [InlineData(201, "\"更新失败\"", "workstation_command_rejected")]
+    [InlineData(500, "\"更新失败\"", "workstation_command_rejected")]
+    [InlineData(200, "\"启动成功\"", "workstation_command_unconfirmed")]
+    [InlineData(200, "null", "workstation_command_unconfirmed")]
+    [InlineData(200, "true", "workstation_command_unconfirmed")]
+    public async Task Barcode_update_requires_its_own_acknowledgement_and_never_retries(int code, string data, string errorCode)
+    {
+        var handler = new StubHttpHandler($$"""{"Code":{{code}},"Data":{{data}}}""");
+        var driver = CreateDriver(handler, controlEnabled: true);
+        var error = await Assert.ThrowsAsync<SampleWorkstationProtocolException>(() => driver.UpdateTaskBarcodesAsync(
+            "SAMPLE-WORKSTATION-01", "TASK-01", new() { SampleBarcode1 = "A", SampleBarcode2 = "B" }, CancellationToken.None));
+        Assert.Equal(errorCode, error.ErrorCode);
+        Assert.Equal(code, error.VendorCode);
+        Assert.Equal(data, error.VendorData!.Value.GetRawText());
+        Assert.Equal("/Service/UpdateTaskBarcode", Assert.Single(handler.Requests).Uri.AbsolutePath);
+    }
+
+    [Theory]
     [InlineData(0, SampleWorkstationDeviceState.Idle, true)]
     [InlineData(1, SampleWorkstationDeviceState.Running, true)]
     [InlineData(5, SampleWorkstationDeviceState.Offline, false)]
@@ -196,6 +264,11 @@ public sealed class SampleWorkstationDriverTests
             driver.InitializeAsync("SAMPLE-WORKSTATION-01", CancellationToken.None));
         await Assert.ThrowsAsync<DeviceControlDisabledException>(() =>
             driver.StartTaskAsync("SAMPLE-WORKSTATION-01", "TASK-01", CancellationToken.None));
+        var barcodes = new SampleWorkstationTaskBarcodes { SampleBarcode1 = "A", SampleBarcode2 = "B" };
+        await Assert.ThrowsAsync<DeviceControlDisabledException>(() =>
+            driver.StartTaskAsync("SAMPLE-WORKSTATION-01", "TASK-01", barcodes, CancellationToken.None));
+        await Assert.ThrowsAsync<DeviceControlDisabledException>(() =>
+            driver.UpdateTaskBarcodesAsync("SAMPLE-WORKSTATION-01", "TASK-01", barcodes, CancellationToken.None));
         Assert.Empty(handler.Requests);
     }
 

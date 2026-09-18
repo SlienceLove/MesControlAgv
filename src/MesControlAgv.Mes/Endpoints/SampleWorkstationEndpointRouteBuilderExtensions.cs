@@ -1,6 +1,7 @@
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
 using MesControlAgv.Mes.Services;
+using Microsoft.AspNetCore.Http.Features;
 
 namespace MesControlAgv.Mes.Endpoints;
 
@@ -40,10 +41,31 @@ public static class SampleWorkstationEndpointRouteBuilderExtensions
         endpoints.MapPost("/api/workstations/{deviceId}/tasks/{taskNo}/start", async (
             string deviceId,
             string taskNo,
+            SampleWorkstationTaskBarcodes? barcodes,
+            HttpRequest request,
             ISampleWorkstationCommands controller,
+            ISampleWorkstationBarcodeCommands barcodeController,
             CancellationToken cancellationToken) =>
             await ExecuteAsync(
-                () => controller.StartTaskAsync(deviceId, taskNo, cancellationToken),
+                () =>
+                {
+                    taskNo = SampleWorkstationTaskRoute.ReadCommandTaskNo(request.HttpContext.Features.Get<IHttpRequestFeature>()?.RawTarget, taskNo);
+                    return barcodes is null
+                        ? controller.StartTaskAsync(deviceId, taskNo, cancellationToken)
+                        : barcodeController.StartTaskAsync(deviceId, taskNo, barcodes, cancellationToken);
+                },
+                cancellationToken, isCommand: true));
+
+        endpoints.MapPost("/api/workstations/{deviceId}/tasks/{taskNo}/barcodes", async (
+            string deviceId, string taskNo, SampleWorkstationTaskBarcodes barcodes,
+            HttpRequest request,
+            ISampleWorkstationBarcodeCommands controller, CancellationToken cancellationToken) =>
+            await ExecuteAsync(
+                () =>
+                {
+                    taskNo = SampleWorkstationTaskRoute.ReadCommandTaskNo(request.HttpContext.Features.Get<IHttpRequestFeature>()?.RawTarget, taskNo);
+                    return controller.UpdateTaskBarcodesAsync(deviceId, taskNo, barcodes, cancellationToken);
+                },
                 cancellationToken, isCommand: true));
 
         endpoints.MapGet("/api/workstations/{deviceId}/tasks", async (

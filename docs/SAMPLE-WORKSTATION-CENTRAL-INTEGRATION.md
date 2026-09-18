@@ -141,7 +141,8 @@ MES 与 Adapter 路径相同，前缀为 `/api/workstations/{deviceId}`：
 | GET | `/tasks/{taskNo}`、`/tasks/{taskNo}/state` | 已有任务详情、执行状态 |
 | GET | `/protocol/{operation}` | 厂家扩展只读信息 |
 | POST | `/initialize` | 初始化；内部转换为厂家 GET `Init` |
-| POST | `/tasks/{taskNo}/start` | 启动已有任务；内部转换为 GET `StartExperiment?TaskNo=...` |
+| POST | `/tasks/{taskNo}/start` | 启动已有任务；可选 JSON 体携带 V1.02 两个大瓶条码，无请求体兼容旧调用 |
+| POST | `/tasks/{taskNo}/barcodes` | 仅更新两个大瓶条码；内部转换为 GET `UpdateTaskBarcode`，不会启动 |
 
 任务列表查询支持 `state=Waiting/Running/Completed`、`startDate/endDate=yyyy-MM-dd`、`startNo`（从 1 开始）和 `recordNum`（默认 50）。协议分页沿用这些日期和分页参数；详情操作用 `key`。
 
@@ -153,7 +154,7 @@ MES 与 Adapter 路径相同，前缀为 `/api/workstations/{deviceId}`：
 
 ## 命令结果如何交给中控
 
-只有已知确认文本才返回命令成功响应：初始化为“正在进行初始化”或“初始化成功”，任务启动为“启动成功”。响应保留原有字段，增加 `acknowledged=true` 和启动任务的 `taskNo`。
+只有已知确认文本才返回命令成功响应：初始化为“正在进行初始化”或“初始化成功”，任务启动为“启动成功”，条码更新为“更新成功”。响应保留原有字段，增加 `acknowledged=true` 和目标任务的 `taskNo`。
 
 `acknowledged` 仅表示厂家确认接收/启动，不代表设备动作或任务完成。中控应继续通过任务状态读取观察 `Running`、`Completed`，不能将 `Code=200`、设备 `Idle` 或错误码 `0` 单独当作本次任务完成。
 
@@ -175,6 +176,37 @@ MES 与 Adapter 路径相同，前缀为 `/api/workstations/{deviceId}`：
 厂家明确返回“启动失败”时使用 `outcomeUnknown=false`，作为已知拒绝处理；超时、断线、空响应或其他无法确认结果的响应使用 `outcomeUnknown=true`，表示命令可能已进入厂家，不表示“肯定未发送”。两类结果都不自动重发。调用方取消等待也不会撤销厂家已收到的命令；结果不明确时先只读查询并与现场核实。
 
 ## 与当前主工作区的衔接
+
+### 2026-09-18 V1.02 大瓶条码通讯
+
+依据 `res/开盖分液工作站Http接口文档V1.02.pdf` 第17、24–25页，新增
+`ISampleWorkstationBarcodeCommands`，提供双条码更新与带码启动。用户已确认
+`UpdateTaskBarcode` 仅写条码，不触发运行。
+
+两个 POST 命令的 JSON 请求体相同（更新必填，启动可选）：
+
+```json
+{
+  "sampleBarcode1": "SOURCE-001",
+  "sampleBarcode2": "SOURCE-002"
+}
+```
+
+有请求体时两个来源 ID 均要求非空，Adapter 只 Trim，保留大小写和内部字符。
+厂家 GET 参数使用 `TaskNo`、`SampleBarcode1`、`SampleBarcode2`；两个命令各发送一次，
+不会相互调用或自动重试。条码更新明确失败（201或“更新失败”）使用
+`workstation_command_rejected`、`outcomeUnknown=false`，保存厂家原码/内容；未知返回或
+超时保持不确定结果。200不能单独作为成功。
+
+此能力仅已完成通讯层接入和离线测试，尚未用 V1.02 厂家服务实测。
+文档将 GET 参数表标作“请求头设置”，缺少可运行请求示例；现实现沿用既有 GET 查询参数
+方式，真实验收须核对参数位置。配置能力不代表现场版本已支持。
+
+正式 worker 仍使用旧 taskNo-only 调用，未自动更新条码，也未将核对表行顺序隐式映射为
+1/2号大瓶。后续按实际模板建立明确的大瓶位置绑定、冻结来源 ID 和分液表，再接入正式
+流程；当前不可据此宣称已完成来源→小瓶位置溯源或模板上传。
+`SourceBarCode` / `TargetBarCode` 是模板中的模块参数编码，与两个样品来源 ID 不同。
+任务导入仍未开放（`taskImportSupported=false`）。
 
 代码在隔离分支 `feature/sample-workstation-http-readonly`，已包含默认隐藏的 WPF 联调入口，但未合并到 `feature/wpf-ui-layout-optimization`。
 
