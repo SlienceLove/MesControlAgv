@@ -37,4 +37,21 @@ dotnet build MesControlAgv.sln -c Release --artifacts-path C:/Users/33206/AppDat
 
 ## 独立审查
 
-只读审查范围 `dd963b5..0f31868`，未发现阻断问题，确认新号长度/随机性、幂等顺序、历史兼容和证据导出范围符合设计。工具拒绝覆盖/hash不符路径目前以本轮实际命令验证为证据，尚未加入自动化CLI测试；此项作为低风险后续测试改进记录，不扩展本次最小修正。ZIP再次只读核验为5个预期文件，包内XLSX hash与原冻结hash一致。
+只读审查范围 `dd963b5..0f31868`，未发现阻断问题，确认新号长度/随机性、幂等顺序、历史兼容和证据导出范围符合设计。审查时工具拒绝覆盖/hash不符路径只有实际命令验证，缺少自动化CLI测试；此项随后按下节补齐。ZIP再次只读核验为5个预期文件，包内XLSX hash与原冻结hash一致。
+
+## 后续自动化CLI收尾（2026-09-20）
+
+测试提交 `6bf6b92`，只修改测试项目及新测试类，不改生产代码。测试通过项目引用构建工具，使用构建输出直接启动真实CLI，不在测试中嵌套build或搜索仓库路径，不连接厂家设备。
+
+- 新增9项：短号/历史42位号原样还原（2）；独立解码上传帧和manifest核对；hash/任务号不符/非法文件名拒绝（3）；已有文件/目录保留（2）；重复输出全部文件原样保留（1）；缺参数提示且不创建文件（1）。
+- 各用例只使用独立临时目录；子进程20秒上限，清理前校验临时根目录和专属前缀。没有清理或修改现场材料。
+- Debug全量Adapter 357/357通过。
+- 仓库外隔离Release首次全量356/357：唯一失败是未改动的 `FieldStandardConfigurationTests.FindRepositoryRoot` 从构建路径父目录寻找sln失败；同一输出中的新增CLI9/9通过。未改动该无关测试。
+- 改为仓库内独立、ignored的Release输出后，全量Adapter 357/357通过，说明新测试可用于常规及隔离构建。
+- 本轮未重跑未改动的MES；上一轮373/373证据仍保留，不合并计为本轮重新执行总数。厂家复现ZIP的hash未变，现场服务未部署，Unknown记录未改，未发任何厂家请求。
+- 独立只读审查 `c8935b4..6bf6b92` 无发现，确认真实子进程调用、独立帧解码、工程引用和临时目录清理符合范围；上一轮自动化CLI测试缺口已关闭。
+
+```powershell
+dotnet test tests/MesControlAgv.Adapter.Tests/MesControlAgv.Adapter.Tests.csproj --no-restore --nologo -v minimal
+dotnet test tests/MesControlAgv.Adapter.Tests/MesControlAgv.Adapter.Tests.csproj -c Release --artifacts-path D:/Project/Github/Mes-worktrees/sample-workstation-http-readonly/artifacts/workstation-field-20260920-0935/cli-release-build --nologo -v minimal
+```
