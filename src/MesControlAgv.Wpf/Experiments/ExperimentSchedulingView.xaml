@@ -525,6 +525,7 @@
                             <RowDefinition Height="110" />
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <TextBlock Foreground="#475467" Text="{Binding Message}" TextWrapping="Wrap" />
                         <StackPanel Grid.Row="1" Margin="0,4,0,4" Orientation="Horizontal">
@@ -541,7 +542,7 @@
                                     <DataGridTextColumn Width="70" Header="目标模块" Binding="{Binding TargetModule, UpdateSourceTrigger=PropertyChanged}" />
                                     <DataGridTextColumn Width="40" Header="X" Binding="{Binding TargetX, UpdateSourceTrigger=PropertyChanged}" />
                                     <DataGridTextColumn Width="40" Header="Y" Binding="{Binding TargetY, UpdateSourceTrigger=PropertyChanged}" />
-                                    <DataGridTextColumn Width="55" Header="体积" Binding="{Binding VolumeMicroliters, UpdateSourceTrigger=PropertyChanged}" />
+                                    <DataGridTextColumn Width="80" Header="体积 (µL)" Binding="{Binding VolumeMicroliters, UpdateSourceTrigger=PropertyChanged}" />
                                 </DataGrid.Columns>
                             </DataGrid>
                         </ScrollViewer>
@@ -559,11 +560,42 @@
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
-                        <StackPanel Grid.Row="4" Margin="0,6,0,0" Orientation="Horizontal">
+                        <StackPanel Grid.Row="4" Margin="0,6,0,0">
+                            <WrapPanel>
+                                <TextBlock Margin="0,4,6,4" VerticalAlignment="Center" Text="统一每孔体积 (µL)" />
+                                <TextBox x:Name="WorkstationUniformVolumeInput" AutomationProperties.AutomationId="ExperimentWorkstationUniformVolumeInput"
+                                         Width="75" Margin="0,0,6,4" VerticalContentAlignment="Center" IsEnabled="{Binding CanEdit}"
+                                         Text="{Binding UniformVolumeText, UpdateSourceTrigger=PropertyChanged}" />
+                                <Button x:Name="ApplyWorkstationUniformVolumeButton" AutomationProperties.AutomationId="ExperimentApplyWorkstationUniformVolumeButton"
+                                        Margin="0,0,0,4" Padding="8,4" Command="{Binding ApplyUniformVolumeCommand}" Content="应用到全部行"
+                                        ToolTip="只修改当前任务表的体积；不会保存、导入或启动设备。" />
+                            </WrapPanel>
+                            <TextBlock Foreground="#B54708" Text="{Binding UniformVolumeValidationMessage}" TextWrapping="Wrap" />
+                            <TextBlock x:Name="WorkstationVolumeSummaryText" Margin="0,3,0,2" FontWeight="SemiBold" Text="{Binding VolumeSummary}" TextWrapping="Wrap" />
+                            <ItemsControl x:Name="WorkstationSourceVolumeSummaries" ItemsSource="{Binding SourceVolumeSummaries}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate><TextBlock Margin="0,1" Foreground="#475467" Text="{Binding Display}" TextWrapping="Wrap" /></DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <TextBlock x:Name="WorkstationEditStatusText" Margin="0,3,0,0" Text="{Binding EditStatusText}" TextWrapping="Wrap">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="#667085" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding HasUnsavedChanges}" Value="True">
+                                                <Setter Property="Foreground" Value="#B54708" />
+                                                <Setter Property="FontWeight" Value="SemiBold" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </StackPanel>
+                        <WrapPanel Grid.Row="5" Margin="0,6,0,0">
                             <Button x:Name="BeginWorkstationTemplateModeButton" AutomationProperties.AutomationId="ExperimentBeginWorkstationTemplateModeButton" Padding="8,4" Command="{Binding BeginTemplateModeCommand}" Content="新建模板准备" />
                             <Button x:Name="SaveWorkstationPreparationButton" AutomationProperties.AutomationId="ExperimentSaveWorkstationPreparationButton" Padding="8,4" Command="{Binding SaveCommand}" Content="保存准备" />
                             <Button x:Name="ImportWorkstationPreparationButton" AutomationProperties.AutomationId="ExperimentImportWorkstationPreparationButton" Margin="6,0,0,0" Padding="8,4" Background="#027A48" Foreground="White" Command="{Binding ImportCommand}" Content="显式导入" />
-                        </StackPanel>
+                        </WrapPanel>
                     </Grid>
                 </Expander>
             </Grid>

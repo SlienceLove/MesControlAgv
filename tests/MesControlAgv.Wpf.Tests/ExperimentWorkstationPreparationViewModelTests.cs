@@ -6,7 +6,7 @@ using MesControlAgv.Wpf.ViewModels;
 
 namespace MesControlAgv.Wpf.Tests;
 
-public sealed class ExperimentWorkstationPreparationViewModelTests
+public sealed partial class ExperimentWorkstationPreparationViewModelTests
 {
     [Fact]
     public void Clear_source_command_is_stable_and_notifies_as_a_source_is_selected_and_cleared()

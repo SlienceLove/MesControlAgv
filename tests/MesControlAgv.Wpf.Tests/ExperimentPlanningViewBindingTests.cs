@@ -155,6 +155,9 @@ public sealed class ExperimentPlanningViewBindingTests
                 Assert.False(workstationPreparationPanel.IsExpanded);
                 Assert.Same(scheduling.WorkstationPreparation.SaveCommand, Assert.IsType<Button>(schedulingView.FindName("SaveWorkstationPreparationButton")).Command);
                 Assert.Same(scheduling.WorkstationPreparation.ImportCommand, Assert.IsType<Button>(schedulingView.FindName("ImportWorkstationPreparationButton")).Command);
+                Assert.Same(scheduling.WorkstationPreparation.ApplyUniformVolumeCommand, Assert.IsType<Button>(schedulingView.FindName("ApplyWorkstationUniformVolumeButton")).Command);
+                Assert.Equal(nameof(ExperimentWorkstationPreparationViewModel.UniformVolumeText), Assert.IsType<TextBox>(schedulingView.FindName("WorkstationUniformVolumeInput")).GetBindingExpression(TextBox.TextProperty)!.ParentBinding.Path.Path);
+                Assert.Equal(scheduling.WorkstationPreparation.VolumeSummary, Assert.IsType<TextBlock>(schedulingView.FindName("WorkstationVolumeSummaryText")).Text);
                 var workstationTransfers = Assert.IsType<DataGrid>(schedulingView.FindName("WorkstationTransferGrid"));
                 Assert.Equal(nameof(ExperimentWorkstationPreparationViewModel.CanEdit), workstationTransfers.GetBindingExpression(UIElement.IsEnabledProperty)!.ParentBinding.Path.Path);
                 Assert.Equal(scheduling.WorkstationPreparation.CanEdit, workstationTransfers.IsEnabled);
