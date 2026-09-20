@@ -85,6 +85,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         ShineLabTaskDispatch = new ShineLabTaskDispatchViewModel(_mes);
         ShineLabSequenceImport = new ShineLabSequenceImportViewModel(mes: _mes);
         _modules = new ControlCenterViewModel(WorkflowEditor, _mes, ModuleRegistry);
+        Materials = new MaterialManagementViewModel(_mes);
         _modules.AgvCommunication.ConfigureRuntimeMode(effectiveRuntimeMode);
         DiagnosticAudit = diagnosticAudit ?? new OfflineDiagnosticAuditTrail();
         Diagnostics = new DiagnosticsCenterViewModel(StartupDiagnostics, DiagnosticAudit);
@@ -94,6 +95,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         ObserveOfflineState("batch-import", _modules.BatchImport.OfflineState);
         ObserveOfflineState("sample-management", _modules.SampleManagement.OfflineState);
         ObserveOfflineState("shinelab-import", ShineLabSequenceImport.OfflineState);
+        ObserveOfflineState("materials", Materials.OfflineState);
         DiagnosticAudit.Record(
             "startup",
             "configuration",
@@ -154,6 +156,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ShineLabDeviceStatusViewModel ShineLabDeviceStatus { get; }
     public ShineLabTaskDispatchViewModel ShineLabTaskDispatch { get; }
     public ShineLabSequenceImportViewModel ShineLabSequenceImport { get; }
+    public MaterialManagementViewModel Materials { get; }
     public StartupConfigurationReport StartupDiagnostics { get; }
     public OfflineDiagnosticAuditTrail DiagnosticAudit { get; }
     public DiagnosticsCenterViewModel Diagnostics { get; }
@@ -419,6 +422,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public async Task StartAsync()
     {
         await RefreshAsync();
+        await Materials.RefreshAsync(_shutdown.Token);
         await ShineLabTaskDispatch.RefreshTasksAsync();
         await Readiness.RefreshAsync(_shutdown.Token);
         // When MES is unavailable (for example while the field Ethernet is
@@ -1128,6 +1132,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         AuboArm.Dispose();
         Samples.Dispose();
         ShineLabDeviceStatus.Dispose();
+        Materials.Dispose();
         _refreshGate.Dispose();
         _actionGate.Dispose();
         _shutdown.Dispose();

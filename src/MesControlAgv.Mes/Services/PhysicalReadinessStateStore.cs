@@ -667,6 +667,12 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
         }
     }
 
+    // Keep the original convenience overload for local callers that already
+    // hold this store instance.  The explicit supervisor-instance overload
+    // above remains the fail-closed boundary used by persisted authorizations.
+    public bool AcknowledgeAuthorization(string deviceId, long expectedEpoch) =>
+        AcknowledgeAuthorization(deviceId, expectedEpoch, _instanceId);
+
     private static PhysicalDeviceDescriptor NormalizeDescriptor(PhysicalDeviceDescriptor descriptor)
     {
         ArgumentNullException.ThrowIfNull(descriptor);

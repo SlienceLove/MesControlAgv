@@ -108,6 +108,35 @@ public sealed class ExperimentRuntimeAdmissionApiTests
     }
 
     [Fact]
+    public async Task Inventory_sample_can_be_admitted_without_a_legacy_custody_record()
+    {
+        using var factory = new MesWebApplicationFactory();
+        using var client = factory.CreateClient();
+        var plan = await CreatePublishedPlanAsync(client);
+        var id = Guid.NewGuid();
+        using (var scope = factory.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            database.SampleMaterials.Add(new SampleMaterialRecord
+            {
+                SampleId = id, Barcode = $"INV-{id:N}", SampleBatchId = "INVENTORY-ONLY",
+                Status = "Available", CreatedAtUtc = DateTime.UtcNow, UpdatedAtUtc = DateTime.UtcNow
+            });
+            await database.SaveChangesAsync();
+        }
+        var scheduled = await CreateScheduledJobAsync(client, plan, "INVENTORY-ONLY",
+            new DateTimeOffset(2026, 8, 22, 9, 30, 0, TimeSpan.Zero), id.ToString());
+        var admitted = await AdmitAsync(client, scheduled.Job.JobId, "Inventory reservation admission");
+        Assert.NotNull(admitted.WorkflowRunId);
+        using var verification = factory.Services.CreateScope();
+        var db = verification.ServiceProvider.GetRequiredService<MesDbContext>();
+        Assert.False(await db.Samples.AnyAsync());
+        var sample = await db.SampleMaterials.SingleAsync(item => item.SampleId == id);
+        Assert.Equal(scheduled.Job.JobId, sample.BoundExperimentJobId);
+        Assert.Equal("Reserved", sample.Status);
+    }
+
+    [Fact]
     public async Task Two_scheduled_jobs_competing_for_one_runtime_resource_admit_exactly_one()
     {
         using var factory = new MesWebApplicationFactory();

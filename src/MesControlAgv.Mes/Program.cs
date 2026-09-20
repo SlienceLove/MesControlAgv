@@ -145,6 +145,10 @@ builder.Services.AddScoped<ExperimentWorkstationPreparationService>();
 builder.Services.AddScoped<IExperimentWorkstationPreparationService>(services =>
     services.GetRequiredService<ExperimentWorkstationPreparationService>());
 builder.Services.AddScoped<IExperimentWorkstationRuntimeBindingValidator, ExperimentWorkstationRuntimeBindingValidator>();
+builder.Services.AddScoped<MaterialOperationCoordinator>();
+builder.Services.AddScoped<MaterialManagementService>();
+builder.Services.AddScoped<IMaterialManagementService>(services =>
+    services.GetRequiredService<MaterialManagementService>());
 builder.Services.AddScoped<ExperimentRuntimeLeaseLifecycle>();
 builder.Services.AddScoped<ExperimentRuntimeAdmissionService>();
 builder.Services.AddScoped<IExperimentRuntimeAdmissionService>(services =>
@@ -197,6 +201,7 @@ using (var scope = app.Services.CreateScope())
     await EnsurePhysicalSafetyActionTablesAsync(database);
     await EnsureSampleManagementTablesAsync(database);
     await PhysicalSafetyActionService.ReconcilePreparedRecordsAsync(database, CancellationToken.None);
+    await EnsureMaterialManagementTablesAsync(database);
 }
 
 app.MapGet("/health", () => Results.Ok(new { service = "mes", status = "ok" }));
@@ -212,6 +217,7 @@ app.MapMesWorkflowEndpoints();
 app.MapMesExperimentSchedulingEndpoints();
 app.MapMesExperimentSampleVerificationEndpoints();
 app.MapMesExperimentWorkstationPreparationEndpoints();
+app.MapMaterialManagementEndpoints();
 
 app.MapPost("/api/field-navigation-acceptances", async (
     CreateFieldNavigationAcceptanceRequest request,
@@ -987,6 +993,405 @@ static async Task EnsureColumnsAsync(
         alter.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {definition.Name} {definition.Sql};";
         await alter.ExecuteNonQueryAsync();
     }
+}
+
+static async Task EnsureMaterialManagementTablesAsync(MesDbContext database)
+{
+    var connection = database.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open)
+    {
+        await connection.OpenAsync();
+    }
+
+    var hadMaterialOperationsTable = false;
+    await using (var tableProbe = connection.CreateCommand())
+    {
+        tableProbe.CommandText = "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'MaterialOperations');";
+        hadMaterialOperationsTable = Convert.ToInt64(await tableProbe.ExecuteScalarAsync()) != 0;
+    }
+
+    var tableStatements = new[]
+    {
+        """
+        CREATE TABLE IF NOT EXISTS MaterialOperations (
+            RequestId TEXT NOT NULL PRIMARY KEY,
+            OperationKind TEXT NOT NULL,
+            Fingerprint TEXT NOT NULL,
+            Outcome TEXT NOT NULL,
+            ResultJson TEXT NOT NULL,
+            Actor TEXT NOT NULL,
+            CreatedAtUtc TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS MaterialCatalog (
+            MaterialId TEXT NOT NULL PRIMARY KEY,
+            MaterialCode TEXT NOT NULL,
+            Name TEXT NOT NULL,
+            Kind TEXT NOT NULL,
+            Specification TEXT NULL,
+            Unit TEXT NULL,
+            IsEnabled INTEGER NOT NULL DEFAULT 1,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS WarehouseLocations (
+            LocationId TEXT NOT NULL PRIMARY KEY,
+            WarehouseCode TEXT NOT NULL,
+            WarehouseName TEXT NOT NULL,
+            LocationCode TEXT NOT NULL,
+            IsEnabled INTEGER NOT NULL DEFAULT 1,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS SampleMaterials (
+            SampleId TEXT NOT NULL PRIMARY KEY,
+            Barcode TEXT NOT NULL,
+            SampleBatchId TEXT NOT NULL,
+            MaterialCode TEXT NULL,
+            SampleType TEXT NULL,
+            Status TEXT NOT NULL,
+            LocationId TEXT NULL,
+            BoundExperimentJobId TEXT NULL,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL,
+            FOREIGN KEY (LocationId) REFERENCES WarehouseLocations(LocationId) ON DELETE NO ACTION,
+            FOREIGN KEY (BoundExperimentJobId) REFERENCES ExperimentJobs(JobId) ON DELETE NO ACTION
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS MaterialLots (
+            LotId TEXT NOT NULL PRIMARY KEY,
+            MaterialId TEXT NOT NULL,
+            MaterialCode TEXT NOT NULL,
+            LotCode TEXT NOT NULL,
+            Barcode TEXT NULL,
+            Specification TEXT NULL,
+            Unit TEXT NULL,
+            ManufactureDateUtc TEXT NULL,
+            ExpiryDateUtc TEXT NULL,
+            IsQuarantined INTEGER NOT NULL DEFAULT 0,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL,
+            FOREIGN KEY (MaterialId) REFERENCES MaterialCatalog(MaterialId) ON DELETE NO ACTION
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS InventoryBalances (
+            BalanceId TEXT NOT NULL PRIMARY KEY,
+            LotId TEXT NOT NULL,
+            LocationId TEXT NOT NULL,
+            OnHand NUMERIC NOT NULL DEFAULT 0,
+            Reserved NUMERIC NOT NULL DEFAULT 0,
+            UpdatedAtUtc TEXT NOT NULL,
+            FOREIGN KEY (LotId) REFERENCES MaterialLots(LotId) ON DELETE CASCADE,
+            FOREIGN KEY (LocationId) REFERENCES WarehouseLocations(LocationId) ON DELETE NO ACTION
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS InventoryTransactions (
+            Id TEXT NOT NULL PRIMARY KEY,
+            RequestId TEXT NOT NULL,
+            LineKey TEXT NOT NULL,
+            TransactionKind TEXT NOT NULL,
+            LotId TEXT NULL,
+            SampleId TEXT NULL,
+            FromLocationId TEXT NULL,
+            ToLocationId TEXT NULL,
+            MaterialCode TEXT NULL,
+            LotCode TEXT NULL,
+            Barcode TEXT NULL,
+            Quantity NUMERIC NULL,
+            Unit TEXT NULL,
+            ExperimentJobId TEXT NULL,
+            Actor TEXT NOT NULL,
+            Reason TEXT NULL,
+            CorrelationId TEXT NULL,
+            DetailsJson TEXT NOT NULL,
+            OccurredAtUtc TEXT NOT NULL,
+            FOREIGN KEY (RequestId) REFERENCES MaterialOperations(RequestId) ON DELETE NO ACTION,
+            FOREIGN KEY (LotId) REFERENCES MaterialLots(LotId) ON DELETE NO ACTION,
+            FOREIGN KEY (SampleId) REFERENCES SampleMaterials(SampleId) ON DELETE NO ACTION,
+            FOREIGN KEY (FromLocationId) REFERENCES WarehouseLocations(LocationId) ON DELETE NO ACTION,
+            FOREIGN KEY (ToLocationId) REFERENCES WarehouseLocations(LocationId) ON DELETE NO ACTION,
+            FOREIGN KEY (ExperimentJobId) REFERENCES ExperimentJobs(JobId) ON DELETE NO ACTION
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS BarcodeScanEvents (
+            Id TEXT NOT NULL PRIMARY KEY,
+            RequestId TEXT NOT NULL,
+            RawCode TEXT NOT NULL,
+            NormalizedCode TEXT NOT NULL,
+            ScanKind TEXT NOT NULL,
+            Source TEXT NOT NULL,
+            Outcome TEXT NOT NULL,
+            IssueCode TEXT NULL,
+            SampleId TEXT NULL,
+            LotId TEXT NULL,
+            Actor TEXT NOT NULL,
+            DetailsJson TEXT NOT NULL,
+            OccurredAtUtc TEXT NOT NULL,
+            FOREIGN KEY (RequestId) REFERENCES MaterialOperations(RequestId) ON DELETE NO ACTION,
+            FOREIGN KEY (SampleId) REFERENCES SampleMaterials(SampleId) ON DELETE NO ACTION,
+            FOREIGN KEY (LotId) REFERENCES MaterialLots(LotId) ON DELETE NO ACTION
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ExperimentJobMaterialBindings (
+            BindingId TEXT NOT NULL PRIMARY KEY,
+            RequestId TEXT NOT NULL,
+            LineKey TEXT NOT NULL,
+            ExperimentJobId TEXT NOT NULL,
+            SampleId TEXT NULL,
+            LotId TEXT NULL,
+            Quantity NUMERIC NOT NULL,
+            Unit TEXT NULL,
+            Status TEXT NOT NULL,
+            InjectionPosition TEXT NULL,
+            Actor TEXT NOT NULL,
+            Reason TEXT NULL,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL,
+            FOREIGN KEY (RequestId) REFERENCES MaterialOperations(RequestId) ON DELETE NO ACTION,
+            FOREIGN KEY (ExperimentJobId) REFERENCES ExperimentJobs(JobId) ON DELETE CASCADE,
+            FOREIGN KEY (SampleId) REFERENCES SampleMaterials(SampleId) ON DELETE NO ACTION,
+            FOREIGN KEY (LotId) REFERENCES MaterialLots(LotId) ON DELETE NO ACTION
+        );
+        """
+    };
+
+    foreach (var statement in tableStatements)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = statement;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    var indexStatements = new[]
+    {
+        "CREATE INDEX IF NOT EXISTS IX_MaterialOperations_OperationKind_CreatedAtUtc ON MaterialOperations (OperationKind, CreatedAtUtc);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_MaterialCatalog_MaterialCode ON MaterialCatalog (MaterialCode);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_WarehouseLocations_WarehouseCode_LocationCode ON WarehouseLocations (WarehouseCode, LocationCode);",
+        "CREATE INDEX IF NOT EXISTS IX_WarehouseLocations_WarehouseCode_IsEnabled ON WarehouseLocations (WarehouseCode, IsEnabled);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_SampleMaterials_Barcode ON SampleMaterials (Barcode);",
+        "CREATE INDEX IF NOT EXISTS IX_SampleMaterials_Status_UpdatedAtUtc ON SampleMaterials (Status, UpdatedAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_SampleMaterials_BoundExperimentJobId ON SampleMaterials (BoundExperimentJobId);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_MaterialLots_MaterialCode_LotCode ON MaterialLots (MaterialCode, LotCode);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_MaterialLots_Barcode ON MaterialLots (Barcode);",
+        "CREATE INDEX IF NOT EXISTS IX_MaterialLots_Quarantine_Expiry ON MaterialLots (IsQuarantined, ExpiryDateUtc);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_InventoryBalances_LotId_LocationId ON InventoryBalances (LotId, LocationId);",
+        "CREATE INDEX IF NOT EXISTS IX_InventoryBalances_LocationId ON InventoryBalances (LocationId);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_InventoryTransactions_RequestId_LineKey ON InventoryTransactions (RequestId, LineKey);",
+        "CREATE INDEX IF NOT EXISTS IX_InventoryTransactions_LotId_OccurredAtUtc ON InventoryTransactions (LotId, OccurredAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_InventoryTransactions_SampleId_OccurredAtUtc ON InventoryTransactions (SampleId, OccurredAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_InventoryTransactions_ExperimentJobId_OccurredAtUtc ON InventoryTransactions (ExperimentJobId, OccurredAtUtc);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_BarcodeScanEvents_RequestId ON BarcodeScanEvents (RequestId);",
+        "CREATE INDEX IF NOT EXISTS IX_BarcodeScanEvents_NormalizedCode_OccurredAtUtc ON BarcodeScanEvents (NormalizedCode, OccurredAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_BarcodeScanEvents_SampleId_OccurredAtUtc ON BarcodeScanEvents (SampleId, OccurredAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_BarcodeScanEvents_LotId_OccurredAtUtc ON BarcodeScanEvents (LotId, OccurredAtUtc);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentJobMaterialBindings_RequestId_LineKey ON ExperimentJobMaterialBindings (RequestId, LineKey);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentJobMaterialBindings_JobId_Status ON ExperimentJobMaterialBindings (ExperimentJobId, Status);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentJobMaterialBindings_SampleId ON ExperimentJobMaterialBindings (SampleId);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentJobMaterialBindings_LotId ON ExperimentJobMaterialBindings (LotId);"
+    };
+
+    foreach (var statement in indexStatements)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = statement;
+        await command.ExecuteNonQueryAsync();
+    }
+
+    await EnsureMaterialManagementSchemaCompatibilityAsync(connection, hadMaterialOperationsTable);
+
+    const string defaultLocationId = "00000000-0000-0000-0000-000000000001";
+    await using var seed = connection.CreateCommand();
+    seed.CommandText =
+        """
+        INSERT OR IGNORE INTO WarehouseLocations
+            (LocationId, WarehouseCode, WarehouseName, LocationCode, IsEnabled, CreatedAtUtc, UpdatedAtUtc)
+        VALUES ($id, 'MAIN', '默认仓库', 'DEFAULT', 1, $now, $now);
+        """;
+    seed.Parameters.Add(new Microsoft.Data.Sqlite.SqliteParameter("$id", defaultLocationId));
+    seed.Parameters.Add(new Microsoft.Data.Sqlite.SqliteParameter("$now", DateTime.UtcNow.ToString("O")));
+    await seed.ExecuteNonQueryAsync();
+}
+
+/// <summary>
+/// The first material-management build shipped before request-level operation
+/// records and all foreign keys were added. SQLite's CREATE TABLE IF NOT EXISTS
+/// deliberately leaves those old tables untouched, so add a small, explicit
+/// compatibility layer. Existing request rows are backfilled as completed
+/// legacy operations and triggers enforce the same references for old tables.
+/// A future migration can rebuild the tables without changing this contract.
+/// </summary>
+static async Task EnsureMaterialManagementSchemaCompatibilityAsync(
+    System.Data.Common.DbConnection connection,
+    bool hadMaterialOperationsTable)
+{
+    await using (var pragma = connection.CreateCommand())
+    {
+        pragma.CommandText = "PRAGMA foreign_keys = ON;";
+        await pragma.ExecuteNonQueryAsync();
+    }
+
+    await using (var version = connection.CreateCommand())
+    {
+        version.CommandText =
+            "CREATE TABLE IF NOT EXISTS MaterialSchemaMigrations (Version INTEGER NOT NULL PRIMARY KEY, AppliedAtUtc TEXT NOT NULL);";
+        await version.ExecuteNonQueryAsync();
+    }
+
+    // Legacy databases may have been created before barcode uniqueness was
+    // enforced case-insensitively. Fail before installing triggers so startup
+    // is read-only and points operators at the conflicting rows.
+    await MaterialSchemaCompatibilityChecker.EnsureNoBarcodeConflictsAsync(connection);
+
+    if (hadMaterialOperationsTable)
+        await MaterialSchemaCompatibilityChecker.EnsureNoOrphanForeignKeysAsync(connection);
+
+    // Preserve material audit rows created by the pre-operation-record build.
+    if (!hadMaterialOperationsTable)
+    {
+      await using var backfill = connection.CreateCommand();
+        backfill.CommandText =
+            """
+            INSERT OR IGNORE INTO MaterialOperations
+                (RequestId, OperationKind, Fingerprint, Outcome, ResultJson, Actor, CreatedAtUtc)
+            SELECT RequestId, 'legacy', 'legacy:' || RequestId, 'Completed', '{}', 'schema-migration', MIN(OccurredAtUtc)
+            FROM InventoryTransactions
+            GROUP BY RequestId;
+            INSERT OR IGNORE INTO MaterialOperations
+                (RequestId, OperationKind, Fingerprint, Outcome, ResultJson, Actor, CreatedAtUtc)
+            SELECT RequestId, 'legacy', 'legacy:' || RequestId, 'Completed', '{}', 'schema-migration', MIN(OccurredAtUtc)
+            FROM BarcodeScanEvents
+            GROUP BY RequestId;
+            INSERT OR IGNORE INTO MaterialOperations
+                (RequestId, OperationKind, Fingerprint, Outcome, ResultJson, Actor, CreatedAtUtc)
+            SELECT RequestId, 'legacy', 'legacy:' || RequestId, 'Completed', '{}', 'schema-migration', MIN(CreatedAtUtc)
+            FROM ExperimentJobMaterialBindings
+            GROUP BY RequestId;
+            """;
+        await backfill.ExecuteNonQueryAsync();
+    }
+    await MaterialSchemaCompatibilityChecker.EnsureNoOrphanForeignKeysAsync(connection);
+
+    var foreignKeys = new[]
+    {
+        (Table: "MaterialLots", Column: "MaterialId", Target: "MaterialCatalog", TargetColumn: "MaterialId"),
+        (Table: "SampleMaterials", Column: "LocationId", Target: "WarehouseLocations", TargetColumn: "LocationId"),
+        (Table: "SampleMaterials", Column: "BoundExperimentJobId", Target: "ExperimentJobs", TargetColumn: "JobId"),
+        (Table: "InventoryBalances", Column: "LotId", Target: "MaterialLots", TargetColumn: "LotId"),
+        (Table: "InventoryBalances", Column: "LocationId", Target: "WarehouseLocations", TargetColumn: "LocationId"),
+        (Table: "InventoryTransactions", Column: "RequestId", Target: "MaterialOperations", TargetColumn: "RequestId"),
+        (Table: "InventoryTransactions", Column: "LotId", Target: "MaterialLots", TargetColumn: "LotId"),
+        (Table: "InventoryTransactions", Column: "SampleId", Target: "SampleMaterials", TargetColumn: "SampleId"),
+        (Table: "InventoryTransactions", Column: "FromLocationId", Target: "WarehouseLocations", TargetColumn: "LocationId"),
+        (Table: "InventoryTransactions", Column: "ToLocationId", Target: "WarehouseLocations", TargetColumn: "LocationId"),
+        (Table: "InventoryTransactions", Column: "ExperimentJobId", Target: "ExperimentJobs", TargetColumn: "JobId"),
+        (Table: "BarcodeScanEvents", Column: "RequestId", Target: "MaterialOperations", TargetColumn: "RequestId"),
+        (Table: "BarcodeScanEvents", Column: "SampleId", Target: "SampleMaterials", TargetColumn: "SampleId"),
+        (Table: "BarcodeScanEvents", Column: "LotId", Target: "MaterialLots", TargetColumn: "LotId"),
+        (Table: "ExperimentJobMaterialBindings", Column: "RequestId", Target: "MaterialOperations", TargetColumn: "RequestId"),
+        (Table: "ExperimentJobMaterialBindings", Column: "ExperimentJobId", Target: "ExperimentJobs", TargetColumn: "JobId"),
+        (Table: "ExperimentJobMaterialBindings", Column: "SampleId", Target: "SampleMaterials", TargetColumn: "SampleId"),
+        (Table: "ExperimentJobMaterialBindings", Column: "LotId", Target: "MaterialLots", TargetColumn: "LotId")
+    };
+
+    foreach (var foreignKey in foreignKeys)
+    {
+        var triggerBase = $"TR_Material_{foreignKey.Table}_{foreignKey.Column}_FK";
+        var insertTrigger = $"""
+            CREATE TRIGGER IF NOT EXISTS {insertTriggerName(triggerBase)}
+            BEFORE INSERT ON {foreignKey.Table}
+            WHEN NEW.{foreignKey.Column} IS NOT NULL AND NOT EXISTS
+                (SELECT 1 FROM {foreignKey.Target} WHERE {foreignKey.TargetColumn} = NEW.{foreignKey.Column})
+            BEGIN
+                SELECT RAISE(ABORT, 'material foreign key violation');
+            END;
+            """;
+        var updateTrigger = $"""
+            CREATE TRIGGER IF NOT EXISTS {updateTriggerName(triggerBase)}
+            BEFORE UPDATE OF {foreignKey.Column} ON {foreignKey.Table}
+            WHEN NEW.{foreignKey.Column} IS NOT NULL AND NOT EXISTS
+                (SELECT 1 FROM {foreignKey.Target} WHERE {foreignKey.TargetColumn} = NEW.{foreignKey.Column})
+            BEGIN
+                SELECT RAISE(ABORT, 'material foreign key violation');
+            END;
+            """;
+        await using var triggerCommand = connection.CreateCommand();
+        triggerCommand.CommandText = insertTrigger + updateTrigger;
+        await triggerCommand.ExecuteNonQueryAsync();
+    }
+
+    var barcodeTriggers = new[]
+    {
+        (Name: "TR_Material_SampleMaterials_Barcode", Table: "SampleMaterials", Key: "SampleId", Nullable: false),
+        (Name: "TR_Material_MaterialLots_Barcode", Table: "MaterialLots", Key: "LotId", Nullable: true)
+    };
+
+    foreach (var barcodeTrigger in barcodeTriggers)
+    {
+        var nullGuard = barcodeTrigger.Nullable ? "NEW.Barcode IS NOT NULL AND " : string.Empty;
+        var sampleExclusion = barcodeTrigger.Table == "SampleMaterials"
+            ? "SampleId <> NEW.SampleId AND "
+            : string.Empty;
+        var lotExclusion = barcodeTrigger.Table == "MaterialLots"
+            ? "LotId <> NEW.LotId AND "
+            : string.Empty;
+        var insertTrigger = $"""
+            CREATE TRIGGER IF NOT EXISTS {barcodeTrigger.Name}_Insert
+            BEFORE INSERT ON {barcodeTrigger.Table}
+            WHEN {nullGuard}
+                (EXISTS (
+                    SELECT 1 FROM SampleMaterials
+                    WHERE upper(Barcode) = upper(NEW.Barcode)
+                ) OR EXISTS (
+                    SELECT 1 FROM MaterialLots
+                    WHERE Barcode IS NOT NULL AND upper(Barcode) = upper(NEW.Barcode)
+                ))
+            BEGIN
+                SELECT RAISE(ABORT, 'material barcode already exists');
+            END;
+            """;
+        var updateTrigger = $"""
+            CREATE TRIGGER IF NOT EXISTS {barcodeTrigger.Name}_Update
+            BEFORE UPDATE OF Barcode ON {barcodeTrigger.Table}
+                WHEN {nullGuard}
+                (EXISTS (
+                    SELECT 1 FROM SampleMaterials
+                    WHERE {sampleExclusion}
+                      upper(Barcode) = upper(NEW.Barcode)
+                ) OR EXISTS (
+                    SELECT 1 FROM MaterialLots
+                    WHERE {lotExclusion}
+                      Barcode IS NOT NULL
+                      AND upper(Barcode) = upper(NEW.Barcode)
+                ))
+            BEGIN
+                SELECT RAISE(ABORT, 'material barcode already exists');
+            END;
+            """;
+        await using var barcodeTriggerCommand = connection.CreateCommand();
+        barcodeTriggerCommand.CommandText = insertTrigger + updateTrigger;
+        await barcodeTriggerCommand.ExecuteNonQueryAsync();
+    }
+
+    await using (var migration = connection.CreateCommand())
+    {
+        migration.CommandText =
+            "INSERT OR REPLACE INTO MaterialSchemaMigrations (Version, AppliedAtUtc) VALUES (2, $now);";
+        migration.Parameters.Add(new Microsoft.Data.Sqlite.SqliteParameter("$now", DateTime.UtcNow.ToString("O")));
+        await migration.ExecuteNonQueryAsync();
+    }
+
+    static string insertTriggerName(string value) => value + "_Insert";
+    static string updateTriggerName(string value) => value + "_Update";
 }
 
 static async Task EnsureFieldNavigationAcceptanceTablesAsync(MesDbContext database)

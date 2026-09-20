@@ -83,7 +83,15 @@ public sealed class MainWindowNavigationTests
                     .Where(button => string.Equals(button.Tag as string, "InstrumentTaskImportTab", StringComparison.Ordinal))
                     .ToArray();
 
-                Assert.Equal(4, groupHeaders.Length);
+                Assert.Equal(5, groupHeaders.Length);
+                Assert.Contains("物料管理", groupHeaders);
+                var materialsGroup = FindVisualChildren<Expander>(sidebar).Single(item => Equals(item.Header, "物料管理"));
+                var materialTags = FindVisualChildren<RadioButton>(materialsGroup).Select(item => item.Tag as string).ToArray();
+                Assert.Contains("MaterialManagementTab", materialTags);
+                Assert.Contains("SampleManagementTab", materialTags);
+                var overview = FindVisualChildren<Expander>(sidebar).Single(item => Equals(item.Header, "运营总览"));
+                Assert.DoesNotContain(FindVisualChildren<RadioButton>(overview), item =>
+                    item.Tag as string is "MaterialManagementTab" or "SampleManagementTab");
                 Assert.Contains("运营总览", groupHeaders);
                 Assert.Contains("任务与设备", groupHeaders);
                 Assert.Contains("实验工作流", groupHeaders);

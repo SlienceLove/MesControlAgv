@@ -1,5 +1,7 @@
 # Branch consolidation — 2026-09-20
 
+> This document retains intermediate checkpoints. Current branch roles and final integration scope are recorded in [BRANCH-MANAGEMENT.md](BRANCH-MANAGEMENT.md). Workstation final archive 4fbddc4 and material/admission source 74cfb88 are now integrated; three-device uncommitted execution drafts remain excluded.
+
 ## Responsibilities
 
 - `master`: verified release baseline. Promote only after integration regression and UI acceptance.

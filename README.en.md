@@ -156,4 +156,3 @@ The Adapter includes a configurable vendor TCP driver, but Simulator is the defa
 - [Vendor TCP Adapter](docs/AGV-TCP-ADAPTER.md)
 - [Physical acceptance boundary](docs/physical-acceptance/README.md)
 - [Progress and handoff](docs/PROGRESS.md)
-- [MVP design](docs/superpowers/specs/2026-07-29-agv-mes-mvp-design.md)

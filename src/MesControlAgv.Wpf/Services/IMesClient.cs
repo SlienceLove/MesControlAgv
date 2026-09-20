@@ -1,6 +1,8 @@
 using MesControlAgv.Contracts;
 using MesControlAgv.Contracts.Experiments;
 using MesControlAgv.Contracts.Samples;
+using MesControlAgv.Contracts.Materials;
+using SampleLifecycleStatus = MesControlAgv.Contracts.Materials.SampleLifecycleStatus;
 using MesControlAgv.Contracts.Workflows;
 
 namespace MesControlAgv.Wpf.Services;
@@ -677,4 +679,72 @@ public interface IMesClient
         ImportExperimentWorkstationTaskRequest request,
         CancellationToken cancellationToken) =>
         Task.FromException<ExperimentWorkstationPreparation>(new NotSupportedException("Experiment workstation preparation APIs are not supported by this MES client."));
+    Task<IReadOnlyList<MaterialCatalogItem>> GetMaterialCatalogAsync(
+        MaterialKind? kind,
+        string? search,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<MaterialCatalogItem>>([]);
+
+    Task<IReadOnlyList<WarehouseLocation>> GetMaterialLocationsAsync(
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<WarehouseLocation>>([]);
+
+    Task<IReadOnlyList<SampleMaterial>> GetSamplesAsync(
+        string? barcode,
+        SampleLifecycleStatus? status,
+        string? search,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<SampleMaterial>>([]);
+
+    Task<IReadOnlyList<MaterialLotInventory>> GetMaterialInventoryAsync(
+        string? materialCode,
+        string? lotCode,
+        string? locationCode,
+        bool includeQuarantined,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<MaterialLotInventory>>([]);
+
+    Task<MaterialImportPreview> PreviewMaterialImportAsync(
+        MaterialImportRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(new MaterialImportPreview { RequestId = request.RequestId });
+
+    Task<MaterialCommandResult<MaterialImportResult>> ImportMaterialsAsync(
+        MaterialImportRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<MaterialCommandResult<MaterialImportResult>>(
+            new NotSupportedException("Material import is not supported by this MES client."));
+
+    Task<MaterialScanResult> ScanMaterialAsync(
+        MaterialScanRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<MaterialScanResult>(
+            new NotSupportedException("Material scanning is not supported by this MES client."));
+
+    Task<MaterialCommandResult<MaterialLotInventory>> ReceiveMaterialAsync(
+        ReceiveMaterialRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<MaterialCommandResult<MaterialLotInventory>>(
+            new NotSupportedException("Material receiving is not supported by this MES client."));
+
+    Task<MaterialCommandResult<MaterialLotInventory>> MoveMaterialAsync(
+        MoveMaterialRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<MaterialCommandResult<MaterialLotInventory>>(
+            new NotSupportedException("Material moving is not supported by this MES client."));
+
+    Task<MaterialCommandResult<MaterialLotInventory>> AdjustMaterialAsync(
+        AdjustMaterialRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<MaterialCommandResult<MaterialLotInventory>>(
+            new NotSupportedException("Material adjustment is not supported by this MES client."));
+
+    Task<IReadOnlyList<MaterialTraceEvent>> TraceMaterialAsync(
+        string? barcode,
+        string? materialCode,
+        string? lotCode,
+        Guid? experimentJobId,
+        int limit,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<MaterialTraceEvent>>([]);
 }

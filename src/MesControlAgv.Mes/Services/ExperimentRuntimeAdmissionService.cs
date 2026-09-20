@@ -3,6 +3,7 @@ using System.Text;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts.Experiments;
 using MesControlAgv.Contracts.Samples;
+using MesControlAgv.Contracts.Materials;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Mes.Data;
 using MesControlAgv.Mes.Entities;
@@ -24,7 +25,8 @@ internal sealed class ExperimentRuntimeAdmissionService(
     ExperimentSchedulingMutationGate mutationGate,
     ExperimentRuntimeLeaseLifecycle leaseLifecycle,
     TimeProvider timeProvider,
-    SampleManagementService sampleManagement) : IExperimentRuntimeAdmissionService
+    SampleManagementService sampleManagement,
+    IMaterialManagementService materials) : IExperimentRuntimeAdmissionService
 {
     private const string AdmittedEventType = "ExperimentJobAdmitted";
     private const string RejectedEventType = "ExperimentJobAdmissionRejected";
@@ -133,6 +135,15 @@ internal sealed class ExperimentRuntimeAdmissionService(
                         signal.Resources),
                     cancellationToken);
             }
+            catch
+            {
+                database.ChangeTracker.Clear();
+                await ReleaseMaterialAfterAdmissionFailureAsync(
+                    experimentJobId,
+                    metadata,
+                    CancellationToken.None);
+                throw;
+            }
         }
         finally
         {
@@ -183,7 +194,8 @@ internal sealed class ExperimentRuntimeAdmissionService(
             // before any device worker can claim a node. This keeps custody
             // events correlated without requiring the operator to copy a RunId
             // back into the sample page after admission.
-            if (!string.IsNullOrWhiteSpace(job.SampleId))
+            if (!string.IsNullOrWhiteSpace(job.SampleId) &&
+                await sampleManagement.GetAsync(job.SampleId, cancellationToken) is not null)
             {
                 await sampleManagement.BindRunAsync(
                     job.SampleId,
@@ -300,7 +312,13 @@ internal sealed class ExperimentRuntimeAdmissionService(
         if (!string.IsNullOrWhiteSpace(job.SampleId))
         {
             var sample = await sampleManagement.GetAsync(job.SampleId, cancellationToken);
-            if (sample is null)
+            var key = job.SampleId.Trim().ToUpperInvariant();
+            var inventoryId = Guid.TryParse(key, out var parsedId) ? parsedId : Guid.Empty;
+            var inventoryBarcode = (sample?.Barcode ?? job.SampleId).Trim().ToUpperInvariant();
+            var inventorySample = await database.SampleMaterials.AsNoTracking().SingleOrDefaultAsync(
+                item => item.SampleId == inventoryId || item.Barcode.ToUpper() == inventoryBarcode,
+                cancellationToken);
+            if (sample is null && inventorySample is null)
             {
                 return new AdmissionRejection(
                     ExperimentSchedulingIssueCodes.SampleNotRegistered,
@@ -308,7 +326,17 @@ internal sealed class ExperimentRuntimeAdmissionService(
                     Array.Empty<ExperimentResourceReference>());
             }
 
-            if (!string.Equals(sample.SampleBatchId, job.SampleBatchId, StringComparison.OrdinalIgnoreCase))
+            if (inventorySample is not null &&
+                (inventorySample.BoundExperimentJobId != job.JobId ||
+                 inventorySample.Status != MesControlAgv.Contracts.Materials.SampleLifecycleStatus.Reserved.ToString() ||
+                 !string.Equals(inventorySample.SampleBatchId, job.SampleBatchId, StringComparison.OrdinalIgnoreCase)))
+            {
+                return new AdmissionRejection(
+                    ExperimentSchedulingIssueCodes.SampleAlreadyBound,
+                    "Inventory sample must match the batch and remain reserved by this job.",
+                    Array.Empty<ExperimentResourceReference>());
+            }
+            if (sample is not null && !string.Equals(sample.SampleBatchId, job.SampleBatchId, StringComparison.OrdinalIgnoreCase))
             {
                 return new AdmissionRejection(
                     ExperimentSchedulingIssueCodes.SampleBatchMismatch,
@@ -316,7 +344,7 @@ internal sealed class ExperimentRuntimeAdmissionService(
                     Array.Empty<ExperimentResourceReference>());
             }
 
-            if (sample.RunId is { } existingRun && existingRun != Guid.Empty)
+            if (sample?.RunId is { } existingRun && existingRun != Guid.Empty)
             {
                 return new AdmissionRejection(
                     ExperimentSchedulingIssueCodes.SampleAlreadyBound,
@@ -672,6 +700,10 @@ internal sealed class ExperimentRuntimeAdmissionService(
         AdmissionRejection rejection,
         CancellationToken cancellationToken)
     {
+        await ReleaseMaterialAfterAdmissionFailureAsync(
+            experimentJobId,
+            metadata,
+            cancellationToken);
         var (job, schedule) = await LoadProjectionAsync(experimentJobId, cancellationToken);
         var result = new ExperimentJobAdmissionResult
         {
@@ -697,6 +729,17 @@ internal sealed class ExperimentRuntimeAdmissionService(
             throw;
         }
     }
+
+    private Task<MaterialReleaseResult> ReleaseMaterialAfterAdmissionFailureAsync(
+        Guid experimentJobId,
+        NormalizedMetadata metadata,
+        CancellationToken cancellationToken) =>
+        materials.ReleaseForExperimentAsync(
+            experimentJobId,
+            DeriveRequestId(metadata.RequestId, "material-release-admission-failure"),
+            metadata.Actor,
+            metadata.Reason,
+            cancellationToken);
 
     private ExperimentSchedulingAuditRecord AddAdmissionAudit(
         NormalizedMetadata metadata,
@@ -863,6 +906,12 @@ internal sealed class ExperimentRuntimeAdmissionService(
             metadata.Reason
         });
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
+    }
+
+    private static Guid DeriveRequestId(Guid source, string purpose)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(source.ToString("N") + "\u001f" + purpose));
+        return new Guid(bytes.AsSpan(0, 16));
     }
 
     private sealed record NormalizedMetadata(Guid RequestId, string Actor, string Reason);

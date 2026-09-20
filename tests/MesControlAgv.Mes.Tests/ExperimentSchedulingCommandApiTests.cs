@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using MesControlAgv.Contracts.Experiments;
+using MesControlAgv.Contracts.Materials;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Domain.Profiles;
 using MesControlAgv.Mes.Data;
@@ -621,7 +622,8 @@ public sealed class ExperimentSchedulingCommandApiTests : IClassFixture<MesWebAp
             TimeProvider.System,
             profile,
             catalog,
-            new ExperimentSchedulingMutationGate());
+            new ExperimentSchedulingMutationGate(),
+            new MaterialManagementService(database, new MaterialOperationCoordinator()));
         var scheduled = await commandService.ScheduleJobAsync(
             jobId,
             new ScheduleExperimentJobRequest
@@ -639,6 +641,212 @@ public sealed class ExperimentSchedulingCommandApiTests : IClassFixture<MesWebAp
         Assert.Equal(ScheduleEntryStatus.Scheduled, scheduled.Status);
         Assert.Empty(scheduled.BlockingReasons);
         Assert.Single(scheduled.Reservations);
+    }
+
+    [Fact]
+    public async Task Scheduling_reserves_job_sample_and_unscheduling_releases_it()
+    {
+        var workflow = await PublishWorkflowAsync();
+        var plan = await CreatePublishedPlanAsync(workflow);
+        var sampleId = Guid.NewGuid();
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            var now = DateTime.UtcNow;
+            database.SampleMaterials.Add(new SampleMaterialRecord
+            {
+                SampleId = sampleId,
+                Barcode = "SCHED-SAMPLE-" + Guid.NewGuid().ToString("N"),
+                SampleBatchId = "SCHED-BATCH",
+                Status = SampleLifecycleStatus.Available.ToString(),
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now
+            });
+            await database.SaveChangesAsync();
+        }
+
+        var jobResponse = await _client.PostAsJsonAsync("/api/experiment-jobs", new CreateExperimentJobRequest
+        {
+            RequestId = Guid.NewGuid(),
+            Actor = "sample-schedule-test",
+            Reason = "Create sample-backed job",
+            PlanId = plan.PlanId,
+            PlanVersion = plan.Version,
+            SampleBatchId = "SCHED-BATCH",
+            SampleId = sampleId.ToString()
+        });
+        jobResponse.EnsureSuccessStatusCode();
+        var job = (await jobResponse.Content.ReadFromJsonAsync<ExperimentJob>())!;
+
+        var start = new DateTimeOffset(2035, 1, 2, 9, 0, 0, TimeSpan.Zero);
+        var scheduleResponse = await _client.PutAsJsonAsync(
+            $"/api/experiment-jobs/{job.JobId}/schedule",
+            Schedule(start, start.AddHours(1), 10, "Reserve the scheduled sample"));
+        scheduleResponse.EnsureSuccessStatusCode();
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            var binding = await database.ExperimentJobMaterialBindings.SingleAsync(
+                item => item.ExperimentJobId == job.JobId);
+            Assert.Equal(sampleId, binding.SampleId);
+            Assert.Equal(MaterialBindingStatus.Reserved.ToString(), binding.Status);
+            Assert.Equal(SampleLifecycleStatus.Reserved.ToString(),
+                await database.SampleMaterials.Where(item => item.SampleId == sampleId)
+                    .Select(item => item.Status).SingleAsync());
+        }
+
+        var unschedule = await _client.PostAsJsonAsync(
+            $"/api/experiment-jobs/{job.JobId}/unschedule",
+            Action("Release the scheduled sample"));
+        unschedule.EnsureSuccessStatusCode();
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            Assert.Equal(SampleLifecycleStatus.Available.ToString(),
+                await database.SampleMaterials.Where(item => item.SampleId == sampleId)
+                    .Select(item => item.Status).SingleAsync());
+            Assert.Equal(MaterialBindingStatus.Released.ToString(),
+                await database.ExperimentJobMaterialBindings
+                    .Where(item => item.ExperimentJobId == job.JobId)
+                    .Select(item => item.Status).SingleAsync());
+        }
+    }
+
+    [Fact]
+    public async Task Scheduling_rejects_unregistered_job_sample_without_changing_job_state()
+    {
+        var workflow = await PublishWorkflowAsync();
+        var plan = await CreatePublishedPlanAsync(workflow);
+        var jobResponse = await _client.PostAsJsonAsync("/api/experiment-jobs", new CreateExperimentJobRequest
+        {
+            RequestId = Guid.NewGuid(),
+            Actor = "sample-schedule-test",
+            Reason = "Create missing-sample job",
+            PlanId = plan.PlanId,
+            PlanVersion = plan.Version,
+            SampleBatchId = "MISSING-SAMPLE-BATCH",
+            SampleId = Guid.NewGuid().ToString()
+        });
+        jobResponse.EnsureSuccessStatusCode();
+        var job = (await jobResponse.Content.ReadFromJsonAsync<ExperimentJob>())!;
+
+        var start = new DateTimeOffset(2036, 1, 2, 9, 0, 0, TimeSpan.Zero);
+        var response = await _client.PutAsJsonAsync(
+            $"/api/experiment-jobs/{job.JobId}/schedule",
+            Schedule(start, start.AddHours(1), 10, "Reject missing sample"));
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var error = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(MaterialIssueCodes.SampleNotFound, error.GetProperty("code").GetString());
+
+        using var scope = _factory.Services.CreateScope();
+        var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+        Assert.Equal(ExperimentJobStatus.Ready.ToString(),
+            await database.ExperimentJobs.Where(item => item.JobId == job.JobId)
+                .Select(item => item.Status).SingleAsync());
+    }
+
+    [Fact]
+    public async Task Scheduling_rolls_back_when_material_inventory_is_insufficient()
+    {
+        var workflow = await PublishWorkflowAsync();
+        var materialCode = ("SCHED-INSUFFICIENT-" + Guid.NewGuid().ToString("N")).ToUpperInvariant();
+        var materialId = Guid.NewGuid();
+        var lotId = Guid.NewGuid();
+        var locationId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            database.MaterialCatalog.Add(new MaterialCatalogRecord
+            {
+                MaterialId = materialId,
+                MaterialCode = materialCode,
+                Name = "Insufficient scheduling material",
+                Kind = "Consumable",
+                Unit = "EA",
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now
+            });
+            database.WarehouseLocations.Add(new WarehouseLocationRecord
+            {
+                LocationId = locationId,
+                WarehouseCode = "TEST",
+                WarehouseName = "Test warehouse",
+                LocationCode = "TEST-01",
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now
+            });
+            database.MaterialLots.Add(new MaterialLotRecord
+            {
+                LotId = lotId,
+                MaterialId = materialId,
+                MaterialCode = materialCode,
+                LotCode = "LOT-INSUFFICIENT",
+                Unit = "EA",
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now
+            });
+            database.InventoryBalances.Add(new InventoryBalanceRecord
+            {
+                BalanceId = Guid.NewGuid(),
+                LotId = lotId,
+                LocationId = locationId,
+                OnHand = 0,
+                Reserved = 0,
+                UpdatedAtUtc = now
+            });
+            await database.SaveChangesAsync();
+        }
+
+        var planRequest = CreatePlanRequest(
+            workflow,
+            "Create insufficient material plan",
+            [new ExperimentMaterialRequirement
+            {
+                MaterialId = materialCode,
+                Name = "Insufficient scheduling material",
+                Quantity = 1,
+                Unit = "EA"
+            }]);
+        var createPlan = await _client.PostAsJsonAsync("/api/experiment-plans", planRequest);
+        createPlan.EnsureSuccessStatusCode();
+        var draft = (await createPlan.Content.ReadFromJsonAsync<ExperimentPlan>())!;
+        (await _client.PostAsJsonAsync(
+            $"/api/experiment-plans/{draft.PlanId}/versions/{draft.Version}/validate",
+            Action("Validate insufficient material plan"))).EnsureSuccessStatusCode();
+        var publish = await _client.PostAsJsonAsync(
+            $"/api/experiment-plans/{draft.PlanId}/versions/{draft.Version}/publish",
+            Action("Publish insufficient material plan"));
+        publish.EnsureSuccessStatusCode();
+        var plan = (await publish.Content.ReadFromJsonAsync<ExperimentPlan>())!;
+        var job = await CreateJobAsync(plan, "INSUFFICIENT-BATCH-" + Guid.NewGuid().ToString("N"));
+
+        var start = new DateTimeOffset(2037, 1, 2, 9, 0, 0, TimeSpan.Zero);
+        var response = await _client.PutAsJsonAsync(
+            $"/api/experiment-jobs/{job.JobId}/schedule",
+            Schedule(start, start.AddHours(1), 10, "Reject insufficient material"));
+        var errorBody = await response.Content.ReadAsStringAsync();
+        Assert.True(response.StatusCode == HttpStatusCode.Conflict, errorBody);
+        var error = JsonSerializer.Deserialize<JsonElement>(errorBody);
+        Assert.Equal(MaterialIssueCodes.InventoryInsufficient, error.GetProperty("code").GetString());
+
+        using var verifyScope = _factory.Services.CreateScope();
+        var verifyDatabase = verifyScope.ServiceProvider.GetRequiredService<MesDbContext>();
+        Assert.Equal(ExperimentJobStatus.Ready.ToString(),
+            await verifyDatabase.ExperimentJobs.Where(item => item.JobId == job.JobId)
+                .Select(item => item.Status).SingleAsync());
+        var scheduleEntryIds = await verifyDatabase.ScheduleEntries
+            .Where(item => item.ExperimentJobId == job.JobId)
+            .Select(item => item.ScheduleEntryId)
+            .ToArrayAsync();
+        Assert.Empty(scheduleEntryIds);
+        Assert.Empty(await verifyDatabase.ResourceReservations
+            .Where(item => scheduleEntryIds.Contains(item.ScheduleEntryId)).ToListAsync());
+        Assert.Empty(await verifyDatabase.ExperimentJobMaterialBindings
+            .Where(item => item.ExperimentJobId == job.JobId).ToListAsync());
+        Assert.Equal(0m, await verifyDatabase.InventoryBalances
+            .Where(item => item.LotId == lotId).Select(item => item.Reserved).SingleAsync());
     }
 
     private async Task<WorkflowVersion> PublishWorkflowAsync()
@@ -689,7 +897,8 @@ public sealed class ExperimentSchedulingCommandApiTests : IClassFixture<MesWebAp
 
     private static SaveExperimentPlanDraftRequest CreatePlanRequest(
         WorkflowVersion workflow,
-        string reason) => new()
+        string reason,
+        IReadOnlyList<ExperimentMaterialRequirement>? materialRequirements = null) => new()
         {
             RequestId = Guid.NewGuid(),
             Actor = "planner-api-test",
@@ -704,16 +913,10 @@ public sealed class ExperimentSchedulingCommandApiTests : IClassFixture<MesWebAp
                 {
                     ["method"] = "anion"
                 },
-                MaterialRequirements =
-            [
-                new ExperimentMaterialRequirement
-                {
-                    MaterialId = "SAMPLE-TUBE",
-                    Name = "Sample tube",
-                    Quantity = 1,
-                    Unit = "piece"
-                }
-            ],
+                // Material reservation is covered by the material-management
+                // integration tests; these scheduling tests exercise resource
+                // lifecycle behavior without requiring inventory fixtures.
+                MaterialRequirements = materialRequirements ?? [],
                 ResourceRequirements =
             [
                 new ExperimentResourceRequirement
