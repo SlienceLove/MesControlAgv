@@ -73,7 +73,7 @@ This ledger is automated WPF and compile evidence only. It did not connect to a 
 dotnet test tests/MesControlAgv.Wpf.Tests/MesControlAgv.Wpf.Tests.csproj --no-build --no-restore --nologo -v minimal --filter "FullyQualifiedName~ExperimentScheduling|FullyQualifiedName~ExperimentWorkstationPreparation|FullyQualifiedName~ExperimentPlanningViewBinding|FullyQualifiedName~MesClient"
 ```
 
-另有一项已记录、未修复的 Minor：人工放置区行高顺序需从 `Auto, Auto, Auto, *` 恢复为原有 `Auto, Auto, *, Auto`，避免多资源列表挤占排程按钮。已排程任务的准备/导入/运行逻辑不受该布局项影响；多资源人工排程验收及合并前仍需收尾，详见最新交接。
+当时保留一项人工放置区行高 Minor；现已于 2026-09-20 恢复为原有 `Auto, Auto, *, Auto`，并通过单资源/32 个资源布局测量、101 项 WPF 相关回归与隔离 Release 构建。见 [后续布局收尾验证](2026-09-20-workstation-manual-placement-layout.md)。以上 9 月 18 日的测试数量仍作为当日历史证据保留。
 
 ## 尚未由本记录证明
 

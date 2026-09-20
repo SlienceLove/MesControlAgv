@@ -12,6 +12,87 @@ namespace MesControlAgv.Wpf.Tests;
 
 public sealed class ExperimentPlanningViewBindingTests
 {
+    [Theory]
+    [InlineData(1)]
+    [InlineData(32)]
+    public async Task Manual_placement_bounds_resource_scrolling_and_keeps_actions_visible(int resourceCount)
+    {
+        var client = ExperimentUiClientStub.Create();
+        using var scheduling = new ExperimentSchedulingViewModel(client, new AllowConfirmation())
+        {
+            Reason = "Manual placement layout acceptance"
+        };
+        await scheduling.RefreshAsync(client.Job.JobId);
+
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            Window? window = null;
+            try
+            {
+                for (var index = 1; index < resourceCount; index++)
+                {
+                    scheduling.Resources.Add(new ExperimentResourceSelectionItemViewModel(client.Availability with
+                    {
+                        Resource = new ExperimentResourceReference
+                        {
+                            ResourceType = ExperimentResourceTypeIds.Instrument,
+                            ResourceId = $"LAYOUT-{index}"
+                        },
+                        DisplayName = $"Layout resource {index}"
+                    }));
+                }
+
+                var view = new ExperimentSchedulingView { DataContext = scheduling };
+                window = Show(view, 1380, 780);
+                var scheduleButton = Assert.IsType<Button>(view.FindName("ScheduleButton"));
+                var unscheduleButton = Assert.IsType<Button>(view.FindName("UnscheduleButton"));
+                var actions = Assert.IsType<StackPanel>(scheduleButton.Parent);
+                var placement = Assert.IsType<Grid>(actions.Parent);
+                var resources = Assert.Single(placement.Children.OfType<ScrollViewer>());
+                Assert.Equal(resourceCount, Assert.IsType<ItemsControl>(resources.Content).Items.Count);
+                Assert.Equal(GridUnitType.Star, placement.RowDefinitions[2].Height.GridUnitType);
+                Assert.Equal(GridUnitType.Auto, placement.RowDefinitions[3].Height.GridUnitType);
+                Assert.True(resources.ViewportHeight > 0);
+                Assert.True(resources.ActualHeight < placement.ActualHeight);
+                if (resourceCount > 1)
+                {
+                    Assert.True(resources.ScrollableHeight > 0);
+                    resources.ScrollToEnd();
+                    window.UpdateLayout();
+                    PumpDispatcher(view.Dispatcher);
+                    Assert.True(resources.VerticalOffset > 0);
+                }
+
+                var resourceBounds = resources.TransformToAncestor(placement)
+                    .TransformBounds(new Rect(new Point(), resources.RenderSize));
+                foreach (var button in new[] { scheduleButton, unscheduleButton })
+                {
+                    var bounds = button.TransformToAncestor(placement)
+                        .TransformBounds(new Rect(new Point(), button.RenderSize));
+                    Assert.True(button.IsVisible && bounds.Height > 0);
+                    Assert.True(resourceBounds.Bottom <= bounds.Top);
+                    Assert.InRange(bounds.Bottom, 0, placement.ActualHeight + 1);
+                }
+                var timeline = Assert.IsType<ScrollViewer>(view.FindName("ResourceTimeline"));
+                Assert.True(timeline.IsVisible && timeline.ActualHeight > 0);
+            }
+            catch (Exception exception)
+            {
+                failure = exception;
+            }
+            finally
+            {
+                window?.Close();
+                Dispatcher.CurrentDispatcher.InvokeShutdown();
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(15)), "Manual placement layout test did not complete.");
+        Assert.Null(failure);
+    }
+
     [Fact]
     public async Task Independent_plan_and_scheduling_views_bind_lifecycle_manual_actions_and_timeline()
     {
