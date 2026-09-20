@@ -293,11 +293,14 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Prepared_task_import_is_idempotent_and_closes_with_frozen_task_and_barcodes_once(bool defaultTips)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task Prepared_task_import_is_idempotent_and_closes_with_frozen_task_and_barcodes_once(bool defaultTips, bool milliliters)
     {
-        var gateway = new RecordingWorkstation { DefaultTips = defaultTips };
+        var gateway = new RecordingWorkstation { DefaultTips = defaultTips,
+            FileVolumeUnit = milliliters ? SampleWorkstationTemplateVolumeUnit.Milliliters : SampleWorkstationTemplateVolumeUnit.Microliters };
         using var factory = ConfigureGateway(new PhysicalMesWebApplicationFactory(PhysicalProfile()), gateway);
         using var client = factory.CreateClient();
         var workflow = await PublishWorkflowAsync(client);
@@ -873,6 +876,7 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         public SampleWorkstationTaskBarcodes? StartBarcodes { get; private set; }
         public bool FailBarcodeUpdate { get; init; }
         public bool DefaultTips { get; init; }
+        public SampleWorkstationTemplateVolumeUnit FileVolumeUnit { get; init; }
         public List<ConsumedObservation> ConsumedObservations { get; } = [];
         private (SampleWorkstationDeviceState State, int Raw, int Error, SampleWorkstationTaskState Task) Current => _observation++ switch { 0 => (SampleWorkstationDeviceState.Idle, 0, 0, SampleWorkstationTaskState.Completed), 1 => (SampleWorkstationDeviceState.Running, 1, 3, SampleWorkstationTaskState.Running), _ => (SampleWorkstationDeviceState.Idle, 0, 0, SampleWorkstationTaskState.Completed) };
         private (SampleWorkstationDeviceState State, int Raw, int Error, SampleWorkstationTaskState Task)? _snapshot;
@@ -892,16 +896,19 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         {
             TemplateReadCalls++;
             var template = Template(task);
-            var bytes = SampleWorkstationTemplateFile.Write(template);
-            return Task.FromResult(new SampleWorkstationTemplateResponse(id, task + ".xlsx", bytes, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)), template, DateTimeOffset.UtcNow));
+            var bytes = SampleWorkstationTemplateFile.Write(template, FileVolumeUnit);
+            return Task.FromResult(new SampleWorkstationTemplateResponse(id, task + ".xlsx", bytes, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)), template, DateTimeOffset.UtcNow)
+                { FileVolumeUnit = FileVolumeUnit });
         }
-        public async Task<SampleWorkstationTaskImportResponse> ImportTasksAsync(string id, string fileName, Stream content, CancellationToken ct)
+        public async Task<SampleWorkstationTaskImportResponse> ImportTasksAsync(string id, string fileName, Stream content, CancellationToken ct,
+            SampleWorkstationTemplateVolumeUnit fileVolumeUnit = SampleWorkstationTemplateVolumeUnit.Microliters)
         {
             ImportCalls++;
+            Assert.Equal(FileVolumeUnit, fileVolumeUnit);
             var bytes = await SampleWorkstationTemplateFile.ReadBytesAsync(content, ct);
-            var template = SampleWorkstationTemplateFile.Read(bytes);
+            var template = SampleWorkstationTemplateFile.Read(bytes, fileVolumeUnit);
             return new SampleWorkstationTaskImportResponse(id, [template.TaskNo], DateTimeOffset.UtcNow)
-            { ReadbackVerified = true, FileSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)), Template = template };
+            { FileVolumeUnit = fileVolumeUnit, ReadbackVerified = true, FileSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)), Template = template };
         }
         private SampleWorkstationTaskTemplate Template(string taskNo) => new(taskNo, "Prepared task",
         [

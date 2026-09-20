@@ -60,16 +60,18 @@ public sealed class SampleWorkstationAdapterClient(HttpClient client)
             cancellationToken);
 
     public async Task<SampleWorkstationTaskImportResponse> ImportTasksAsync(
-        string deviceId, string fileName, Stream content, CancellationToken cancellationToken)
+        string deviceId, string fileName, Stream content, CancellationToken cancellationToken,
+        SampleWorkstationTemplateVolumeUnit fileVolumeUnit = SampleWorkstationTemplateVolumeUnit.Microliters)
     {
         var bytes = await SampleWorkstationTemplateFile.ReadBytesAsync(content, cancellationToken);
-        var expected = SampleWorkstationTemplateFile.Read(bytes);
+        var expected = SampleWorkstationTemplateFile.Read(bytes, fileVolumeUnit);
         _ = SampleWorkstationTemplateFile.EncodeUpload(fileName, bytes); // Validate filename before HTTP.
         var path = QueryHelpers.AddQueryString($"api/workstations/{EscapeRequired(deviceId, nameof(deviceId))}/tasks/import", "fileName", fileName);
+        path = QueryHelpers.AddQueryString(path, "fileVolumeUnit", fileVolumeUnit.ToString());
         using var body = new ByteArrayContent(bytes);
         body.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
         var response = await SendAsync<SampleWorkstationTaskImportResponse>(HttpMethod.Post, path, body, cancellationToken);
-        if (!response.ReadbackVerified || response.Template is null || response.TaskNos is null ||
+        if (response.FileVolumeUnit != fileVolumeUnit || !response.ReadbackVerified || response.Template is null || response.TaskNos is null ||
             !string.Equals(response.DeviceId, deviceId.Trim(), StringComparison.OrdinalIgnoreCase) ||
             !response.TaskNos.SequenceEqual(new[] { expected.TaskNo }) ||
             !SampleWorkstationTemplateFile.SameContent(expected, response.Template) ||

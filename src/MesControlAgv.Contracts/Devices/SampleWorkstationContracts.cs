@@ -219,6 +219,7 @@ public sealed record SampleWorkstationTaskImportResponse(
     IReadOnlyList<string> TaskNos,
     DateTimeOffset ObservedAtUtc)
 {
+    public SampleWorkstationTemplateVolumeUnit FileVolumeUnit { get; init; }
     public bool ReadbackVerified { get; init; }
     public string? FileSha256 { get; init; }
     public SampleWorkstationTaskTemplate? Template { get; init; }

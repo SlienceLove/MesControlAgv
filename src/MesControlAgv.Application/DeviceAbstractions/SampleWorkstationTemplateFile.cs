@@ -31,14 +31,16 @@ public static class SampleWorkstationTemplateFile
         return copy.ToArray();
     }
 
-    public static SampleWorkstationTaskTemplate Read(byte[] content)
+    public static SampleWorkstationTaskTemplate Read(byte[] content,
+        SampleWorkstationTemplateVolumeUnit fileVolumeUnit = SampleWorkstationTemplateVolumeUnit.Microliters)
     {
-        try { return ReadCore(content); }
+        ValidateUnit(fileVolumeUnit);
+        try { return ReadCore(content, fileVolumeUnit); }
         catch (Exception exception) when (exception is InvalidDataException or XmlException or FormatException or OverflowException)
         { throw new ArgumentException("Invalid workstation XLSX template: " + exception.Message, exception); }
     }
 
-    private static SampleWorkstationTaskTemplate ReadCore(byte[] content)
+    private static SampleWorkstationTaskTemplate ReadCore(byte[] content, SampleWorkstationTemplateVolumeUnit fileVolumeUnit)
     {
         ArgumentNullException.ThrowIfNull(content);
         if (content.Length is 0 or > MaximumFileBytes) throw new ArgumentException("Template must be a nonempty XLSX up to 4 MiB.");
@@ -119,14 +121,16 @@ public static class SampleWorkstationTemplateFile
             ValidateTipCoordinates(tipX, tipY);
             return new SampleWorkstationTransferRow(
                 Required(v[0]), Required(v[1]), tipX, tipY,
-                Required(v[4]), Positive(v[5]), Positive(v[6]), Required(v[7]), Positive(v[8]), Positive(v[9]), Positive(v[10]));
+                Required(v[4]), Positive(v[5]), Positive(v[6]), Required(v[7]), Positive(v[8]), Positive(v[9]), ReadVolume(v[10], fileVolumeUnit));
         }).ToArray();
         if (rows.Length == 0) throw new ArgumentException("At least one transfer is required.");
         return new(Required(tasks[0][0]), Required(tasks[0][1]), rows);
     }
 
-    public static byte[] Write(SampleWorkstationTaskTemplate template)
+    public static byte[] Write(SampleWorkstationTaskTemplate template,
+        SampleWorkstationTemplateVolumeUnit fileVolumeUnit = SampleWorkstationTemplateVolumeUnit.Microliters)
     {
+        ValidateUnit(fileVolumeUnit);
         ArgumentNullException.ThrowIfNull(template);
         ArgumentNullException.ThrowIfNull(template.Transfers);
         var tasks = new[] { TaskHeaders, new[] { Required(template.TaskNo), Required(template.TaskName), "", "" } };
@@ -136,7 +140,7 @@ public static class SampleWorkstationTemplateFile
             ValidateTipCoordinates(row.TipX, row.TipY);
             transfers.Add([Required(row.LiquidCode), Required(row.TipModule), row.TipX.ToString(CultureInfo.InvariantCulture), row.TipY.ToString(CultureInfo.InvariantCulture),
                 Required(row.SourceModule), Number(row.SourceX), Number(row.SourceY), Required(row.TargetModule),
-                Number(row.TargetX), Number(row.TargetY), Number(row.VolumeMicroliters)]);
+                Number(row.TargetX), Number(row.TargetY), WriteVolume(row.VolumeMicroliters, fileVolumeUnit)]);
         }
         if (transfers.Count == 1) throw new ArgumentException("At least one transfer is required.");
         using var output = new MemoryStream();
@@ -210,4 +214,31 @@ public static class SampleWorkstationTemplateFile
     private static string Number(int value) => value > 0 ? value.ToString(CultureInfo.InvariantCulture) : throw new ArgumentException("Coordinates and volume must be positive integers.");
     private static int Positive(string value) => int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var n) && n > 0
         ? n : throw new ArgumentException("Coordinates and volume must be positive integers.");
+
+    private static void ValidateUnit(SampleWorkstationTemplateVolumeUnit unit)
+    {
+        if (!Enum.IsDefined(unit)) throw new ArgumentException("Unsupported workstation Excel volume unit.");
+    }
+
+    private static string WriteVolume(int microliters, SampleWorkstationTemplateVolumeUnit unit)
+    {
+        var legacy = Number(microliters);
+        return unit == SampleWorkstationTemplateVolumeUnit.Microliters ? legacy
+            : (microliters / 1000m).ToString("0.###", CultureInfo.InvariantCulture);
+    }
+
+    private static int ReadVolume(string value, SampleWorkstationTemplateVolumeUnit unit)
+    {
+        if (unit == SampleWorkstationTemplateVolumeUnit.Microliters) return Positive(value);
+        var decimalPoint = value.IndexOf('.');
+        if (decimalPoint >= 0 && value.Skip(decimalPoint + 4).Any(character => character != '0'))
+            throw new ArgumentException("Excel mL volume must not contain sub-µL precision.");
+        if (!decimal.TryParse(value, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var milliliters)
+            || milliliters <= 0 || milliliters > int.MaxValue / 1000m)
+            throw new ArgumentException("Excel mL volume must be positive and within the supported µL range.");
+        var microliters = milliliters * 1000m;
+        if (decimal.Truncate(microliters) != microliters)
+            throw new ArgumentException("Excel mL volume must convert exactly to whole µL; no rounding is allowed.");
+        return (int)microliters;
+    }
 }

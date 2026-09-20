@@ -9,6 +9,24 @@ namespace MesControlAgv.Adapter.Tests;
 
 public sealed class WorkstationImportEvidenceCliTests : IDisposable
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Real_cli_restores_milliliter_snapshot_with_exact_frozen_hash(bool stringEnum)
+    {
+        var fixture = CreateSnapshot("WS0123456789ABCDEF01");
+        var bytes = SampleWorkstationTemplateFile.Write(fixture.Template, SampleWorkstationTemplateVolumeUnit.Milliliters);
+        var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(fixture.Input))!;
+        var payload = json["prepared"]!["payload"]!;
+        payload["fileVolumeUnit"] = stringEnum ? System.Text.Json.Nodes.JsonValue.Create("Milliliters") : System.Text.Json.Nodes.JsonValue.Create(1);
+        payload["generatedTemplateFileSha256"] = Hash(bytes);
+        File.WriteAllText(fixture.Input, json.ToJsonString());
+        var result = await RunAsync(fixture.Input, fixture.Output);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Empty(result.Error);
+        Assert.Equal(bytes, File.ReadAllBytes(Path.Combine(fixture.Output, fixture.Template.TaskNo + ".xlsx")));
+    }
+
     private readonly DirectoryInfo _workspace = Directory.CreateTempSubdirectory("workstation-evidence-tests-");
     private static readonly JsonSerializerOptions WebJson = new(JsonSerializerDefaults.Web);
 

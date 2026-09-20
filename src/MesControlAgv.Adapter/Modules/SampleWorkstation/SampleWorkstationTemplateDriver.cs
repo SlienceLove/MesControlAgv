@@ -26,7 +26,7 @@ public sealed partial class SampleWorkstationDriver
             if (file.FileData.Length > (SampleWorkstationTemplateFile.MaximumFileBytes + 2) / 3 * 4)
                 throw new ArgumentException("Template exceeds 4 MiB.");
             bytes = Convert.FromBase64String(file.FileData);
-            template = SampleWorkstationTemplateFile.Read(bytes);
+            template = SampleWorkstationTemplateFile.Read(bytes, options.TemplateVolumeUnit);
         }
         catch (Exception exception) when (exception is FormatException or ArgumentException)
         { throw new SampleWorkstationProtocolException("Invalid downloaded template: " + exception.Message); }
@@ -35,15 +35,18 @@ public sealed partial class SampleWorkstationDriver
                 $"Requested task '{taskNo}', but workbook contains '{template.TaskNo}'.",
                 SampleWorkstationErrorCodes.TemplateMismatch, response.Code);
         return new(options.DeviceId, file.FileName, bytes, Convert.ToHexString(SHA256.HashData(bytes)),
-            template, timeProvider.GetUtcNow());
+            template, timeProvider.GetUtcNow()) { FileVolumeUnit = options.TemplateVolumeUnit };
     }
 
     public async Task<SampleWorkstationTaskImportResponse> ImportTasksAsync(
-        string deviceId, string fileName, Stream content, CancellationToken cancellationToken)
+        string deviceId, string fileName, Stream content, CancellationToken cancellationToken,
+        SampleWorkstationTemplateVolumeUnit fileVolumeUnit = SampleWorkstationTemplateVolumeUnit.Microliters)
     {
         EnsureControlEnabled(deviceId);
+        if (!Enum.IsDefined(fileVolumeUnit) || fileVolumeUnit != options.TemplateVolumeUnit)
+            throw new ArgumentException("Import file volume unit differs from the configured vendor Excel unit; prepare a new task.");
         var bytes = await SampleWorkstationTemplateFile.ReadBytesAsync(content, cancellationToken);
-        var expected = SampleWorkstationTemplateFile.Read(bytes);
+        var expected = SampleWorkstationTemplateFile.Read(bytes, fileVolumeUnit);
         using var body = new ByteArrayContent(SampleWorkstationTemplateFile.EncodeUpload(fileName, bytes));
         // Vendor WCFTestToolsDLH sends this raw Base64 frame with application/json;
         // it is deliberately NOT JSON-serialized or multipart-wrapped.
@@ -59,6 +62,7 @@ public sealed partial class SampleWorkstationDriver
                 SampleWorkstationErrorCodes.TemplateMismatch, response.Code);
         return new(options.DeviceId, [expected.TaskNo], timeProvider.GetUtcNow())
         {
+            FileVolumeUnit = fileVolumeUnit,
             ReadbackVerified = true,
             FileSha256 = Convert.ToHexString(SHA256.HashData(bytes)),
             Template = expected

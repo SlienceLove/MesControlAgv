@@ -21,6 +21,7 @@ public sealed record SampleWorkstationOptions
     public string OperationJournalPath { get; init; } = "data/sample-workstation-operations.json";
     public int RequestTimeoutMs { get; init; } = 20000;
     public int MaximumPageSize { get; init; } = 100;
+    public SampleWorkstationTemplateVolumeUnit TemplateVolumeUnit { get; init; }
     // Absent in the supplied field DLL; update configuration after a vendor upgrade.
     public SampleWorkstationProtocolOperation[] UnsupportedProtocolOperations { get; init; } =
     [
@@ -48,6 +49,8 @@ public sealed record SampleWorkstationOptions
                     binder => binder.ErrorOnUnknownConfiguration = true) ?? []
             };
         ArgumentException.ThrowIfNullOrWhiteSpace(options.DeviceId);
+        if (!Enum.IsDefined(options.TemplateVolumeUnit))
+            throw new InvalidOperationException($"{SectionName}:TemplateVolumeUnit must be Microliters or Milliliters.");
         if (options.UnsupportedProtocolOperations is null
             || options.UnsupportedProtocolOperations.Any(operation => !Enum.IsDefined(operation)))
             throw new InvalidOperationException($"{SectionName}:UnsupportedProtocolOperations contains an invalid operation.");
