@@ -16,7 +16,6 @@ public partial class WorkstationTaskWindow : Window
 {
     private readonly IMesClient _client;
     private readonly string _deviceId;
-    private readonly string? _sourceTaskNo;
     private readonly ObservableCollection<TransferEditorRow> _rows = [];
     private IReadOnlyList<SampleWorkstationTaskTemplate> _preview = [];
     private bool _busy;
@@ -24,10 +23,13 @@ public partial class WorkstationTaskWindow : Window
     public WorkstationTaskWindow(IMesClient client, string deviceId, string? sourceTaskNo, bool batch)
     {
         InitializeComponent();
-        _client = client; _deviceId = deviceId; _sourceTaskNo = sourceTaskNo;
+        _client = client; _deviceId = deviceId;
         TransferGrid.ItemsSource = _rows; _rows.Add(new());
         TaskNo.Text = NewNumber(); TaskName.Text = "新建分液任务"; Actor.Text = Environment.UserName;
         WorkspaceTabs.SelectedIndex = batch ? 1 : 0;
+        SourceTasks.ItemsSource = _sourceTasks;
+        SourceTasks.Text = sourceTaskNo ?? "";
+        _editorBaseline = EditorSnapshot();
         Closing += (_, e) => { if (_busy) { e.Cancel = true; Status.Text = "正在处理请求，请等待结果后关闭。"; } };
     }
     private static string NewNumber() => DateTime.Now.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture) + RandomNumberGenerator.GetInt32(100000, 1000000);
@@ -44,17 +46,32 @@ public partial class WorkstationTaskWindow : Window
     }
     private void SetRows(SampleWorkstationTaskTemplate template)
     {
+        WorkstationBatchWorkbook.Validate([template]);
         TaskNo.Text = NewNumber(); TaskName.Text = template.TaskName;
         _rows.Clear(); foreach (var r in template.Transfers) _rows.Add(new(r));
+        ClearPreview();
+        _editorBaseline = EditorSnapshot();
         Status.Text = "模板已加载并生成新编号，可编辑明细后保存。";
     }
     private async void ReadSource_Click(object s, RoutedEventArgs e)
     {
         if (_busy) return;
-        if (string.IsNullOrWhiteSpace(_sourceTaskNo)) { Status.Text = "请先在设备状态页的最近任务列表选中一个来源任务，再打开此窗口。"; return; }
+        var sourceTaskNo = (SourceTasks.SelectedItem as WorkstationSourceTask)?.TaskNo ?? SourceTasks.Text.Trim();
+        if (string.IsNullOrWhiteSpace(sourceTaskNo)) { Status.Text = "请在上方加载并选择设备任务，或直接输入来源任务编号。"; return; }
         _busy = true; WorkspaceTabs.IsEnabled = false;
-        try { SetRows((await _client.GetSampleWorkstationTemplateAsync(_deviceId, _sourceTaskNo, CancellationToken.None)).Template); }
-        catch (Exception ex) { Status.Text = "读取模板失败：" + ex.Message; }
+        try
+        {
+            var response = await _client.GetSampleWorkstationTemplateAsync(_deviceId, sourceTaskNo, CancellationToken.None);
+            if (response.DeviceId != _deviceId || response.Template.TaskNo != sourceTaskNo)
+                throw new InvalidOperationException("返回的设备或任务编号与选择不一致，未替换当前模板。");
+            WorkstationBatchWorkbook.Validate([response.Template]);
+            if (ConfirmReplaceEditor())
+            {
+                SetRows(response.Template);
+                Status.Text = $"已从任务 {sourceTaskNo} 复制全部明细并生成新编号，来源任务保持不变。";
+            }
+        }
+        catch (Exception ex) { Status.Text = "读取模板失败，已保留当前内容；可使用本地模板或参考示例。" + ex.Message; }
         finally { _busy = false; WorkspaceTabs.IsEnabled = true; }
     }
     private static byte[] ReadFile(string path)
@@ -68,20 +85,28 @@ public partial class WorkstationTaskWindow : Window
         if (dialog.ShowDialog(this) != true) return;
         var tasks = WorkstationBatchWorkbook.Read(ReadFile(dialog.FileName));
         if (tasks.Count != 1) throw new ArgumentException("单任务模板只能包含一个任务；多个任务请使用批量导入页。");
-        SetRows(tasks[0]);
+        if (ConfirmReplaceEditor()) SetRows(tasks[0]);
     });
     private void SaveTemplate_Click(object s, RoutedEventArgs e) => Guard(() =>
     {
         var task = Collect(); var dialog = new SaveFileDialog { Filter = "Excel 模板 (*.xlsx)|*.xlsx", FileName = "开盖分液任务样表.xlsx" };
         if (dialog.ShowDialog(this) != true) return;
         File.WriteAllBytes(dialog.FileName, WorkstationBatchWorkbook.Write([task]));
+        _editorBaseline = EditorSnapshot();
         Status.Text = "已保存模板。可复制行填写多个任务：相同编号的行归为同一任务。编号请保持文本格式。";
     });
-    private void PreviewSingle_Click(object s, RoutedEventArgs e) => Guard(() => SetPreview([Collect()]));
+    private void PreviewSingle_Click(object s, RoutedEventArgs e) => Guard(() =>
+    {
+        ClearPreview();
+        SetPreview([Collect()]);
+    });
     private void SetPreview(IReadOnlyList<SampleWorkstationTaskTemplate> tasks)
     {
         if (_submitted) throw new InvalidOperationException("本窗口已提交过导入，请先核对结果；新批次请重新打开窗口。");
-        WorkstationBatchWorkbook.Validate(tasks); _preview = tasks;
+        ClearPreview();
+        WorkstationBatchWorkbook.Validate(tasks);
+        EnsureNoReferenceCodes(tasks);
+        _preview = tasks;
         PreviewGrid.ItemsSource = tasks; PreviewGrid.SelectedIndex = 0;
         Summary.Text = $"校验通过：{tasks.Count} 个任务，{tasks.Sum(t => t.Transfers.Count)} 条分液明细";
         ImportButton.IsEnabled = true; WorkspaceTabs.SelectedIndex = 1;

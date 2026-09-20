@@ -1384,6 +1384,19 @@ public sealed class MesClient(HttpClient client) : IMesClient
             request,
             cancellationToken);
 
+    public async Task<IReadOnlyList<SampleWorkstationTaskSummaryResponse>> GetSampleWorkstationTasksAsync(
+        string deviceId, int startNo, int recordNum, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
+        if (startNo < 1 || recordNum is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(startNo));
+        using var response = await client.GetAsync(
+            $"api/workstations/{Uri.EscapeDataString(deviceId)}/tasks?startNo={startNo}&recordNum={recordNum}", cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw await CreateExperimentApiExceptionAsync(response, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<List<SampleWorkstationTaskSummaryResponse>>(cancellationToken)
+            ?? throw new InvalidOperationException("MES 未返回工作站任务列表。");
+    }
+
     public async Task<SampleWorkstationTemplateResponse> GetSampleWorkstationTemplateAsync(
         string deviceId,
         string taskNo,

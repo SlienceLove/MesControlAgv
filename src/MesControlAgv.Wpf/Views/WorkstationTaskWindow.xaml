@@ -18,12 +18,24 @@
                         <TextBlock Text="任务名称" VerticalAlignment="Center"/><TextBox x:Name="TaskName" Width="220" Margin="8,0,18,0"/>
                         <Button Content="新编号" Click="NewNumber_Click" Padding="12,6"/>
                     </WrapPanel>
-                    <WrapPanel Grid.Row="1" Margin="0,12">
-                        <Button Content="读取选中任务模板" Click="ReadSource_Click" Padding="12,6" Margin="0,0,8,0"/>
+                    <StackPanel Grid.Row="1" Margin="0,10">
+                        <WrapPanel>
+                            <TextBlock Text="设备已有任务" VerticalAlignment="Center" Margin="0,0,8,6"/>
+                            <ComboBox x:Name="SourceTasks" Width="310" IsEditable="True" IsTextSearchEnabled="True"
+                                      DisplayMemberPath="Label" TextSearch.TextPath="TaskNo" Margin="0,0,8,6"
+                                      ToolTip="加载后选择任务，或直接输入设备中的任务编号"/>
+                            <Button x:Name="LoadTasks" Content="加载任务" Click="LoadTasks_Click" Padding="12,6" Margin="0,0,8,6"/>
+                            <Button x:Name="MoreTasks" Content="加载更多" Click="MoreTasks_Click" Padding="12,6" Margin="0,0,8,6" Visibility="Collapsed"/>
+                            <Button x:Name="CopySource" Content="复制为新模板" Click="ReadSource_Click" Padding="12,6" Margin="0,0,0,6"/>
+                        </WrapPanel>
+                        <TextBlock x:Name="TaskListStatus" Text="来源：开盖分液设备。可直接输入任务编号，或点击加载任务。" Foreground="#5C7084" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                        <WrapPanel>
+                        <Button x:Name="FillReference" Content="填入参考示例" Click="FillReference_Click" Padding="12,6" Margin="0,0,8,0"/>
                         <Button Content="打开本地模板" Click="OpenTemplate_Click" Padding="12,6" Margin="0,0,8,0"/>
                         <Button Content="增加明细" Click="AddRow_Click" Padding="12,6" Margin="0,0,8,0"/>
                         <Button Content="删除选中明细" Click="RemoveRow_Click" Padding="12,6"/>
-                    </WrapPanel>
+                        </WrapPanel>
+                    </StackPanel>
                     <DataGrid x:Name="TransferGrid" Grid.Row="2" AutoGenerateColumns="False" CanUserAddRows="False" SelectionMode="Single">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="溶剂编码" Binding="{Binding LiquidCode}" Width="110"/>
@@ -40,10 +52,10 @@
                         </DataGrid.Columns>
                     </DataGrid>
                     <StackPanel Grid.Row="3" Margin="0,12,0,0">
-                        <TextBlock Text="模块编码沿用厂家模板；来源/目标坐标和体积为正整数。枪头坐标 0/0 表示工作站默认值。" TextWrapping="Wrap" Foreground="#5C7084"/>
+                        <TextBlock Text="模块编码使用设备实际值；“示例_”编码须替换后才能导入。来源/目标坐标和体积为正整数；枪头 0/0 使用工作站默认值。" TextWrapping="Wrap" Foreground="#5C7084"/>
                         <WrapPanel Margin="0,10,0,0">
                             <Button Content="保存模板 / 导出 Excel 样表" Click="SaveTemplate_Click" Padding="14,8" Background="#1769AA" Foreground="White"/>
-                            <Button Content="校验并转入导入预览" Click="PreviewSingle_Click" Padding="14,8" Margin="10,0,0,0"/>
+                            <Button x:Name="PreviewSingle" Content="校验并转入导入预览" Click="PreviewSingle_Click" Padding="14,8" Margin="10,0,0,0"/>
                         </WrapPanel>
                     </StackPanel>
                 </Grid>

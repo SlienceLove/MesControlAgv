@@ -658,6 +658,10 @@ public interface IMesClient
         CancellationToken cancellationToken) =>
         Task.FromException<ExperimentSampleVerification>(new NotSupportedException("Experiment sample verification APIs are not supported by this MES client."));
 
+    Task<IReadOnlyList<SampleWorkstationTaskSummaryResponse>> GetSampleWorkstationTasksAsync(
+        string deviceId, int startNo, int recordNum, CancellationToken cancellationToken) =>
+        Task.FromException<IReadOnlyList<SampleWorkstationTaskSummaryResponse>>(new NotSupportedException("当前客户端不支持工作站任务列表。"));
+
     Task<SampleWorkstationTemplateResponse> GetSampleWorkstationTemplateAsync(
         string deviceId,
         string taskNo,
