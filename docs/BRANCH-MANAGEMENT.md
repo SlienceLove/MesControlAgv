@@ -15,6 +15,7 @@
 | master | 已通过本轮离线回归的统一基线；现场部署仍需现场验收 | 接收 develop |
 | develop | 唯一集成入口 | 功能、UI 分支先汇入这里 |
 | feature/wpf-ui-layout-optimization | 后续界面优化 | develop |
+| feature/workstation-ml-template-validation | 从develop ad2d958建立，开盖分液Excel mL兼容与真机验收；复用本会话独立worktree | develop，完成验证后由集成会话合入 |
 | feature/sample-workstation-http-readonly | 已暂停，最终归档源 4fbddc4 | 已集成，后续任务重新从统一基线开始 |
 | feature/material-management | 已集成的物料功能历史 | 保留追溯，不继续分叉 |
 | feature/physical-admission-v2 | 已集成的准入与物料历史 74cfb88 | 保留追溯，不继续分叉 |
@@ -22,6 +23,8 @@
 | archive/* | 本地整理前的提交点和源码快照 | 不作为发布版本 |
 
 已有旧地图、流程、架构及临时 UI 分支暂不删除，避免丢失工作目录或其他会话的上下文。新工作只以统一基线为起点，不在旧分支上继续累计。
+
+2026-09-20 本会话将干净的独立目录 `D:/Project/Github/Mes-worktrees/sample-workstation-http-readonly` 切换到新任务分支 `feature/workstation-ml-template-validation`，起点为develop `ad2d958`。前处理预开发成果仍完整保留在原分支 `feature/sample-workstation-http-readonly` 的 `a469425`；原分支上关于前处理定向复用的记录随该分支保留，本任务不合并前处理代码。其他会话分支、目录和现场服务不变。
 
 ## 已纳入本轮基线
 
