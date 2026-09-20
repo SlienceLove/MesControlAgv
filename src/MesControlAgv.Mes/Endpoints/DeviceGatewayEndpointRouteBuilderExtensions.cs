@@ -145,6 +145,12 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
                 },
                 cancellationToken));
 
+        endpoints.MapGet("/api/agvs/{agvId}/pose", async (
+            string agvId, IAgvGateway adapter, CancellationToken cancellationToken) =>
+            adapter is IAgvPoseGateway pose
+                ? await ExecuteAgvReadAsync(() => pose.GetPoseAsync(agvId, cancellationToken), "AGV pose is unavailable.")
+                : Results.Problem("The configured gateway does not expose AGV pose.", statusCode: 501));
+
         endpoints.MapGet("/api/agv", async (
             IAgvGateway adapter,
             CancellationToken cancellationToken) =>

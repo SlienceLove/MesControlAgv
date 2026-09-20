@@ -384,7 +384,8 @@ internal sealed class TcpApiChannel : IDisposable
     }
 }
 
-public sealed class TcpAgvClient :
+public sealed partial class TcpAgvClient :
+    IAgvPoseDeviceClient,
     IAgvTaskAbsenceEvidenceClient,
     IAgvDeviceClient,
     IAgvIoDeviceClient,
@@ -1018,6 +1019,7 @@ public sealed class TcpAgvClient :
         _controlChannel.Dispose();
         _otherChannel.Dispose();
         _controlTransactionGate.Dispose();
+        _poseGate.Dispose();
         _lifetime?.Dispose();
     }
 

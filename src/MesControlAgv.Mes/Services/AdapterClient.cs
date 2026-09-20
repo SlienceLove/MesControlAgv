@@ -18,8 +18,19 @@ public class AdapterHttpException(HttpStatusCode responseStatusCode, string? det
             : $"Adapter returned HTTP {(int)statusCode} ({statusCode}): {detail}";
 }
 
-public sealed class AdapterClient(HttpClient client) : IAgvGateway, IPathAwareAgvGateway, IFleetAwareAgvGateway, IAdapterRuntimeIdentityGateway, IPhysicalPreflightAgvGateway, IPhysicalAgvControlGateway, IFieldNavigationAcceptanceGateway, IFieldNavigationManualClosureGateway
+public sealed class AdapterClient(HttpClient client) : IAgvGateway, IAgvPoseGateway, IPathAwareAgvGateway, IFleetAwareAgvGateway, IAdapterRuntimeIdentityGateway, IPhysicalPreflightAgvGateway, IPhysicalAgvControlGateway, IFieldNavigationAcceptanceGateway, IFieldNavigationManualClosureGateway
 {
+    public async Task<AgvPoseResponse> GetPoseAsync(string agvId, CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync($"agvs/{Uri.EscapeDataString(agvId)}/pose", cancellationToken);
+        await EnsureSuccessAsync(response, cancellationToken);
+        var pose = await response.Content.ReadFromJsonAsync<AgvPoseResponse>(cancellationToken)
+            ?? throw new InvalidOperationException("Adapter returned no AGV pose.");
+        if (!string.Equals(pose.AgvId, agvId, StringComparison.Ordinal))
+            throw new InvalidOperationException("Adapter returned a different AGV identity.");
+        return pose;
+    }
+
     public async Task<FieldNavigationManualClosureResult> CloseUnconfirmedNavigationAsync(
         Guid acceptanceId, FieldNavigationManualCloseCommand command, CancellationToken cancellationToken)
     {

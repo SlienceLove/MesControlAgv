@@ -14,6 +14,11 @@ public interface IAgvGateway
     Task<AgvTaskResponse?> ExecuteAgvCommandAsync(string agvId, string command, Guid? taskId, CancellationToken cancellationToken);
 }
 
+public interface IAgvPoseGateway
+{
+    Task<AgvPoseResponse> GetPoseAsync(string agvId, CancellationToken cancellationToken);
+}
+
 public interface IRouteAwareAgvGateway
 {
     Task<AgvTaskResponse> DispatchAsync(

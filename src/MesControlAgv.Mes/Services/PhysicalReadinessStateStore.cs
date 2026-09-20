@@ -18,6 +18,7 @@ public sealed class PhysicalReadinessSupervisorOptions
     public TimeSpan ReadyStabilityWindow { get; init; } = TimeSpan.FromSeconds(5);
     public TimeSpan FullPreflightInterval { get; init; } = TimeSpan.FromSeconds(30);
     public TimeSpan ObservationStaleAfter { get; init; } = TimeSpan.FromSeconds(10);
+    public TimeSpan ProbeTimeout { get; init; } = TimeSpan.FromSeconds(8);
     public bool RequireFullPreflightForReady { get; init; } = true;
 }
 
@@ -37,7 +38,7 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
     private readonly string _instanceId;
     private readonly TimeProvider _timeProvider;
     private bool _enabled;
-    private bool _refreshInProgress;
+    private int _refreshCount;
     private DateTimeOffset _lastRefreshAtUtc;
     private TimeSpan _observationStaleAfter = TimeSpan.FromSeconds(10);
     private string _disabledReason = PhysicalReadinessReasonCodes.SupervisorDisabled;
@@ -181,9 +182,9 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
         }
     }
 
-    public void SetRefreshInProgress(bool value)
+    public void BeginRefresh()
     {
-        lock (_gate) _refreshInProgress = value;
+        lock (_gate) _refreshCount++;
     }
 
     public void CompleteRefresh(DateTimeOffset observedAtUtc)
@@ -191,7 +192,7 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
         lock (_gate)
         {
             _lastRefreshAtUtc = NormalizeTime(observedAtUtc);
-            _refreshInProgress = false;
+            _refreshCount = Math.Max(0, _refreshCount - 1);
         }
     }
 
@@ -536,7 +537,7 @@ public sealed class PhysicalReadinessStateStore : IPhysicalReadinessState
                 ReadOnly = true,
                 SupervisorInstanceId = _instanceId,
                 ObservedAtUtc = _lastRefreshAtUtc,
-                RefreshInProgress = _refreshInProgress,
+                RefreshInProgress = _refreshCount > 0,
                 SchedulingPermitted = schedulingPermitted,
                 Devices = devices,
                 BlockingReasons = aggregateReasons.Distinct(StringComparer.Ordinal).ToArray()

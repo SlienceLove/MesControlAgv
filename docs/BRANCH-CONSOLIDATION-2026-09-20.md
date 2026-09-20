@@ -56,11 +56,21 @@ All 37 workstation merge conflicts have been resolved. This checkpoint integrate
 
 Original UI/workstation/three-device workspaces remain untouched by this merge. This local integration checkpoint does not promote master, synchronize the UI checkout or publish remote refs. No physical device execution was used for verification.
 
+## Digital-twin integration checkpoint
+
+After the workstation checkpoint `2558f12` completed, the user-approved digital-twin source commit `8ef073e` was merged without conflicts. This is the reviewed, accepted digital-twin subset, not the whole `archive/three-device-wip-20260920` snapshot.
+
+- Includes the offline 606 model/assets/licenses, WPF scene/fullscreen, schematic map alignment and smooth pose display, readonly Adapter/MES pose chain, and independent device readiness polling.
+- Excludes the pending three-device workflow/existing-task execution changes and all local runtime databases, logs, screenshots and deployment packages. Original feature/UI workspaces remain untouched except for the scoped source commit in the three-device feature branch.
+- The combined source tree was exported for isolated verification: Adapter451, MES560, WPF608, workflow contracts74 and JavaScript20 all passed (1,713 tests), plus the native fullscreen smoke. Shared auto-merged interfaces and readiness registration received a read-only integration review with no findings.
+- Verification details and the pre-existing ShineLab fixture/timing caveats are recorded in `docs/DIGITAL-TWIN-SOURCE-INTEGRATION-2026-09-20.md`.
+- This is a local develop integration only: no master promotion, remote push, live deployment or physical command.
+
 ## Remaining ordered work
 
 1. Workstation integration is resolved using separate new and legacy paths; retain this checkpoint before proceeding.
 2. Integrate material/admission changes; reconcile SampleManagement with inventory reservation and traceability identity.
-3. Review WIP digital-twin and three-device snapshots; integrate approved source, keeping site-specific runtime configuration explicit.
+3. Digital-twin source is integrated; separately review and integrate the remaining three-device execution changes, keeping site-specific runtime configuration explicit.
 4. Run builds and relevant offline regressions, then perform UI acceptance. Never run physical device commands as part of branch cleanup.
 5. Promote the validated result to master, synchronize the UI branch, and publish agreed refs without force push.
 6. Archive old feature branches only after verifying commit coverage and all worktree changes.

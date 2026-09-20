@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <StartupObject>CalibrationPreviewProgram</StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../src/MesControlAgv.Wpf/MesControlAgv.Wpf.csproj" />
+    <ProjectReference Include="../../../src/MesControlAgv.Adapter/MesControlAgv.Adapter.csproj" />
+    <Compile Include="../PoseSmoke/Capture.cs" Link="Capture.cs" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,104 @@
+<UserControl x:Class="MesControlAgv.Wpf.Views.DigitalTwinView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             AutomationProperties.AutomationId="DigitalTwinView">
+    <Grid x:Name="LayoutRoot" Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <StackPanel x:Name="DetailedHeader" Margin="0,0,0,10">
+            <TextBlock Text="数字孪生 · 606实验室" FontSize="22" FontWeight="SemiBold" />
+            <TextBlock Margin="0,5,0,4" Foreground="#596775" Text="只读状态 · D160／SHA18i 暂不绑定 · 示意跟随使用实机坐标，不代表测量级定位" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding SourceDisplay}" FontWeight="SemiBold" Foreground="#296083" Margin="0,0,0,8" />
+            <WrapPanel>
+                <ComboBox x:Name="DevicePicker" Width="280" Margin="0,0,8,6"
+                          AutomationProperties.AutomationId="DigitalTwinDevicePicker"
+                          ItemsSource="{Binding Devices}" DisplayMemberPath="Name"
+                          SelectedItem="{Binding SelectedDevice}" IsEnabled="{Binding IsReady}"
+                          SelectionChanged="DevicePicker_SelectionChanged" />
+                <Button Content="完整场景" Tag="reset" Click="ViewerCommand_Click" IsEnabled="{Binding IsReady}" Margin="0,0,8,6" Padding="12,5" />
+                <Button Content="设备区" Tag="equipment-overview" Click="ViewerCommand_Click" IsEnabled="{Binding IsReady}" Margin="0,0,8,6" Padding="12,5" />
+                <Button Content="地面开关" Tag="ground-toggle" Click="ViewerCommand_Click" IsEnabled="{Binding IsReady}" Margin="0,0,8,6" Padding="12,5" />
+                <Button Content="地图参照" Tag="map-reference-toggle" Click="ViewerCommand_Click" IsEnabled="{Binding IsReady}" Margin="0,0,8,6" Padding="12,5" />
+                <Button Content="路线开关" Tag="routes-toggle" Click="ViewerCommand_Click" IsEnabled="{Binding IsReady}" Margin="0,0,8,6" Padding="12,5" />
+                <Button Content="聚焦所选" Tag="focus" Click="ViewerCommand_Click" IsEnabled="{Binding IsReady}" Margin="0,0,8,6" Padding="12,5" />
+                <Button Content="隐藏／显示所选" Tag="toggle" Click="ViewerCommand_Click" IsEnabled="{Binding IsReady}" Margin="0,0,8,6" Padding="12,5" />
+                <Button Content="显示全部" Tag="show-all" Click="ViewerCommand_Click" IsEnabled="{Binding IsReady}" Margin="0,0,8,6" Padding="12,5" />
+                <Button Content="重新加载" Click="Reload_Click" Margin="0,0,8,6" Padding="12,5" />
+                <Button x:Name="FullScreenButton" Content="全屏查看 · F11" Click="FullScreen_Click" IsEnabled="False" Margin="0,0,8,6" Padding="12,5" />
+            </WrapPanel>
+            <TextBlock x:Name="PoseStatusText" Text="位置：等待只读坐标 · 三维未标定" TextWrapping="Wrap" Foreground="#296083" />
+            <CheckBox x:Name="SchematicFollowCheck" Content="示意跟随：按开盖／分液工作台轮廓对齐，跟随实机坐标（非测量标定）"
+                      Checked="SchematicFollow_Changed" Unchecked="SchematicFollow_Changed" Margin="0,4,0,3" />
+            <Expander Header="位置标定（只改变三维显示，不控制设备）" Expanded="Calibration_Expanded" Collapsed="Calibration_Collapsed" Margin="0,4,0,0">
+                <StackPanel>
+                    <TextBlock Text="在三维中点选站点对应的底盘定位中心地面点。至少三个分布良好的点；LM1／LM7／LM2 近共线，请补 LM6 或其他已确认点。" TextWrapping="Wrap" />
+                    <WrapPanel Margin="0,5,0,0">
+                        <ComboBox x:Name="CalibrationStation" Width="85" DisplayMemberPath="Id" Margin="0,0,8,0" />
+                        <Button Content="点选地面位置" Click="PickCalibration_Click" Padding="8,3" Margin="0,0,8,0" />
+                        <Button Content="清空选点" Click="ClearCalibration_Click" Padding="8,3" Margin="0,0,8,0" />
+                        <TextBlock Text="地面 Y(m)" VerticalAlignment="Center" />
+                        <TextBox x:Name="CalibrationFloor" Text="-0.025" Width="70" Margin="5,0,8,0" TextChanged="CalibrationNumber_Changed" />
+                    </WrapPanel>
+                    <TextBlock x:Name="CalibrationPointsText" Text="尚未选点" TextWrapping="Wrap" Margin="0,4,0,4" />
+                    <WrapPanel>
+                        <TextBlock Text="底盘参考点相对模型原点 X/Z(m)" VerticalAlignment="Center" />
+                        <TextBox x:Name="CalibrationReferenceX" Text="0" Width="65" Margin="5,0,5,0" TextChanged="CalibrationNumber_Changed" />
+                        <TextBox x:Name="CalibrationReferenceZ" Text="0" Width="65" Margin="0,0,10,0" TextChanged="CalibrationNumber_Changed" />
+                        <TextBlock Text="模型朝向修正(°)" VerticalAlignment="Center" />
+                        <TextBox x:Name="CalibrationHeading" Text="0" Width="65" Margin="5,0,8,0" TextChanged="CalibrationNumber_Changed" />
+                        <Button Content="检查偏差" Click="CheckCalibration_Click" Padding="8,3" Margin="0,0,8,0" />
+                        <Button Content="保存并启用" Click="SaveCalibration_Click" Padding="8,3" Margin="0,0,8,0" />
+                    </WrapPanel>
+                    <CheckBox x:Name="CalibrationConfirmed" Content="已核对地面对应点、底盘定位参考点和车头方向（默认 0 不是已标定值）" Margin="0,5,0,5" />
+                    <TextBlock Text="朝向修正：模型实际车头相对局部 +X 轴朝 -Z 的角度；参考点偏移按未旋转模型局部坐标填写。" TextWrapping="Wrap" Foreground="#657483" />
+                    <TextBlock x:Name="CalibrationStatusText" Text="未标定：保留原 CAD 位置，不代表实机位置。" TextWrapping="Wrap" Foreground="#A05816" />
+                </StackPanel>
+            </Expander>
+            <WrapPanel>
+                <Button Content="恢复位置同步" Click="ResumePose_Click" Padding="8,3" Margin="0,4,8,0" />
+                <Button Content="暂停位置同步" Click="PausePose_Click" Padding="8,3" Margin="0,4,8,0" />
+            </WrapPanel>
+        </StackPanel>
+        <DockPanel x:Name="PresentationToolbar" Visibility="Collapsed" Margin="8,4" LastChildFill="True">
+            <Button DockPanel.Dock="Right" Content="退出全屏 · Esc" Click="ExitFullScreen_Click" Padding="12,5" />
+            <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+                <Button Content="完整场景" Tag="reset" Click="ViewerCommand_Click" IsEnabled="{Binding IsReady}" Margin="0,0,8,0" Padding="12,5" />
+                <Button Content="设备区" Tag="equipment-overview" Click="ViewerCommand_Click" IsEnabled="{Binding IsReady}" Margin="0,0,8,0" Padding="12,5" />
+                <Button Content="地图参照" Tag="map-reference-toggle" Click="ViewerCommand_Click" IsEnabled="{Binding IsReady}" Margin="0,0,8,0" Padding="12,5" />
+            </StackPanel>
+            <TextBlock x:Name="PresentationWarning" Visibility="Collapsed" Foreground="#A05816"
+                       VerticalAlignment="Center" TextWrapping="Wrap" Margin="8,0" />
+        </DockPanel>
+        <Border Grid.Row="1" Background="#2C3E50" BorderBrush="#50657A" BorderThickness="1" MinHeight="200">
+            <Grid x:Name="BrowserHost" />
+        </Border>
+        <ItemsControl x:Name="DetailedReadings" Grid.Row="2" ItemsSource="{Binding Readings}" Margin="0,8,0,0">
+            <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><UniformGrid Columns="3" /></ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <Border Margin="0,0,6,0" Padding="10,8" Background="#F5F8FB" BorderBrush="#D9E2EC" BorderThickness="1" CornerRadius="5">
+                        <StackPanel>
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Right" Text="{Binding DisplayText}" Foreground="{Binding Color}" FontWeight="SemiBold" Margin="8,0,0,0" />
+                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" Foreground="#23374A" />
+                            </DockPanel>
+                            <TextBlock Text="{Binding EquipmentId}" FontSize="11" Foreground="#627587" Margin="0,3,0,3" />
+                            <TextBlock Text="{Binding Detail}" ToolTip="{Binding Detail}" TextWrapping="Wrap" Height="34" TextTrimming="CharacterEllipsis" Foreground="#4F6273" FontSize="12" />
+                            <TextBlock Text="{Binding TimeText}" Foreground="#627587" FontSize="10" Margin="0,4,0,0" />
+                        </StackPanel>
+                    </Border>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <StackPanel x:Name="DetailedFooter" Grid.Row="3" Margin="0,8,0,0">
+            <TextBlock Text="{Binding Status}" Foreground="#394B5C" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding SelectionDescription}" Margin="0,3,0,0" Foreground="#657483" TextWrapping="Wrap" />
+        </StackPanel>
+    </Grid>
+</UserControl>

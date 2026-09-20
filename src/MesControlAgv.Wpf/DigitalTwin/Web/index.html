@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval' 'nonce-digital-twin-importmap'; style-src 'self'; connect-src 'self'; worker-src 'self' blob:; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+  <title>606实验室数字孪生</title>
+  <link rel="stylesheet" href="./viewer.css">
+  <script type="importmap" nonce="digital-twin-importmap">{"imports":{"three":"./vendor/three/build/three.module.min.js","three/addons/":"./vendor/three/examples/jsm/"}}</script>
+  <script type="module" src="./viewer.js"></script>
+</head>
+<body><div id="notice" role="status">正在加载实验室场景……</div><div id="source" hidden>只读状态 · 数据来源未连接</div><div id="labels"></div>
+<aside id="map-reference" hidden><strong id="map-reference-status">导航地图参照 · 未与 CAD 对齐</strong><svg id="map-svg" aria-label="导航站点和轮廓参照"></svg><small>橙点：LM1 · 蓝线：规划路线，不是实际轨迹<br>黑线／点：扫描障碍参照，不全是墙体</small></aside>
+<div id="ground-status" hidden></div><div id="hint" hidden>拖动旋转 · 滚轮缩放 · 点击设备选择 · 橙色仅表示选中</div></body>
+</html>

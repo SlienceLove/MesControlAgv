@@ -105,7 +105,7 @@
     </Window.Resources>
     <Grid Background="{StaticResource AppCanvasBrush}">
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="184" />
+            <ColumnDefinition x:Name="SidebarColumn" Width="184" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
@@ -152,6 +152,12 @@
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="地图视图" />
+                                </RadioButton>
+                                <RadioButton Tag="DigitalTwinTab"
+                                             AutomationProperties.AutomationId="DigitalTwinNavigation"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="数字孪生" />
                                 </RadioButton>
                             </StackPanel>
                         </Expander>
@@ -237,10 +243,10 @@
 
         <Grid Grid.Column="1">
             <Grid.RowDefinitions>
-                <RowDefinition Height="56" />
+                <RowDefinition x:Name="ShellHeaderRow" Height="56" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
-            <Border Grid.Row="0" Background="White" BorderBrush="{StaticResource BorderBrush}"
+            <Border x:Name="ShellHeader" Grid.Row="0" Background="White" BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="0,0,0,1">
                 <Grid Margin="16,0">
                     <Grid.ColumnDefinitions>
@@ -268,7 +274,7 @@
                 </Grid>
             </Border>
 
-            <Border Grid.Row="1" Margin="12" Padding="14"
+            <Border x:Name="PageFrame" Grid.Row="1" Margin="12" Padding="14"
                     Background="{StaticResource SurfaceBrush}"
                     TextElement.Foreground="{StaticResource TextPrimaryBrush}"
                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="9">
@@ -634,6 +640,9 @@
         </TabItem>
     <TabItem x:Name="MapDashboardTab" Header="地图视图" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
             <views:MapDashboardView x:Name="MapDashboardView" />
+        </TabItem>
+    <TabItem x:Name="DigitalTwinTab" Header="数字孪生" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+            <views:DigitalTwinView x:Name="DigitalTwinView" StatusSource="{Binding DigitalTwinStatusSource}" />
         </TabItem>
                 </TabControl>
             </Border>

@@ -63,6 +63,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         StartupDiagnostics = startupConfiguration ?? StartupConfigurationReport.Unknown;
         var effectiveRuntimeMode = ResolveRuntimeMode(StartupDiagnostics.RuntimeMode, simulator is not null);
         _connectionSource = RuntimeConnectionSourcePresentation.Resolve(effectiveRuntimeMode);
+        DigitalTwinStatusSource = new DigitalTwin.MesDigitalTwinStatusSource(_mes, _connectionSource);
         WorkflowEditor = new WorkflowEditorViewModel(
             workflowStore ?? new WorkflowStore(),
             _mes,
@@ -387,6 +388,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             ? "Release \u5B89\u5168\u67E5\u770B\uFF1A\u4EFF\u771F\u63A7\u5236\u5DF2\u7981\u7528"
             : "\u624B\u5DE5\u5230\u7AD9\u4E0E\u5BFC\u822A\u63A7\u5236\u5DF2\u7981\u7528";
     public RuntimeConnectionSource ConnectionSource => _connectionSource;
+    public DigitalTwin.IDigitalTwinStatusSource DigitalTwinStatusSource { get; }
     public string ConnectionSourceDisplay => RuntimeConnectionSourcePresentation.SourceDisplay(ConnectionSource);
     public string ConnectionSourceDetail => RuntimeConnectionSourcePresentation.SourceDetail(ConnectionSource);
 
