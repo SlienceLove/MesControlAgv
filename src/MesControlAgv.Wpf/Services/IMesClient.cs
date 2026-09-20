@@ -195,6 +195,8 @@ public interface IMesClient
         CancellationToken cancellationToken) =>
         GetPhysicalReadinessAsync(cancellationToken);
     Task<AgvDashboardSnapshot> GetAgvSnapshotAsync(CancellationToken cancellationToken);
+    Task<AgvPoseResponse> GetAgvPoseAsync(string agvId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("MES pose endpoint is not available.");
     async Task<IReadOnlyList<AgvDashboardSnapshot>> GetAgvFleetAsync(CancellationToken cancellationToken) => [await GetAgvSnapshotAsync(cancellationToken)];
     async Task<IReadOnlyList<AgvFleetDashboardStatus>> GetAgvFleetStatusAsync(CancellationToken cancellationToken) =>
         (await GetAgvFleetAsync(cancellationToken))

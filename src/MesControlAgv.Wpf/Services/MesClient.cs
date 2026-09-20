@@ -405,6 +405,16 @@ public sealed class MesClient(HttpClient client) : IMesClient
         return ToDashboardSnapshot(snapshot);
     }
 
+    public async Task<MesControlAgv.Contracts.AgvPoseResponse> GetAgvPoseAsync(string agvId, CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync($"api/agvs/{Uri.EscapeDataString(agvId)}/pose", cancellationToken);
+        if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.NotImplemented)
+            throw new NotSupportedException("位置接口未就绪，请使用支持位姿读取的 MES／Adapter。");
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<MesControlAgv.Contracts.AgvPoseResponse>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no AGV pose.");
+    }
+
     public async Task<IReadOnlyList<AgvDashboardSnapshot>> GetAgvFleetAsync(CancellationToken cancellationToken)
     {
         var snapshots = await client.GetFromJsonAsync<List<ContractAgvSnapshot>>("api/agvs/fleet", cancellationToken) ?? [];

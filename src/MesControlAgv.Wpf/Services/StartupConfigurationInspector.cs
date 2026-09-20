@@ -32,6 +32,7 @@ public sealed record StartupConfigurationInput
     public string? RuntimeMode { get; init; }
     public string? ManageLocalServices { get; init; }
     public string? ManageLocalMes { get; init; }
+    public string? TwinSchematicFollow { get; init; }
     public string? MesBaseUrl { get; init; }
     public string? SimulatorBaseUrl { get; init; }
     public string? AdapterBaseUrl { get; init; }
@@ -48,6 +49,7 @@ public sealed record StartupConfigurationReport
     public required string RuntimeMode { get; init; }
     public required bool ManageLocalServices { get; init; }
     public required bool ManageLocalMes { get; init; }
+    public bool TwinSchematicFollow { get; init; }
     public required Uri MesBaseUrl { get; init; }
     public required Uri SimulatorBaseUrl { get; init; }
     public required Uri AdapterBaseUrl { get; init; }
@@ -109,6 +111,7 @@ public static class StartupConfigurationInspector
             RuntimeMode = readEnvironment("WPF_RUNTIME_MODE"),
             ManageLocalServices = readEnvironment("WPF_MANAGE_LOCAL_SERVICES"),
             ManageLocalMes = readEnvironment("WPF_MANAGE_LOCAL_MES"),
+            TwinSchematicFollow = readEnvironment("WPF_TWIN_SCHEMATIC_FOLLOW"),
             MesBaseUrl = readEnvironment("MES_BASE_URL"),
             SimulatorBaseUrl = readEnvironment("SIMULATOR_BASE_URL"),
             AdapterBaseUrl = readEnvironment("ADAPTER_BASE_URL"),
@@ -181,6 +184,7 @@ public static class StartupConfigurationInspector
         AddOptionalPathDiagnostic("MAP_SMAP_PATH", "SMAP 地图", input.MapSmapPath, items);
         AddOptionalPathDiagnostic("WPF_WORKFLOW_STORE_PATH", "流程存储", input.WorkflowStorePath, items);
         AddOptionalPathDiagnostic("SHINELAB_INBOX_PATH", "ShineLab 收件目录", input.ShineLabInboxPath, items);
+        var twinSchematicFollow = ResolveTwinSchematicFollow(input.TwinSchematicFollow, runtimeMode, items);
 
         return new StartupConfigurationReport
         {
@@ -188,6 +192,7 @@ public static class StartupConfigurationInspector
             RuntimeMode = runtimeMode,
             ManageLocalServices = manageLocalServices,
             ManageLocalMes = manageLocalMes,
+            TwinSchematicFollow = twinSchematicFollow && !items.Any(item => item.Severity == StartupDiagnosticSeverity.Error),
             MesBaseUrl = mesUrl,
             SimulatorBaseUrl = simulatorUrl,
             AdapterBaseUrl = adapterUrl,
@@ -196,6 +201,24 @@ public static class StartupConfigurationInspector
             RealWriteAccess = adapter.RealWriteAccess,
             Items = items
         };
+    }
+
+    private static bool ResolveTwinSchematicFollow(string? configured, string runtimeMode, ICollection<StartupDiagnosticItem> items)
+    {
+        const string key = "WPF_TWIN_SCHEMATIC_FOLLOW";
+        if (string.IsNullOrWhiteSpace(configured)) return false;
+        if (!bool.TryParse(configured.Trim(), out var enabled))
+        {
+            items.Add(Error(key + "_INVALID", "数字孪生示意跟随", configured, key + " 必须是 true 或 false。"));
+            return false;
+        }
+        if (enabled && runtimeMode != "physical")
+        {
+            items.Add(Error(key + "_PHYSICAL_ONLY", "数字孪生示意跟随", configured, "示意跟随启动选项仅适用于物理运行链。"));
+            return false;
+        }
+        items.Add(Info(key, "数字孪生示意跟随", enabled.ToString(), "仅影响 606 三维显示，不代表测量标定或现场动作授权。"));
+        return enabled;
     }
 
     private static string NormalizeRuntimeMode(string? configured, ICollection<StartupDiagnosticItem> items)

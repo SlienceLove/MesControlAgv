@@ -22,12 +22,15 @@
 
   <ItemGroup>
     <PackageReference Include="Nodify" Version="7.3.0" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3537.50" />
   </ItemGroup>
 
   <ItemGroup>
     <None Include="Configuration\guangzhou606.station-mapping.json"
           CopyToOutputDirectory="PreserveNewest"
           CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="DigitalTwin\Web\**\*"
+             CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
   <Target Name="BuildLocalServices" BeforeTargets="Build;Publish" Condition="'$(SkipLocalServiceBuild)' != 'true'">

@@ -284,6 +284,22 @@ public sealed class AgvAdapterModule : IDeviceAdapterModule
             });
         });
 
+        endpoints.MapGet("/agvs/{agvId}/pose", async (
+            string agvId, IAgvDeviceClient device, ProfileConfiguration profile, CancellationToken cancellationToken) =>
+        {
+            var configured = profile.Agvs.FirstOrDefault(item => item.Enabled);
+            if (configured is null || !string.Equals(configured.AgvId, agvId, StringComparison.Ordinal))
+                return Results.NotFound(new { detail = "The requested AGV is not the configured physical device." });
+            if (device is not IAgvPoseDeviceClient pose)
+                return Results.Problem("The configured driver does not expose real-time pose.", statusCode: 501);
+            try { return Results.Ok((await pose.GetPoseAsync(cancellationToken)) with { AgvId = configured.AgvId }); }
+            catch (Exception ex) when (ex is AgvApiException or AgvProtocolException)
+            { return Results.Problem(ex.Message, statusCode: 502); }
+            catch (Exception ex) when (ex is IOException or SocketException)
+            { return Results.Problem("AGV pose connection unavailable.", statusCode: 503); }
+            catch (TimeoutException) { return Results.Problem("AGV pose query timed out.", statusCode: 504); }
+        });
+
         endpoints.MapGet("/agv/io", async (
             IAgvDeviceClient device,
             CancellationToken cancellationToken) =>

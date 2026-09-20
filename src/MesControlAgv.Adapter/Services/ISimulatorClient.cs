@@ -68,6 +68,11 @@ public interface ISimulatorClient : IAgvDeviceClient
 {
 }
 
+public interface IAgvPoseDeviceClient
+{
+    Task<AgvPoseResponse> GetPoseAsync(CancellationToken cancellationToken);
+}
+
 /// <summary>
 /// Implemented by physical-device clients that support a read-only 1101-style
 /// safety query. Simulator implementations intentionally do not expose it.

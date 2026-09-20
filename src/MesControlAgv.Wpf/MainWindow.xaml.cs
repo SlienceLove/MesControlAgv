@@ -9,9 +9,11 @@ namespace MesControlAgv.Wpf;
 
 public partial class MainWindow : Window
 {
+    private bool _twinStartupApplied;
     public MainWindow()
     {
         InitializeComponent();
+        InitializeTwinFullScreen();
         Loaded += MainWindow_Loaded;
 
         // The grouped sidebar's checked state is only a visual affordance and
@@ -20,8 +22,16 @@ public partial class MainWindow : Window
         EnsureInitialTabSelection();
     }
 
-    private void MainWindow_Loaded(object sender, RoutedEventArgs e) =>
+    private void MainWindow_Loaded(object sender, RoutedEventArgs e)
+    {
         EnsureInitialTabSelection();
+        if (_twinStartupApplied || DataContext is not MainViewModel model) return;
+        _twinStartupApplied = true;
+        if (model.StartupDiagnostics is { CanStart: true, TwinSchematicFollow: true } &&
+            string.Equals(model.StartupDiagnostics.RuntimeMode, "physical", StringComparison.OrdinalIgnoreCase) &&
+            model.ConnectionSource == RuntimeConnectionSource.PhysicalDevice)
+            DigitalTwinView.EnableSchematicFollowing(true);
+    }
 
     private void EnsureInitialTabSelection()
     {
@@ -61,6 +71,7 @@ public partial class MainWindow : Window
 
     private void MainTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (IsTwinFullScreen && MainTabs.SelectedItem != DigitalTwinTab) SetTwinFullScreen(false);
         if (MainTabs.SelectedItem is not TabItem selectedTab)
         {
             return;
