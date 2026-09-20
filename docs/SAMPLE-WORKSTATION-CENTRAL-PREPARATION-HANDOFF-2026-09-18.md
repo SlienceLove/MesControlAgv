@@ -4,7 +4,7 @@
 
 - 隔离工作区：`D:\Project\Github\Mes-worktrees\sample-workstation-http-readonly`
 - 隔离分支：`feature/sample-workstation-http-readonly`
-- 最新自动化复审源代码头：`09190d0`（2026-09-20 默认枪头兼容及本地50µL预览）；布局收尾源代码头为 `34bb395`。
+- 最新离线验证源代码头：`0f31868`（新厂家任务号20字符及原上传证据还原）；默认枪头兼容为 `09190d0`，布局收尾为 `34bb395`。短号修正尚未部署运行服务。
 - `3c6302b` 补齐 WPF 选择切换同步失效和右侧详情滚动布局；这是自动化测试/编译证据，不是真机或现场验收结论。
 - 日常集成目标分支：`feature/wpf-ui-layout-optimization`，不是 `master`；现场验收前不要合并。该日常分支曾见 `201dbb4` 及无关用户改动，真正集成时必须重新检查，不能覆盖。
 - 自动化准备链已通过；证据见 [2026-09-18 中控准备链验证](diagnostics/2026-09-18-workstation-central-preparation-validation.md)。本阶段没有真实设备写入或现场进程操作。
@@ -21,7 +21,7 @@
 
 ### 2026-09-20 真实导入验收更新（优先接续）
 
-最新本地排查：中控生成厂家任务号为42字符，厂家旧schema限20字符，可能是此次入库失败原因之一；尚未获得现场schema/日志，不能断言根因。见[任务号兼容排查及待确认方案](diagnostics/2026-09-20-workstation-import-taskno-investigation.md)。暂未修改新号生成逻辑，旧Unknown记录保持原样。
+最新本地排查：原中控厂家任务号42字符，厂家旧schema限20字符，可能是此次入库失败原因之一；尚未获得现场schema/日志，不能断言根因。用户批准后，已将新号改为20字符并完成离线回归，旧Unknown记录保持原样。原上传XLSX也已按hash还原并打包。见[短号修正与复现包](diagnostics/2026-09-20-workstation-short-taskno-validation.md)。现场运行服务仍是修正前版本，不直接重新导入该Unknown记录。
 
 用户已确认现场就绪及使用中控生成的两个测试来源 ID。本轮正式准备成功，但唯一一次导入返回“导入成功”后，新任务查询为201“无数据”，模板回读却返回旧任务。准备记录现为 **Unknown**，没有运行准入、条码更新或启动；不能算验收通过。专用新版 Adapter/MES 已在15042/15045启用，原现场其他实例未动，未打开WPF。具体身份、证据与发给厂家的日志问题见 [50µL真实导入阻塞记录](diagnostics/2026-09-20-workstation-50ul-field-import-blocked.md)。后续先只读对账该记录，不直接重发；此前“没有真实导入”的段落是历史阶段说明。
 
