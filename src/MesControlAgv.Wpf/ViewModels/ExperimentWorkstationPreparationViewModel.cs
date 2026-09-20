@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Windows.Input;
 using MesControlAgv.Contracts;
 using MesControlAgv.Contracts.Experiments;
@@ -17,6 +18,8 @@ public sealed class ExperimentWorkstationPreparationViewModel : ExperimentBindab
     private readonly AsyncCommand _saveCommand;
     private readonly AsyncCommand _importCommand;
     private readonly RelayCommand _beginTemplateModeCommand;
+    private readonly RelayCommand _applyUniformVolumeCommand;
+    private string _uniformVolumeText = "50";
     private Guid? _jobId;
     private int _generation;
     private bool _isBusy;
@@ -41,6 +44,8 @@ public sealed class ExperimentWorkstationPreparationViewModel : ExperimentBindab
         _saveCommand = new AsyncCommand(SaveAsync, () => CanSave);
         _importCommand = new AsyncCommand(ImportAsync, () => CanImport);
         _beginTemplateModeCommand = new RelayCommand(() => _ = BeginTemplateModeAsync(), () => IsApplicable && CanMutate && !IsBusy && !BlocksNewTemplateMode && !IsTemplateMode);
+        _applyUniformVolumeCommand = new RelayCommand(ApplyUniformVolume, () => CanApplyUniformVolume);
+        Transfers.CollectionChanged += (_, _) => RefreshEditingSummary();
     }
 
     public ObservableCollection<WorkstationPreparationTransferRowViewModel> Transfers { get; } = [];
@@ -67,6 +72,61 @@ public sealed class ExperimentWorkstationPreparationViewModel : ExperimentBindab
     public ObservableCollection<WorkstationTemplateSourceChoice> SourceKeys { get; } = [];
     public ObservableCollection<ExperimentSampleVerificationRowViewModel> VerifiedSamples { get; } = [];
     public ICommand BeginTemplateModeCommand => _beginTemplateModeCommand;
+
+    public string UniformVolumeText
+    {
+        get => _uniformVolumeText;
+        set
+        {
+            if (!SetField(ref _uniformVolumeText, value ?? string.Empty)) return;
+            OnPropertyChanged(nameof(UniformVolumeValidationMessage));
+            OnPropertyChanged(nameof(CanApplyUniformVolume));
+            _applyUniformVolumeCommand.RaiseCanExecuteChanged();
+        }
+    }
+    public string UniformVolumeValidationMessage => TryGetUniformVolume(out _) ? string.Empty : "请输入正整数体积（µL）。";
+    public bool CanApplyUniformVolume => IsApplicable && IsTemplateMode && CanEdit && Transfers.Count > 0 &&
+        Preparation?.Status is not (ExperimentWorkstationPreparationStatus.Importing or ExperimentWorkstationPreparationStatus.Unknown) && TryGetUniformVolume(out _);
+    public ICommand ApplyUniformVolumeCommand => _applyUniformVolumeCommand;
+    public int SourceCount => Transfers.Select(row => new WorkstationTemplateSourceChoice(row.Original.SourceModule, row.Original.SourceX, row.Original.SourceY)).Distinct().Count();
+    public int TargetCount => Transfers.Select(row => (row.TargetModule.Trim(), row.TargetX, row.TargetY)).Distinct().Count();
+    public long? TotalVolumeMicroliters => Transfers.Any(row => row.VolumeMicroliters <= 0) ? null : Transfers.Sum(row => (long)row.VolumeMicroliters);
+    public string VolumeSummary => Transfers.Count == 0 ? "尚未加载任务表" :
+        $"来源 {SourceCount} · 目标孔 {TargetCount} · 分液 {Transfers.Count} 条 · 计划总量 {FormatVolume(TotalVolumeMicroliters)}";
+    public IReadOnlyList<WorkstationSourceVolumeSummary> SourceVolumeSummaries => Transfers
+        .GroupBy(row => new WorkstationTemplateSourceChoice(row.Original.SourceModule, row.Original.SourceX, row.Original.SourceY))
+        .Select(group => new WorkstationSourceVolumeSummary(
+            group.Key.Display,
+            BottleBindings.FirstOrDefault(binding => binding.SelectedSource == group.Key)?.BottleNumber,
+            group.First().SourceIdentity,
+            group.Select(row => (row.TargetModule.Trim(), row.TargetX, row.TargetY)).Distinct().Count(),
+            group.Count(),
+            group.Any(row => row.VolumeMicroliters <= 0) ? null : group.Sum(row => (long)row.VolumeMicroliters)))
+        .ToArray();
+    public bool HasUnsavedChanges => IsTemplateMode && Transfers.Count > 0 && (IsDirty || Preparation is null);
+    public string EditStatusText => Transfers.Count == 0 ? string.Empty : IsDirty ? "有未保存修改，请先保存准备。" :
+        Preparation is null ? "尚未保存准备；保存不会导入或启动设备。" : "当前表格无未保存修改。";
+
+    private bool TryGetUniformVolume(out int volume) =>
+        int.TryParse(UniformVolumeText.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out volume) && volume > 0;
+
+    private void ApplyUniformVolume()
+    {
+        if (!CanApplyUniformVolume || !TryGetUniformVolume(out var volume)) return;
+        // Existing setters mark actual changes dirty; an unchanged value stays a no-op.
+        foreach (var row in Transfers) row.VolumeMicroliters = volume;
+    }
+
+    private void RefreshEditingSummary()
+    {
+        OnPropertyChanged(nameof(SourceCount)); OnPropertyChanged(nameof(TargetCount));
+        OnPropertyChanged(nameof(TotalVolumeMicroliters)); OnPropertyChanged(nameof(VolumeSummary));
+        OnPropertyChanged(nameof(SourceVolumeSummaries)); OnPropertyChanged(nameof(HasUnsavedChanges));
+        OnPropertyChanged(nameof(EditStatusText)); OnPropertyChanged(nameof(CanApplyUniformVolume));
+        _applyUniformVolumeCommand.RaiseCanExecuteChanged();
+    }
+
+    internal static string FormatVolume(long? volume) => volume is { } value ? $"{value} µL" : "体积待修正";
 
     internal void Invalidate()
     {
@@ -203,6 +263,7 @@ public sealed class ExperimentWorkstationPreparationViewModel : ExperimentBindab
         foreach (var source in value.Payload.Transfers.Select(row => new WorkstationTemplateSourceChoice(row.Transfer.SourceModule, row.Transfer.SourceX, row.Transfer.SourceY)).Distinct()) SourceKeys.Add(source);
         foreach (var binding in value.Payload.BottleBindings.OrderBy(item => item.BottleNumber)) AddBottle(binding.BottleNumber, binding.SampleId, binding.TemplateSource is null ? null : new WorkstationTemplateSourceChoice(binding.TemplateSource.Module, binding.TemplateSource.X, binding.TemplateSource.Y));
         IsDirty = false;
+        RefreshEditingSummary();
     }
     private void AddBottle(int number, Guid? sampleId = null, WorkstationTemplateSourceChoice? source = null) => BottleBindings.Add(new WorkstationPreparationBottleBindingViewModel(number, VerifiedSamples, SourceKeys, sampleId, source, MarkDirty));
     private void MarkDirty()
@@ -216,9 +277,15 @@ public sealed class ExperimentWorkstationPreparationViewModel : ExperimentBindab
         IsDirty = true;
         RaiseStates();
     }
-    private void Reset() { IsBusy = false; IsApplicable = false; CanMutate = false; IsTemplateMode = false; RequiresPreparation = false; IsResolved = false; IsDirty = false; Preparation = null; Transfers.Clear(); SourceKeys.Clear(); BottleBindings.Clear(); VerifiedSamples.Clear(); }
-    private void RaiseStates() { OnPropertyChanged(nameof(CanEdit)); OnPropertyChanged(nameof(CanSave)); OnPropertyChanged(nameof(CanImport)); OnPropertyChanged(nameof(IsVerificationCurrent)); OnPropertyChanged(nameof(BlocksNewTemplateMode)); _saveCommand.RaiseCanExecuteChanged(); _importCommand.RaiseCanExecuteChanged(); _beginTemplateModeCommand.RaiseCanExecuteChanged(); }
+    private void Reset() { IsBusy = false; IsApplicable = false; CanMutate = false; IsTemplateMode = false; RequiresPreparation = false; IsResolved = false; IsDirty = false; Preparation = null; Transfers.Clear(); SourceKeys.Clear(); BottleBindings.Clear(); VerifiedSamples.Clear(); UniformVolumeText = "50"; RefreshEditingSummary(); }
+    private void RaiseStates() { OnPropertyChanged(nameof(CanEdit)); OnPropertyChanged(nameof(CanSave)); OnPropertyChanged(nameof(CanImport)); OnPropertyChanged(nameof(IsVerificationCurrent)); OnPropertyChanged(nameof(BlocksNewTemplateMode)); _saveCommand.RaiseCanExecuteChanged(); _importCommand.RaiseCanExecuteChanged(); _beginTemplateModeCommand.RaiseCanExecuteChanged(); RefreshEditingSummary(); }
     private static string Read(WorkflowNode node, string key) => node.Configuration.TryGetValue(key, out var value) ? value?.Trim() ?? string.Empty : string.Empty;
+}
+
+public sealed record WorkstationSourceVolumeSummary(string Source, int? BottleNumber, string SourceIdentity, int TargetCount, int TransferCount, long? VolumeMicroliters)
+{
+    public string Display => $"{(BottleNumber is { } bottle ? $"{bottle}号瓶 · " : string.Empty)}{Source} · " +
+        $"{(SourceIdentity == "Unbound source" ? "未绑定来源ID" : SourceIdentity)} · {TargetCount} 孔 / {TransferCount} 条 · 计划 {ExperimentWorkstationPreparationViewModel.FormatVolume(VolumeMicroliters)}";
 }
 
 public sealed record WorkstationTemplateSourceChoice(string Module, int X, int Y)
