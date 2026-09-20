@@ -147,7 +147,7 @@
                                     <TextBlock Text="任务排程" />
                                 </RadioButton>
                                 <RadioButton Tag="InstrumentTaskImportTab" Style="{StaticResource NavigationRadioButtonStyle}" Click="NavigationButton_Click"><TextBlock Text="仪器任务导入" /></RadioButton>
-                                <RadioButton Tag="MapDashboardTab"
+                                <RadioButton Tag="MapDashboardTab" Visibility="Collapsed"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="地图视图" />
@@ -172,7 +172,7 @@
                                 <RadioButton Tag="SampleManagementTab"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
-                                    <TextBlock Text="样品流转" />
+                                    <TextBlock Text="样品管理" />
                                 </RadioButton>
                             </StackPanel>
                         </Expander>
@@ -244,7 +244,7 @@
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="启动诊断" />
                                 </RadioButton>
-                                <RadioButton Tag="ReadinessTab"
+                                <RadioButton Tag="ReadinessTab" Visibility="Collapsed"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="就绪 / 地图 / 审计" TextWrapping="Wrap" />
@@ -653,7 +653,7 @@
                 </Grid>
             </Grid>
         </TabItem>
-    <TabItem x:Name="MapDashboardTab" Header="地图视图" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <TabItem x:Name="MapDashboardTab" Visibility="Collapsed" Header="地图视图" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
             <views:MapDashboardView x:Name="MapDashboardView" />
         </TabItem>
     <TabItem x:Name="DigitalTwinTab" Header="数字孪生" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
