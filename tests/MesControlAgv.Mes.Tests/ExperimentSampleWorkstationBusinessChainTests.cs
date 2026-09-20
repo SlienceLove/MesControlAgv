@@ -212,12 +212,84 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         secondResponse.EnsureSuccessStatusCode();
         var first = (await firstResponse.Content.ReadFromJsonAsync<ExperimentWorkstationPreparation>())!;
         var second = (await secondResponse.Content.ReadFromJsonAsync<ExperimentWorkstationPreparation>())!;
-        var current = (await client.GetFromJsonAsync<ExperimentWorkstationPreparation>($"/api/experiment-jobs/{scheduled.JobId}/workstation-preparations/current"))!;
         Assert.Equal(first.PreparedAt, second.PreparedAt);
         Assert.Equal(1, first.Revision);
         Assert.Equal(2, second.Revision);
-        Assert.Equal(second.PreparationId, current.PreparationId);
-        Assert.Equal(2, current.Revision);
+        var preparations = new List<ExperimentWorkstationPreparation> { first, second };
+        for (var i = 0; i < 14; i++)
+        {
+            var response = await client.PostAsJsonAsync($"/api/experiment-jobs/{scheduled.JobId}/workstation-preparations/prepare", Request("Prepare same-clock distinct task"));
+            response.EnsureSuccessStatusCode();
+            preparations.Add((await response.Content.ReadFromJsonAsync<ExperimentWorkstationPreparation>())!);
+        }
+        Assert.All(preparations, preparation =>
+        {
+            Assert.Matches("^WS[0-9A-F]{18}$", preparation.VendorTaskNo);
+            Assert.Equal(20, preparation.VendorTaskNo.Length);
+            Assert.Equal(first.PreparedAt, preparation.PreparedAt);
+            Assert.Equal(preparation.VendorTaskNo, preparation.Payload.GeneratedTemplate.TaskNo);
+        });
+        Assert.Equal(preparations.Count, preparations.Select(preparation => preparation.VendorTaskNo).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        var current = (await client.GetFromJsonAsync<ExperimentWorkstationPreparation>($"/api/experiment-jobs/{scheduled.JobId}/workstation-preparations/current"))!;
+        Assert.Equal(preparations[^1].PreparationId, current.PreparationId);
+        Assert.Equal(preparations.Count, current.Revision);
+        Assert.Equal(0, gateway.ImportCalls + gateway.BarcodeUpdateCalls + gateway.StartCalls + gateway.BarcodeStartCalls);
+    }
+
+    [Fact]
+    public async Task Historical_long_task_number_unknown_record_is_preserved_and_not_reissued()
+    {
+        const string legacyTaskNo = "MES-20260920014125514-84cac287ab024f2ebd33";
+        var gateway = new RecordingWorkstation();
+        using var factory = ConfigureGateway(new PhysicalMesWebApplicationFactory(PhysicalProfile()), gateway);
+        using var client = factory.CreateClient();
+        var workflow = await PublishWorkflowAsync(client);
+        var plan = await CreatePublishedPlanAsync(client, workflow);
+        var scheduled = await CreateScheduledJobAsync(client, plan);
+        var prepared = await PrepareTwoSourceTaskAsync(client, scheduled.JobId);
+        var template = prepared.Payload.GeneratedTemplate with { TaskNo = legacyTaskNo };
+        var payload = prepared.Payload with
+        {
+            GeneratedTemplate = template,
+            GeneratedTemplateFileName = legacyTaskNo + ".xlsx",
+            GeneratedTemplateFileSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(SampleWorkstationTemplateFile.Write(template)))
+        };
+        var payloadJson = JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var payloadHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(payloadJson)));
+        // Seed historical persistence in this test's temporary database, never a field database.
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            var record = await db.ExperimentWorkstationPreparations.AsNoTracking().SingleAsync();
+            record.PreparationId = Guid.NewGuid();
+            record.Revision++;
+            record.PreparedRequestId = Guid.NewGuid();
+            record.VendorTaskNo = legacyTaskNo;
+            record.PayloadJson = payloadJson;
+            record.PayloadHash = payloadHash;
+            record.Status = ExperimentWorkstationPreparationStatus.Unknown.ToString();
+            record.UnknownAtUtc = DateTime.UtcNow;
+            record.LastError = "Historical import readback mismatch";
+            db.ExperimentWorkstationPreparations.Add(record);
+            await db.SaveChangesAsync();
+        }
+        var current = (await client.GetFromJsonAsync<ExperimentWorkstationPreparation>($"/api/experiment-jobs/{scheduled.JobId}/workstation-preparations/current"))!;
+        Assert.Equal(legacyTaskNo, current.VendorTaskNo);
+        Assert.Equal(legacyTaskNo, current.Payload.GeneratedTemplate.TaskNo);
+        Assert.Equal(payloadHash, current.PayloadHash);
+        Assert.Equal(ExperimentWorkstationPreparationStatus.Unknown, current.Status);
+        var import = await client.PostAsJsonAsync($"/api/experiment-jobs/{scheduled.JobId}/workstation-preparations/{current.PreparationId}/import",
+            new ImportExperimentWorkstationTaskRequest { RequestId = Guid.NewGuid(), Actor = "test", Reason = "Do not reissue historical unknown" });
+        Assert.Equal(HttpStatusCode.Conflict, import.StatusCode);
+        var admission = await client.PostAsJsonAsync($"/api/experiment-jobs/{scheduled.JobId}/admit", Action("Do not admit historical unknown"));
+        Assert.Equal(HttpStatusCode.Conflict, admission.StatusCode);
+        Assert.Equal(0, gateway.ImportCalls + gateway.BarcodeUpdateCalls + gateway.StartCalls + gateway.BarcodeStartCalls);
+        using var finalScope = factory.Services.CreateScope();
+        var persisted = await finalScope.ServiceProvider.GetRequiredService<MesDbContext>().ExperimentWorkstationPreparations.SingleAsync(record => record.PreparationId == current.PreparationId);
+        Assert.Equal(legacyTaskNo, persisted.VendorTaskNo);
+        Assert.Equal(payloadJson, persisted.PayloadJson);
+        Assert.Equal(payloadHash, persisted.PayloadHash);
+        Assert.Equal("Unknown", persisted.Status);
     }
 
     [Theory]
@@ -256,6 +328,7 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         var prepared = (await prepareResponse.Content.ReadFromJsonAsync<ExperimentWorkstationPreparation>())!;
         Assert.Equal(ExperimentWorkstationPreparationStatus.Prepared, prepared.Status);
         Assert.NotEqual("TEST-001", prepared.VendorTaskNo);
+        Assert.Matches("^WS[0-9A-F]{18}$", prepared.VendorTaskNo);
         Assert.Equal([sample1.SampleId, sample1.SampleId, sample2.SampleId], prepared.Payload.Transfers.Select(row => row.SourceSampleId).ToArray());
         Assert.Equal(prepared.Payload.SourceTemplate.Transfers, prepared.Payload.GeneratedTemplate.Transfers);
         if (defaultTips)
@@ -267,7 +340,11 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
 
         var prepareReplay = await client.PostAsJsonAsync($"/api/experiment-jobs/{scheduled.JobId}/workstation-preparations/prepare", prepareRequest);
         Assert.Equal(HttpStatusCode.Created, prepareReplay.StatusCode);
-        Assert.True((await prepareReplay.Content.ReadFromJsonAsync<ExperimentWorkstationPreparation>())!.IsIdempotentReplay);
+        var replayed = (await prepareReplay.Content.ReadFromJsonAsync<ExperimentWorkstationPreparation>())!;
+        Assert.True(replayed.IsIdempotentReplay);
+        Assert.Equal(prepared.VendorTaskNo, replayed.VendorTaskNo);
+        Assert.Equal(prepared.PreparationId, replayed.PreparationId);
+        Assert.Equal(prepared.PayloadHash, replayed.PayloadHash);
         Assert.Equal(1, gateway.TemplateReadCalls);
 
         var importRequest = new ImportExperimentWorkstationTaskRequest { RequestId = Guid.NewGuid(), Actor = "test", Reason = "Import generated task" };

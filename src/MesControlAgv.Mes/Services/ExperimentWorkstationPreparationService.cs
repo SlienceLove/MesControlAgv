@@ -70,7 +70,7 @@ internal sealed class ExperimentWorkstationPreparationService(
             cancellationToken);
         ValidateCapturedTemplate(captured, normalized.DeviceId, normalized.SourceTaskNo);
 
-        var vendorTaskNo = CreateVendorTaskNo(timeProvider.GetUtcNow());
+        var vendorTaskNo = CreateVendorTaskNo();
         if (normalized.Transfers is { Count: 0 })
             throw Conflict("An explicitly edited workstation task must contain at least one transfer.",
                 ExperimentWorkstationPreparationIssueCodes.InvalidTemplateBinding);
@@ -609,8 +609,11 @@ internal sealed class ExperimentWorkstationPreparationService(
     private static ExperimentWorkstationPreparationStatus ParseStatus(string value) =>
         ExperimentSchedulingPersistence.ParseStatus<ExperimentWorkstationPreparationStatus>(value);
 
-    private static string CreateVendorTaskNo(DateTimeOffset now) =>
-        $"MES-{now:yyyyMMddHHmmssfff}-{Guid.NewGuid():N}"[..42];
+    // Legacy vendor TaskNo is varchar(20). Keep 72 random bits in uppercase
+    // ASCII; timestamps and full provenance remain in the central records.
+    // Only new preparations use this format; persisted task numbers are untouched.
+    private static string CreateVendorTaskNo() =>
+        "WS" + Convert.ToHexString(RandomNumberGenerator.GetBytes(9));
 
     private static Metadata NormalizeMetadata(Guid requestId, string? actor, string? reason) => new(
         requestId == Guid.Empty ? throw new ArgumentException("A non-empty request id is required.", nameof(requestId)) : requestId,
