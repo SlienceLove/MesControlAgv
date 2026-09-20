@@ -25,4 +25,6 @@ dotnet build MesControlAgv.sln -c Release --artifacts-path C:/Users/33206/AppDat
 
 后端未变更，本轮未重跑 MES/Adapter/WorkflowContract 全量；其既有证据仍见 9 月 18 日记录。本轮验证不等于新版厂家服务的真实导入/写码/执行验收。
 
+独立审查范围 `3614049..34bb395` 已通过，无 Critical/Important/Minor 遗留；上轮布局小项关闭。
+
 下一步按[交接清单](../SAMPLE-WORKSTATION-CENTRAL-PREPARATION-HANDOFF-2026-09-18.md)完成现场验证。通过后按既有条件授权合入 `feature/wpf-ui-layout-optimization`，整合前重新核对目标分支和用户改动。
