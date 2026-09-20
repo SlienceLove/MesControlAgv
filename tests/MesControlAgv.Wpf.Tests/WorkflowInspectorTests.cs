@@ -27,7 +27,7 @@ public sealed class WorkflowInspectorTests
             WorkflowDevices = profile.WorkflowDevices.Concat([new WorkflowDeviceProfile
             {
                 DeviceId = "SAMPLE-WORKSTATION-01", DeviceFamily = WorkflowDeviceFamilyIds.SampleWorkstation,
-                CapabilityIds = [WorkflowCapabilityIds.SampleWorkstationExecute], Enabled = true, ControlEnabled = false
+                CapabilityIds = [WorkflowCapabilityIds.SampleWorkstationExecute, WorkflowCapabilityIds.SampleWorkstationStartExistingTask], Enabled = true, ControlEnabled = false
             }]).ToArray()
         };
         var editor = new WorkflowEditorViewModel(new WorkflowStore(fixture.Path), profileConfiguration: profile);
@@ -42,6 +42,7 @@ public sealed class WorkflowInspectorTests
             WorkflowGraphNodeTypeIds.InstrumentReadStatus,
             WorkflowGraphNodeTypeIds.InstrumentWaitUntilStable,
             WorkflowGraphNodeTypeIds.RobotExecuteProgram,
+            WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask,
             WorkflowGraphNodeTypeIds.SampleWorkstationExecuteTemplate
         };
 
@@ -94,6 +95,20 @@ public sealed class WorkflowInspectorTests
         Assert.Equal(
             WorkflowInspectorEditorKind.Boolean,
             editor.Inspector.Fields.Single(field => field.Key == WorkflowNodeConfigurationKeys.RequireComment).EditorKind);
+
+        var workstation = editor.SelectedWorkflow.Nodes.Single(node =>
+            node.GraphNodeTypeId == WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask &&
+            snapshots.ContainsKey(node.Id));
+        editor.SelectedNode = workstation;
+        var workstationDevice = editor.Inspector.Fields.Single(field =>
+            field.Key == WorkflowNodeConfigurationKeys.DeviceId);
+        Assert.Equal(WorkflowInspectorEditorKind.Selection, workstationDevice.EditorKind);
+        Assert.Contains(workstationDevice.Options, option =>
+            option.Value == "SAMPLE-WORKSTATION-01" && option.IsAvailable);
+        Assert.Equal(
+            WorkflowInspectorEditorKind.Text,
+            editor.Inspector.Fields.Single(field =>
+                field.Key == WorkflowNodeConfigurationKeys.TaskNo).EditorKind);
 
         editor.SaveCommand.Execute(null);
         var reloaded = new WorkflowEditorViewModel(new WorkflowStore(fixture.Path));

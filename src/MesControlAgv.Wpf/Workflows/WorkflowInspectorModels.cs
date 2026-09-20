@@ -497,6 +497,9 @@ public sealed class WorkflowInspectorViewModel : INotifyPropertyChanged
         var designTimeSampleWorkstation = string.Equals(
             definition.NodeTypeId,
             WorkflowGraphNodeTypeIds.SampleWorkstationExecuteTemplate,
+            StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(definition.NodeTypeId,
+            WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask,
             StringComparison.OrdinalIgnoreCase);
         var allowDesignTimeControl = designTimeRobotProgram || designTimeSampleWorkstation;
         return profile.GetDevices(field.DeviceFamily ?? string.Empty)

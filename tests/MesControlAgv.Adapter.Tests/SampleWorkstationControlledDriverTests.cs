@@ -85,7 +85,7 @@ public sealed class SampleWorkstationControlledDriverTests
             BaseUrl = client.BaseAddress.ToString(),
             OperationJournalPath = Path.Combine(Path.GetTempPath(), $"mes-workstation-{Guid.NewGuid():N}.json")
         };
-        var reader = new SampleWorkstationReadOnlyDriver(vendor, options, TimeProvider.System);
+        var reader = new SampleWorkstationDriver(vendor, options, TimeProvider.System);
         return new SampleWorkstationControlledDriver(
             vendor,
             reader,

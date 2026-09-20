@@ -1,0 +1,758 @@
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (8ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      PRAGMA journal_mode = 'wal';
+info: Microsoft.EntityFrameworkCore.Database.Command[20101]
+      Executed DbCommand (1ms) [Parameters=[], CommandType='Text', CommandTimeout='30']
+      CREATE TABLE "Tasks" (
+          "TaskId" TEXT NOT NULL CONSTRAINT "PK_Tasks" PRIMARY KEY,
+          "AgvId" TEXT NOT NULL,
+          "DeviceTaskId" TEXT NOT NULL,
+          "TargetStationId" TEXT NOT NULL,
+          "State" TEXT NOT NULL,
+          "LastError" TEXT NULL,
+          "PathJson" TEXT NULL
+      );
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://127.0.0.1:15041
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Production
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: D:\Project\Github\Mes-worktrees\sample-workstation-http-readonly\src\MesControlAgv.Adapter
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 33.6873ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 40.9643ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.619ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.7778ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/StartExperiment?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/StartExperiment?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 2061.5159ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 2061.6222ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.604ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.7477ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.0345ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.1245ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.4376ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.5774ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.5698ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.6641ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.3206ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.4266ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.7979ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.9242ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.7938ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.8842ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 14.4537ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 14.5458ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.4925ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.5775ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 8.397ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 8.4581ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 14.7494ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 14.8952ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.9006ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 8.0092ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 8.0495ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 8.1376ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 14.4254ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 14.5819ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.0436ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.1458ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.4054ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.4695ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.4008ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.4645ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 12.6433ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 12.7723ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 8.2353ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 8.3214ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.6598ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.7308ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.0807ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.1583ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.0834ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.1533ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 5.9ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 5.9673ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 9.6064ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 9.6763ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 14.8191ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 16.6276ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 5.7195ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 5.7977ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.2078ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.2815ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/StartExperiment?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/StartExperiment?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 1042.0726ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 1042.1527ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.3137ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.4837ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.2565ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.3503ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.9579ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 8.0622ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 5.9905ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.1268ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 15.3226ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 15.4033ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.8708ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.9103ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 5.4475ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 5.4947ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 13.154ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 13.2645ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.0077ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.0468ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.5884ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.6505ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTrajectoryParameterDetails?TrajectoryTaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTrajectoryParameterDetails?TrajectoryTaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.3716ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.4579ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/StartExperiment?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/StartExperiment?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 1045.0332ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 1045.0959ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 8.3565ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 8.4036ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.625ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.6595ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.9468ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.9996ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.1955ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.2321ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.3437ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.4121ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.9595ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.0144ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 8.6999ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 8.7365ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 13.3114ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 13.4397ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.9462ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.9913ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 5.8828ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 5.9211ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 16.3314ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 16.4179ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.0075ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.0475ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 8.5143ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 8.5717ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.9689ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.0067ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 13.2161ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 13.2741ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.2107ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.28ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.9267ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.9704ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/StartExperiment?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/StartExperiment?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 1024.9628ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 1025.0187ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.3792ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.4528ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.7687ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.8105ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.6885ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.7352ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 11.6321ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 11.7008ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.7311ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.7841ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.77ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.8105ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 13.0416ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 13.1661ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.1441ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.1986ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.9136ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.0064ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.1141ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.1578ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 13.0233ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 13.0771ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.3508ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.3998ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 5.9489ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 5.994ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTrajectoryParameterDetails?TrajectoryTaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTrajectoryParameterDetails?TrajectoryTaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.3205ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.3612ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/StartExperiment?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/StartExperiment?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 2054.644ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 2054.6926ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.6255ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.6927ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.1533ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.1969ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.744ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.7827ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.8098ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.8652ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.5386ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.5889ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.3828ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.423ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.0352ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.0754ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.9289ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.9765ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 16.5858ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 16.639ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.4577ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.5089ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.7164ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.7628ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.2255ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.2649ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetInstrumentStatus?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 11.0001ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 11.0553ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetErrorInformation?EquipmentNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 6.7871ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 6.8298ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskState?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 7.0677ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 7.1202ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[100]
+      Start processing HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[100]
+      Sending HTTP request GET http://192.168.200.157:8082/Service/GetTaskDetails?TaskNo=TEST-001
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.ClientHandler[101]
+      Received HTTP response headers after 8.0769ms - 200
+info: System.Net.Http.HttpClient.VendorSampleWorkstationHttpClient.LogicalHandler[101]
+      End processing HTTP request after 8.1349ms - 200

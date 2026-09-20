@@ -377,6 +377,19 @@ public class MainViewModelTests
         Assert.Equal("Timeout", viewModel.TaskEvents[0].EventType);
     }
 
+    [Fact]
+    public void Main_view_model_forwards_hidden_workstation_test_control_flag()
+    {
+        using var viewModel = new MainViewModel(
+            new FakeMesClient([]),
+            sampleWorkstationTestControlEnabled: true);
+
+        viewModel.ShineLabDeviceStatus.SelectedInstrument =
+            ShineLabDeviceStatusViewModel.SampleWorkstationInstrument;
+
+        Assert.True(viewModel.ShineLabDeviceStatus.IsWorkstationTestControlVisible);
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         for (var attempt = 0; attempt < 100; attempt++)
@@ -418,8 +431,15 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
     public IReadOnlyList<ShineLabDeviceStatusResponse> ShineLabDeviceStatuses { get; set; } = [];
     public Exception? ShineLabDeviceStatusException { get; set; }
     public SampleWorkstationDashboardSnapshot? SampleWorkstationSnapshot { get; set; }
+    public Queue<SampleWorkstationDashboardSnapshot?> SampleWorkstationSnapshots { get; } = new();
+    public int SampleWorkstationSnapshotCallCount { get; private set; }
+    public Action<int>? SampleWorkstationSnapshotObserved { get; set; }
     public TaskCompletionSource<SampleWorkstationDashboardSnapshot?>? SampleWorkstationSnapshotGate { get; set; }
     public string? LastSampleWorkstationDeviceId { get; private set; }
+    public SampleWorkstationCommandResponse? SampleWorkstationStartResult { get; set; }
+    public Exception? SampleWorkstationStartException { get; set; }
+    public int SampleWorkstationStartCallCount { get; private set; }
+    public (string DeviceId, string TaskNo)? LastSampleWorkstationStart { get; private set; }
     public ShineLabCommandResponse? LastShineLabResponse { get; set; }
     public ShineLabConfigRequest? LastShineLabConfig { get; private set; }
     public ShineLabCommandRequest? LastShineLabCommand { get; private set; }
@@ -497,10 +517,36 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
         string deviceId,
         CancellationToken cancellationToken)
     {
+        SampleWorkstationSnapshotCallCount++;
+        SampleWorkstationSnapshotObserved?.Invoke(SampleWorkstationSnapshotCallCount);
         LastSampleWorkstationDeviceId = deviceId;
+        if (SampleWorkstationSnapshots.TryDequeue(out var queued))
+        {
+            return Task.FromResult(queued);
+        }
         return SampleWorkstationSnapshotGate is { } gate
             ? gate.Task
             : Task.FromResult(SampleWorkstationSnapshot);
+    }
+    public Task<SampleWorkstationCommandResponse> StartSampleWorkstationTestTaskAsync(
+        string deviceId,
+        string taskNo,
+        CancellationToken cancellationToken)
+    {
+        SampleWorkstationStartCallCount++;
+        LastSampleWorkstationStart = (deviceId, taskNo);
+        return SampleWorkstationStartException is { } exception
+            ? Task.FromException<SampleWorkstationCommandResponse>(exception)
+            : Task.FromResult(SampleWorkstationStartResult ?? new SampleWorkstationCommandResponse(
+                deviceId,
+                SampleWorkstationCommandOperation.StartTask,
+                200,
+                JsonSerializer.SerializeToElement("启动成功"),
+                DateTimeOffset.UtcNow)
+            {
+                TaskNo = taskNo,
+                Acknowledged = true
+            });
     }
     public Task<ShineLabCommandResponse> SendShineLabConfigAsync(
         string equipmentCode,

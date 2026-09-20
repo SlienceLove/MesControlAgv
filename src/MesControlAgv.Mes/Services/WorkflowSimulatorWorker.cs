@@ -279,7 +279,7 @@ public sealed class WorkflowSimulatorDispatcher(
             Outcome = outcome,
             Error = error,
             UnknownReason = outcome == WorkflowStepCompletionOutcome.Unknown
-                ? UnknownReason.ManualReconciliationRequired
+                ? MesControlAgv.Contracts.Devices.UnknownReason.ManualReconciliationRequired
                 : null,
             Outputs = outputs ?? new Dictionary<string, string?>()
         }, cancellationToken);

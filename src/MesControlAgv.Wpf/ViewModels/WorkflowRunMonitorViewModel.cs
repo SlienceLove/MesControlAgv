@@ -29,6 +29,8 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     private readonly AsyncCommand _resolveSucceededCommand;
     private readonly AsyncCommand _resolveFailedCommand;
     private readonly AsyncCommand _resolveArrivedAndCancelCommand;
+    private readonly AsyncCommand _confirmManualTaskCommand;
+    private readonly AsyncCommand _cancelManualTaskCommand;
     private readonly AsyncCommand _prepareCompositeRunCommand;
     private readonly AsyncCommand _createAndAuthorizeFieldMoveCommand;
     private readonly IWorkflowRuntimeAlertPresenter _alertPresenter;
@@ -109,6 +111,12 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
             () => ResolveUnknownAsync(WorkflowUnknownResolutionOutcome.ConfirmedArrivedAndCancel),
             () => CanResolveUnknown && SelectedNode?.NodeTypeId == "agv.move" &&
                 string.IsNullOrEmpty(GetControlUnavailableReason(WorkflowRunControlPermissions.Cancel, true, string.Empty)));
+        _confirmManualTaskCommand = new AsyncCommand(
+            () => CompleteManualConfirmationAsync(WorkflowManualConfirmationOutcome.Confirmed),
+            () => CanCompleteManualConfirmation);
+        _cancelManualTaskCommand = new AsyncCommand(
+            () => CompleteManualConfirmationAsync(WorkflowManualConfirmationOutcome.Cancelled),
+            () => CanCompleteManualConfirmation);
         _prepareCompositeRunCommand = new AsyncCommand(
             PrepareCompositeRunAsync,
             () => CanPrepareCompositeRun);
@@ -122,6 +130,8 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         CancelCommand = _cancelCommand;
         ResolveUnknownSucceededCommand = _resolveSucceededCommand;
         ResolveUnknownFailedCommand = _resolveFailedCommand;
+        ConfirmManualTaskCommand = _confirmManualTaskCommand;
+        CancelManualTaskCommand = _cancelManualTaskCommand;
         CreateAndAuthorizeFieldMoveCommand = _createAndAuthorizeFieldMoveCommand;
     }
 
@@ -221,6 +231,8 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
     public ICommand ResolveUnknownSucceededCommand { get; }
     public ICommand ResolveUnknownFailedCommand { get; }
     public ICommand ResolveArrivedAndCancelCommand => _resolveArrivedAndCancelCommand;
+    public ICommand ConfirmManualTaskCommand { get; }
+    public ICommand CancelManualTaskCommand { get; }
     public ICommand PrepareCompositeRunCommand => _prepareCompositeRunCommand;
     public ICommand CreateAndAuthorizeFieldMoveCommand { get; }
     public ICommand RefreshExperimentJobsCommand => _refreshExperimentJobsCommand;
@@ -621,6 +633,82 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         CompositeRun?.Status == ExperimentRunStatus.Unknown ||
         Nodes.Any(node => node.Status == WorkflowNodeExecutionStatus.Unknown) ||
         DeviceOperations.Any(operation => operation.Status == WorkflowDeviceOperationStatus.Unknown);
+
+    public WorkflowRunNodeItemViewModel? PendingManualConfirmationNode
+        => ResolvePendingManualConfirmation().Node;
+
+    public bool HasPendingManualConfirmation => PendingManualConfirmationNode is not null;
+
+    public string ManualConfirmationTitle =>
+        PendingManualConfirmationNode?.NodeName ?? "人工确认";
+
+    public string ManualConfirmationPrompt
+    {
+        get
+        {
+            var node = PendingManualConfirmationNode;
+            if (node is null) return string.Empty;
+            return node.Snapshot.Inputs.TryGetValue("prompt", out var prompt) &&
+                   !string.IsNullOrWhiteSpace(prompt)
+                ? prompt.Trim()
+                : "请核对现场条件后选择继续或取消后续流程。";
+        }
+    }
+
+    public bool CanCompleteManualConfirmation =>
+        string.IsNullOrEmpty(ManualConfirmationUnavailableReason);
+
+    public string ManualConfirmationUnavailableReason
+    {
+        get
+        {
+            if (IsBusy) return "正在处理其他运行请求。";
+            if (Run is null) return "请先加载流程运行。";
+            var pending = ResolvePendingManualConfirmation();
+            if (pending.Node is null) return pending.UnavailableReason;
+            if (string.IsNullOrWhiteSpace(OperatorName)) return "请输入操作者身份。";
+            if (!string.Equals(_permissionActor, OperatorName.Trim(), StringComparison.OrdinalIgnoreCase))
+                return "请先由 MES 校验当前操作者权限。";
+            if (!_grantedPermissions.Contains(
+                    WorkflowRunControlPermissions.CompleteManualTask,
+                    StringComparer.OrdinalIgnoreCase))
+                return $"需要 {WorkflowRunControlPermissions.CompleteManualTask} 权限。";
+            if (string.IsNullOrWhiteSpace(ControlReason)) return "请输入本次操作原因。";
+            return string.Empty;
+        }
+    }
+
+    private (WorkflowRunNodeItemViewModel? Node, string UnavailableReason)
+        ResolvePendingManualConfirmation()
+    {
+        if (Run is null) return (null, "请先加载流程运行。");
+        if (Run.IsTerminal) return (null, "流程已结束，不能再处理人工确认。");
+        var waiting = Nodes.Where(node =>
+                node.Status == WorkflowNodeExecutionStatus.WaitingForSignal &&
+                string.Equals(
+                    node.NodeTypeId,
+                    WorkflowGraphNodeTypeIds.ManualConfirmation,
+                    StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        if (Run.CurrentNodeId is { } currentNodeId)
+        {
+            var current = waiting.Where(node => node.NodeId == currentNodeId).ToArray();
+            return current.Length switch
+            {
+                1 => (current[0], string.Empty),
+                > 1 => (null, "当前节点存在多个等待人工确认的执行记录，请刷新并核对运行状态。"),
+                _ when waiting.Length > 0 => (null, "当前节点与等待人工确认节点不一致，请刷新并核对运行状态。"),
+                _ => (null, "当前没有等待处理的人工确认节点。")
+            };
+        }
+
+        return waiting.Length switch
+        {
+            1 => (waiting[0], string.Empty),
+            > 1 => (null, "存在多个等待人工确认节点，无法确定操作目标。"),
+            _ => (null, "当前没有等待处理的人工确认节点。")
+        };
+    }
 
     public bool CanPause => string.IsNullOrEmpty(PauseUnavailableReason);
 
@@ -1788,6 +1876,73 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         await RefreshPermissionsAsync(CancellationToken.None, reportFailure: true);
     }
 
+    private async Task CompleteManualConfirmationAsync(WorkflowManualConfirmationOutcome outcome)
+    {
+        if (Run is null || PendingManualConfirmationNode is not { } node) return;
+        var runId = Run.ExecutionId;
+        var nodeExecutionId = node.Id;
+        var confirmed = outcome == WorkflowManualConfirmationOutcome.Confirmed;
+        var title = confirmed ? "确认并继续流程" : "确认取消后续流程";
+        var message = confirmed
+            ? "确认后流程将继续推进，后续工作站节点可能立即下发一次设备启动请求。是否继续？"
+            : "取消只终止尚未执行的后续流程，不会向设备发送停止命令，也不会打断已经开始的设备动作。是否继续？";
+        if (!_confirmation.Confirm(title, message)) return;
+
+        try
+        {
+            await LoadAsync(runId);
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = $"人工确认状态复核失败，未发送操作请求：{exception.Message}";
+            return;
+        }
+        if (Run?.ExecutionId != runId || PendingManualConfirmationNode?.Id != nodeExecutionId)
+        {
+            StatusMessage = "人工确认节点状态已变化，未发送操作请求；请核对刷新后的运行状态。";
+            return;
+        }
+        if (!CanCompleteManualConfirmation)
+        {
+            StatusMessage = $"人工确认操作未发送：{ManualConfirmationUnavailableReason}";
+            return;
+        }
+
+        var actor = OperatorName.Trim();
+        var reason = ControlReason.Trim();
+        IsBusy = true;
+        try
+        {
+            var result = await _mes.CompleteWorkflowManualConfirmationAsync(
+                runId,
+                nodeExecutionId,
+                new WorkflowManualConfirmationRequest
+                {
+                    RequestId = Guid.NewGuid(),
+                    Actor = actor,
+                    Reason = reason,
+                    Outcome = outcome,
+                    Comment = reason
+                },
+                CancellationToken.None);
+            ControlReason = string.Empty;
+            await LoadAsync(runId);
+            StatusMessage = result.IsIdempotentReplay
+                ? "人工确认请求已按原结果重放。"
+                : confirmed
+                    ? "人工确认已完成，流程将继续推进。"
+                    : "人工节点已取消；后续流程不会执行，未发送设备停止命令。";
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = $"人工确认操作失败：{exception.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
     private async Task RefreshPermissionsAsync(
         CancellationToken cancellationToken,
         bool reportFailure)
@@ -2276,6 +2431,10 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         OnPropertyChanged(nameof(AutoRefreshStatusDisplay));
         OnPropertyChanged(nameof(UnknownWarning));
         OnPropertyChanged(nameof(UnknownResolutionContext));
+        OnPropertyChanged(nameof(PendingManualConfirmationNode));
+        OnPropertyChanged(nameof(HasPendingManualConfirmation));
+        OnPropertyChanged(nameof(ManualConfirmationTitle));
+        OnPropertyChanged(nameof(ManualConfirmationPrompt));
         RaiseControlStateChanged();
     }
 
@@ -2312,6 +2471,8 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         _resolveSucceededCommand.RaiseCanExecuteChanged();
         _resolveFailedCommand.RaiseCanExecuteChanged();
         _resolveArrivedAndCancelCommand.RaiseCanExecuteChanged();
+        _confirmManualTaskCommand.RaiseCanExecuteChanged();
+        _cancelManualTaskCommand.RaiseCanExecuteChanged();
         _createAndAuthorizeFieldMoveCommand.RaiseCanExecuteChanged();
         OnPropertyChanged(nameof(CanPause));
         OnPropertyChanged(nameof(HasCompositeJob));
@@ -2325,6 +2486,8 @@ public sealed class WorkflowRunMonitorViewModel : INotifyPropertyChanged, IDispo
         OnPropertyChanged(nameof(CancelUnavailableReason));
         OnPropertyChanged(nameof(UnknownResolutionUnavailableReason));
         OnPropertyChanged(nameof(UnknownResolutionContext));
+        OnPropertyChanged(nameof(CanCompleteManualConfirmation));
+        OnPropertyChanged(nameof(ManualConfirmationUnavailableReason));
         OnPropertyChanged(nameof(CanCreateAndAuthorizeFieldMove));
         OnPropertyChanged(nameof(FieldMoveUnavailableReason));
     }

@@ -495,19 +495,35 @@ public sealed partial class WorkflowApplicationService
 
     private static IReadOnlyDictionary<string, string?> CreateDeviceRequestSummary(
         WorkflowNextStepRequest step,
-        Guid nodeExecutionId) => new Dictionary<string, string?>
+        Guid nodeExecutionId)
     {
-        ["nodeExecutionId"] = nodeExecutionId.ToString(),
-        ["nodeId"] = step.NodeId.ToString(),
-        ["stepRequestId"] = step.StepRequestId.ToString(),
-        ["targetStation"] = step.TargetStation,
-        ["deviceId"] = ResolveDeviceId(step),
-        ["programName"] = ResolveProgramName(step),
-        ["templateVersion"] = ResolveTemplateVersion(step)
-    };
+        var summary = new Dictionary<string, string?>
+        {
+            ["nodeExecutionId"] = nodeExecutionId.ToString(),
+            ["nodeId"] = step.NodeId.ToString(),
+            ["stepRequestId"] = step.StepRequestId.ToString(),
+            ["targetStation"] = step.TargetStation,
+            ["deviceId"] = ResolveDeviceId(step),
+            ["programName"] = ResolveProgramName(step),
+            ["taskNo"] = ResolveTaskNo(step),
+            ["templateVersion"] = ResolveTemplateVersion(step)
+        };
+        foreach (var key in new[]
+        {
+            WorkflowTrustedWorkstationInputKeys.PreparationId,
+            WorkflowTrustedWorkstationInputKeys.PreparationPayloadHash,
+            WorkflowTrustedWorkstationInputKeys.SampleBarcode1,
+            WorkflowTrustedWorkstationInputKeys.SampleBarcode2
+        })
+        {
+            if (step.Parameters.TryGetValue(key, out var value)) summary[key] = value;
+        }
+        return summary;
+    }
 
     private static bool IsDeviceStep(WorkflowNextStepRequest step) =>
         step.NodeType is WorkflowNodeType.Move or WorkflowNodeType.RobotProgram ||
+        string.Equals(step.NodeTypeId, WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask, StringComparison.OrdinalIgnoreCase) ||
         string.Equals(
             step.NodeTypeId,
             WorkflowGraphNodeTypeIds.SampleWorkstationExecuteTemplate,
@@ -521,6 +537,8 @@ public sealed partial class WorkflowApplicationService
                 WorkflowGraphNodeTypeIds.SampleWorkstationExecuteTemplate,
                 StringComparison.OrdinalIgnoreCase)
                 ? WorkflowCapabilityIds.SampleWorkstationExecute
+                : string.Equals(step.NodeTypeId, WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask, StringComparison.OrdinalIgnoreCase)
+                    ? WorkflowCapabilityIds.SampleWorkstationStartExistingTask
                 : WorkflowCapabilityIds.AgvNavigateToStation;
 
     private static string? ResolveDeviceId(WorkflowNextStepRequest step) =>
@@ -537,6 +555,10 @@ public sealed partial class WorkflowApplicationService
 
     private static string? ResolveTemplateVersion(WorkflowNextStepRequest step) =>
         step.Parameters.TryGetValue(WorkflowNodeConfigurationKeys.TemplateVersion, out var value) &&
+        !string.IsNullOrWhiteSpace(value) ? value.Trim() : null;
+
+    private static string? ResolveTaskNo(WorkflowNextStepRequest step) =>
+        step.Parameters.TryGetValue(WorkflowNodeConfigurationKeys.TaskNo, out var value) &&
         !string.IsNullOrWhiteSpace(value)
             ? value.Trim()
             : null;

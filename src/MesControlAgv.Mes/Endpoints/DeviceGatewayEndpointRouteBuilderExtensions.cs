@@ -73,62 +73,9 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
             }
         });
 
-        endpoints.MapGet("/api/workstations/{deviceId}/status", async (
-            string deviceId,
-            ISampleWorkstationReader reader,
-            CancellationToken cancellationToken) =>
-            await ExecuteWorkstationReadAsync(
-                () => reader.GetStatusAsync(deviceId, cancellationToken),
-                cancellationToken));
+        endpoints.MapSampleWorkstationEndpoints();
 
-        endpoints.MapGet("/api/workstations/{deviceId}/errors", async (
-            string deviceId,
-            ISampleWorkstationReader reader,
-            CancellationToken cancellationToken) =>
-            await ExecuteWorkstationReadAsync(
-                () => reader.GetErrorsAsync(deviceId, cancellationToken),
-                cancellationToken));
-
-        endpoints.MapGet("/api/workstations/{deviceId}/tasks", async (
-            string deviceId,
-            string? state,
-            string? startDate,
-            string? endDate,
-            int? startNo,
-            int? recordNum,
-            ISampleWorkstationReader reader,
-            CancellationToken cancellationToken) =>
-            await ExecuteWorkstationReadAsync(
-                () => reader.GetTasksAsync(
-                    deviceId,
-                    new SampleWorkstationTaskQuery(
-                        state,
-                        startDate,
-                        endDate,
-                        startNo ?? 1,
-                        recordNum ?? 50),
-                    cancellationToken),
-                cancellationToken));
-
-        endpoints.MapGet("/api/workstations/{deviceId}/tasks/{taskNo}", async (
-            string deviceId,
-            string taskNo,
-            ISampleWorkstationReader reader,
-            CancellationToken cancellationToken) =>
-            await ExecuteWorkstationReadAsync(
-                () => reader.GetTaskDetailsAsync(deviceId, taskNo, cancellationToken),
-                cancellationToken));
-
-        endpoints.MapGet("/api/workstations/{deviceId}/tasks/{taskNo}/state", async (
-            string deviceId,
-            string taskNo,
-            ISampleWorkstationReader reader,
-            CancellationToken cancellationToken) =>
-            await ExecuteWorkstationReadAsync(
-                () => reader.GetTaskStateAsync(deviceId, taskNo, cancellationToken),
-                cancellationToken));
-
-        endpoints.MapPost("/api/workstations/{deviceId}/initialize", async (
+        endpoints.MapPost("/api/workstations/{deviceId}/legacy/initialize", async (
             string deviceId,
             SampleWorkstationOperationRequest request,
             ISampleWorkstationController controller,
@@ -144,7 +91,7 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
                 },
                 cancellationToken));
 
-        endpoints.MapPost("/api/workstations/{deviceId}/tasks", async (
+        endpoints.MapPost("/api/workstations/{deviceId}/legacy/tasks", async (
             string deviceId,
             SampleWorkstationTaskCreateRequest request,
             ISampleWorkstationController controller,
@@ -160,7 +107,7 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
                 },
                 cancellationToken));
 
-        endpoints.MapPost("/api/workstations/{deviceId}/tasks/{taskNo}/trajectory", async (
+        endpoints.MapPost("/api/workstations/{deviceId}/legacy/tasks/{taskNo}/trajectory", async (
             string deviceId,
             string taskNo,
             SampleWorkstationTrajectoryRequest request,
@@ -179,7 +126,7 @@ public static class DeviceGatewayEndpointRouteBuilderExtensions
                 },
                 cancellationToken));
 
-        endpoints.MapPost("/api/workstations/{deviceId}/tasks/{taskNo}/start", async (
+        endpoints.MapPost("/api/workstations/{deviceId}/legacy/tasks/{taskNo}/start", async (
             string deviceId,
             string taskNo,
             SampleWorkstationStartRequest request,

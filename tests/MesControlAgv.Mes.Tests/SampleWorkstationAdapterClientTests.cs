@@ -1,12 +1,53 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using MesControlAgv.Contracts;
+using MesControlAgv.Application;
 using MesControlAgv.Mes.Services;
 
 namespace MesControlAgv.Mes.Tests;
 
 public sealed class SampleWorkstationAdapterClientTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task V102_barcode_pair_is_serialized_to_only_the_requested_post(bool start)
+    {
+        var handler = new RecordingHandler(JsonContent.Create(new SampleWorkstationCommandResponse(
+            "WS-01", start ? SampleWorkstationCommandOperation.StartTask : SampleWorkstationCommandOperation.UpdateTaskBarcodes,
+            200, JsonSerializer.SerializeToElement("ok"), DateTimeOffset.UtcNow) { TaskNo = "TASK&01", Acknowledged = true }));
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://adapter.local/") };
+        var client = new SampleWorkstationAdapterClient(httpClient);
+        var barcodes = new SampleWorkstationTaskBarcodes { SampleBarcode1 = "来源+A&1", SampleBarcode2 = "b/2" };
+        var result = start
+            ? await client.StartTaskAsync("WS-01", "TASK&01", barcodes, CancellationToken.None)
+            : await client.UpdateTaskBarcodesAsync("WS-01", "TASK&01", barcodes, CancellationToken.None);
+        Assert.True(result.Acknowledged);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.EndsWith(start ? "/start" : "/barcodes", request.RequestUri!.AbsolutePath);
+        Assert.Contains("TASK%2601", request.RequestUri.AbsolutePath);
+        Assert.Equal(barcodes, JsonSerializer.Deserialize<SampleWorkstationTaskBarcodes>(
+            Assert.Single(handler.Bodies)!, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+    }
+
+    [Fact]
+    public async Task Barcode_update_rejection_preserves_vendor_code_and_known_outcome()
+    {
+        var handler = new RecordingHandler(new StringContent(
+            """{"detail":"missing task","errorCode":"workstation_command_rejected","outcomeUnknown":false,"vendorCode":201,"vendorData":"更新失败"}"""),
+            HttpStatusCode.BadGateway);
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://adapter.local/") };
+        var client = new SampleWorkstationAdapterClient(httpClient);
+        var error = await Assert.ThrowsAsync<SampleWorkstationGatewayException>(() => client.UpdateTaskBarcodesAsync(
+            "WS-01", "TASK-01", new() { SampleBarcode1 = "A", SampleBarcode2 = "B" }, CancellationToken.None));
+        Assert.False(error.OutcomeUnknown);
+        Assert.Equal(201, error.VendorCode);
+        Assert.Equal("更新失败", error.VendorData!.Value.GetString());
+        Assert.Single(handler.Requests);
+    }
+
     [Fact]
     public async Task Read_methods_use_only_normalized_adapter_get_routes()
     {
@@ -17,7 +58,13 @@ public sealed class SampleWorkstationAdapterClientTests
             JsonContent.Create<IReadOnlyList<SampleWorkstationTaskSummaryResponse>>(
             [
                 new(1, "TASK-01", "task", SampleWorkstationTaskState.Waiting, "等待运行", "2026-08-17 10:00:00", null)
-            ]));
+            ]),
+            JsonContent.Create(new SampleWorkstationProtocolResponse(
+                "SAMPLE-WORKSTATION-01",
+                SampleWorkstationProtocolOperation.SolventParameterList,
+                200,
+                JsonDocument.Parse("[{\"LiquidCode\":\"WATER\"}]").RootElement.Clone(),
+                observedAt)));
         using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://adapter.local/") };
         var client = new SampleWorkstationAdapterClient(httpClient);
 
@@ -26,13 +73,22 @@ public sealed class SampleWorkstationAdapterClientTests
             "SAMPLE-WORKSTATION-01",
             new SampleWorkstationTaskQuery("Waiting", StartNo: 1, RecordNum: 20),
             CancellationToken.None);
+        var protocol = await client.GetProtocolReadAsync(
+            "SAMPLE-WORKSTATION-01",
+            SampleWorkstationProtocolOperation.SolventParameterList,
+            new SampleWorkstationProtocolReadQuery(StartDate: "2026-08-11", RecordNum: 10),
+            CancellationToken.None);
 
         Assert.Equal(SampleWorkstationDeviceState.Idle, status.State);
         Assert.Single(tasks);
+        Assert.Equal("WATER", protocol.Data[0].GetProperty("LiquidCode").GetString());
         Assert.Equal("/api/workstations/SAMPLE-WORKSTATION-01/status", handler.Requests[0].RequestUri!.AbsolutePath);
         Assert.Equal("/api/workstations/SAMPLE-WORKSTATION-01/tasks", handler.Requests[1].RequestUri!.AbsolutePath);
+        Assert.Equal("/api/workstations/SAMPLE-WORKSTATION-01/protocol/SolventParameterList", handler.Requests[2].RequestUri!.AbsolutePath);
         Assert.Contains("state=Waiting", handler.Requests[1].RequestUri!.Query, StringComparison.Ordinal);
         Assert.Contains("recordNum=20", handler.Requests[1].RequestUri!.Query, StringComparison.Ordinal);
+        Assert.Contains("startDate=2026-08-11", handler.Requests[2].RequestUri!.Query, StringComparison.Ordinal);
+        Assert.Contains("recordNum=10", handler.Requests[2].RequestUri!.Query, StringComparison.Ordinal);
         Assert.All(handler.Requests, request =>
         {
             Assert.Equal(HttpMethod.Get, request.Method);
@@ -47,11 +103,41 @@ public sealed class SampleWorkstationAdapterClientTests
         using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://adapter.local/") };
         var client = new SampleWorkstationAdapterClient(httpClient);
 
-        var exception = await Assert.ThrowsAsync<AdapterHttpException>(() =>
+        var exception = await Assert.ThrowsAsync<SampleWorkstationGatewayException>(() =>
             client.GetStatusAsync("SAMPLE-WORKSTATION-01", CancellationToken.None));
 
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, exception.ResponseStatusCode);
-        Assert.Equal("device disabled", exception.Detail);
+        Assert.Equal(503, exception.StatusCode);
+        Assert.Equal("device disabled", exception.Message);
+    }
+
+    [Fact]
+    public async Task Control_methods_use_normalized_adapter_post_routes()
+    {
+        var observedAt = new DateTimeOffset(2026, 9, 11, 8, 0, 0, TimeSpan.Zero);
+        var handler = new RecordingHandler(
+            JsonContent.Create(new SampleWorkstationCommandResponse(
+                "SAMPLE-WORKSTATION-01",
+                SampleWorkstationCommandOperation.Initialize,
+                200,
+                JsonDocument.Parse("\"设备初始化请求\"").RootElement.Clone(),
+                observedAt)),
+            JsonContent.Create(new SampleWorkstationCommandResponse(
+                "SAMPLE-WORKSTATION-01",
+                SampleWorkstationCommandOperation.StartTask,
+                200,
+                JsonDocument.Parse("\"开始实验\"").RootElement.Clone(),
+                observedAt)));
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://adapter.local/") };
+        var client = new SampleWorkstationAdapterClient(httpClient);
+
+        _ = await client.InitializeAsync("SAMPLE-WORKSTATION-01", CancellationToken.None);
+        _ = await client.StartTaskAsync("SAMPLE-WORKSTATION-01", "TASK-01", CancellationToken.None);
+
+        Assert.Equal(HttpMethod.Post, handler.Requests[0].Method);
+        Assert.Equal("/api/workstations/SAMPLE-WORKSTATION-01/initialize", handler.Requests[0].RequestUri!.AbsolutePath);
+        Assert.Equal(HttpMethod.Post, handler.Requests[1].Method);
+        Assert.Equal("/api/workstations/SAMPLE-WORKSTATION-01/tasks/TASK-01/start", handler.Requests[1].RequestUri!.AbsolutePath);
+        Assert.All(handler.Requests, request => Assert.Null(request.Content));
     }
 
     private sealed class RecordingHandler : HttpMessageHandler
@@ -66,14 +152,16 @@ public sealed class SampleWorkstationAdapterClientTests
             _responses = new Queue<(HttpContent, HttpStatusCode)>([(response, status)]);
 
         public List<HttpRequestMessage> Requests { get; } = [];
+        public List<string?> Bodies { get; } = [];
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
             Requests.Add(request);
+            Bodies.Add(request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken));
             var response = _responses.Dequeue();
-            return Task.FromResult(new HttpResponseMessage(response.Status) { Content = response.Content });
+            return new HttpResponseMessage(response.Status) { Content = response.Content };
         }
     }
 }

@@ -219,7 +219,7 @@ public sealed class WorkflowRunControlTests
             {
                 DeviceOperationId = claimed.DeviceOperation!.OperationId,
                 Outcome = WorkflowStepCompletionOutcome.Unknown,
-                UnknownReason = UnknownReason.Timeout,
+                UnknownReason = MesControlAgv.Contracts.Devices.UnknownReason.Timeout,
                 Error = "Adapter response timeout"
             },
             CancellationToken.None);
@@ -243,7 +243,7 @@ public sealed class WorkflowRunControlTests
             {
                 DeviceOperationId = claimed.DeviceOperation!.OperationId,
                 Outcome = WorkflowStepCompletionOutcome.Unknown,
-                UnknownReason = UnknownReason.Timeout,
+                UnknownReason = MesControlAgv.Contracts.Devices.UnknownReason.Timeout,
                 Error = "Adapter response timeout"
             },
             CancellationToken.None);
@@ -290,7 +290,7 @@ public sealed class WorkflowRunControlTests
             {
                 DeviceOperationId = claimed.DeviceOperation!.OperationId,
                 Outcome = WorkflowStepCompletionOutcome.Unknown,
-                UnknownReason = UnknownReason.ManualReconciliationRequired,
+                UnknownReason = MesControlAgv.Contracts.Devices.UnknownReason.ManualReconciliationRequired,
                 Error = "Adapter response timeout"
             },
             CancellationToken.None);
@@ -334,7 +334,7 @@ public sealed class WorkflowRunControlTests
             {
                 DeviceOperationId = claimed.DeviceOperation!.OperationId,
                 Outcome = WorkflowStepCompletionOutcome.Unknown,
-                UnknownReason = UnknownReason.ManualReconciliationRequired,
+                UnknownReason = MesControlAgv.Contracts.Devices.UnknownReason.ManualReconciliationRequired,
                 Error = "Legacy ambiguous outcome"
             },
             CancellationToken.None);

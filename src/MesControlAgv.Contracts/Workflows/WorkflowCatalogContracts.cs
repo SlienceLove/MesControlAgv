@@ -16,6 +16,7 @@ public static class WorkflowCapabilityIds
     public const string InstrumentStopAnalysis = "instrument.stop-analysis";
     public const string RobotExecuteProgram = "robot.execute-program";
     public const string SampleWorkstationExecute = "sample-workstation.execute";
+    public const string SampleWorkstationStartExistingTask = "sample-workstation.start-existing-task";
 }
 
 public static class WorkflowDeviceFamilyIds
@@ -33,6 +34,7 @@ public static class WorkflowNodeConfigurationKeys
     public const string DeviceId = "deviceId";
     public const string ProgramName = "programName";
     public const string TemplateVersion = "templateVersion";
+    public const string TaskNo = "taskNo";
     public const string InstrumentId = "instrumentId";
     public const string TimeoutSeconds = "timeoutSeconds";
     public const string RetryCount = "retryCount";
@@ -49,6 +51,15 @@ public static class WorkflowNodeConfigurationKeys
     public const string ParallelGatewayKey = "gatewayKey";
     public const string SubflowWorkflowId = "workflowId";
     public const string SubflowVersion = "workflowVersion";
+}
+
+/// <summary>MES-owned inputs frozen into an admitted run and verified by the worker.</summary>
+public static class WorkflowTrustedWorkstationInputKeys
+{
+    public const string PreparationId = "__mesWorkstationPreparationId";
+    public const string PreparationPayloadHash = "__mesWorkstationPreparationPayloadHash";
+    public const string SampleBarcode1 = "__mesWorkstationSampleBarcode1";
+    public const string SampleBarcode2 = "__mesWorkstationSampleBarcode2";
 }
 
 public enum WorkflowSchemaValueType

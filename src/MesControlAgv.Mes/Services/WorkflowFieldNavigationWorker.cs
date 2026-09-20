@@ -1133,7 +1133,7 @@ public sealed class WorkflowFieldNavigationDispatcher(
                 Outcome = outcome,
                 Error = error,
                 UnknownReason = outcome == WorkflowStepCompletionOutcome.Unknown
-                    ? UnknownReason.ManualReconciliationRequired
+                    ? MesControlAgv.Contracts.Devices.UnknownReason.ManualReconciliationRequired
                     : null,
                 Outputs = outputs
             },

@@ -38,15 +38,31 @@ The workstation conflict requires a behavioral decision, not just text resolutio
 - Both implementations use the same dispatcher/options class names and overlap on workflow contracts, persistence, recovery and WPF parameters.
 
 Recommended decision: use the preparation/verification/existing-task path for new workstation operations, but preserve legacy saved workflows through an explicit compatibility path until migration is verified. Do not silently replace old node semantics or remove AGV/AUBO recovery behavior.
-This decision is pending user direction before code integration changes device execution behavior.
+The user approved continuing with this compatibility principle. No further approval for the same choice is needed.
+
+## Workstation integration checkpoint
+
+All 37 workstation merge conflicts have been resolved. This checkpoint integrates the pinned workstation source, not later changes in its original worktree. Material/admission and the saved digital-twin/three-device WIP remain separate follow-up stages.
+
+- Both template and existing-task node IDs, capabilities, schemas and command interfaces are retained.
+- Sample records coexist with the new append-only preparation and verification records.
+- Adapter registration uses the new driver for read access and retains the controlled legacy driver behind separate `/legacy/` routes. The MES legacy client and MES legacy control routes use that namespace too. Existing external clients using the old request-body control endpoints must explicitly migrate to `/legacy/`; read endpoints remain unchanged.
+- Legacy command admission still checks ProtocolConfirmed in SampleWorkstationControlledDriver; the new command path uses its own capability/control checks.
+- A duplicate vendor HTTP command method introduced by auto-merge was removed.
+- Application, Adapter and MES compile successfully. Adapter regression: 441 passed; WPF: 509 passed; workflow contracts: 74 passed; MES: 545 passed, including two new merge-specific cases for node ownership and cross-capability device occupation. Total: 1,569 passing tests across these four projects.
+- New and legacy workers filter by their own node type and share the transactional workstation claim gate. Persistence preserves both task number/preparation identity and legacy template version. Sample custody binding and preparation verification are both retained.
+- Legacy settings now live under `WorkflowLegacySampleWorkstationWorker`. Move approved legacy Templates and activation settings there before using historical template execution. Both workers remain disabled in checked-in configurations; enabling control is a deployment decision, not part of this consolidation.
+- Legacy read-error semantics use LegacySampleWorkstationAdapterClient; new preparation and task operations use SampleWorkstationAdapterClient. Old driver-name test fixtures have been adapted to the shared read interface.
+
+Original UI/workstation/three-device workspaces remain untouched by this merge. This local integration checkpoint does not promote master, synchronize the UI checkout or publish remote refs. No physical device execution was used for verification.
 
 ## Remaining ordered work
 
-1. Resolve the workstation behavioral decision; integrate and test both retained paths as applicable.
+1. Workstation integration is resolved using separate new and legacy paths; retain this checkpoint before proceeding.
 2. Integrate material/admission changes; reconcile SampleManagement with inventory reservation and traceability identity.
 3. Review WIP digital-twin and three-device snapshots; integrate approved source, keeping site-specific runtime configuration explicit.
 4. Run builds and relevant offline regressions, then perform UI acceptance. Never run physical device commands as part of branch cleanup.
 5. Promote the validated result to master, synchronize the UI branch, and publish agreed refs without force push.
 6. Archive old feature branches only after verifying commit coverage and all worktree changes.
 
-No feature merge, release promotion or UI synchronization is claimed complete by this document.
+Release promotion and UI synchronization remain pending the remaining integration stages and acceptance.

@@ -29,6 +29,14 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
 
     public DbSet<ExperimentJobRecord> ExperimentJobs => Set<ExperimentJobRecord>();
 
+    public DbSet<ExperimentSampleRecord> ExperimentSamples => Set<ExperimentSampleRecord>();
+
+    public DbSet<ExperimentSampleVerificationRecord> ExperimentSampleVerifications =>
+        Set<ExperimentSampleVerificationRecord>();
+
+    public DbSet<ExperimentWorkstationPreparationRecord> ExperimentWorkstationPreparations =>
+        Set<ExperimentWorkstationPreparationRecord>();
+
     public DbSet<ExperimentRunRecord> ExperimentRuns => Set<ExperimentRunRecord>();
 
     public DbSet<ScheduleEntryRecord> ScheduleEntries => Set<ScheduleEntryRecord>();
@@ -53,6 +61,19 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
     public DbSet<SampleRecord> Samples => Set<SampleRecord>();
 
     public DbSet<SampleEventRecord> SampleEvents => Set<SampleEventRecord>();
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        EnsureExperimentSampleVerificationSnapshotsAreAppendOnly();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(
+        bool acceptAllChangesOnSuccess,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureExperimentSampleVerificationSnapshotsAreAppendOnly();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -223,6 +244,52 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.HasIndex(job => new { job.Status, job.CreatedAtUtc });
             entity.HasIndex(job => new { job.PlanId, job.PlanVersion });
             entity.HasIndex(job => job.WorkflowRunId).IsUnique();
+        });
+
+        modelBuilder.Entity<ExperimentSampleRecord>(entity =>
+        {
+            entity.ToTable("ExperimentSamples");
+            entity.HasKey(sample => sample.SampleId);
+            entity.Property(sample => sample.BusinessSampleId).HasMaxLength(256);
+            entity.Property(sample => sample.BatchId).HasMaxLength(256);
+            entity.Property(sample => sample.Barcode).HasMaxLength(512);
+            entity.Property(sample => sample.NormalizedBarcode).HasMaxLength(512);
+            entity.Property(sample => sample.DisplayName).HasMaxLength(256);
+            entity.Property(sample => sample.Status).HasMaxLength(32);
+            entity.HasIndex(sample => sample.BusinessSampleId).IsUnique();
+            entity.HasIndex(sample => sample.NormalizedBarcode).IsUnique();
+            entity.HasIndex(sample => new { sample.BatchId, sample.Status });
+        });
+
+        modelBuilder.Entity<ExperimentSampleVerificationRecord>(entity =>
+        {
+            entity.ToTable("ExperimentSampleVerifications");
+            entity.HasKey(verification => verification.VerificationId);
+            entity.Property(verification => verification.Status).HasMaxLength(32);
+            entity.Property(verification => verification.RowsJson).HasMaxLength(65535);
+            entity.Property(verification => verification.SnapshotHash).HasMaxLength(128);
+            entity.Property(verification => verification.VerifiedBy).HasMaxLength(256);
+            entity.Property(verification => verification.VerificationNote).HasMaxLength(2048);
+            entity.Property(verification => verification.InvalidationReason).HasMaxLength(2048);
+            entity.HasIndex(verification => new { verification.ExperimentJobId, verification.Revision }).IsUnique();
+            entity.HasIndex(verification => new { verification.ExperimentJobId, verification.Status, verification.UpdatedAtUtc });
+        });
+
+        modelBuilder.Entity<ExperimentWorkstationPreparationRecord>(entity =>
+        {
+            entity.ToTable("ExperimentWorkstationPreparations");
+            entity.HasKey(preparation => preparation.PreparationId);
+            entity.Property(preparation => preparation.DeviceId).HasMaxLength(128);
+            entity.Property(preparation => preparation.VendorTaskNo).HasMaxLength(256);
+            entity.Property(preparation => preparation.VerificationSnapshotHash).HasMaxLength(128);
+            entity.Property(preparation => preparation.PayloadJson).HasMaxLength(262144);
+            entity.Property(preparation => preparation.PayloadHash).HasMaxLength(128);
+            entity.Property(preparation => preparation.Status).HasMaxLength(32);
+            entity.Property(preparation => preparation.LastError).HasMaxLength(2048);
+            entity.HasIndex(preparation => preparation.VendorTaskNo).IsUnique();
+            entity.HasIndex(preparation => new { preparation.ExperimentJobId, preparation.Revision }).IsUnique();
+            entity.HasIndex(preparation => new { preparation.ExperimentJobId, preparation.PreparedAtUtc });
+            entity.HasIndex(preparation => new { preparation.DeviceId, preparation.Status, preparation.PreparedAtUtc });
         });
 
         modelBuilder.Entity<ExperimentRunRecord>(entity =>
@@ -412,5 +479,50 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.HasIndex(sampleEvent => new { sampleEvent.SampleRecordId, sampleEvent.OccurredAtUtc });
             entity.HasIndex(sampleEvent => sampleEvent.OperationId);
         });
+    }
+
+    private void EnsureExperimentSampleVerificationSnapshotsAreAppendOnly()
+    {
+        var changedSnapshot = ChangeTracker.Entries<ExperimentSampleVerificationRecord>()
+            .Any(entry =>
+                entry.State == EntityState.Deleted ||
+                (entry.State == EntityState.Modified &&
+                 (entry.Property(verification => verification.ExperimentJobId).IsModified ||
+                  entry.Property(verification => verification.Revision).IsModified ||
+                  entry.Property(verification => verification.RowsJson).IsModified ||
+                  entry.Property(verification => verification.SnapshotHash).IsModified ||
+                  entry.Property(verification => verification.CreatedAtUtc).IsModified)));
+
+        if (changedSnapshot)
+        {
+            throw new InvalidOperationException(
+                "Experiment sample verification snapshots are append-only and cannot be deleted.");
+        }
+
+
+        var changedPreparationPayload = ChangeTracker.Entries<ExperimentWorkstationPreparationRecord>()
+            .Any(entry =>
+                entry.State == EntityState.Deleted ||
+                (entry.State == EntityState.Modified &&
+                 (entry.Property(preparation => preparation.ExperimentJobId).IsModified ||
+                  entry.Property(preparation => preparation.Revision).IsModified ||
+                  entry.Property(preparation => preparation.WorkflowId).IsModified ||
+                  entry.Property(preparation => preparation.WorkflowVersion).IsModified ||
+                  entry.Property(preparation => preparation.ScheduleEntryId).IsModified ||
+                  entry.Property(preparation => preparation.DeviceId).IsModified ||
+                  entry.Property(preparation => preparation.VendorTaskNo).IsModified ||
+                  entry.Property(preparation => preparation.VerificationId).IsModified ||
+                  entry.Property(preparation => preparation.VerificationRevision).IsModified ||
+                  entry.Property(preparation => preparation.VerificationSnapshotHash).IsModified ||
+                  entry.Property(preparation => preparation.PayloadJson).IsModified ||
+                  entry.Property(preparation => preparation.PayloadHash).IsModified ||
+                  entry.Property(preparation => preparation.PreparedRequestId).IsModified ||
+                  entry.Property(preparation => preparation.PreparedAtUtc).IsModified)));
+
+        if (changedPreparationPayload)
+        {
+            throw new InvalidOperationException(
+                "Experiment workstation preparation payloads are append-only and cannot be deleted.");
+        }
     }
 }

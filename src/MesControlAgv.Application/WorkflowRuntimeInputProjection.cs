@@ -63,7 +63,11 @@ public static class WorkflowRuntimeInputProjection
 
         if (IsServerManagedInteraction(node.NodeTypeId) ||
             string.Equals(node.NodeTypeId, WorkflowGraphNodeTypeIds.RobotExecuteProgram, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(node.NodeTypeId, WorkflowGraphNodeTypeIds.SampleWorkstationExecuteTemplate, StringComparison.OrdinalIgnoreCase))
+            string.Equals(node.NodeTypeId, WorkflowGraphNodeTypeIds.SampleWorkstationExecuteTemplate, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(
+                node.NodeTypeId,
+                WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask,
+                StringComparison.OrdinalIgnoreCase))
         {
             foreach (var configuration in node.Configuration ??
                      new Dictionary<string, string?>())

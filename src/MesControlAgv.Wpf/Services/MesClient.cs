@@ -228,6 +228,31 @@ public sealed class MesClient(HttpClient client) : IMesClient
                 : detail);
     }
 
+    public async Task<SampleWorkstationCommandResponse> StartSampleWorkstationTestTaskAsync(
+        string deviceId,
+        string taskNo,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(taskNo);
+        var path =
+            $"api/workstations/{Uri.EscapeDataString(deviceId)}/tasks/{Uri.EscapeDataString(taskNo)}/start";
+
+        using var response = await client.PostAsync(path, content: null, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            var problem = await TryReadProblemDetailAsync(response.Content, cancellationToken);
+            throw new SampleWorkstationTestStartException(
+                string.IsNullOrWhiteSpace(problem?.Detail)
+                    ? $"MES rejected the sample workstation start request (HTTP {(int)response.StatusCode})."
+                    : problem.Detail,
+                problem?.OutcomeUnknown ?? true);
+        }
+
+        return await response.Content.ReadFromJsonAsync<SampleWorkstationCommandResponse>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no sample workstation start result.");
+    }
+
     private async Task<WorkstationSectionResult<T>> ReadWorkstationSectionAsync<T>(
         string path,
         CancellationToken cancellationToken)
@@ -260,6 +285,35 @@ public sealed class MesClient(HttpClient client) : IMesClient
     }
 
     private sealed record WorkstationSectionResult<T>(T? Value, string? Error);
+
+    private static async Task<WorkstationProblemDetail?> TryReadProblemDetailAsync(
+        HttpContent content,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            var payload = await content.ReadFromJsonAsync<JsonElement>(cancellationToken);
+            if (payload.ValueKind != JsonValueKind.Object) return null;
+            var detail = payload.TryGetProperty("detail", out var detailElement)
+                ? detailElement.GetString()
+                : null;
+            bool? outcomeUnknown = payload.TryGetProperty("outcomeUnknown", out var outcomeElement)
+                ? outcomeElement.ValueKind switch
+                {
+                    JsonValueKind.True => true,
+                    JsonValueKind.False => false,
+                    _ => null
+                }
+                : null;
+            return new WorkstationProblemDetail(detail, outcomeUnknown);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private sealed record WorkstationProblemDetail(string? Detail, bool? OutcomeUnknown);
 
     public async Task<ShineLabCommandResponse> SendShineLabConfigAsync(
         string equipmentCode,
@@ -804,6 +858,18 @@ public sealed class MesClient(HttpClient client) : IMesClient
             $"api/workflow-run-controls/permissions?actor={Uri.EscapeDataString(actor)}",
             cancellationToken) ?? new WorkflowRunControlPermissionsSnapshot { Actor = actor };
 
+    public Task<WorkflowRuntimeInteractionResult> CompleteWorkflowManualConfirmationAsync(
+        Guid workflowRunId,
+        Guid nodeExecutionId,
+        WorkflowManualConfirmationRequest request,
+        CancellationToken cancellationToken) =>
+        PostWorkflowRunRequestAsync<WorkflowManualConfirmationRequest, WorkflowRuntimeInteractionResult>(
+            $"api/workflow-runs/{workflowRunId}/nodes/{nodeExecutionId}/manual-confirmation",
+            request,
+            "workflow manual confirmation result",
+            "workflow manual confirmation request",
+            cancellationToken);
+
     public Task<WorkflowRunControlResult> PauseWorkflowRunAsync(
         Guid workflowRunId,
         WorkflowRunControlRequest request,
@@ -843,13 +909,26 @@ public sealed class MesClient(HttpClient client) : IMesClient
     private async Task<WorkflowRunControlResult> PostWorkflowRunControlAsync<TRequest>(
         string route,
         TRequest request,
+        CancellationToken cancellationToken) =>
+        await PostWorkflowRunRequestAsync<TRequest, WorkflowRunControlResult>(
+            route,
+            request,
+            "workflow run control result",
+            "workflow run control request",
+            cancellationToken);
+
+    private async Task<TResponse> PostWorkflowRunRequestAsync<TRequest, TResponse>(
+        string route,
+        TRequest request,
+        string responseDescription,
+        string requestDescription,
         CancellationToken cancellationToken)
     {
         using var response = await client.PostAsJsonAsync(route, request, cancellationToken);
         if (response.IsSuccessStatusCode)
         {
-            return await response.Content.ReadFromJsonAsync<WorkflowRunControlResult>(cancellationToken) ??
-                   throw new InvalidOperationException("MES returned no workflow run control result.");
+            return await response.Content.ReadFromJsonAsync<TResponse>(cancellationToken) ??
+                   throw new InvalidOperationException($"MES returned no {responseDescription}.");
         }
 
         string? detail = null;
@@ -868,7 +947,7 @@ public sealed class MesClient(HttpClient client) : IMesClient
 
         throw new InvalidOperationException(
             string.IsNullOrWhiteSpace(detail)
-                ? $"MES rejected the workflow run control request ({(int)response.StatusCode})."
+                ? $"MES rejected the {requestDescription} ({(int)response.StatusCode})."
                 : detail);
     }
 
@@ -1122,6 +1201,87 @@ public sealed class MesClient(HttpClient client) : IMesClient
 
         throw await CreateExperimentApiExceptionAsync(response, cancellationToken);
     }
+
+    public async Task<IReadOnlyList<ExperimentSample>> GetExperimentSamplesAsync(
+        string? batchId,
+        CancellationToken cancellationToken) =>
+        await GetExperimentAsync<IReadOnlyList<ExperimentSample>>(
+            $"api/experiment-samples{BuildExperimentQuery(("batchId", batchId))}",
+            cancellationToken) ?? [];
+
+    public Task<ExperimentSample> SaveExperimentSampleAsync(
+        Guid sampleId,
+        SaveExperimentSampleRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ExperimentSample>(
+            HttpMethod.Put,
+            $"api/experiment-samples/{sampleId}",
+            request,
+            cancellationToken);
+
+    public async Task<ExperimentSampleVerification?> GetCurrentExperimentSampleVerificationAsync(
+        Guid jobId,
+        CancellationToken cancellationToken) =>
+        await GetExperimentAsync<ExperimentSampleVerification>(
+            $"api/experiment-jobs/{jobId}/sample-verifications/current",
+            cancellationToken,
+            mapNotFoundToNull: true);
+
+    public Task<ExperimentSampleVerification> SaveCurrentExperimentSampleVerificationAsync(
+        Guid jobId,
+        SaveExperimentSampleVerificationRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ExperimentSampleVerification>(
+            HttpMethod.Put,
+            $"api/experiment-jobs/{jobId}/sample-verifications/current",
+            request,
+            cancellationToken);
+
+    public Task<ExperimentSampleVerification> CompleteExperimentSampleVerificationAsync(
+        Guid jobId,
+        int revision,
+        CompleteExperimentSampleVerificationRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ExperimentSampleVerification>(
+            HttpMethod.Post,
+            $"api/experiment-jobs/{jobId}/sample-verifications/{revision}/verify",
+            request,
+            cancellationToken);
+
+    public async Task<SampleWorkstationTemplateResponse> GetSampleWorkstationTemplateAsync(
+        string deviceId,
+        string taskNo,
+        CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync(
+            $"api/workstations/{Uri.EscapeDataString(deviceId)}/tasks/{Uri.EscapeDataString(taskNo)}/template",
+            cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw await CreateExperimentApiExceptionAsync(response, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<SampleWorkstationTemplateResponse>(cancellationToken)
+            ?? throw new InvalidOperationException("MES returned no workstation task template.");
+    }
+
+    public async Task<ExperimentWorkstationPreparation?> GetCurrentExperimentWorkstationPreparationAsync(
+        Guid jobId,
+        CancellationToken cancellationToken) =>
+        await GetExperimentAsync<ExperimentWorkstationPreparation>(
+            $"api/experiment-jobs/{jobId}/workstation-preparations/current", cancellationToken, mapNotFoundToNull: true);
+
+    public Task<ExperimentWorkstationPreparation> PrepareExperimentWorkstationTaskAsync(
+        Guid jobId,
+        PrepareExperimentWorkstationTaskRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ExperimentWorkstationPreparation>(
+            HttpMethod.Post, $"api/experiment-jobs/{jobId}/workstation-preparations/prepare", request, cancellationToken);
+
+    public Task<ExperimentWorkstationPreparation> ImportExperimentWorkstationTaskAsync(
+        Guid jobId,
+        Guid preparationId,
+        ImportExperimentWorkstationTaskRequest request,
+        CancellationToken cancellationToken) =>
+        SendExperimentAsync<ExperimentWorkstationPreparation>(
+            HttpMethod.Post, $"api/experiment-jobs/{jobId}/workstation-preparations/{preparationId}/import", request, cancellationToken);
 
     private async Task<DashboardTask> PostAsync(string path, object? body, CancellationToken cancellationToken)
     {

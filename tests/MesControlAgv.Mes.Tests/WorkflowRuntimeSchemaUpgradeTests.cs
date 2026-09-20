@@ -16,6 +16,296 @@ namespace MesControlAgv.Mes.Tests;
 public sealed class WorkflowRuntimeSchemaUpgradeTests
 {
     [Fact]
+    public async Task Fresh_database_enforces_sample_and_verification_unique_indexes()
+    {
+        var databasePath = Path.Combine(Path.GetTempPath(), $"mes-sample-verification-unique-{Guid.NewGuid():N}.db");
+        try
+        {
+            var options = new DbContextOptionsBuilder<MesDbContext>()
+                .UseSqlite($"Data Source={databasePath};Pooling=False")
+                .Options;
+            await using var database = new MesDbContext(options);
+            await database.Database.EnsureCreatedAsync();
+            var now = DateTime.UtcNow;
+            database.ExperimentSamples.Add(new ExperimentSampleRecord
+            {
+                SampleId = Guid.NewGuid(),
+                BusinessSampleId = "S-001",
+                BatchId = "B-001",
+                Barcode = " BC-001 ",
+                DisplayName = "Sample one",
+                Status = "Active",
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now
+            });
+            await database.SaveChangesAsync();
+            Assert.Equal("BC-001", database.ExperimentSamples.Local.Single().NormalizedBarcode);
+
+            database.ExperimentSamples.Add(new ExperimentSampleRecord
+            {
+                SampleId = Guid.NewGuid(),
+                BusinessSampleId = "S-001",
+                BatchId = "B-001",
+                Barcode = "BC-002",
+                DisplayName = "Duplicate business id",
+                Status = "Active",
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now
+            });
+            await Assert.ThrowsAsync<DbUpdateException>(() => database.SaveChangesAsync());
+            database.ChangeTracker.Clear();
+
+            database.ExperimentSamples.Add(new ExperimentSampleRecord
+            {
+                SampleId = Guid.NewGuid(),
+                BusinessSampleId = "S-002",
+                BatchId = "B-001",
+                Barcode = "BC-001",
+                DisplayName = "Duplicate barcode",
+                Status = "Active",
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now
+            });
+            await Assert.ThrowsAsync<DbUpdateException>(() => database.SaveChangesAsync());
+            database.ChangeTracker.Clear();
+
+            var jobId = Guid.NewGuid();
+            database.ExperimentSampleVerifications.Add(new ExperimentSampleVerificationRecord
+            {
+                VerificationId = Guid.NewGuid(),
+                ExperimentJobId = jobId,
+                Revision = 1,
+                Status = "Draft",
+                RowsJson = "[]",
+                SnapshotHash = "hash-one",
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now
+            });
+            await database.SaveChangesAsync();
+            var verification = database.ExperimentSampleVerifications.Local.Single();
+            verification.RowsJson = "[\"changed\"]";
+            await Assert.ThrowsAsync<InvalidOperationException>(() => database.SaveChangesAsync());
+            database.ChangeTracker.Clear();
+
+            verification = await database.ExperimentSampleVerifications.SingleAsync();
+            verification.Status = "ReadyForVerification";
+            verification.UpdatedAtUtc = now.AddMinutes(1);
+            await database.SaveChangesAsync();
+
+            database.ExperimentSampleVerifications.Remove(verification);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => database.SaveChangesAsync());
+            database.ChangeTracker.Clear();
+
+            database.ExperimentWorkstationPreparations.Add(new ExperimentWorkstationPreparationRecord
+            {
+                PreparationId = Guid.NewGuid(), ExperimentJobId = jobId, Revision = 1,
+                WorkflowId = Guid.NewGuid(), WorkflowVersion = 1, ScheduleEntryId = Guid.NewGuid(), DeviceId = "WS-01",
+                VendorTaskNo = "MES-APPEND-ONLY", VerificationId = Guid.NewGuid(), VerificationRevision = 1,
+                VerificationSnapshotHash = "verification-hash", PayloadJson = "{}", PayloadHash = "payload-hash",
+                Status = "Prepared", PreparedRequestId = Guid.NewGuid(), PreparedAtUtc = now
+            });
+            await database.SaveChangesAsync();
+            var preparation = database.ExperimentWorkstationPreparations.Local.Single();
+            preparation.PayloadJson = "{\"changed\":true}";
+            await Assert.ThrowsAsync<InvalidOperationException>(() => database.SaveChangesAsync());
+            database.ChangeTracker.Clear();
+            preparation = await database.ExperimentWorkstationPreparations.SingleAsync();
+            preparation.Status = "Imported";
+            preparation.ImportedAtUtc = now.AddMinutes(2);
+            await database.SaveChangesAsync();
+            database.ExperimentWorkstationPreparations.Remove(preparation);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => database.SaveChangesAsync());
+            database.ChangeTracker.Clear();
+
+            database.ExperimentSampleVerifications.Add(new ExperimentSampleVerificationRecord
+            {
+                VerificationId = Guid.NewGuid(),
+                ExperimentJobId = jobId,
+                Revision = 1,
+                Status = "Draft",
+                RowsJson = "[]",
+                SnapshotHash = "hash-two",
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now
+            });
+            await Assert.ThrowsAsync<DbUpdateException>(() => database.SaveChangesAsync());
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+            if (File.Exists(databasePath + "-shm")) File.Delete(databasePath + "-shm");
+            if (File.Exists(databasePath + "-wal")) File.Delete(databasePath + "-wal");
+        }
+    }
+
+    [Fact]
+    public async Task Existing_experiment_database_adds_sample_verification_tables_and_retains_prior_records()
+    {
+        var databasePath = Path.Combine(
+            Path.GetTempPath(),
+            $"mes-sample-verification-schema-{Guid.NewGuid():N}.db");
+        var planId = Guid.NewGuid();
+        var jobId = Guid.NewGuid();
+
+        try
+        {
+            var options = new DbContextOptionsBuilder<MesDbContext>()
+                .UseSqlite($"Data Source={databasePath};Pooling=False")
+                .Options;
+            await using (var setup = new MesDbContext(options))
+            {
+                await setup.Database.EnsureCreatedAsync();
+                setup.ExperimentPlans.Add(new ExperimentPlanRecord
+                {
+                    PlanId = planId,
+                    Version = 1,
+                    Name = "Retained plan",
+                    Description = "Sample verification schema upgrade evidence",
+                    WorkflowId = Guid.NewGuid(),
+                    WorkflowVersion = 1,
+                    Status = "Draft",
+                    MaterialRequirementsJson = "[]",
+                    DefaultParametersJson = "{}",
+                    ResourceRequirementsJson = "[]",
+                    CreatedBy = "schema-test",
+                    CreatedAtUtc = DateTime.UtcNow,
+                    UpdatedAtUtc = DateTime.UtcNow
+                });
+                setup.ExperimentJobs.Add(new ExperimentJobRecord
+                {
+                    JobId = jobId,
+                    PlanId = planId,
+                    PlanVersion = 1,
+                    WorkflowId = Guid.NewGuid(),
+                    WorkflowVersion = 1,
+                    SampleBatchId = "B-001",
+                    ParametersJson = "{}",
+                    Status = "Draft",
+                    CreatedBy = "schema-test",
+                    CreatedAtUtc = DateTime.UtcNow,
+                    UpdatedAtUtc = DateTime.UtcNow
+                });
+                setup.ExperimentRuns.Add(new ExperimentRunRecord
+                {
+                    ExperimentRunId = Guid.NewGuid(),
+                    ExperimentJobId = jobId,
+                    PlanId = planId,
+                    PlanVersion = 1,
+                    AdmissionRequestId = Guid.NewGuid(),
+                    Status = "Draft",
+                    StepsJson = "[]",
+                    CreatedAtUtc = DateTime.UtcNow,
+                    UpdatedAtUtc = DateTime.UtcNow
+                });
+                setup.ExperimentSchedulingAudits.Add(new ExperimentSchedulingAuditRecord
+                {
+                    Id = Guid.NewGuid(),
+                    EventType = "SchemaUpgradeEvidence",
+                    Outcome = "Succeeded",
+                    RequestId = Guid.NewGuid(),
+                    RequestFingerprint = "schema-upgrade-evidence",
+                    Actor = "schema-test",
+                    Reason = "Retain prior audit",
+                    ExperimentJobId = jobId,
+                    DetailsJson = "{}",
+                    ResultJson = "{}",
+                    OccurredAtUtc = DateTime.UtcNow
+                });
+                await setup.SaveChangesAsync();
+                await setup.Database.ExecuteSqlRawAsync("DROP TABLE ExperimentWorkstationPreparations;");
+                await setup.Database.ExecuteSqlRawAsync(
+                    """
+                    CREATE TABLE ExperimentWorkstationPreparations (
+                        PreparationId TEXT NOT NULL PRIMARY KEY,
+                        ExperimentJobId TEXT NOT NULL,
+                        DeviceId TEXT NOT NULL,
+                        VendorTaskNo TEXT NOT NULL,
+                        VerificationId TEXT NOT NULL,
+                        VerificationRevision INTEGER NOT NULL,
+                        VerificationSnapshotHash TEXT NOT NULL,
+                        PayloadJson TEXT NOT NULL,
+                        PayloadHash TEXT NOT NULL,
+                        Status TEXT NOT NULL,
+                        PreparedRequestId TEXT NOT NULL,
+                        ImportRequestId TEXT NULL,
+                        PreparedAtUtc TEXT NOT NULL,
+                        ImportingAtUtc TEXT NULL,
+                        ImportedAtUtc TEXT NULL,
+                        UnknownAtUtc TEXT NULL,
+                        LastError TEXT NULL
+                    );
+                    """);
+                var samePreparedAt = new DateTime(2026, 9, 18, 10, 0, 0, DateTimeKind.Utc);
+                foreach (var taskNo in new[] { "LEGACY-PREP-1", "LEGACY-PREP-2" })
+                {
+                    await setup.Database.ExecuteSqlRawAsync(
+                        """
+                        INSERT INTO ExperimentWorkstationPreparations (
+                            PreparationId, ExperimentJobId, DeviceId, VendorTaskNo,
+                            VerificationId, VerificationRevision, VerificationSnapshotHash,
+                            PayloadJson, PayloadHash, Status, PreparedRequestId, PreparedAtUtc)
+                        VALUES ({0}, {1}, {2}, {3}, {4}, 1, {5}, {6}, {7}, {8}, {9}, {10});
+                        """,
+                        Guid.NewGuid(), jobId, "WS-01", taskNo, Guid.NewGuid(),
+                        "legacy-verification", "{}", "legacy-payload", "Prepared", Guid.NewGuid(), samePreparedAt);
+                }
+                await setup.Database.ExecuteSqlRawAsync("DROP TABLE ExperimentSampleVerifications;");
+                await setup.Database.ExecuteSqlRawAsync("DROP TABLE ExperimentSamples;");
+            }
+
+            await using (var factory = new ExistingWorkflowDatabaseFactory(databasePath))
+            {
+                using var client = factory.CreateClient();
+                (await client.GetAsync("/health")).EnsureSuccessStatusCode();
+
+                await using var connection = new SqliteConnection($"Data Source={databasePath};Pooling=False");
+                await connection.OpenAsync();
+                var tables = await ReadNamesAsync(connection, "SELECT name FROM sqlite_master WHERE type = 'table';");
+                var indexes = await ReadNamesAsync(connection, "SELECT name FROM sqlite_master WHERE type = 'index';");
+
+                Assert.Contains("ExperimentSamples", tables);
+                Assert.Contains("ExperimentSampleVerifications", tables);
+                Assert.Contains("ExperimentWorkstationPreparations", tables);
+                Assert.Contains("IX_ExperimentSamples_BusinessSampleId", indexes);
+                Assert.Contains("IX_ExperimentSamples_NormalizedBarcode", indexes);
+                Assert.Contains("IX_ExperimentSampleVerifications_ExperimentJobId_Revision", indexes);
+                Assert.Contains("IX_ExperimentWorkstationPreparations_VendorTaskNo", indexes);
+                Assert.Contains("IX_ExperimentWorkstationPreparations_ExperimentJobId_Revision", indexes);
+                Assert.Contains("IX_ExperimentWorkstationPreparations_ExperimentJobId_PreparedAtUtc", indexes);
+                var preparationColumns = await ReadNamesAsync(connection, "SELECT name FROM pragma_table_info('ExperimentWorkstationPreparations');");
+                Assert.Contains("Revision", preparationColumns);
+                Assert.Contains("WorkflowId", preparationColumns);
+                Assert.Contains("WorkflowVersion", preparationColumns);
+                Assert.Contains("ScheduleEntryId", preparationColumns);
+                await using var revisions = connection.CreateCommand();
+                revisions.CommandText = "SELECT Revision FROM ExperimentWorkstationPreparations ORDER BY rowid;";
+                var backfilled = new List<long>();
+                await using (var reader = await revisions.ExecuteReaderAsync())
+                    while (await reader.ReadAsync()) backfilled.Add(reader.GetInt64(0));
+                Assert.Equal([1L, 2L], backfilled);
+
+                await using var count = connection.CreateCommand();
+                count.CommandText = "SELECT COUNT(*) FROM ExperimentPlans;";
+                Assert.Equal(1L, (long)(await count.ExecuteScalarAsync())!);
+                count.CommandText = "SELECT COUNT(*) FROM ExperimentJobs;";
+                Assert.Equal(1L, (long)(await count.ExecuteScalarAsync())!);
+                count.CommandText = "SELECT COUNT(*) FROM ExperimentRuns;";
+                Assert.Equal(1L, (long)(await count.ExecuteScalarAsync())!);
+                count.CommandText = "SELECT COUNT(*) FROM ExperimentSchedulingAudits;";
+                Assert.Equal(1L, (long)(await count.ExecuteScalarAsync())!);
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            if (File.Exists(databasePath)) File.Delete(databasePath);
+            if (File.Exists(databasePath + "-shm")) File.Delete(databasePath + "-shm");
+            if (File.Exists(databasePath + "-wal")) File.Delete(databasePath + "-wal");
+        }
+    }
+
+    [Fact]
     public async Task Existing_g3_database_adds_runtime_record_tables_without_recreating_prior_data()
     {
         var databasePath = Path.Combine(

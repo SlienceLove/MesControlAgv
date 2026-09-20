@@ -65,6 +65,63 @@ public sealed class WorkflowPublicationValidatorTests
             issue.NodeId == move.Id);
     }
 
+    [Fact]
+    public void Sample_workstation_without_manual_confirmation_is_publishable()
+    {
+        var profile = CreateSampleWorkstationProfile();
+        var workflow = CreateLinearWorkflow(
+            WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask,
+            SampleWorkstationConfiguration());
+        var result = CreateValidator(profile: profile).ValidateForPublication(workflow);
+
+        Assert.True(result.IsValid);
+    }
+
+    [Fact]
+    public void Sample_workstation_with_direct_confirmed_path_is_publishable()
+    {
+        var profile = CreateSampleWorkstationProfile();
+        var startId = Guid.NewGuid();
+        var manualId = Guid.NewGuid();
+        var workstationId = Guid.NewGuid();
+        var endId = Guid.NewGuid();
+        var start = CreateNode(startId, WorkflowGraphNodeTypeIds.Start, "Start", 1, [manualId]);
+        var manual = CreateNode(
+            manualId,
+            WorkflowGraphNodeTypeIds.ManualConfirmation,
+            "整机初始化确认",
+            2,
+            [workstationId, endId],
+            ManualConfirmationConfiguration());
+        var workstation = CreateNode(
+            workstationId,
+            WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask,
+            "开盖分液",
+            3,
+            [endId],
+            SampleWorkstationConfiguration());
+        var end = CreateNode(endId, WorkflowGraphNodeTypeIds.End, "End", 4, []);
+        var workflow = new WorkflowDefinition
+        {
+            Id = Guid.NewGuid(),
+            SchemaVersion = WorkflowGraphDocument.CurrentSchemaVersion,
+            Name = "Sample workstation",
+            Nodes = [start, manual, workstation, end],
+            Edges =
+            [
+                CreateEdge(startId, "success", manualId),
+                CreateEdge(manualId, "success", workstationId),
+                CreateEdge(manualId, "timeout", endId, WorkflowEdgeKind.Timeout),
+                CreateEdge(manualId, "cancelled", endId, WorkflowEdgeKind.Cancelled),
+                CreateEdge(workstationId, "success", endId)
+            ]
+        };
+
+        var result = CreateValidator(profile: profile).ValidateForPublication(workflow);
+
+        Assert.True(result.IsValid);
+    }
+
     [Theory]
     [InlineData("UNKNOWN_STATION", WorkflowPublicationIssueCodes.StationUnknown)]
     [InlineData("SAMPLE_01", WorkflowPublicationIssueCodes.StationDisabled)]
@@ -370,14 +427,18 @@ public sealed class WorkflowPublicationValidatorTests
         };
     }
 
-    private static WorkflowEdgeDefinition CreateEdge(Guid sourceNodeId, string sourcePort, Guid targetNodeId) => new()
+    private static WorkflowEdgeDefinition CreateEdge(
+        Guid sourceNodeId,
+        string sourcePort,
+        Guid targetNodeId,
+        WorkflowEdgeKind kind = WorkflowEdgeKind.Success) => new()
     {
         Id = Guid.NewGuid(),
         SourceNodeId = sourceNodeId,
         SourcePort = sourcePort,
         TargetNodeId = targetNodeId,
         TargetPort = "in",
-        Kind = WorkflowEdgeKind.Success
+        Kind = kind
     };
 
     private static Dictionary<string, string?> MoveConfiguration(string stationId) =>
@@ -395,6 +456,37 @@ public sealed class WorkflowPublicationValidatorTests
             [WorkflowNodeConfigurationKeys.TimeoutSeconds] = "30",
             [WorkflowNodeConfigurationKeys.RetryCount] = "2"
         };
+
+    private static Dictionary<string, string?> SampleWorkstationConfiguration() =>
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            [WorkflowNodeConfigurationKeys.DeviceId] = "SAMPLE-WORKSTATION-01",
+            [WorkflowNodeConfigurationKeys.TaskNo] = "TEST-001"
+        };
+
+    private static Dictionary<string, string?> ManualConfirmationConfiguration() =>
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            [WorkflowNodeConfigurationKeys.Prompt] = "已在厂家主程序完成整机初始化",
+            [WorkflowNodeConfigurationKeys.TimeoutSeconds] = "3600",
+            [WorkflowNodeConfigurationKeys.RequireComment] = "false"
+        };
+
+    private static ProfileConfiguration CreateSampleWorkstationProfile()
+    {
+        var profile = ProfileConfiguration.Default;
+        return profile with
+        {
+            WorkflowDevices = profile.WorkflowDevices.Concat([new WorkflowDeviceProfile
+            {
+                DeviceId = "SAMPLE-WORKSTATION-01",
+                DeviceFamily = WorkflowDeviceFamilyIds.SampleWorkstation,
+                CapabilityIds = [WorkflowCapabilityIds.SampleWorkstationStartExistingTask],
+                Enabled = true,
+                ControlEnabled = true
+            }]).ToArray()
+        };
+    }
 
     private static WorkflowNode GetMiddleNode(WorkflowDefinition workflow) =>
         workflow.Nodes.Single(node => node.Order == 2);

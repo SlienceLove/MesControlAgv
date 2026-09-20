@@ -68,10 +68,11 @@ public sealed class ExperimentRuntimeAdmissionApiTests
         Assert.Single(await database.WorkflowResourceLeases.AsNoTracking()
             .Where(lease => lease.ActiveResourceKey != null)
             .ToListAsync());
-        Assert.Single(await database.ExperimentSchedulingAudits.AsNoTracking()
+        var admissionAudit = Assert.Single(await database.ExperimentSchedulingAudits.AsNoTracking()
             .Where(audit => audit.RequestId == request.RequestId &&
                             audit.EventType == "ExperimentJobAdmitted")
             .ToListAsync());
+        Assert.DoesNotContain("verificationSnapshotHash", admissionAudit.DetailsJson);
     }
 
     [Fact]
@@ -235,7 +236,7 @@ public sealed class ExperimentRuntimeAdmissionApiTests
             {
                 DeviceOperationId = claimed.DeviceOperation!.OperationId,
                 Outcome = WorkflowStepCompletionOutcome.Unknown,
-                UnknownReason = UnknownReason.IncompleteResponse,
+                UnknownReason = MesControlAgv.Contracts.Devices.UnknownReason.IncompleteResponse,
                 Error = "Adapter outcome could not be proven"
             },
             CancellationToken.None);

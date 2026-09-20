@@ -110,6 +110,47 @@ public interface IExperimentRuntimeAdmissionService
 }
 
 /// <summary>
+/// Owns central sample registration and the immutable, manually verified task
+/// sample snapshot. Transport clients use this boundary rather than persistence.
+/// </summary>
+public interface IExperimentSampleVerificationService
+{
+    Task<IReadOnlyList<ExperimentSample>> ListSamplesAsync(QueryExperimentSamplesRequest request, CancellationToken cancellationToken);
+    Task<ExperimentSample> SaveSampleAsync(Guid sampleId, SaveExperimentSampleRequest request, CancellationToken cancellationToken);
+    Task<ExperimentSampleVerification?> GetCurrentAsync(Guid experimentJobId, CancellationToken cancellationToken);
+    Task<ExperimentSampleVerification> SaveCurrentAsync(Guid experimentJobId, SaveExperimentSampleVerificationRequest request, CancellationToken cancellationToken);
+    Task<ExperimentSampleVerification> VerifyAsync(Guid experimentJobId, int revision, CompleteExperimentSampleVerificationRequest request, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// Reusable admission/upload boundary. A later caller supplies the snapshot it
+/// intends to use and receives only a still-current verified snapshot.
+/// </summary>
+public interface IExperimentSampleVerificationGate
+{
+    Task<ExperimentSampleVerification> RequireVerifiedCurrentAsync(Guid experimentJobId, int revision, string snapshotHash, CancellationToken cancellationToken);
+}
+
+/// <summary>Prepares and imports a verified workstation task without ever starting it.</summary>
+public interface IExperimentWorkstationPreparationService
+{
+    Task<ExperimentWorkstationPreparation?> GetCurrentAsync(
+        Guid experimentJobId,
+        CancellationToken cancellationToken);
+
+    Task<ExperimentWorkstationPreparation> PrepareAsync(
+        Guid experimentJobId,
+        PrepareExperimentWorkstationTaskRequest request,
+        CancellationToken cancellationToken);
+
+    Task<ExperimentWorkstationPreparation> ImportAsync(
+        Guid experimentJobId,
+        Guid preparationId,
+        ImportExperimentWorkstationTaskRequest request,
+        CancellationToken cancellationToken);
+}
+
+/// <summary>
 /// Device-free persistence boundary for a composed experiment run. It only
 /// materializes the pinned plan/step snapshot; child workflow admission and
 /// device operations belong to the later coordinator.

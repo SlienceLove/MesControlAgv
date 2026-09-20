@@ -4,6 +4,7 @@
              xmlns:converters="clr-namespace:MesControlAgv.Wpf.Converters">
     <UserControl.Resources>
         <converters:InstrumentVisibilityConverter x:Key="InstrumentVisibilityConverter" />
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
     </UserControl.Resources>
 
     <Grid Margin="0,12,0,0">
@@ -202,8 +203,9 @@
                                        Text="{Binding WorkstationLatestTaskTime}" />
                         </Grid>
                         <DataGrid Margin="0,14,0,0" ItemsSource="{Binding WorkstationTasks}"
+                                  SelectedItem="{Binding SelectedWorkstationTask, Mode=TwoWay}"
                                   AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
-                                  HeadersVisibility="Column" MinHeight="80"
+                                  SelectionMode="Single" HeadersVisibility="Column" MinHeight="80"
                                   ScrollViewer.HorizontalScrollBarVisibility="Auto"
                                   ScrollViewer.VerticalScrollBarVisibility="Auto">
                             <DataGrid.Columns>
@@ -214,6 +216,35 @@
                                 <DataGridTextColumn Width="1.5*" MinWidth="100" Header="备注" Binding="{Binding Remark}" />
                             </DataGrid.Columns>
                         </DataGrid>
+                        <Border Margin="0,14,0,0" Padding="14"
+                                Background="#FFF8E8" BorderBrush="#E2B04A" BorderThickness="1"
+                                CornerRadius="6"
+                                Visibility="{Binding IsWorkstationTestControlVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                            <StackPanel>
+                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="联调测试" />
+                                <TextBlock Margin="0,4,0,0" Foreground="#7A3E00" TextWrapping="Wrap"
+                                           Text="此入口仅用于设备接入测试，正式运行由实验工作流统一调度。" />
+                                <Grid Margin="0,10,0,0">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="90" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="90" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Foreground="Gray" Text="选中任务" />
+                                    <TextBlock Grid.Column="1" Text="{Binding SelectedWorkstationTaskNo}" />
+                                    <TextBlock Grid.Column="2" Foreground="Gray" Text="当前状态" />
+                                    <TextBlock Grid.Column="3" Text="{Binding SelectedWorkstationTaskState}" />
+                                </Grid>
+                                <StackPanel Margin="0,12,0,0" Orientation="Horizontal">
+                                    <Button Width="130" Height="34"
+                                            Command="{Binding StartWorkstationTestTaskCommand}"
+                                            Content="启动测试任务" />
+                                    <TextBlock Margin="14,7,0,0" TextWrapping="Wrap"
+                                               Text="{Binding WorkstationTestControlMessage}" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </Border>
             </StackPanel>

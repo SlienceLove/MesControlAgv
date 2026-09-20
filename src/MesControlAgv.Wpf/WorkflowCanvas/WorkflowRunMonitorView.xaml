@@ -264,6 +264,60 @@
                 </Grid>
             </Border>
 
+            <Border x:Name="WorkflowManualConfirmationPanel"
+                    Margin="0,8,0,0"
+                    Padding="10,8"
+                    Background="#EEF4FF"
+                    BorderBrush="#2E5AAC"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Visibility="{Binding HasPendingManualConfirmation, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Foreground="#1849A9"
+                                   FontWeight="SemiBold"
+                                   Text="{Binding ManualConfirmationTitle}"
+                                   TextWrapping="Wrap" />
+                        <TextBlock Margin="0,3,0,0"
+                                   Foreground="#344054"
+                                   Text="{Binding ManualConfirmationPrompt}"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1"
+                                Margin="12,0,0,0"
+                                Orientation="Horizontal"
+                                VerticalAlignment="Center">
+                        <Button x:Name="ConfirmManualTaskButton"
+                                MinWidth="118"
+                                MinHeight="32"
+                                Margin="0,0,8,0"
+                                Padding="10,4"
+                                Background="#247A3D"
+                                Foreground="White"
+                                AutomationProperties.AutomationId="WorkflowConfirmManualTaskButton"
+                                Command="{Binding ConfirmManualTaskCommand}"
+                                Content="确认并继续"
+                                ToolTip="{Binding ManualConfirmationUnavailableReason}"
+                                ToolTipService.ShowOnDisabled="True" />
+                        <Button x:Name="CancelManualTaskButton"
+                                MinWidth="118"
+                                MinHeight="32"
+                                Padding="10,4"
+                                Background="#B42318"
+                                Foreground="White"
+                                AutomationProperties.AutomationId="WorkflowCancelManualTaskButton"
+                                Command="{Binding CancelManualTaskCommand}"
+                                Content="取消本流程"
+                                ToolTip="{Binding ManualConfirmationUnavailableReason}"
+                                ToolTipService.ShowOnDisabled="True" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
             <Border Margin="0,8,0,0"
                     Padding="10,8"
                     Background="#FCE7F3"
@@ -333,12 +387,14 @@
                 </StackPanel>
             </Border>
 
-            <Border Margin="0,8,0,0"
+            <Border x:Name="WorkflowFieldAcceptancePanel"
+                    Margin="0,8,0,0"
                     Padding="10,8"
                     Background="#FFF8E7"
                     BorderBrush="#F79009"
                     BorderThickness="1"
-                    CornerRadius="4">
+                    CornerRadius="4"
+                    Visibility="Collapsed">
                 <StackPanel>
                     <DockPanel>
                         <TextBlock DockPanel.Dock="Left"

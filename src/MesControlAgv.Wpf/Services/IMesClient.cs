@@ -81,6 +81,14 @@ public sealed record SampleWorkstationDashboardSnapshot(
     string? ErrorReadError = null,
     string? TasksReadError = null);
 
+public sealed class SampleWorkstationTestStartException(
+    string message,
+    bool outcomeUnknown)
+    : InvalidOperationException(message)
+{
+    public bool OutcomeUnknown { get; } = outcomeUnknown;
+}
+
 public sealed record DashboardWorkflowNextStep(
     Guid StepRequestId,
     Guid ExecutionId,
@@ -151,6 +159,12 @@ public interface IMesClient
         string sampleIdOrBarcode,
         CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<SampleEventResponse>>([]);
+    Task<SampleWorkstationCommandResponse> StartSampleWorkstationTestTaskAsync(
+        string deviceId,
+        string taskNo,
+        CancellationToken cancellationToken) =>
+        Task.FromException<SampleWorkstationCommandResponse>(
+            new NotSupportedException("Sample workstation test control is not supported by this MES client."));
     Task<ShineLabCommandResponse> SendShineLabConfigAsync(
         string equipmentCode,
         ShineLabConfigRequest request,
@@ -441,6 +455,14 @@ public interface IMesClient
         CancellationToken cancellationToken) =>
         Task.FromResult(new WorkflowRunControlPermissionsSnapshot { Actor = actor });
 
+    Task<WorkflowRuntimeInteractionResult> CompleteWorkflowManualConfirmationAsync(
+        Guid workflowRunId,
+        Guid nodeExecutionId,
+        WorkflowManualConfirmationRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<WorkflowRuntimeInteractionResult>(
+            new NotSupportedException("Workflow manual confirmation is not supported by this MES client."));
+
     Task<WorkflowRunControlResult> PauseWorkflowRunAsync(
         Guid workflowRunId,
         WorkflowRunControlRequest request,
@@ -600,4 +622,57 @@ public interface IMesClient
         AdmitExperimentJobRequest request,
         CancellationToken cancellationToken) =>
         Task.FromException<ExperimentJobAdmissionResult>(new NotSupportedException("Experiment runtime admission APIs are not supported by this MES client."));
+
+    Task<IReadOnlyList<ExperimentSample>> GetExperimentSamplesAsync(
+        string? batchId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<ExperimentSample>>([]);
+
+    Task<ExperimentSample> SaveExperimentSampleAsync(
+        Guid sampleId,
+        SaveExperimentSampleRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentSample>(new NotSupportedException("Experiment sample APIs are not supported by this MES client."));
+
+    Task<ExperimentSampleVerification?> GetCurrentExperimentSampleVerificationAsync(
+        Guid jobId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<ExperimentSampleVerification?>(null);
+
+    Task<ExperimentSampleVerification> SaveCurrentExperimentSampleVerificationAsync(
+        Guid jobId,
+        SaveExperimentSampleVerificationRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentSampleVerification>(new NotSupportedException("Experiment sample verification APIs are not supported by this MES client."));
+
+    Task<ExperimentSampleVerification> CompleteExperimentSampleVerificationAsync(
+        Guid jobId,
+        int revision,
+        CompleteExperimentSampleVerificationRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentSampleVerification>(new NotSupportedException("Experiment sample verification APIs are not supported by this MES client."));
+
+    Task<SampleWorkstationTemplateResponse> GetSampleWorkstationTemplateAsync(
+        string deviceId,
+        string taskNo,
+        CancellationToken cancellationToken) =>
+        Task.FromException<SampleWorkstationTemplateResponse>(new NotSupportedException("Sample workstation template APIs are not supported by this MES client."));
+
+    Task<ExperimentWorkstationPreparation?> GetCurrentExperimentWorkstationPreparationAsync(
+        Guid jobId,
+        CancellationToken cancellationToken) =>
+        Task.FromResult<ExperimentWorkstationPreparation?>(null);
+
+    Task<ExperimentWorkstationPreparation> PrepareExperimentWorkstationTaskAsync(
+        Guid jobId,
+        PrepareExperimentWorkstationTaskRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentWorkstationPreparation>(new NotSupportedException("Experiment workstation preparation APIs are not supported by this MES client."));
+
+    Task<ExperimentWorkstationPreparation> ImportExperimentWorkstationTaskAsync(
+        Guid jobId,
+        Guid preparationId,
+        ImportExperimentWorkstationTaskRequest request,
+        CancellationToken cancellationToken) =>
+        Task.FromException<ExperimentWorkstationPreparation>(new NotSupportedException("Experiment workstation preparation APIs are not supported by this MES client."));
 }

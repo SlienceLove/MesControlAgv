@@ -15,9 +15,11 @@ namespace MesControlAgv.Mes.Services;
 /// Converts one scheduled job into a workflow run and run-wide resource leases
 /// in one database transaction. It creates no adapter or device operation.
 /// </summary>
-public sealed class ExperimentRuntimeAdmissionService(
+internal sealed class ExperimentRuntimeAdmissionService(
     MesDbContext database,
     IWorkflowApplicationService workflows,
+    IExperimentSampleVerificationService sampleVerificationService,
+    IExperimentSampleVerificationGateCore sampleVerificationGate,
     ExperimentResourceCatalog resourceCatalog,
     ExperimentSchedulingMutationGate mutationGate,
     ExperimentRuntimeLeaseLifecycle leaseLifecycle,
@@ -62,20 +64,20 @@ public sealed class ExperimentRuntimeAdmissionService(
                     .ThenBy(reservation => reservation.ReservationId)
                     .ToListAsync(cancellationToken);
 
-            var rejection = await ValidateAdmissionAsync(
+            var validation = await ValidateAdmissionAsync(
                 job,
                 schedules,
                 schedule,
                 reservations,
                 metadata.RequestId,
                 cancellationToken);
-            if (rejection is not null)
+            if (validation.Rejection is not null)
             {
                 return await PersistRejectedAsync(
                     experimentJobId,
                     metadata,
                     fingerprint,
-                    rejection,
+                    validation.Rejection,
                     cancellationToken);
             }
 
@@ -88,6 +90,21 @@ public sealed class ExperimentRuntimeAdmissionService(
                         reservation.Status == ResourceReservationStatus.Planned.ToString()).ToArray(),
                     metadata,
                     fingerprint,
+                    validation.Verification,
+                    validation.WorkstationPreparation,
+                    cancellationToken);
+            }
+            catch (ExperimentSampleVerificationException exception)
+            {
+                database.ChangeTracker.Clear();
+                return await PersistRejectedAsync(
+                    experimentJobId,
+                    metadata,
+                    fingerprint,
+                    new AdmissionRejection(
+                        exception.Code,
+                        exception.Message,
+                        Array.Empty<ExperimentResourceReference>()),
                     cancellationToken);
             }
             catch (WorkflowAdmissionRejectedSignal signal)
@@ -129,6 +146,8 @@ public sealed class ExperimentRuntimeAdmissionService(
         IReadOnlyList<ResourceReservationRecord> plannedReservations,
         NormalizedMetadata metadata,
         string fingerprint,
+        ExperimentSampleVerification? verification,
+        ExperimentWorkstationPreparationRecord? workstationPreparation,
         CancellationToken cancellationToken)
     {
         await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken);
@@ -176,6 +195,14 @@ public sealed class ExperimentRuntimeAdmissionService(
                     cancellationToken);
             }
 
+            if (workstationPreparation is not null)
+            {
+                await ApplyTrustedWorkstationBindingAsync(
+                    workflowResult.ExecutionId,
+                    workstationPreparation,
+                    cancellationToken);
+            }
+
             var leaseExpiry = CalculateLeaseExpiry(schedule, now);
             var leases = plannedReservations.Select(reservation => new WorkflowResourceLeaseRecord
             {
@@ -214,7 +241,8 @@ public sealed class ExperimentRuntimeAdmissionService(
                 schedule,
                 plannedReservations,
                 leases);
-            var audit = AddAdmissionAudit(metadata, fingerprint, initialResult, job, schedule, leases);
+            var audit = AddAdmissionAudit(
+                metadata, fingerprint, initialResult, job, schedule, leases, verification, workstationPreparation);
             await database.SaveChangesAsync(cancellationToken);
 
             var run = await database.WorkflowExecutions.SingleAsync(
@@ -251,7 +279,7 @@ public sealed class ExperimentRuntimeAdmissionService(
         }
     }
 
-    private async Task<AdmissionRejection?> ValidateAdmissionAsync(
+    private async Task<AdmissionValidation> ValidateAdmissionAsync(
         ExperimentJobRecord job,
         IReadOnlyList<ScheduleEntryRecord> schedules,
         ScheduleEntryRecord? schedule,
@@ -337,6 +365,48 @@ public sealed class ExperimentRuntimeAdmissionService(
             plan.WorkflowId,
             plan.WorkflowVersion,
             plan.PlanId);
+        var workflowReferences = planWorkflowSteps
+            .Select(step => new WorkflowReference(step.WorkflowId, step.WorkflowVersion))
+            .Distinct()
+            .ToArray();
+        var workflowIds = workflowReferences.Select(reference => reference.WorkflowId).Distinct().ToArray();
+        var workflowVersions = await database.WorkflowVersions.AsNoTracking()
+            .Where(item => workflowIds.Contains(item.WorkflowId))
+            .ToListAsync(cancellationToken);
+        var pinnedWorkflows = new List<WorkflowVersionRecord>();
+        foreach (var reference in workflowReferences)
+        {
+            var workflow = workflowVersions.SingleOrDefault(item =>
+                item.WorkflowId == reference.WorkflowId && item.Version == reference.Version);
+            if (workflow is null ||
+                !string.Equals(workflow.Status, "Published", StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(workflow.PublishStatus, "Published", StringComparison.OrdinalIgnoreCase))
+            {
+                return new AdmissionRejection(
+                    ExperimentSchedulingIssueCodes.WorkflowVersionNotPublished,
+                    "A fixed workflow version is not published.",
+                    Array.Empty<ExperimentResourceReference>());
+            }
+            pinnedWorkflows.Add(workflow);
+        }
+
+        // Apply the workstation gate before the current multi-step execution boundary.
+        ExperimentSampleVerification? verification;
+        ExperimentWorkstationPreparationRecord? workstationPreparation;
+        try
+        {
+            (verification, workstationPreparation) = await RequireSampleVerificationIfNeededAsync(
+                job,
+                pinnedWorkflows,
+                cancellationToken);
+        }
+        catch (ExperimentSampleVerificationException exception)
+        {
+            return new AdmissionRejection(
+                exception.Code,
+                exception.Message,
+                Array.Empty<ExperimentResourceReference>());
+        }
         if (planWorkflowSteps.Count > 1)
         {
             return new AdmissionRejection(
@@ -344,22 +414,26 @@ public sealed class ExperimentRuntimeAdmissionService(
                 "This plan contains multiple workflow templates. Runtime composition must be enabled before admission.",
                 Array.Empty<ExperimentResourceReference>());
         }
-        var workflow = await database.WorkflowVersions.AsNoTracking().SingleOrDefaultAsync(
-            item => item.WorkflowId == job.WorkflowId && item.Version == job.WorkflowVersion,
-            cancellationToken);
-        if (workflow is null ||
-            !string.Equals(workflow.Status, "Published", StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(workflow.PublishStatus, "Published", StringComparison.OrdinalIgnoreCase))
-        {
-            return new AdmissionRejection(
-                ExperimentSchedulingIssueCodes.WorkflowVersionNotPublished,
-                "The job's pinned workflow version is not published.",
-                Array.Empty<ExperimentResourceReference>());
-        }
 
         var requestedResources = ExperimentSchedulingPersistence.Deserialize(
             schedule.RequestedResourcesJson,
             Array.Empty<ExperimentResourceReference>());
+        if (workstationPreparation is not null && !requestedResources.Any(resource =>
+                string.Equals(resource.ResourceType, ExperimentResourceTypeIds.Workstation, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(resource.ResourceId, workstationPreparation.DeviceId, StringComparison.OrdinalIgnoreCase)))
+        {
+            return new AdmissionRejection(
+                ExperimentWorkstationPreparationIssueCodes.RuntimeBindingInvalid,
+                "The prepared workstation is not the fixed workstation resource reserved by this schedule.",
+                requestedResources);
+        }
+        if (workstationPreparation is not null && workstationPreparation.ScheduleEntryId != schedule.ScheduleEntryId)
+        {
+            return new AdmissionRejection(
+                ExperimentWorkstationPreparationIssueCodes.RuntimeBindingInvalid,
+                "The schedule entry changed after workstation preparation.",
+                requestedResources);
+        }
         var requestedKeys = requestedResources
             .Select(reference => ExperimentResourceKeys.Create(reference.ResourceType, reference.ResourceId))
             .ToArray();
@@ -418,7 +492,153 @@ public sealed class ExperimentRuntimeAdmissionService(
                     ExperimentResourceKeys.Create(reference.ResourceType, reference.ResourceId),
                     StringComparer.Ordinal)).ToArray());
         }
-        return null;
+        return new AdmissionValidation(null, verification, workstationPreparation);
+    }
+
+    private async Task<(ExperimentSampleVerification? Verification, ExperimentWorkstationPreparationRecord? Preparation)> RequireSampleVerificationIfNeededAsync(
+        ExperimentJobRecord job,
+        IReadOnlyList<WorkflowVersionRecord> pinnedWorkflows,
+        CancellationToken cancellationToken)
+    {
+        var requiresVerification = pinnedWorkflows.Any(workflow =>
+            WorkflowPersistence.DeserializeDefinition(workflow.DefinitionJson).Nodes.Any(node => string.Equals(
+                node.NodeTypeId,
+                WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask,
+                StringComparison.Ordinal)));
+        if (!requiresVerification) return (null, null);
+
+        var preparations = await database.ExperimentWorkstationPreparations
+            .Where(item => item.ExperimentJobId == job.JobId)
+            .OrderByDescending(item => item.Revision)
+            .ToListAsync(cancellationToken);
+        if (preparations.Count > 0)
+        {
+            var preparation = preparations[0];
+            if (preparation.WorkflowId != job.WorkflowId || preparation.WorkflowVersion != job.WorkflowVersion)
+                throw new ExperimentSampleVerificationException(
+                    "The job workflow changed after workstation preparation.",
+                    ExperimentWorkstationPreparationIssueCodes.RuntimeBindingInvalid);
+            if (!string.Equals(preparation.Status, ExperimentWorkstationPreparationStatus.Imported.ToString(), StringComparison.Ordinal))
+                throw new ExperimentSampleVerificationException(
+                    "The current workstation preparation has not been imported successfully.",
+                    preparation.Status == ExperimentWorkstationPreparationStatus.Unknown.ToString()
+                        ? ExperimentWorkstationPreparationIssueCodes.ImportOutcomeUnknown
+                        : ExperimentWorkstationPreparationIssueCodes.PreparationNotImported);
+            var nodes = pinnedWorkflows
+                .SelectMany(workflow => WorkflowPersistence.DeserializeDefinition(workflow.DefinitionJson).Nodes)
+                .Where(node => string.Equals(node.NodeTypeId, WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask, StringComparison.Ordinal))
+                .ToArray();
+            if (nodes.Length != 1 ||
+                !nodes[0].Configuration.TryGetValue(WorkflowNodeConfigurationKeys.DeviceId, out var configuredDevice) ||
+                !string.Equals(configuredDevice?.Trim(), preparation.DeviceId, StringComparison.OrdinalIgnoreCase))
+                throw new ExperimentSampleVerificationException(
+                    "A prepared job must contain exactly one workstation node fixed to the prepared device.",
+                    ExperimentWorkstationPreparationIssueCodes.RuntimeBindingInvalid);
+            var verified = await sampleVerificationGate.RequireVerifiedCurrentWhileMutationGateHeldAsync(
+                job.JobId,
+                preparation.VerificationRevision,
+                preparation.VerificationSnapshotHash,
+                cancellationToken);
+            if (verified.VerificationId != preparation.VerificationId)
+                throw new ExperimentSampleVerificationException(
+                    "The imported preparation is not linked to the current verified sample identity.",
+                    ExperimentWorkstationPreparationIssueCodes.VersionConflict);
+            return (verified, preparation);
+        }
+
+        var current = await sampleVerificationService.GetCurrentAsync(job.JobId, cancellationToken);
+        if (current is null)
+        {
+            throw new ExperimentSampleVerificationException(
+                "A verified current sample snapshot is required before workstation admission.",
+                ExperimentSampleVerificationIssueCodes.VerificationRequired);
+        }
+
+        return (await sampleVerificationGate.RequireVerifiedCurrentWhileMutationGateHeldAsync(
+            job.JobId,
+            current.Revision,
+            current.SnapshotHash,
+            cancellationToken), null);
+    }
+
+    private async Task ApplyTrustedWorkstationBindingAsync(
+        Guid workflowRunId,
+        ExperimentWorkstationPreparationRecord preparation,
+        CancellationToken cancellationToken)
+    {
+        var actualHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(preparation.PayloadJson)));
+        if (!string.Equals(actualHash, preparation.PayloadHash, StringComparison.Ordinal))
+            throw new ExperimentSampleVerificationException(
+                "The persisted workstation preparation payload hash is invalid.",
+                ExperimentWorkstationPreparationIssueCodes.RuntimeBindingInvalid);
+        var payload = ExperimentSchedulingPersistence.Deserialize<ExperimentWorkstationPreparationPayload?>(
+            preparation.PayloadJson,
+            null) ?? throw new ExperimentSampleVerificationException(
+                "The persisted workstation preparation payload is missing.",
+                ExperimentWorkstationPreparationIssueCodes.RuntimeBindingInvalid);
+        var barcode1 = payload.BottleBindings.Single(binding => binding.BottleNumber == 1).SampleBarcode;
+        var barcode2 = payload.BottleBindings.Single(binding => binding.BottleNumber == 2).SampleBarcode;
+        var trusted = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+        {
+            [WorkflowNodeConfigurationKeys.TaskNo] = preparation.VendorTaskNo,
+            [WorkflowTrustedWorkstationInputKeys.PreparationId] = preparation.PreparationId.ToString("D"),
+            [WorkflowTrustedWorkstationInputKeys.PreparationPayloadHash] = preparation.PayloadHash,
+            [WorkflowTrustedWorkstationInputKeys.SampleBarcode1] = barcode1,
+            [WorkflowTrustedWorkstationInputKeys.SampleBarcode2] = barcode2
+        };
+
+        var run = await database.WorkflowExecutions.SingleAsync(
+            item => item.ExecutionId == workflowRunId,
+            cancellationToken);
+        var definition = WorkflowPersistence.DeserializeDefinition(
+            run.DefinitionSnapshotJson ?? throw new ExperimentSampleVerificationException(
+                "The admitted workflow has no immutable definition snapshot.",
+                ExperimentWorkstationPreparationIssueCodes.RuntimeBindingInvalid));
+        var workstationNode = definition.Nodes.Single(node => string.Equals(
+            node.NodeTypeId,
+            WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask,
+            StringComparison.Ordinal));
+        var configuration = new Dictionary<string, string?>(workstationNode.Configuration, StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in trusted) configuration[pair.Key] = pair.Value;
+        workstationNode = workstationNode with { Configuration = configuration };
+        definition = definition with
+        {
+            Nodes = definition.Nodes.Select(node => node.Id == workstationNode.Id ? workstationNode : node).ToArray()
+        };
+        run.DefinitionSnapshotJson = WorkflowPersistence.Serialize(definition);
+
+        WorkflowNextStepRequest BindStep(WorkflowNextStepRequest step)
+        {
+            var parameters = new Dictionary<string, string?>(step.Parameters, StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in trusted) parameters[pair.Key] = pair.Value;
+            return step with { Parameters = parameters };
+        }
+
+        var result = WorkflowPersistence.DeserializeResult(run.ResultJson);
+        if (result.NextStepRequest is { } resultStep && resultStep.NodeId == workstationNode.Id)
+        {
+            var bound = BindStep(resultStep);
+            run.ResultJson = WorkflowPersistence.Serialize(result with { NextStepRequest = bound });
+            run.PendingStepJson = WorkflowPersistence.Serialize(bound);
+        }
+        else if (!string.IsNullOrWhiteSpace(run.PendingStepJson))
+        {
+            var pending = ExperimentSchedulingPersistence.Deserialize<WorkflowNextStepRequest?>(run.PendingStepJson, null);
+            if (pending?.NodeId == workstationNode.Id)
+                run.PendingStepJson = WorkflowPersistence.Serialize(BindStep(pending));
+        }
+
+        var existingNodes = await database.WorkflowNodeExecutions
+            .Where(node => node.WorkflowRunId == workflowRunId && node.NodeId == workstationNode.Id)
+            .ToListAsync(cancellationToken);
+        foreach (var node in existingNodes)
+        {
+            var inputs = new Dictionary<string, string?>(
+                WorkflowPersistence.DeserializeDetails(node.InputJson),
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in trusted) inputs[pair.Key] = pair.Value;
+            node.InputJson = WorkflowPersistence.Serialize(inputs);
+        }
     }
 
     private async Task<ExperimentJobAdmissionResult?> TryReplayAsync(
@@ -484,7 +704,9 @@ public sealed class ExperimentRuntimeAdmissionService(
         ExperimentJobAdmissionResult result,
         ExperimentJobRecord job,
         ScheduleEntryRecord schedule,
-        IReadOnlyList<WorkflowResourceLeaseRecord> leases)
+        IReadOnlyList<WorkflowResourceLeaseRecord> leases,
+        ExperimentSampleVerification? verification,
+        ExperimentWorkstationPreparationRecord? workstationPreparation)
     {
         var audit = AddAdmissionAudit(
             metadata,
@@ -494,7 +716,7 @@ public sealed class ExperimentRuntimeAdmissionService(
             ExperimentSchedulingPersistence.MapScheduleEntry(
                 schedule,
                 Array.Empty<ResourceReservation>()));
-        audit.DetailsJson = ExperimentSchedulingPersistence.Serialize(new Dictionary<string, string?>
+        var details = new Dictionary<string, string?>
         {
             ["workflowRunId"] = result.WorkflowRunId?.ToString(),
             ["leaseCount"] = leases.Count.ToString(),
@@ -502,7 +724,21 @@ public sealed class ExperimentRuntimeAdmissionService(
                 ",",
                 leases.Select(lease => $"{lease.ResourceType.ToUpperInvariant()}/{lease.ResourceId.ToUpperInvariant()}")
                     .OrderBy(value => value, StringComparer.Ordinal))
-        });
+        };
+        if (verification is not null)
+        {
+            details["verificationId"] = verification.VerificationId.ToString("D");
+            details["verificationRevision"] = verification.Revision.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            details["verificationSnapshotHash"] = verification.SnapshotHash;
+        }
+        if (workstationPreparation is not null)
+        {
+            details["workstationPreparationId"] = workstationPreparation.PreparationId.ToString("D");
+            details["workstationPreparationHash"] = workstationPreparation.PayloadHash;
+            details["workstationVendorTaskNo"] = workstationPreparation.VendorTaskNo;
+            details["workstationDeviceId"] = workstationPreparation.DeviceId;
+        }
+        audit.DetailsJson = ExperimentSchedulingPersistence.Serialize(details);
         return audit;
     }
 
@@ -635,6 +871,17 @@ public sealed class ExperimentRuntimeAdmissionService(
         string Code,
         string Message,
         IReadOnlyList<ExperimentResourceReference> Resources);
+
+    private sealed record AdmissionValidation(
+        AdmissionRejection? Rejection,
+        ExperimentSampleVerification? Verification,
+        ExperimentWorkstationPreparationRecord? WorkstationPreparation)
+    {
+        public static implicit operator AdmissionValidation(AdmissionRejection rejection) =>
+            new(rejection, null, null);
+    }
+
+    private sealed record WorkflowReference(Guid WorkflowId, int Version);
 
     private sealed class WorkflowAdmissionRejectedSignal(string code, string message) : Exception(message)
     {

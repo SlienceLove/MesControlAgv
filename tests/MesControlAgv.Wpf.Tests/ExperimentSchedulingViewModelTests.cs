@@ -1,3 +1,4 @@
+using MesControlAgv.Contracts;
 using MesControlAgv.Contracts.Experiments;
 using MesControlAgv.Contracts.Workflows;
 using MesControlAgv.Wpf.Services;
@@ -518,6 +519,689 @@ public sealed class ExperimentSchedulingViewModelTests
         Assert.Equal(ExperimentJobStatus.Scheduled, viewModel.SelectedJob!.Job.Status);
     }
 
+    [Fact]
+    public async Task Sample_verification_loads_per_selected_job_gates_workstation_admission_and_never_confirms_twice()
+    {
+        var fixture = SchedulingFixture.Create();
+        var workstationJob = fixture.Client.AddJob("B-WORK", ExperimentJobStatus.Scheduled, workstation: true);
+        var ordinaryJob = fixture.Client.AddJob("B-ORDINARY", ExperimentJobStatus.Scheduled);
+        fixture.Client.SetSchedule(Schedule(workstationJob.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        fixture.Client.SetSchedule(Schedule(ordinaryJob.JobId, fixture.Resource, fixture.WindowStart.AddHours(2), fixture.WindowStart.AddHours(3), ScheduleEntryStatus.Scheduled));
+        fixture.Client.SetVerification(workstationJob.JobId, fixture.Client.CreateVerification(workstationJob, ExperimentSampleVerificationStatus.ReadyForVerification));
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Visual verification";
+
+        await viewModel.RefreshAsync(workstationJob.JobId);
+
+        Assert.True(viewModel.SelectedJobRequiresSampleVerification);
+        Assert.Equal("待核对", viewModel.VerificationStatus);
+        Assert.Single(viewModel.SampleVerificationRows);
+        Assert.Contains(ExperimentSampleVerificationIssueCodes.PositionDuplicate, viewModel.SampleVerificationRows[0].Validation, StringComparison.Ordinal);
+        Assert.False(viewModel.CanAdmit);
+        Assert.True(viewModel.CanCompleteSampleVerification);
+
+        await viewModel.CompleteSampleVerificationAsync();
+
+        Assert.Equal("已核对", viewModel.VerificationStatus);
+        Assert.True(viewModel.CanAdmit);
+        Assert.Equal(0, fixture.Confirmation.Count);
+
+        viewModel.VerificationSampleNumber = "S-CHANGED";
+        viewModel.VerificationSampleBarcode = "BC-CHANGED";
+        viewModel.VerificationSamplePosition = "B01";
+        viewModel.VerificationSampleOrder = 2;
+        await viewModel.SaveSampleRowAsync();
+
+        Assert.Contains("核对已失效", viewModel.VerificationStatus, StringComparison.Ordinal);
+        Assert.False(viewModel.CanAdmit);
+
+        await viewModel.RefreshAsync(ordinaryJob.JobId);
+        Assert.False(viewModel.SelectedJobRequiresSampleVerification);
+        Assert.Empty(viewModel.SampleVerificationRows);
+        Assert.True(viewModel.CanAdmit);
+    }
+
+    [Theory]
+    [InlineData("business")]
+    [InlineData("barcode")]
+    [InlineData("position")]
+    [InlineData("order")]
+    public async Task Unsaved_identity_edits_immediately_block_admission_and_verification_and_reverting_restores_state(string field)
+    {
+        var fixture = SchedulingFixture.Create();
+        var job = fixture.Client.AddJob("B-UNSAVED", ExperimentJobStatus.Scheduled, workstation: true);
+        fixture.Client.SetSchedule(Schedule(job.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        var snapshot = fixture.Client.CreateVerification(job, ExperimentSampleVerificationStatus.Verified);
+        fixture.Client.SetVerification(job.JobId, snapshot);
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "check unsaved changes";
+        await viewModel.RefreshAsync(job.JobId);
+        viewModel.SelectedSampleVerificationRow = Assert.Single(viewModel.SampleVerificationRows);
+        var original = viewModel.SelectedSampleVerificationRow;
+        Assert.True(viewModel.CanAdmit);
+        void Edit(bool changed)
+        {
+            switch (field)
+            {
+                case "business": viewModel.VerificationSampleNumber = original.SampleNumber + (changed ? "-edit" : ""); break;
+                case "barcode": viewModel.VerificationSampleBarcode = original.Barcode + (changed ? "-edit" : ""); break;
+                case "position": viewModel.VerificationSamplePosition = original.Position + (changed ? "-edit" : ""); break;
+                default: viewModel.VerificationSampleOrder = original.Order + (changed ? 1 : 0); break;
+            }
+        }
+        Edit(true);
+        Assert.True(viewModel.HasUnsavedVerificationIdentityChanges);
+        Assert.False(viewModel.CanAdmit);
+        Assert.False(viewModel.AdmitCommand.CanExecute(null));
+        Assert.False(viewModel.CompleteSampleVerificationCommand.CanExecute(null));
+        Assert.Contains("未保存修改", viewModel.VerificationStatus, StringComparison.Ordinal);
+        Assert.Equal(ExperimentSampleVerificationStatus.Verified, viewModel.CurrentSampleVerification!.Status);
+        Assert.Null(fixture.Client.LastSavedVerificationRequest);
+        Edit(false);
+        Assert.False(viewModel.HasUnsavedVerificationIdentityChanges);
+        Assert.True(viewModel.CanAdmit);
+        Assert.Equal("已核对", viewModel.VerificationStatus);
+        fixture.Client.SetVerification(job.JobId, snapshot with { Status = ExperimentSampleVerificationStatus.ReadyForVerification });
+        await viewModel.RefreshAsync(job.JobId);
+        viewModel.SelectedSampleVerificationRow = Assert.Single(viewModel.SampleVerificationRows);
+        Assert.True(viewModel.CanCompleteSampleVerification);
+        Edit(true);
+        Assert.False(viewModel.CanCompleteSampleVerification);
+        Edit(false);
+        Assert.True(viewModel.CanCompleteSampleVerification);
+        viewModel.VerificationSampleDisplayName = "display only";
+        Assert.False(viewModel.HasUnsavedVerificationIdentityChanges);
+        Assert.True(viewModel.CanCompleteSampleVerification);
+        fixture.Client.SetVerification(job.JobId, snapshot);
+        await viewModel.RefreshAsync(job.JobId);
+        viewModel.SelectedSampleVerificationRow = Assert.Single(viewModel.SampleVerificationRows);
+        viewModel.VerificationSampleDisplayName = "another display name";
+        Assert.True(viewModel.CanAdmit);
+    }
+
+    [Theory]
+    [InlineData(ExperimentJobStatus.Admitted, ScheduleEntryStatus.Admitted)]
+    [InlineData(ExperimentJobStatus.Completed, ScheduleEntryStatus.Completed)]
+    [InlineData(ExperimentJobStatus.Running, ScheduleEntryStatus.Admitted)]
+    [InlineData(ExperimentJobStatus.Scheduled, ScheduleEntryStatus.Admitted)]
+    public async Task Protected_tasks_disable_sample_identity_editor_and_commands(ExperimentJobStatus jobStatus, ScheduleEntryStatus scheduleStatus)
+    {
+        var fixture = SchedulingFixture.Create();
+        var job = fixture.Client.AddJob("B-PROTECTED", jobStatus, workstation: true);
+        fixture.Client.SetSchedule(Schedule(job.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), scheduleStatus));
+        fixture.Client.SetVerification(job.JobId, fixture.Client.CreateVerification(job, ExperimentSampleVerificationStatus.ReadyForVerification));
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "late correction";
+        await viewModel.RefreshAsync(job.JobId);
+        viewModel.SelectedSampleVerificationRow = Assert.Single(viewModel.SampleVerificationRows);
+        Assert.False(viewModel.CanEditSampleIdentity);
+        Assert.False(viewModel.SaveSampleRowCommand.CanExecute(null));
+        Assert.False(viewModel.CompleteSampleVerificationCommand.CanExecute(null));
+        await viewModel.SaveSampleRowAsync();
+        Assert.Null(fixture.Client.LastSavedVerificationRequest);
+        Assert.Null(fixture.Client.LastSampleSaveRequest);
+    }
+
+    [Fact]
+    public async Task Pending_or_failed_workstation_detection_conservatively_blocks_admission()
+    {
+        var fixture = SchedulingFixture.Create();
+        var job = fixture.Client.AddJob("B-PENDING", ExperimentJobStatus.Scheduled, workstation: true);
+        fixture.Client.SetSchedule(Schedule(job.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        fixture.Client.SetVerification(job.JobId, fixture.Client.CreateVerification(job, ExperimentSampleVerificationStatus.Verified));
+        fixture.Client.HoldWorkflowVersionRequest();
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Check pending gate";
+
+        var refresh = viewModel.RefreshAsync(job.JobId);
+        await fixture.Client.WorkflowVersionRequested!.Task;
+
+        Assert.False(viewModel.IsSampleVerificationRequirementResolved);
+        Assert.False(viewModel.CanAdmit);
+        Assert.Contains("正在确认", viewModel.AdmissionVerificationMessage, StringComparison.Ordinal);
+
+        fixture.Client.ReleaseWorkflowVersionRequest(job.WorkflowId, job.WorkflowVersion);
+        await refresh;
+        Assert.True(viewModel.IsSampleVerificationRequirementResolved);
+        Assert.True(viewModel.CanAdmit);
+    }
+
+    [Fact]
+    public async Task Missing_workflow_version_keeps_sample_requirement_unresolved_and_blocks_admission()
+    {
+        var fixture = SchedulingFixture.Create();
+        var job = fixture.Client.AddJob("B-MISSING-WORKFLOW", ExperimentJobStatus.Scheduled);
+        fixture.Client.SetSchedule(Schedule(job.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        fixture.Client.ReturnNullWorkflowVersion = true;
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Conservative workflow gate";
+
+        await viewModel.RefreshAsync(job.JobId);
+
+        Assert.False(viewModel.IsSampleVerificationRequirementResolved);
+        Assert.False(viewModel.CanAdmit);
+        Assert.True(viewModel.HasError);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Workflow_version_errors_keep_sample_requirement_unresolved_and_block_admission(bool notSupported)
+    {
+        var fixture = SchedulingFixture.Create();
+        var job = fixture.Client.AddJob("B-WORKFLOW-ERROR", ExperimentJobStatus.Scheduled);
+        fixture.Client.SetSchedule(Schedule(job.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        fixture.Client.WorkflowVersionException = notSupported
+            ? new NotSupportedException("workflow endpoint unavailable")
+            : new InvalidOperationException("workflow lookup failed");
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Conservative workflow gate";
+
+        await viewModel.RefreshAsync(job.JobId);
+
+        Assert.False(viewModel.IsSampleVerificationRequirementResolved);
+        Assert.False(viewModel.CanAdmit);
+        Assert.Contains(fixture.Client.WorkflowVersionException.Message, viewModel.ErrorMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Ordinary_workflow_preserves_admission_without_loading_irrelevant_sample_projection()
+    {
+        var fixture = SchedulingFixture.Create();
+        var job = fixture.Client.AddJob("B-ORDINARY-SHORT-CIRCUIT", ExperimentJobStatus.Scheduled);
+        fixture.Client.SetSchedule(Schedule(job.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        fixture.Client.ThrowOnVerificationProjectionRead = true;
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Ordinary admission";
+
+        await viewModel.RefreshAsync(job.JobId);
+
+        Assert.True(viewModel.IsSampleVerificationRequirementResolved);
+        Assert.False(viewModel.SelectedJobRequiresSampleVerification);
+        Assert.True(viewModel.CanAdmit);
+        Assert.Equal(0, fixture.Client.CurrentVerificationReadCalls);
+        Assert.Equal(0, fixture.Client.SampleReadCalls);
+        Assert.False(viewModel.HasError);
+    }
+
+    [Fact]
+    public async Task Completion_response_for_an_old_selection_never_overwrites_the_new_selection()
+    {
+        var fixture = SchedulingFixture.Create();
+        var workstationJob = fixture.Client.AddJob("B-ASYNC", ExperimentJobStatus.Scheduled, workstation: true);
+        var ordinaryJob = fixture.Client.AddJob("B-OTHER", ExperimentJobStatus.Ready);
+        fixture.Client.SetSchedule(Schedule(workstationJob.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        fixture.Client.SetVerification(workstationJob.JobId, fixture.Client.CreateVerification(workstationJob, ExperimentSampleVerificationStatus.ReadyForVerification));
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Check stale response";
+        await viewModel.RefreshAsync(workstationJob.JobId);
+        fixture.Client.HoldCompletionRequest();
+
+        var completion = viewModel.CompleteSampleVerificationAsync();
+        await fixture.Client.CompletionRequested!.Task;
+        viewModel.SelectedJob = viewModel.TaskPool.Single(item => item.JobId == ordinaryJob.JobId);
+        fixture.Client.ReleaseCompletionRequest(workstationJob.JobId);
+        await completion;
+
+        Assert.Equal(ordinaryJob.JobId, viewModel.SelectedJob!.JobId);
+        Assert.Null(viewModel.CurrentSampleVerification);
+        Assert.Empty(viewModel.SampleVerificationRows);
+    }
+
+    [Fact]
+    public async Task Saving_a_row_snapshots_old_task_inputs_before_selection_changes()
+    {
+        var fixture = SchedulingFixture.Create();
+        var workstationJob = fixture.Client.AddJob("B-SAVE", ExperimentJobStatus.Scheduled, workstation: true);
+        var ordinaryJob = fixture.Client.AddJob("B-SAVE-OTHER", ExperimentJobStatus.Ready);
+        fixture.Client.SetSchedule(Schedule(workstationJob.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        fixture.Client.SetVerification(workstationJob.JobId, fixture.Client.CreateVerification(workstationJob, ExperimentSampleVerificationStatus.ReadyForVerification));
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Check save snapshot";
+        await viewModel.RefreshAsync(workstationJob.JobId);
+        var original = Assert.Single(viewModel.SampleVerificationRows);
+        viewModel.SelectedSampleVerificationRow = original;
+        viewModel.VerificationSampleNumber = "S-SAVED";
+        viewModel.VerificationSampleBarcode = "BC-SAVED";
+        viewModel.VerificationSamplePosition = "B01";
+        viewModel.VerificationSampleOrder = 2;
+        viewModel.OperatorName = "frozen operator";
+        viewModel.Reason = "frozen reason";
+        fixture.Client.HoldSampleSaveRequest();
+
+        var saving = viewModel.SaveSampleRowAsync();
+        await fixture.Client.SampleSaveRequested!.Task;
+        viewModel.OperatorName = "changed operator";
+        viewModel.Reason = "changed reason";
+        viewModel.SelectedJob = viewModel.TaskPool.Single(item => item.JobId == ordinaryJob.JobId);
+        fixture.Client.ReleaseSampleSaveRequest();
+        await saving;
+
+        Assert.Equal(workstationJob.JobId, fixture.Client.LastSavedVerificationJobId);
+        var saved = Assert.Single(fixture.Client.LastSavedVerificationRows!);
+        Assert.Equal("BC-SAVED", saved.SampleBarcode);
+        Assert.Equal("B01", saved.Position);
+        Assert.Equal(2, saved.Order);
+        Assert.Equal("frozen operator", fixture.Client.LastSampleSaveRequest!.Actor);
+        Assert.Equal("frozen reason", fixture.Client.LastSampleSaveRequest.Reason);
+        Assert.Equal("frozen operator", fixture.Client.LastSavedVerificationRequest!.Actor);
+        Assert.Equal("frozen reason", fixture.Client.LastSavedVerificationRequest.Reason);
+        Assert.Equal(ordinaryJob.JobId, viewModel.SelectedJob!.JobId);
+        Assert.Null(viewModel.CurrentSampleVerification);
+    }
+
+    [Fact]
+    public async Task Multi_row_sample_numbers_survive_save_and_completion()
+    {
+        var fixture = SchedulingFixture.Create();
+        var job = fixture.Client.AddJob("B-MULTI", ExperimentJobStatus.Scheduled, workstation: true);
+        fixture.Client.SetSchedule(Schedule(job.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        fixture.Client.SetVerification(job.JobId, fixture.Client.CreateTwoRowVerification(job, ExperimentSampleVerificationStatus.ReadyForVerification));
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "multi rows";
+        await viewModel.RefreshAsync(job.JobId);
+        Assert.Equal(["S-B-MULTI-1", "S-B-MULTI-2"], viewModel.SampleVerificationRows.Select(row => row.SampleNumber).ToArray());
+
+        viewModel.SelectedSampleVerificationRow = viewModel.SampleVerificationRows[0];
+        await viewModel.SaveSampleRowAsync();
+
+        Assert.NotNull(fixture.Client.LastSampleSaveRequest);
+        Assert.Equal(string.Empty, fixture.Client.LastSavedVerificationRows![1].BusinessSampleId);
+        Assert.Equal(["S-B-MULTI-1", "S-B-MULTI-2"], viewModel.SampleVerificationRows.Select(row => row.SampleNumber).ToArray());
+        await viewModel.CompleteSampleVerificationAsync();
+        Assert.Equal(["S-B-MULTI-1", "S-B-MULTI-2"], viewModel.SampleVerificationRows.Select(row => row.SampleNumber).ToArray());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Failed_snapshot_save_and_failed_authoritative_reload_clears_cached_verified_state(bool failCurrentReload)
+    {
+        var fixture = SchedulingFixture.Create();
+        var job = fixture.Client.AddJob("B-RELOAD-FAIL", ExperimentJobStatus.Scheduled, workstation: true);
+        fixture.Client.SetSchedule(Schedule(job.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        fixture.Client.SetVerification(job.JobId, fixture.Client.CreateVerification(job, ExperimentSampleVerificationStatus.Verified));
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Force authoritative reload";
+        await viewModel.RefreshAsync(job.JobId);
+        viewModel.SelectedSampleVerificationRow = Assert.Single(viewModel.SampleVerificationRows);
+        viewModel.VerificationSampleBarcode = "BC-CHANGED-BEFORE-FAILURE";
+        fixture.Client.SnapshotSaveException = new InvalidOperationException("snapshot save failed");
+        fixture.Client.FailCurrentVerificationReloadAfterSave = failCurrentReload;
+        fixture.Client.FailSampleReloadAfterSave = !failCurrentReload;
+
+        await viewModel.SaveSampleRowAsync();
+
+        Assert.NotNull(fixture.Client.LastSampleSaveRequest);
+        Assert.NotNull(fixture.Client.LastSavedVerificationRequest);
+        Assert.Null(viewModel.CurrentSampleVerification);
+        Assert.False(viewModel.IsSampleVerificationRequirementResolved);
+        Assert.False(viewModel.CanAdmit);
+        Assert.Contains("snapshot save failed", viewModel.ErrorMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Old_job_failure_cannot_pollute_new_job_operation_or_release_its_busy_state()
+    {
+        var fixture = SchedulingFixture.Create();
+        var oldJob = fixture.Client.AddJob("B-OLD-FAIL", ExperimentJobStatus.Scheduled, workstation: true);
+        var newJob = fixture.Client.AddJob("B-NEW-BUSY", ExperimentJobStatus.Ready, workstation: true);
+        fixture.Client.SetSchedule(Schedule(oldJob.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        fixture.Client.SetVerification(oldJob.JobId, fixture.Client.CreateVerification(oldJob, ExperimentSampleVerificationStatus.ReadyForVerification));
+        fixture.Client.SetVerification(newJob.JobId, fixture.Client.CreateVerification(newJob, ExperimentSampleVerificationStatus.ReadyForVerification));
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Operation ownership";
+        await viewModel.RefreshAsync(oldJob.JobId);
+        viewModel.SelectedSampleVerificationRow = Assert.Single(viewModel.SampleVerificationRows);
+        fixture.Client.HoldSampleSaveRequest();
+
+        var oldSave = viewModel.SaveSampleRowAsync();
+        await fixture.Client.SampleSaveRequested!.Task;
+        viewModel.SelectedJob = viewModel.TaskPool.Single(item => item.JobId == newJob.JobId);
+        Assert.False(viewModel.IsBusy);
+        Assert.Equal(string.Empty, viewModel.StatusMessage);
+        fixture.Client.HoldCompletionRequest();
+
+        var newCompletion = viewModel.CompleteSampleVerificationAsync();
+        await fixture.Client.CompletionRequested!.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.True(viewModel.IsBusy);
+        var newJobStatus = viewModel.StatusMessage;
+        fixture.Client.FailSampleSaveRequest(new InvalidOperationException("old job save failed"));
+        await oldSave;
+
+        Assert.True(viewModel.IsBusy);
+        Assert.Equal(string.Empty, viewModel.ErrorMessage);
+        Assert.Equal(newJobStatus, viewModel.StatusMessage);
+
+        fixture.Client.ReleaseCompletionRequest(newJob.JobId);
+        await newCompletion;
+        Assert.False(viewModel.IsBusy);
+    }
+
+    [Fact]
+    public async Task Old_job_success_leaves_no_status_text_after_selection_changes()
+    {
+        var fixture = SchedulingFixture.Create();
+        var oldJob = fixture.Client.AddJob("B-OLD-SUCCESS", ExperimentJobStatus.Scheduled, workstation: true);
+        var newJob = fixture.Client.AddJob("B-NEW-IDLE", ExperimentJobStatus.Ready);
+        fixture.Client.SetSchedule(Schedule(oldJob.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        fixture.Client.SetVerification(oldJob.JobId, fixture.Client.CreateVerification(oldJob, ExperimentSampleVerificationStatus.ReadyForVerification));
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Operation ownership";
+        await viewModel.RefreshAsync(oldJob.JobId);
+        fixture.Client.HoldCompletionRequest();
+
+        var oldCompletion = viewModel.CompleteSampleVerificationAsync();
+        await fixture.Client.CompletionRequested!.Task;
+        viewModel.SelectedJob = viewModel.TaskPool.Single(item => item.JobId == newJob.JobId);
+        fixture.Client.ReleaseCompletionRequest(oldJob.JobId);
+        await oldCompletion;
+
+        Assert.Equal(newJob.JobId, viewModel.SelectedJob!.JobId);
+        Assert.Equal(string.Empty, viewModel.StatusMessage);
+        Assert.Equal(string.Empty, viewModel.ErrorMessage);
+        Assert.False(viewModel.IsBusy);
+    }
+
+    [Fact]
+    public async Task Old_scheduling_success_cannot_reselect_over_or_end_busy_for_the_new_job()
+    {
+        var fixture = SchedulingFixture.Create();
+        var oldJob = fixture.Client.AddJob("B-OLD-SCHEDULE", ExperimentJobStatus.Ready);
+        var newJob = fixture.Client.AddJob("B-NEW-VERIFY", ExperimentJobStatus.Ready, workstation: true);
+        fixture.Client.SetVerification(newJob.JobId, fixture.Client.CreateVerification(newJob, ExperimentSampleVerificationStatus.ReadyForVerification));
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Cross-command ownership";
+        await viewModel.RefreshAsync(oldJob.JobId);
+        fixture.Client.HoldScheduleRequest();
+
+        var oldSchedule = viewModel.ScheduleAsync();
+        await fixture.Client.ScheduleRequested!.Task;
+        viewModel.SelectedJob = viewModel.TaskPool.Single(item => item.JobId == newJob.JobId);
+        fixture.Client.HoldCompletionRequest();
+        var newCompletion = viewModel.CompleteSampleVerificationAsync();
+        await fixture.Client.CompletionRequested!.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        var newJobStatus = viewModel.StatusMessage;
+
+        fixture.Client.ReleaseScheduleRequest();
+        await oldSchedule;
+
+        Assert.Equal(newJob.JobId, viewModel.SelectedJob!.JobId);
+        Assert.True(viewModel.IsBusy);
+        Assert.Equal(newJobStatus, viewModel.StatusMessage);
+        Assert.Equal(string.Empty, viewModel.ErrorMessage);
+
+        fixture.Client.ReleaseCompletionRequest(newJob.JobId);
+        await newCompletion;
+        Assert.False(viewModel.IsBusy);
+    }
+
+    [Fact]
+    public async Task Configured_legacy_preparation_lookup_blocks_admission_while_pending_and_after_failure_but_confirmed_absence_restores_it()
+    {
+        var fixture = SchedulingFixture.Create();
+        fixture.Client.ConfigureWorkstationPreparation = true;
+        var job = fixture.Client.AddJob("B-PREPARATION-LOOKUP", ExperimentJobStatus.Scheduled, workstation: true);
+        fixture.Client.SetSchedule(Schedule(job.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        fixture.Client.SetVerification(job.JobId, fixture.Client.CreateVerification(job, ExperimentSampleVerificationStatus.Verified));
+        fixture.Client.HoldCurrentPreparationRequest();
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Configured legacy lookup gate";
+
+        var refresh = viewModel.RefreshAsync(job.JobId);
+        await fixture.Client.CurrentPreparationRequested!.Task;
+        Assert.True(viewModel.WorkstationPreparation.IsApplicable);
+        Assert.False(viewModel.WorkstationPreparation.IsResolved);
+        Assert.False(viewModel.CanAdmit);
+        Assert.False(viewModel.AdmitCommand.CanExecute(null));
+        Assert.Equal(0, fixture.Client.AdmitCalls);
+
+        fixture.Client.FailCurrentPreparationRequest(new InvalidOperationException("current preparation failed"));
+        await refresh;
+        Assert.False(viewModel.WorkstationPreparation.IsResolved);
+        Assert.False(viewModel.CanAdmit);
+        Assert.False(viewModel.AdmitCommand.CanExecute(null));
+        Assert.Contains("current preparation failed", viewModel.WorkstationPreparation.Message, StringComparison.Ordinal);
+
+        fixture.Client.ClearCurrentPreparationHold();
+        await viewModel.RefreshAsync(job.JobId);
+        Assert.True(viewModel.WorkstationPreparation.IsResolved);
+        Assert.False(viewModel.WorkstationPreparation.RequiresPreparation);
+        Assert.True(viewModel.CanAdmit);
+        Assert.True(viewModel.AdmitCommand.CanExecute(null));
+        Assert.Equal(0, fixture.Client.AdmitCalls);
+        Assert.Equal(0, fixture.Client.WorkflowExecuteCalls);
+        Assert.Equal(0, fixture.Client.DeviceCommandCalls);
+    }
+
+    [Fact]
+    public async Task Imported_matching_preparation_allows_admission_but_each_pin_or_dirty_transfer_independently_blocks_without_actions()
+    {
+        var fixture = SchedulingFixture.Create();
+        fixture.Client.ConfigureWorkstationPreparation = true;
+        var job = fixture.Client.AddJob("B-IMPORTED-GATES", ExperimentJobStatus.Scheduled, workstation: true);
+        fixture.Client.SetSchedule(Schedule(job.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        var verified = fixture.Client.CreateVerification(job, ExperimentSampleVerificationStatus.Verified);
+        fixture.Client.SetVerification(job.JobId, verified);
+        fixture.Client.SetPreparation(job.JobId, fixture.Client.CreatePreparation(job, verified, ExperimentWorkstationPreparationStatus.Imported));
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Imported preparation gates";
+
+        await viewModel.RefreshAsync(job.JobId);
+        Assert.True(viewModel.WorkstationPreparation.IsVerificationCurrent);
+        Assert.True(viewModel.CanAdmit);
+
+        foreach (var drifted in new[]
+                 {
+                     verified with { VerificationId = Guid.NewGuid() },
+                     verified with { Revision = verified.Revision + 1 },
+                     verified with { SnapshotHash = verified.SnapshotHash + "-changed" }
+                 })
+        {
+            fixture.Client.SetVerification(job.JobId, drifted);
+            await viewModel.RefreshAsync(job.JobId);
+            Assert.False(viewModel.WorkstationPreparation.IsVerificationCurrent);
+            Assert.False(viewModel.CanAdmit);
+            fixture.Client.SetVerification(job.JobId, verified);
+            await viewModel.RefreshAsync(job.JobId);
+            Assert.True(viewModel.CanAdmit);
+        }
+
+        Assert.NotEmpty(viewModel.WorkstationPreparation.Transfers);
+        viewModel.WorkstationPreparation.Transfers[0].VolumeMicroliters++;
+        Assert.True(viewModel.WorkstationPreparation.IsDirty);
+        Assert.False(viewModel.CanAdmit);
+        await viewModel.RefreshAsync(job.JobId);
+        Assert.False(viewModel.WorkstationPreparation.IsDirty);
+        Assert.True(viewModel.CanAdmit);
+        Assert.Equal(0, fixture.Client.AdmitCalls);
+        Assert.Equal(0, fixture.Client.WorkflowExecuteCalls);
+        Assert.Equal(0, fixture.Client.DeviceCommandCalls);
+    }
+
+    [Fact]
+    public async Task Blank_sample_registration_keeps_one_identity_across_snapshot_failure_retry_and_later_row_edit()
+    {
+        var fixture = SchedulingFixture.Create();
+        var job = fixture.Client.AddJob("B-STABLE-BLANK", ExperimentJobStatus.Scheduled, workstation: true);
+        fixture.Client.SetSchedule(Schedule(job.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Stable generated identity";
+        await viewModel.RefreshAsync(job.JobId);
+        viewModel.VerificationSamplePosition = "A01";
+        viewModel.VerificationSampleOrder = 1;
+        fixture.Client.SnapshotSaveException = new InvalidOperationException("snapshot stage failed");
+
+        await viewModel.SaveSampleRowAsync();
+
+        var first = Assert.Single(fixture.Client.SampleSaveHistory);
+        Assert.NotEqual(Guid.Empty, first.Sample.SampleId);
+        Assert.False(string.IsNullOrWhiteSpace(first.Sample.BusinessSampleId));
+        Assert.False(string.IsNullOrWhiteSpace(first.Sample.Barcode));
+        Assert.Contains("snapshot stage failed", viewModel.ErrorMessage, StringComparison.Ordinal);
+
+        fixture.Client.SnapshotSaveException = null;
+        await viewModel.SaveSampleRowAsync();
+        var second = fixture.Client.SampleSaveHistory[1];
+        Assert.Equal(first.Sample.SampleId, second.Sample.SampleId);
+        Assert.Equal(first.Sample.BusinessSampleId, second.Sample.BusinessSampleId);
+        Assert.Equal(first.Sample.Barcode, second.Sample.Barcode);
+        Assert.Equal(1, fixture.Client.RegisteredSampleCount);
+        Assert.Single(viewModel.SampleVerificationRows);
+
+        viewModel.VerificationSamplePosition = "A02";
+        await viewModel.SaveSampleRowAsync();
+        var third = fixture.Client.SampleSaveHistory[2];
+        Assert.Equal(first.Sample.SampleId, third.Sample.SampleId);
+        Assert.Equal(first.Sample.BusinessSampleId, third.Sample.BusinessSampleId);
+        Assert.Equal(first.Sample.Barcode, third.Sample.Barcode);
+        Assert.Equal(1, fixture.Client.RegisteredSampleCount);
+        var finalRow = Assert.Single(fixture.Client.LastSavedVerificationRows!);
+        Assert.Equal(first.Sample.SampleId, finalRow.SampleId);
+        Assert.Equal("A02", finalRow.Position);
+    }
+
+    [Theory]
+    [InlineData("ordinary")]
+    [InlineData("null")]
+    [InlineData("delayed-workstation")]
+    public async Task Selection_transition_synchronously_clears_the_previous_preparation_and_disables_stale_writes(string transition)
+    {
+        var fixture = SchedulingFixture.Create();
+        fixture.Client.ConfigureWorkstationPreparation = true;
+        var a = fixture.Client.AddJob("B-PREP-A", ExperimentJobStatus.Scheduled, workstation: true);
+        var ordinary = fixture.Client.AddJob("B-ORDINARY", ExperimentJobStatus.Ready);
+        var b = fixture.Client.AddJob("B-PREP-B", ExperimentJobStatus.Scheduled, workstation: true);
+        fixture.Client.SetSchedule(Schedule(a.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        fixture.Client.SetSchedule(Schedule(b.JobId, fixture.Resource, fixture.WindowStart.AddHours(2), fixture.WindowStart.AddHours(3), ScheduleEntryStatus.Scheduled));
+        var verificationA = fixture.Client.CreateVerification(a, ExperimentSampleVerificationStatus.Verified);
+        fixture.Client.SetVerification(a.JobId, verificationA);
+        fixture.Client.SetVerification(b.JobId, fixture.Client.CreateVerification(b, ExperimentSampleVerificationStatus.Verified));
+        fixture.Client.SetPreparation(a.JobId, fixture.Client.CreatePreparation(a, verificationA, ExperimentWorkstationPreparationStatus.Prepared));
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Selection invalidation";
+        await viewModel.RefreshAsync(a.JobId);
+        Assert.True(viewModel.WorkstationPreparation.ImportCommand.CanExecute(null));
+
+        Task? delayedRefresh = null;
+        switch (transition)
+        {
+            case "ordinary":
+                viewModel.SelectedJob = viewModel.TaskPool.Single(item => item.JobId == ordinary.JobId);
+                break;
+            case "null":
+                viewModel.SelectedJob = null;
+                break;
+            default:
+                fixture.Client.HoldWorkflowVersionRequest();
+                delayedRefresh = viewModel.RefreshAsync(b.JobId);
+                await fixture.Client.WorkflowVersionRequested!.Task;
+                break;
+        }
+
+        Assert.Null(viewModel.WorkstationPreparation.Preparation);
+        Assert.Empty(viewModel.WorkstationPreparation.Transfers);
+        Assert.False(viewModel.WorkstationPreparation.SaveCommand.CanExecute(null));
+        Assert.False(viewModel.WorkstationPreparation.ImportCommand.CanExecute(null));
+        Assert.False(viewModel.CanAdmit);
+        await viewModel.WorkstationPreparation.SaveAsync();
+        await viewModel.WorkstationPreparation.ImportAsync();
+        Assert.Equal(0, fixture.Client.PrepareCalls);
+        Assert.Equal(0, fixture.Client.ImportCalls);
+
+        if (delayedRefresh is not null)
+        {
+            fixture.Client.ReleaseWorkflowVersionRequest(b.WorkflowId, b.WorkflowVersion);
+            await delayedRefresh;
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Late_A_save_after_selecting_delayed_B_cannot_restore_state_enable_buttons_or_clear_B_ownership(bool staleFailure)
+    {
+        var fixture = SchedulingFixture.Create();
+        fixture.Client.ConfigureWorkstationPreparation = true;
+        var a = fixture.Client.AddJob("B-SAVE-A", ExperimentJobStatus.Scheduled, workstation: true);
+        var b = fixture.Client.AddJob("B-SAVE-B", ExperimentJobStatus.Scheduled, workstation: true);
+        fixture.Client.SetSchedule(Schedule(a.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        fixture.Client.SetSchedule(Schedule(b.JobId, fixture.Resource, fixture.WindowStart.AddHours(2), fixture.WindowStart.AddHours(3), ScheduleEntryStatus.Scheduled));
+        var verificationA = fixture.Client.CreateVerification(a, ExperimentSampleVerificationStatus.Verified);
+        fixture.Client.SetVerification(a.JobId, verificationA);
+        fixture.Client.SetVerification(b.JobId, fixture.Client.CreateVerification(b, ExperimentSampleVerificationStatus.Verified));
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Stale save ownership";
+        await viewModel.RefreshAsync(a.JobId);
+        await viewModel.WorkstationPreparation.BeginTemplateModeAsync();
+        var sample = Assert.Single(viewModel.SampleVerificationRows);
+        viewModel.WorkstationPreparation.BottleBindings[0].SelectedSample = sample;
+        viewModel.WorkstationPreparation.BottleBindings[1].SelectedSample = sample;
+        viewModel.WorkstationPreparation.BottleBindings[0].SelectedSource = Assert.Single(viewModel.WorkstationPreparation.SourceKeys);
+        var pendingSave = fixture.Client.HoldNextPrepare();
+        var save = viewModel.WorkstationPreparation.SaveAsync();
+        await pendingSave.Requested.Task;
+
+        fixture.Client.HoldWorkflowVersionRequest();
+        var refreshB = viewModel.RefreshAsync(b.JobId);
+        await fixture.Client.WorkflowVersionRequested!.Task;
+        Assert.Null(viewModel.WorkstationPreparation.Preparation);
+        Assert.False(viewModel.WorkstationPreparation.IsResolved);
+        Assert.False(viewModel.CanAdmit);
+        var bMessage = viewModel.WorkstationPreparation.Message;
+
+        if (staleFailure) pendingSave.Gate.SetException(new InvalidOperationException("late A save failure"));
+        else pendingSave.Gate.SetResult(fixture.Client.CreatePreparation(a, verificationA, ExperimentWorkstationPreparationStatus.Prepared));
+        await save;
+        Assert.Null(viewModel.WorkstationPreparation.Preparation);
+        Assert.False(viewModel.WorkstationPreparation.SaveCommand.CanExecute(null));
+        Assert.False(viewModel.WorkstationPreparation.ImportCommand.CanExecute(null));
+        Assert.Equal(bMessage, viewModel.WorkstationPreparation.Message);
+        Assert.Equal(1, fixture.Client.PrepareCalls);
+
+        fixture.Client.ReleaseWorkflowVersionRequest(b.WorkflowId, b.WorkflowVersion);
+        await refreshB;
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Late_A_import_after_selecting_ordinary_job_cannot_restore_state_enable_buttons_or_write_again(bool staleFailure)
+    {
+        var fixture = SchedulingFixture.Create();
+        fixture.Client.ConfigureWorkstationPreparation = true;
+        var a = fixture.Client.AddJob("B-IMPORT-A", ExperimentJobStatus.Scheduled, workstation: true);
+        var ordinary = fixture.Client.AddJob("B-IMPORT-ORDINARY", ExperimentJobStatus.Ready);
+        fixture.Client.SetSchedule(Schedule(a.JobId, fixture.Resource, fixture.WindowStart, fixture.WindowStart.AddHours(1), ScheduleEntryStatus.Scheduled));
+        var verificationA = fixture.Client.CreateVerification(a, ExperimentSampleVerificationStatus.Verified);
+        var preparationA = fixture.Client.CreatePreparation(a, verificationA, ExperimentWorkstationPreparationStatus.Prepared);
+        fixture.Client.SetVerification(a.JobId, verificationA);
+        fixture.Client.SetPreparation(a.JobId, preparationA);
+        using var viewModel = fixture.CreateViewModel();
+        viewModel.Reason = "Stale import ownership";
+        await viewModel.RefreshAsync(a.JobId);
+        var pendingImport = fixture.Client.HoldNextImport();
+        var import = viewModel.WorkstationPreparation.ImportAsync();
+        await pendingImport.Requested.Task;
+
+        viewModel.SelectedJob = viewModel.TaskPool.Single(item => item.JobId == ordinary.JobId);
+        Assert.Null(viewModel.WorkstationPreparation.Preparation);
+        Assert.False(viewModel.WorkstationPreparation.ImportCommand.CanExecute(null));
+        var ordinaryMessage = viewModel.WorkstationPreparation.Message;
+        if (staleFailure) pendingImport.Gate.SetException(new InvalidOperationException("late A import failure"));
+        else pendingImport.Gate.SetResult(preparationA with { Status = ExperimentWorkstationPreparationStatus.Imported });
+        await import;
+
+        Assert.Null(viewModel.WorkstationPreparation.Preparation);
+        Assert.Empty(viewModel.WorkstationPreparation.Transfers);
+        Assert.False(viewModel.WorkstationPreparation.SaveCommand.CanExecute(null));
+        Assert.False(viewModel.WorkstationPreparation.ImportCommand.CanExecute(null));
+        Assert.Equal(ordinaryMessage, viewModel.WorkstationPreparation.Message);
+        Assert.Equal(1, fixture.Client.ImportCalls);
+        await viewModel.WorkstationPreparation.ImportAsync();
+        Assert.Equal(1, fixture.Client.ImportCalls);
+    }
+
     private static ExperimentResourceReference ResourceRef(string type, string id) => new()
     {
         ResourceType = type,
@@ -595,10 +1279,22 @@ public sealed class ExperimentSchedulingViewModelTests
         }
     }
 
+    private sealed class PendingPreparationWrite
+    {
+        public TaskCompletionSource Requested { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<ExperimentWorkstationPreparation> Gate { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
     private sealed class SchedulingClientStub : IMesClient
     {
         private readonly List<ExperimentJob> _jobs = [];
         private readonly List<ScheduleEntry> _schedules = [];
+        private readonly Dictionary<Guid, ExperimentSampleVerification> _verifications = [];
+        private readonly Dictionary<Guid, ExperimentSample> _samples = [];
+        private readonly Dictionary<Guid, ExperimentWorkstationPreparation?> _preparations = [];
+        private readonly Queue<PendingPreparationWrite> _pendingPrepareWrites = [];
+        private readonly Queue<PendingPreparationWrite> _pendingImportWrites = [];
+        private readonly HashSet<Guid> _workstationWorkflowIds = [];
         private readonly ExperimentPlan _plan;
         private readonly ExperimentResourceAvailability _availability;
         public SchedulingClientStub(ExperimentResourceReference resource)
@@ -634,17 +1330,124 @@ public sealed class ExperimentSchedulingViewModelTests
         public int AdmitCalls { get; private set; }
         public int WorkflowExecuteCalls { get; private set; }
         public int DeviceCommandCalls { get; private set; }
+        public int PrepareCalls { get; private set; }
+        public int ImportCalls { get; private set; }
         public bool RejectAdmission { get; set; }
         public Guid AdmittedRunId { get; } = Guid.NewGuid();
+        public TaskCompletionSource<WorkflowVersion?>? PendingWorkflowVersion { get; private set; }
+        public TaskCompletionSource<bool>? WorkflowVersionRequested { get; private set; }
+        public TaskCompletionSource<ExperimentSampleVerification>? PendingCompletion { get; private set; }
+        public TaskCompletionSource<bool>? CompletionRequested { get; private set; }
+        public TaskCompletionSource<ExperimentSample>? PendingSampleSave { get; private set; }
+        public TaskCompletionSource<bool>? SampleSaveRequested { get; private set; }
+        public TaskCompletionSource<ScheduleEntry>? PendingSchedule { get; private set; }
+        public TaskCompletionSource<bool>? ScheduleRequested { get; private set; }
+        public ScheduleEntry? PendingScheduleResult { get; private set; }
+        public ExperimentSample? PendingSample { get; private set; }
+        public Guid? LastSavedVerificationJobId { get; private set; }
+        public IReadOnlyList<ExperimentSampleTaskRow>? LastSavedVerificationRows { get; private set; }
+        public SaveExperimentSampleRequest? LastSampleSaveRequest { get; private set; }
+        public SaveExperimentSampleVerificationRequest? LastSavedVerificationRequest { get; private set; }
+        public bool ReturnNullWorkflowVersion { get; set; }
+        public Exception? WorkflowVersionException { get; set; }
+        public bool ThrowOnVerificationProjectionRead { get; set; }
+        public int CurrentVerificationReadCalls { get; private set; }
+        public int SampleReadCalls { get; private set; }
+        public Exception? SnapshotSaveException { get; set; }
+        public bool FailCurrentVerificationReloadAfterSave { get; set; }
+        public bool FailSampleReloadAfterSave { get; set; }
+        public bool ConfigureWorkstationPreparation { get; set; }
+        public TaskCompletionSource<ExperimentWorkstationPreparation?>? PendingCurrentPreparation { get; private set; }
+        public TaskCompletionSource<bool>? CurrentPreparationRequested { get; private set; }
+        public List<SaveExperimentSampleRequest> SampleSaveHistory { get; } = [];
+        public int RegisteredSampleCount => _samples.Count;
 
-        public ExperimentJob AddJob(string batch, ExperimentJobStatus status)
+        public void HoldWorkflowVersionRequest()
         {
+            PendingWorkflowVersion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            WorkflowVersionRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        public void HoldCurrentPreparationRequest()
+        {
+            PendingCurrentPreparation = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            CurrentPreparationRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        public PendingPreparationWrite HoldNextPrepare()
+        {
+            var pending = new PendingPreparationWrite();
+            _pendingPrepareWrites.Enqueue(pending);
+            return pending;
+        }
+
+        public PendingPreparationWrite HoldNextImport()
+        {
+            var pending = new PendingPreparationWrite();
+            _pendingImportWrites.Enqueue(pending);
+            return pending;
+        }
+
+        public void FailCurrentPreparationRequest(Exception exception) =>
+            PendingCurrentPreparation!.SetException(exception);
+
+        public void ClearCurrentPreparationHold()
+        {
+            PendingCurrentPreparation = null;
+            CurrentPreparationRequested = null;
+        }
+
+        public void ReleaseWorkflowVersionRequest(Guid workflowId, int version) =>
+            PendingWorkflowVersion!.SetResult(CreateWorkflowVersion(workflowId, version));
+
+        public void HoldCompletionRequest()
+        {
+            PendingCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            CompletionRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        public void HoldSampleSaveRequest()
+        {
+            PendingSampleSave = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            SampleSaveRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        public void HoldScheduleRequest()
+        {
+            PendingSchedule = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            ScheduleRequested = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        public void ReleaseScheduleRequest() =>
+            PendingSchedule!.SetResult(PendingScheduleResult!);
+
+        public void ReleaseSampleSaveRequest()
+        {
+            _samples[PendingSample!.SampleId] = PendingSample;
+            PendingSampleSave!.SetResult(PendingSample);
+        }
+
+        public void FailSampleSaveRequest(Exception exception) =>
+            PendingSampleSave!.SetException(exception);
+
+        public void ReleaseCompletionRequest(Guid jobId)
+        {
+            var current = _verifications[jobId];
+            var completed = current with { Status = ExperimentSampleVerificationStatus.Verified, VerifiedBy = "operator", VerifiedAt = DateTimeOffset.Now };
+            _verifications[jobId] = completed;
+            PendingCompletion!.SetResult(completed);
+        }
+
+        public ExperimentJob AddJob(string batch, ExperimentJobStatus status, bool workstation = false)
+        {
+            var workflowId = workstation ? Guid.NewGuid() : _plan.WorkflowId;
+            if (workstation) _workstationWorkflowIds.Add(workflowId);
             var job = new ExperimentJob
             {
                 JobId = Guid.NewGuid(),
                 PlanId = _plan.PlanId,
                 PlanVersion = _plan.Version,
-                WorkflowId = _plan.WorkflowId,
+                WorkflowId = workflowId,
                 WorkflowVersion = _plan.WorkflowVersion,
                 SampleBatchId = batch,
                 Status = status,
@@ -654,6 +1457,102 @@ public sealed class ExperimentSchedulingViewModelTests
             UpsertJob(job);
             return job;
         }
+
+        public ExperimentSampleVerification CreateVerification(ExperimentJob job, ExperimentSampleVerificationStatus status)
+        {
+            var sample = new ExperimentSample
+            {
+                SampleId = Guid.NewGuid(), BusinessSampleId = "S-" + job.SampleBatchId,
+                BatchId = job.SampleBatchId, Barcode = "BC-" + job.SampleBatchId,
+                DisplayName = "样品 " + job.SampleBatchId, Status = ExperimentSampleStatus.Active
+            };
+            _samples[sample.SampleId] = sample;
+            var row = new ExperimentSampleTaskRow
+            {
+                RowId = Guid.NewGuid(), SampleId = sample.SampleId, SampleBarcode = sample.Barcode,
+                Position = "A01", DisplayName = sample.DisplayName, Order = 1
+            };
+            return new ExperimentSampleVerification
+            {
+                VerificationId = Guid.NewGuid(), ExperimentJobId = job.JobId, Revision = 1, Status = status,
+                Rows = [row], SnapshotHash = "HASH-" + job.JobId.ToString("N"),
+                ValidationIssues = [new ExperimentSampleVerificationValidationIssue
+                {
+                    RowId = row.RowId, Order = row.Order,
+                    Code = ExperimentSampleVerificationIssueCodes.PositionDuplicate, Message = "Position must be unique."
+                }]
+            };
+        }
+
+        public ExperimentSampleVerification CreateTwoRowVerification(ExperimentJob job, ExperimentSampleVerificationStatus status)
+        {
+            var first = CreateVerification(job, status);
+            _samples[first.Rows[0].SampleId] = _samples[first.Rows[0].SampleId] with
+            {
+                BusinessSampleId = "S-" + job.SampleBatchId + "-1"
+            };
+            var second = new ExperimentSample
+            {
+                SampleId = Guid.NewGuid(), BusinessSampleId = "S-" + job.SampleBatchId + "-2", BatchId = job.SampleBatchId,
+                Barcode = "BC-" + job.SampleBatchId + "-2", DisplayName = "second display", Status = ExperimentSampleStatus.Active
+            };
+            _samples[second.SampleId] = second;
+            return first with { Rows = [first.Rows[0] with { BusinessSampleId = string.Empty }, new ExperimentSampleTaskRow
+            {
+                RowId = Guid.NewGuid(), SampleId = second.SampleId, BusinessSampleId = string.Empty, SampleBarcode = second.Barcode,
+                Position = "A02", DisplayName = second.DisplayName, Order = 2
+            }] };
+        }
+
+        public void SetVerification(Guid jobId, ExperimentSampleVerification verification) => _verifications[jobId] = verification;
+
+        public ExperimentWorkstationPreparation CreatePreparation(
+            ExperimentJob job,
+            ExperimentSampleVerification verification,
+            ExperimentWorkstationPreparationStatus status)
+        {
+            var row = verification.Rows.Single();
+            var sample = _samples[row.SampleId];
+            var transfer = new SampleWorkstationTransferRow("L", "T", 1, 1, "SRC", 1, 1, "OUT", 2, 2, 10);
+            var source = new WorkstationTemplateSourceKey { Module = transfer.SourceModule, X = transfer.SourceX, Y = transfer.SourceY };
+            return new ExperimentWorkstationPreparation
+            {
+                PreparationId = Guid.NewGuid(),
+                ExperimentJobId = job.JobId,
+                Revision = 1,
+                VerificationId = verification.VerificationId,
+                VerificationRevision = verification.Revision,
+                VerificationSnapshotHash = verification.SnapshotHash,
+                Status = status,
+                Payload = new ExperimentWorkstationPreparationPayload
+                {
+                    Transfers = [new PreparedWorkstationTransfer
+                    {
+                        Order = 1, Transfer = transfer, BottleNumber = 1, VerificationRowId = row.RowId,
+                        SourceSampleId = sample.SampleId, SourceBusinessSampleId = sample.BusinessSampleId,
+                        SourceSampleBarcode = sample.Barcode
+                    }],
+                    BottleBindings =
+                    [
+                        new PreparedWorkstationBottleBinding
+                        {
+                            BottleNumber = 1, IsUsedByTemplate = true, TemplateSource = source,
+                            VerificationRowId = row.RowId, SampleId = sample.SampleId,
+                            BusinessSampleId = sample.BusinessSampleId, SampleBarcode = sample.Barcode
+                        },
+                        new PreparedWorkstationBottleBinding
+                        {
+                            BottleNumber = 2, IsUsedByTemplate = false, VerificationRowId = row.RowId,
+                            SampleId = sample.SampleId, BusinessSampleId = sample.BusinessSampleId,
+                            SampleBarcode = sample.Barcode
+                        }
+                    ]
+                }
+            };
+        }
+
+        public void SetPreparation(Guid jobId, ExperimentWorkstationPreparation? preparation) =>
+            _preparations[jobId] = preparation;
 
         public void SetSchedule(ScheduleEntry schedule)
         {
@@ -683,6 +1582,140 @@ public sealed class ExperimentSchedulingViewModelTests
 
         public Task<IReadOnlyList<ExperimentSchedulingAuditEntry>> GetExperimentSchedulingAuditsAsync(Guid? planId, Guid? experimentJobId, Guid? scheduleEntryId, int limit, CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<ExperimentSchedulingAuditEntry>>(Audits.Take(limit).ToArray());
+
+        public Task<WorkflowVersion?> GetWorkflowVersionAsync(Guid workflowId, int version, CancellationToken cancellationToken)
+        {
+            if (WorkflowVersionException is not null)
+                return Task.FromException<WorkflowVersion?>(WorkflowVersionException);
+            if (PendingWorkflowVersion is not null)
+            {
+                WorkflowVersionRequested!.TrySetResult(true);
+                return PendingWorkflowVersion.Task;
+            }
+            if (ReturnNullWorkflowVersion)
+                return Task.FromResult<WorkflowVersion?>(null);
+            return Task.FromResult<WorkflowVersion?>(CreateWorkflowVersion(workflowId, version));
+        }
+
+        private WorkflowVersion CreateWorkflowVersion(Guid workflowId, int version) => new()
+        {
+            WorkflowId = workflowId,
+            Version = version,
+            Definition = new WorkflowDefinition
+            {
+                Id = workflowId,
+                Nodes = _workstationWorkflowIds.Contains(workflowId)
+                    ? [new WorkflowNode
+                    {
+                        NodeTypeId = WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask,
+                        Configuration = ConfigureWorkstationPreparation
+                            ? new Dictionary<string, string?>
+                            {
+                                [WorkflowNodeConfigurationKeys.DeviceId] = "WS-1",
+                                [WorkflowNodeConfigurationKeys.TaskNo] = "TASK-1"
+                            }
+                            : new Dictionary<string, string?>()
+                    }]
+                    : []
+            }
+        };
+
+        public Task<IReadOnlyList<ExperimentSample>> GetExperimentSamplesAsync(string? batchId, CancellationToken cancellationToken)
+        {
+            SampleReadCalls++;
+            if (ThrowOnVerificationProjectionRead || (FailSampleReloadAfterSave && LastSavedVerificationRequest is not null))
+                return Task.FromException<IReadOnlyList<ExperimentSample>>(new InvalidOperationException("sample reload failed"));
+            return Task.FromResult<IReadOnlyList<ExperimentSample>>(
+                _samples.Values.Where(sample => batchId is null || sample.BatchId == batchId).ToArray());
+        }
+
+        public Task<ExperimentSample> SaveExperimentSampleAsync(Guid sampleId, SaveExperimentSampleRequest request, CancellationToken cancellationToken)
+        {
+            LastSampleSaveRequest = request;
+            SampleSaveHistory.Add(request);
+            var sample = request.Sample with { SampleId = sampleId };
+            if (PendingSampleSave is not null)
+            {
+                PendingSample = sample;
+                SampleSaveRequested!.TrySetResult(true);
+                return PendingSampleSave.Task;
+            }
+            _samples[sampleId] = sample;
+            return Task.FromResult(sample);
+        }
+
+        public Task<ExperimentSampleVerification?> GetCurrentExperimentSampleVerificationAsync(Guid jobId, CancellationToken cancellationToken)
+        {
+            CurrentVerificationReadCalls++;
+            if (ThrowOnVerificationProjectionRead || (FailCurrentVerificationReloadAfterSave && LastSavedVerificationRequest is not null))
+                return Task.FromException<ExperimentSampleVerification?>(new InvalidOperationException("verification reload failed"));
+            return Task.FromResult(_verifications.GetValueOrDefault(jobId));
+        }
+
+        public Task<ExperimentWorkstationPreparation?> GetCurrentExperimentWorkstationPreparationAsync(Guid jobId, CancellationToken cancellationToken)
+        {
+            if (PendingCurrentPreparation is not null)
+            {
+                CurrentPreparationRequested!.TrySetResult(true);
+                return PendingCurrentPreparation.Task;
+            }
+            return Task.FromResult(_preparations.GetValueOrDefault(jobId));
+        }
+
+        public Task<SampleWorkstationTemplateResponse> GetSampleWorkstationTemplateAsync(string deviceId, string taskNo, CancellationToken cancellationToken) =>
+            Task.FromResult(new SampleWorkstationTemplateResponse(
+                deviceId,
+                "task.xlsx",
+                [],
+                "template-hash",
+                new SampleWorkstationTaskTemplate(taskNo, "test", [new SampleWorkstationTransferRow("L", "T", 1, 1, "SRC", 1, 1, "OUT", 2, 2, 10)]),
+                DateTimeOffset.UtcNow));
+
+        public Task<ExperimentWorkstationPreparation> PrepareExperimentWorkstationTaskAsync(Guid jobId, PrepareExperimentWorkstationTaskRequest request, CancellationToken cancellationToken)
+        {
+            PrepareCalls++;
+            var pending = _pendingPrepareWrites.Dequeue();
+            pending.Requested.TrySetResult();
+            return pending.Gate.Task;
+        }
+
+        public Task<ExperimentWorkstationPreparation> ImportExperimentWorkstationTaskAsync(Guid jobId, Guid preparationId, ImportExperimentWorkstationTaskRequest request, CancellationToken cancellationToken)
+        {
+            ImportCalls++;
+            var pending = _pendingImportWrites.Dequeue();
+            pending.Requested.TrySetResult();
+            return pending.Gate.Task;
+        }
+
+        public Task<ExperimentSampleVerification> SaveCurrentExperimentSampleVerificationAsync(Guid jobId, SaveExperimentSampleVerificationRequest request, CancellationToken cancellationToken)
+        {
+            LastSavedVerificationRequest = request;
+            LastSavedVerificationJobId = jobId;
+            LastSavedVerificationRows = request.Rows;
+            if (SnapshotSaveException is not null)
+                return Task.FromException<ExperimentSampleVerification>(SnapshotSaveException);
+            var current = _verifications.GetValueOrDefault(jobId);
+            var verification = new ExperimentSampleVerification
+            {
+                VerificationId = Guid.NewGuid(), ExperimentJobId = jobId, Revision = (current?.Revision ?? 0) + 1,
+                Status = ExperimentSampleVerificationStatus.ReadyForVerification, Rows = request.Rows,
+                SnapshotHash = "HASH-UPDATED-" + Guid.NewGuid().ToString("N")
+            };
+            _verifications[jobId] = verification;
+            return Task.FromResult(verification);
+        }
+
+        public Task<ExperimentSampleVerification> CompleteExperimentSampleVerificationAsync(Guid jobId, int revision, CompleteExperimentSampleVerificationRequest request, CancellationToken cancellationToken)
+        {
+            if (PendingCompletion is not null)
+            {
+                CompletionRequested!.TrySetResult(true);
+                return PendingCompletion.Task;
+            }
+            var completed = _verifications[jobId] with { Status = ExperimentSampleVerificationStatus.Verified, VerifiedBy = request.Actor, VerifiedAt = DateTimeOffset.Now };
+            _verifications[jobId] = completed;
+            return Task.FromResult(completed);
+        }
 
         public Task<ExperimentJob> CreateExperimentJobAsync(CreateExperimentJobRequest request, CancellationToken cancellationToken)
         {
@@ -722,6 +1755,12 @@ public sealed class ExperimentSchedulingViewModelTests
             };
             SetSchedule(schedule);
             UpsertJob(FindJob(jobId) with { Status = ExperimentJobStatus.Scheduled, UpdatedAt = DateTimeOffset.Now });
+            if (PendingSchedule is not null)
+            {
+                PendingScheduleResult = schedule;
+                ScheduleRequested!.TrySetResult(true);
+                return PendingSchedule.Task;
+            }
             return Task.FromResult(schedule);
         }
 

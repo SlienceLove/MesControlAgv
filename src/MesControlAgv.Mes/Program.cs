@@ -60,11 +60,15 @@ var workflowAuboWorkerOptions = builder.Configuration
 var workflowFieldNavigationWorkerOptions = builder.Configuration
     .GetSection("WorkflowFieldNavigationWorker")
     .Get<WorkflowFieldNavigationWorkerOptions>() ?? new WorkflowFieldNavigationWorkerOptions();
-builder.Services.AddSingleton(workflowAuboWorkerOptions);
-builder.Services.AddSingleton(workflowFieldNavigationWorkerOptions);
 var workflowSampleWorkstationWorkerOptions = builder.Configuration
     .GetSection(WorkflowSampleWorkstationWorkerOptions.SectionName)
     .Get<WorkflowSampleWorkstationWorkerOptions>() ?? new WorkflowSampleWorkstationWorkerOptions();
+builder.Services.AddSingleton(workflowAuboWorkerOptions);
+builder.Services.AddSingleton(workflowFieldNavigationWorkerOptions);
+var workflowLegacySampleWorkstationWorkerOptions = builder.Configuration
+    .GetSection(WorkflowLegacySampleWorkstationWorkerOptions.SectionName)
+    .Get<WorkflowLegacySampleWorkstationWorkerOptions>() ?? new WorkflowLegacySampleWorkstationWorkerOptions();
+builder.Services.AddSingleton(workflowLegacySampleWorkstationWorkerOptions);
 builder.Services.AddSingleton(workflowSampleWorkstationWorkerOptions);
 var physicalBatchEnabled = !profile.Features.UseSimulator &&
                            physicalReadinessOptions.Enabled &&
@@ -80,10 +84,11 @@ builder.Services.AddSingleton(new WorkflowPhysicalBatchAdmissionGate(
         ? $"{PhysicalReadinessReasonCodes.SupervisorDisabled}: MES 启动时未启用物理就绪监督器，因此拒绝一键现场执行。"
         : "physical_execution_workers_disabled: MES 启动时未同时启用现场导航、自动许可和 AUBO worker，因此拒绝一键现场执行。"));
 builder.Services.AddSingleton<WorkflowFieldNavigationRetryState>();
-builder.Services.AddHttpClient<ISampleWorkstationReader, SampleWorkstationAdapterClient>(client =>
+builder.Services.AddSampleWorkstationGateway(builder.Configuration);
+builder.Services.AddHttpClient<LegacySampleWorkstationAdapterClient>(client =>
     client.BaseAddress = new Uri(
         builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5041/"));
-builder.Services.AddHttpClient<ISampleWorkstationController, SampleWorkstationAdapterClient>(client =>
+builder.Services.AddHttpClient<ISampleWorkstationController, LegacySampleWorkstationAdapterClient>(client =>
     client.BaseAddress = new Uri(
         builder.Configuration["Adapter:BaseUrl"] ?? "http://localhost:5041/"));
 builder.Services.AddHttpClient<IIonChromatographyStatusReader, IonChromatographyGatewayClient>(client =>
@@ -132,6 +137,14 @@ builder.Services.AddScoped<WorkflowApplicationService>();
 builder.Services.AddScoped<IWorkflowApplicationService>(services => services.GetRequiredService<WorkflowApplicationService>());
 builder.Services.AddScoped<IExperimentSchedulingQueryService, ExperimentSchedulingQueryService>();
 builder.Services.AddScoped<IExperimentSchedulingCommandService, ExperimentSchedulingCommandService>();
+builder.Services.AddScoped<ExperimentSampleVerificationService>();
+builder.Services.AddScoped<IExperimentSampleVerificationService>(services => services.GetRequiredService<ExperimentSampleVerificationService>());
+builder.Services.AddScoped<IExperimentSampleVerificationGate>(services => services.GetRequiredService<ExperimentSampleVerificationService>());
+builder.Services.AddScoped<IExperimentSampleVerificationGateCore>(services => services.GetRequiredService<ExperimentSampleVerificationService>());
+builder.Services.AddScoped<ExperimentWorkstationPreparationService>();
+builder.Services.AddScoped<IExperimentWorkstationPreparationService>(services =>
+    services.GetRequiredService<ExperimentWorkstationPreparationService>());
+builder.Services.AddScoped<IExperimentWorkstationRuntimeBindingValidator, ExperimentWorkstationRuntimeBindingValidator>();
 builder.Services.AddScoped<ExperimentRuntimeLeaseLifecycle>();
 builder.Services.AddScoped<ExperimentRuntimeAdmissionService>();
 builder.Services.AddScoped<IExperimentRuntimeAdmissionService>(services =>
@@ -167,6 +180,7 @@ builder.Services.AddHostedService<WorkflowAdvancedRuntimeWorker>();
 builder.Services.AddHostedService<WorkflowAuboProgramWorker>();
 builder.Services.AddHostedService<WorkflowFieldNavigationWorker>();
 builder.Services.AddHostedService<WorkflowSampleWorkstationWorker>();
+builder.Services.AddHostedService<WorkflowLegacySampleWorkstationWorker>();
 
 var app = builder.Build();
 
@@ -196,6 +210,8 @@ app.MapSampleManagementEndpoints();
 app.MapMesWorkflowEndpoints();
 
 app.MapMesExperimentSchedulingEndpoints();
+app.MapMesExperimentSampleVerificationEndpoints();
+app.MapMesExperimentWorkstationPreparationEndpoints();
 
 app.MapPost("/api/field-navigation-acceptances", async (
     CreateFieldNavigationAcceptanceRequest request,
@@ -714,6 +730,61 @@ static async Task EnsureExperimentSchedulingTablesAsync(MesDbContext database)
         );
         """,
         """
+        CREATE TABLE IF NOT EXISTS ExperimentSamples (
+            SampleId TEXT NOT NULL PRIMARY KEY,
+            BusinessSampleId TEXT NOT NULL,
+            BatchId TEXT NOT NULL,
+            Barcode TEXT NOT NULL,
+            NormalizedBarcode TEXT NOT NULL,
+            DisplayName TEXT NOT NULL,
+            Status TEXT NOT NULL,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ExperimentSampleVerifications (
+            VerificationId TEXT NOT NULL PRIMARY KEY,
+            ExperimentJobId TEXT NOT NULL,
+            Revision INTEGER NOT NULL,
+            Status TEXT NOT NULL,
+            RowsJson TEXT NOT NULL,
+            SnapshotHash TEXT NOT NULL,
+            VerifiedBy TEXT NULL,
+            VerifiedAtUtc TEXT NULL,
+            VerificationNote TEXT NULL,
+            InvalidatedAtUtc TEXT NULL,
+            InvalidationReason TEXT NULL,
+            CreatedAtUtc TEXT NOT NULL,
+            UpdatedAtUtc TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ExperimentWorkstationPreparations (
+            PreparationId TEXT NOT NULL PRIMARY KEY,
+            ExperimentJobId TEXT NOT NULL,
+            Revision INTEGER NOT NULL,
+            WorkflowId TEXT NOT NULL,
+            WorkflowVersion INTEGER NOT NULL,
+            ScheduleEntryId TEXT NOT NULL,
+            DeviceId TEXT NOT NULL,
+            VendorTaskNo TEXT NOT NULL,
+            VerificationId TEXT NOT NULL,
+            VerificationRevision INTEGER NOT NULL,
+            VerificationSnapshotHash TEXT NOT NULL,
+            PayloadJson TEXT NOT NULL,
+            PayloadHash TEXT NOT NULL,
+            Status TEXT NOT NULL,
+            PreparedRequestId TEXT NOT NULL,
+            ImportRequestId TEXT NULL,
+            PreparedAtUtc TEXT NOT NULL,
+            ImportingAtUtc TEXT NULL,
+            ImportedAtUtc TEXT NULL,
+            UnknownAtUtc TEXT NULL,
+            LastError TEXT NULL
+        );
+        """,
+        """
         CREATE TABLE IF NOT EXISTS ScheduleEntries (
             ScheduleEntryId TEXT NOT NULL PRIMARY KEY,
             ExperimentJobId TEXT NOT NULL,
@@ -791,6 +862,7 @@ static async Task EnsureExperimentSchedulingTablesAsync(MesDbContext database)
     }
 
     await EnsureExperimentSchedulingColumnsAsync(connection);
+    await BackfillWorkstationPreparationRevisionsAsync(connection);
 
     var indexStatements = new[]
     {
@@ -799,6 +871,15 @@ static async Task EnsureExperimentSchedulingTablesAsync(MesDbContext database)
         "CREATE INDEX IF NOT EXISTS IX_ExperimentJobs_Status_CreatedAtUtc ON ExperimentJobs (Status, CreatedAtUtc);",
         "CREATE INDEX IF NOT EXISTS IX_ExperimentJobs_PlanId_PlanVersion ON ExperimentJobs (PlanId, PlanVersion);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentJobs_WorkflowRunId ON ExperimentJobs (WorkflowRunId);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentSamples_BusinessSampleId ON ExperimentSamples (BusinessSampleId);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentSamples_NormalizedBarcode ON ExperimentSamples (NormalizedBarcode);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentSamples_BatchId_Status ON ExperimentSamples (BatchId, Status);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentSampleVerifications_ExperimentJobId_Revision ON ExperimentSampleVerifications (ExperimentJobId, Revision);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentSampleVerifications_ExperimentJobId_Status_UpdatedAtUtc ON ExperimentSampleVerifications (ExperimentJobId, Status, UpdatedAtUtc);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentWorkstationPreparations_VendorTaskNo ON ExperimentWorkstationPreparations (VendorTaskNo);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentWorkstationPreparations_ExperimentJobId_Revision ON ExperimentWorkstationPreparations (ExperimentJobId, Revision);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentWorkstationPreparations_ExperimentJobId_PreparedAtUtc ON ExperimentWorkstationPreparations (ExperimentJobId, PreparedAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_ExperimentWorkstationPreparations_DeviceId_Status_PreparedAtUtc ON ExperimentWorkstationPreparations (DeviceId, Status, PreparedAtUtc);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentRuns_ExperimentJobId ON ExperimentRuns (ExperimentJobId);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_ExperimentRuns_AdmissionRequestId ON ExperimentRuns (AdmissionRequestId);",
         "CREATE INDEX IF NOT EXISTS IX_ExperimentRuns_Status_UpdatedAtUtc ON ExperimentRuns (Status, UpdatedAtUtc);",
@@ -846,6 +927,45 @@ static async Task EnsureExperimentSchedulingColumnsAsync(System.Data.Common.DbCo
         [
             (Name: "WorkflowStepsJson", Sql: "TEXT NOT NULL DEFAULT '[]'")
         ]);
+    await EnsureColumnsAsync(
+        connection,
+        "ExperimentWorkstationPreparations",
+        [
+            (Name: "Revision", Sql: "INTEGER NOT NULL DEFAULT 0"),
+            (Name: "WorkflowId", Sql: "TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'"),
+            (Name: "WorkflowVersion", Sql: "INTEGER NOT NULL DEFAULT 0"),
+            (Name: "ScheduleEntryId", Sql: "TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'")
+        ]);
+}
+
+static async Task BackfillWorkstationPreparationRevisionsAsync(System.Data.Common.DbConnection connection)
+{
+    await using var command = connection.CreateCommand();
+    command.CommandText =
+        """
+        WITH ranked AS (
+            SELECT legacy.PreparationId,
+                   COALESCE((
+                       SELECT MAX(existing.Revision)
+                       FROM ExperimentWorkstationPreparations AS existing
+                       WHERE existing.ExperimentJobId = legacy.ExperimentJobId
+                         AND existing.Revision > 0
+                   ), 0) + ROW_NUMBER() OVER (
+                       PARTITION BY legacy.ExperimentJobId
+                       ORDER BY legacy.PreparedAtUtc, legacy.rowid
+                   ) AS BackfilledRevision
+            FROM ExperimentWorkstationPreparations AS legacy
+            WHERE legacy.Revision = 0
+        )
+        UPDATE ExperimentWorkstationPreparations
+        SET Revision = (
+            SELECT ranked.BackfilledRevision
+            FROM ranked
+            WHERE ranked.PreparationId = ExperimentWorkstationPreparations.PreparationId
+        )
+        WHERE Revision = 0;
+        """;
+    await command.ExecuteNonQueryAsync();
 }
 
 static async Task EnsureColumnsAsync(

@@ -407,6 +407,58 @@ public sealed class MesClientWorkflowHttpContractTests
             resolutionBody.RootElement.GetProperty("outcome").GetInt32());
     }
 
+    [Fact]
+    public async Task Workflow_manual_confirmation_uses_the_pinned_run_and_node_route()
+    {
+        var runId = Guid.NewGuid();
+        var nodeExecutionId = Guid.NewGuid();
+        var request = new WorkflowManualConfirmationRequest
+        {
+            RequestId = Guid.NewGuid(),
+            Actor = "admin",
+            Reason = "Instrument initialization confirmed",
+            Outcome = WorkflowManualConfirmationOutcome.Confirmed,
+            Comment = "Ready for dispatch"
+        };
+        var handler = new RecordingHandler(_ => JsonResponse(new WorkflowRuntimeInteractionResult
+        {
+            RequestId = request.RequestId,
+            WorkflowRunId = runId,
+            NodeExecutionId = nodeExecutionId,
+            InteractionType = WorkflowRuntimeInteractionType.ManualConfirmation,
+            Status = WorkflowRuntimeInteractionStatus.Applied,
+            Run = new WorkflowExecutionSnapshot
+            {
+                ExecutionId = runId,
+                RuntimeStatus = WorkflowRuntimeStatus.Prepared
+            }
+        }));
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://mes.local/") };
+        var client = new MesClient(httpClient);
+
+        var result = await client.CompleteWorkflowManualConfirmationAsync(
+            runId,
+            nodeExecutionId,
+            request,
+            CancellationToken.None);
+
+        Assert.Equal(nodeExecutionId, result.NodeExecutionId);
+        var captured = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, captured.Method);
+        Assert.Equal(
+            $"/api/workflow-runs/{runId}/nodes/{nodeExecutionId}/manual-confirmation",
+            captured.Uri.AbsolutePath);
+        using var body = JsonDocument.Parse(captured.Body!);
+        Assert.Equal(request.RequestId, body.RootElement.GetProperty("requestId").GetGuid());
+        Assert.Equal("admin", body.RootElement.GetProperty("actor").GetString());
+        Assert.Equal(request.Reason, body.RootElement.GetProperty("reason").GetString());
+        Assert.Equal(request.Comment, body.RootElement.GetProperty("comment").GetString());
+        Assert.Equal(
+            (int)WorkflowManualConfirmationOutcome.Confirmed,
+            body.RootElement.GetProperty("outcome").GetInt32());
+        Assert.False(body.RootElement.TryGetProperty("permissions", out _));
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.NotFound, "WORKFLOW_VERSION_NOT_FOUND")]
     [InlineData(HttpStatusCode.Conflict, "WORKFLOW_REQUEST_ID_REUSED")]

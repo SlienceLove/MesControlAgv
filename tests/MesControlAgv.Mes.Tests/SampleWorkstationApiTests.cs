@@ -1,8 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
 using MesControlAgv.Application;
 using MesControlAgv.Contracts;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
@@ -26,25 +29,47 @@ public sealed class SampleWorkstationApiTests(MesWebApplicationFactory factory)
             "/api/workstations/SAMPLE-WORKSTATION-01/tasks?state=Waiting&startNo=1&recordNum=20");
         var taskState = await client.GetFromJsonAsync<SampleWorkstationTaskStateResponse>(
             "/api/workstations/SAMPLE-WORKSTATION-01/tasks/TASK-01/state");
+        var protocol = await client.GetFromJsonAsync<SampleWorkstationProtocolResponse>(
+            "/api/workstations/SAMPLE-WORKSTATION-01/protocol/SolventParameterList?startNo=1&recordNum=10");
 
         Assert.Equal(SampleWorkstationDeviceState.Idle, status!.State);
         Assert.Single(tasks!);
         Assert.Equal(SampleWorkstationTaskState.Waiting, taskState!.State);
+        Assert.Equal(SampleWorkstationProtocolOperation.SolventParameterList, protocol!.Operation);
         Assert.Equal("Waiting", reader.LastQuery?.State);
         Assert.Equal(20, reader.LastQuery?.RecordNum);
         Assert.All(reader.Calls, call => Assert.Equal("SAMPLE-WORKSTATION-01", call.DeviceId));
     }
 
     [Fact]
-    public async Task Workstation_control_route_requires_a_request_body()
+    public async Task Control_endpoints_proxy_normalized_commands()
+    {
+        var reader = new StubReader();
+        var controller = new StubController();
+        using var configuredFactory = ConfigureReader(reader, controller);
+        using var client = configuredFactory.CreateClient();
+
+        var initialize = await client.PostAsync(
+            "/api/workstations/SAMPLE-WORKSTATION-01/initialize",
+            content: null);
+        var start = await client.PostAsync(
+            "/api/workstations/SAMPLE-WORKSTATION-01/tasks/TASK-01/start",
+            content: null);
+
+        Assert.Equal(HttpStatusCode.OK, initialize.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, start.StatusCode);
+        Assert.Equal(["initialize", "start:TASK-01"], controller.Calls);
+    }
+
+    [Fact]
+    public async Task Protocol_route_rejects_unknown_operation_without_calling_reader()
     {
         var reader = new StubReader();
         using var configuredFactory = ConfigureReader(reader);
         using var client = configuredFactory.CreateClient();
 
-        var response = await client.PostAsync(
-            "/api/workstations/SAMPLE-WORKSTATION-01/tasks/TASK-01/start",
-            content: null);
+        var response = await client.GetAsync(
+            "/api/workstations/SAMPLE-WORKSTATION-01/protocol/NotARealOperation");
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.Empty(reader.Calls);
@@ -62,12 +87,122 @@ public sealed class SampleWorkstationApiTests(MesWebApplicationFactory factory)
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
     }
 
-    private WebApplicationFactory<Program> ConfigureReader(ISampleWorkstationReader reader) =>
+    private WebApplicationFactory<Program> ConfigureReader(
+        ISampleWorkstationReader reader,
+        ISampleWorkstationCommands? controller = null) =>
         factory.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
         {
             services.RemoveAll<ISampleWorkstationReader>();
             services.AddSingleton(reader);
+            if (controller is not null)
+            {
+                services.RemoveAll<ISampleWorkstationCommands>();
+                services.AddSingleton(controller);
+                if (controller is ISampleWorkstationBarcodeCommands barcodeController)
+                {
+                    services.RemoveAll<ISampleWorkstationBarcodeCommands>();
+                    services.AddSingleton(barcodeController);
+                }
+            }
         }));
+
+    [Theory]
+    [InlineData("TASK-01")]
+    [InlineData("TASK/01")]
+    [InlineData("TASK%2F01")]
+    [InlineData("任务 A&+?#/01")]
+    public async Task V102_routes_keep_barcode_update_separate_from_start_and_preserve_both_identities(string taskNo)
+    {
+        var controller = new StubController();
+        using var configuredFactory = ConfigureReader(new StubReader(), controller);
+        var barcodes = new SampleWorkstationTaskBarcodes { SampleBarcode1 = "A&来源1", SampleBarcode2 = "b+2" };
+        var update = await SendCommand("barcodes");
+        Assert.Equal(200, update.Response.StatusCode);
+        Assert.Equal([$"barcodes:{taskNo}"], controller.Calls);
+        Assert.Equal(barcodes, controller.LastBarcodes);
+        var start = await SendCommand("start");
+        Assert.Equal(200, start.Response.StatusCode);
+        Assert.Equal([$"barcodes:{taskNo}", $"start-with-barcodes:{taskNo}"], controller.Calls);
+        Assert.Equal(barcodes, controller.LastBarcodes);
+
+        Task<HttpContext> SendCommand(string action)
+        {
+            var path = $"/api/workstations/SAMPLE-WORKSTATION-01/tasks/{Uri.EscapeDataString(taskNo)}/{action}";
+            var body = JsonSerializer.SerializeToUtf8Bytes(barcodes);
+            return configuredFactory.Server.SendAsync(context =>
+            {
+                // HttpClient-backed TestServer omits RawTarget; populate the original
+                // target as Kestrel does, so '%2F' and '/' remain distinguishable.
+                context.Request.Method = "POST";
+                context.Request.Path = PathString.FromUriComponent(path);
+                context.Features.Get<IHttpRequestFeature>()!.RawTarget = path;
+                context.Request.ContentType = "application/json";
+                context.Request.ContentLength = body.Length;
+                context.Request.Body = new MemoryStream(body);
+                context.Features.Set<IHttpRequestBodyDetectionFeature>(new RequestWithBody());
+            });
+        }
+    }
+
+    private sealed class RequestWithBody : IHttpRequestBodyDetectionFeature
+    {
+        public bool CanHaveBody => true;
+    }
+
+    private sealed class StubController : ISampleWorkstationCommands, ISampleWorkstationBarcodeCommands
+    {
+        private static readonly DateTimeOffset ObservedAt =
+            new(2026, 9, 11, 8, 0, 0, TimeSpan.Zero);
+
+        public List<string> Calls { get; } = [];
+        public SampleWorkstationTaskBarcodes? LastBarcodes { get; private set; }
+
+        public Task<SampleWorkstationCommandResponse> StartTaskAsync(
+            string deviceId, string taskNo, SampleWorkstationTaskBarcodes barcodes, CancellationToken cancellationToken)
+        {
+            LastBarcodes = barcodes;
+            Calls.Add($"start-with-barcodes:{taskNo}");
+            return Task.FromResult(Response(deviceId, SampleWorkstationCommandOperation.StartTask));
+        }
+
+        public Task<SampleWorkstationCommandResponse> UpdateTaskBarcodesAsync(
+            string deviceId, string taskNo, SampleWorkstationTaskBarcodes barcodes, CancellationToken cancellationToken)
+        {
+            LastBarcodes = barcodes;
+            Calls.Add($"barcodes:{taskNo}");
+            return Task.FromResult(Response(deviceId, SampleWorkstationCommandOperation.UpdateTaskBarcodes));
+        }
+
+        public Task<SampleWorkstationCommandResponse> InitializeAsync(
+            string deviceId,
+            CancellationToken cancellationToken)
+        {
+            Calls.Add("initialize");
+            return Task.FromResult(Response(deviceId, SampleWorkstationCommandOperation.Initialize));
+        }
+
+        public Task<SampleWorkstationCommandResponse> StartTaskAsync(
+            string deviceId,
+            string taskNo,
+            CancellationToken cancellationToken)
+        {
+            Calls.Add($"start:{taskNo}");
+            return Task.FromResult(Response(deviceId, SampleWorkstationCommandOperation.StartTask));
+        }
+
+        private static SampleWorkstationCommandResponse Response(
+            string deviceId,
+            SampleWorkstationCommandOperation operation)
+        {
+            using var document = JsonDocument.Parse("\"ok\"");
+            return new SampleWorkstationCommandResponse(
+                deviceId,
+                operation,
+                200,
+                document.RootElement.Clone(),
+                ObservedAt);
+        }
+    }
 
     private sealed class StubReader(Exception? exception = null) : ISampleWorkstationReader
     {
@@ -122,6 +257,22 @@ public sealed class SampleWorkstationApiTests(MesWebApplicationFactory factory)
             Calls.Add(("state", deviceId));
             return Result(new SampleWorkstationTaskStateResponse(
                 deviceId, taskNo, SampleWorkstationTaskState.Waiting, "等待运行", ObservedAt));
+        }
+
+        public Task<SampleWorkstationProtocolResponse> GetProtocolReadAsync(
+            string deviceId,
+            SampleWorkstationProtocolOperation operation,
+            SampleWorkstationProtocolReadQuery query,
+            CancellationToken cancellationToken)
+        {
+            Calls.Add((operation.ToString(), deviceId));
+            using var document = JsonDocument.Parse("[{\"LiquidCode\":\"WATER\"}]");
+            return Result(new SampleWorkstationProtocolResponse(
+                deviceId,
+                operation,
+                200,
+                document.RootElement.Clone(),
+                ObservedAt));
         }
 
         private Task<T> Result<T>(T value) =>

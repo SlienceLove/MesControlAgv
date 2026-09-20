@@ -12,7 +12,7 @@ namespace MesControlAgv.Adapter.Modules.SampleWorkstation;
 /// </summary>
 public sealed class SampleWorkstationControlledDriver(
     VendorSampleWorkstationHttpClient vendor,
-    SampleWorkstationReadOnlyDriver reader,
+    ISampleWorkstationReader reader,
     SampleWorkstationOptions options,
     TimeProvider timeProvider,
     SampleWorkstationOperationJournal? journal = null) : ISampleWorkstationController

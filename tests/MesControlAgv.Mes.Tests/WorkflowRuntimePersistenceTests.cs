@@ -495,7 +495,7 @@ public sealed class WorkflowRuntimePersistenceTests
             {
                 TransportOperationId = secondClaim.TransportOperationId!.Value,
                 Outcome = WorkflowStepCompletionOutcome.Unknown,
-                UnknownReason = UnknownReason.IncompleteResponse,
+                UnknownReason = MesControlAgv.Contracts.Devices.UnknownReason.IncompleteResponse,
                 Error = "adapter response was ambiguous"
             }, CancellationToken.None);
             Assert.Equal(WorkflowRuntimeStatus.Unknown, unknown.RuntimeStatus);

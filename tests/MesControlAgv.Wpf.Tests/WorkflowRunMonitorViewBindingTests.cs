@@ -14,8 +14,16 @@ public sealed class WorkflowRunMonitorViewBindingTests
     {
         var fixture = WorkflowRunMonitorFixture.Create();
         var monitor = new WorkflowRunMonitorViewModel(new WorkflowRunMonitorClientStub(fixture));
-                await monitor.LoadAsync(fixture.Run.ExecutionId);
-                Assert.False(monitor.HasFailureEvidence, monitor.FailureReasonDisplay);
+        await monitor.LoadAsync(fixture.Run.ExecutionId);
+        Assert.False(monitor.HasFailureEvidence, monitor.FailureReasonDisplay);
+        var manualFixture = WorkflowRunMonitorFixture.CreateManualConfirmation();
+        var manualClient = new WorkflowRunMonitorClientStub(manualFixture)
+        {
+            DeviceOperations = [],
+            Timeline = []
+        };
+        var manualMonitor = new WorkflowRunMonitorViewModel(manualClient);
+        await manualMonitor.LoadAsync(manualFixture.Run.ExecutionId);
 
         Exception? failure = null;
         var thread = new Thread(() =>
@@ -46,6 +54,10 @@ public sealed class WorkflowRunMonitorViewBindingTests
                 var cancel = Assert.IsType<Button>(view.FindName("CancelRunButton"));
                 var resolveSucceeded = Assert.IsType<Button>(view.FindName("ResolveUnknownSucceededButton"));
                 var resolveFailed = Assert.IsType<Button>(view.FindName("ResolveUnknownFailedButton"));
+                var manualConfirmationPanel = Assert.IsType<Border>(view.FindName("WorkflowManualConfirmationPanel"));
+                var confirmManualTask = Assert.IsType<Button>(view.FindName("ConfirmManualTaskButton"));
+                var cancelManualTask = Assert.IsType<Button>(view.FindName("CancelManualTaskButton"));
+                var fieldAcceptancePanel = Assert.IsType<Border>(view.FindName("WorkflowFieldAcceptancePanel"));
                 var fieldAcceptance = Assert.IsType<Button>(view.FindName("CreateFieldAcceptanceButton"));
                 var autoRefresh = Assert.IsType<CheckBox>(view.FindName("AutoRefreshCheckBox"));
                 var progress = Assert.IsType<ProgressBar>(view.FindName("WorkflowRunProgressBar"));
@@ -63,6 +75,8 @@ public sealed class WorkflowRunMonitorViewBindingTests
                 Assert.Same(monitor.CancelCommand, cancel.Command);
                 Assert.Same(monitor.ResolveUnknownSucceededCommand, resolveSucceeded.Command);
                 Assert.Same(monitor.ResolveUnknownFailedCommand, resolveFailed.Command);
+                Assert.Same(monitor.ConfirmManualTaskCommand, confirmManualTask.Command);
+                Assert.Same(monitor.CancelManualTaskCommand, cancelManualTask.Command);
                 Assert.Same(monitor.CreateAndAuthorizeFieldMoveCommand, fieldAcceptance.Command);
                 Assert.Equal("全屏查看", fullscreen.Content.ToString());
                 Assert.Same(monitor.ExperimentJobOptions, experimentJobSelector.ItemsSource);
@@ -77,8 +91,16 @@ public sealed class WorkflowRunMonitorViewBindingTests
                 Assert.Equal(monitor.ProgressPercent, progress.Value);
                 Assert.Equal(Visibility.Collapsed, failurePanel.Visibility);
                 Assert.Equal(Visibility.Collapsed, cancellationPanel.Visibility);
+                Assert.Equal(Visibility.Collapsed, manualConfirmationPanel.Visibility);
+                Assert.Equal(Visibility.Collapsed, fieldAcceptancePanel.Visibility);
                 Assert.DoesNotContain("重试", resolveSucceeded.Content.ToString(), StringComparison.Ordinal);
                 Assert.DoesNotContain("重试", resolveFailed.Content.ToString(), StringComparison.Ordinal);
+
+                view.DataContext = manualMonitor;
+                PumpDispatcher(window.Dispatcher);
+                Assert.Equal(Visibility.Visible, manualConfirmationPanel.Visibility);
+                Assert.Same(manualMonitor.ConfirmManualTaskCommand, confirmManualTask.Command);
+                Assert.Same(manualMonitor.CancelManualTaskCommand, cancelManualTask.Command);
                 window.Close();
             }
             catch (Exception exception)

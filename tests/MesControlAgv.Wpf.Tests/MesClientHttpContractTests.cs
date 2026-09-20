@@ -678,6 +678,119 @@ public sealed class MesClientHttpContractTests
     }
 
     [Fact]
+    public async Task Sample_workstation_test_start_posts_once_to_mes_and_maps_acknowledgement()
+    {
+        var observedAt = DateTimeOffset.Parse("2026-09-15T08:32:06Z");
+        var response = new SampleWorkstationCommandResponse(
+            "WS 01",
+            SampleWorkstationCommandOperation.StartTask,
+            200,
+            JsonSerializer.SerializeToElement("启动成功"),
+            observedAt)
+        {
+            TaskNo = "TASK 001",
+            Acknowledged = true
+        };
+        var handler = new RecordingHandler(_ => JsonResponse(response));
+        using var httpClient = CreateClient(handler);
+        var client = new MesClient(httpClient);
+
+        var actual = await client.StartSampleWorkstationTestTaskAsync(
+            "WS 01",
+            "TASK 001",
+            CancellationToken.None);
+
+        Assert.True(actual.Acknowledged);
+        Assert.Equal("TASK 001", actual.TaskNo);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal(
+            "/api/workstations/WS%2001/tasks/TASK%20001/start",
+            request.Uri.AbsolutePath);
+        Assert.Null(request.Body);
+    }
+
+    [Fact]
+    public async Task Sample_workstation_test_start_defaults_missing_outcome_to_unknown_without_retrying()
+    {
+        var handler = new RecordingHandler(_ => JsonResponse(
+            new { detail = "工作站未确认任务启动" },
+            HttpStatusCode.BadGateway));
+        using var httpClient = CreateClient(handler);
+        var client = new MesClient(httpClient);
+
+        var exception = await Assert.ThrowsAsync<SampleWorkstationTestStartException>(() =>
+            client.StartSampleWorkstationTestTaskAsync(
+                "SAMPLE-WORKSTATION-01",
+                "TEST-001",
+                CancellationToken.None));
+
+        Assert.Contains("工作站未确认任务启动", exception.Message, StringComparison.Ordinal);
+        Assert.True(exception.OutcomeUnknown);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Sample_workstation_test_start_preserves_explicit_known_rejection()
+    {
+        var handler = new RecordingHandler(_ => JsonResponse(
+            new { detail = "工作站控制未启用", outcomeUnknown = false },
+            HttpStatusCode.Forbidden));
+        using var httpClient = CreateClient(handler);
+        var client = new MesClient(httpClient);
+
+        var exception = await Assert.ThrowsAsync<SampleWorkstationTestStartException>(() =>
+            client.StartSampleWorkstationTestTaskAsync(
+                "SAMPLE-WORKSTATION-01",
+                "TEST-001",
+                CancellationToken.None));
+
+        Assert.False(exception.OutcomeUnknown);
+        Assert.Contains("工作站控制未启用", exception.Message, StringComparison.Ordinal);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Sample_workstation_test_start_preserves_unknown_outcome_without_retrying()
+    {
+        var handler = new RecordingHandler(_ => JsonResponse(
+            new { detail = "厂家响应超时", outcomeUnknown = true },
+            HttpStatusCode.GatewayTimeout));
+        using var httpClient = CreateClient(handler);
+        var client = new MesClient(httpClient);
+
+        var exception = await Assert.ThrowsAsync<SampleWorkstationTestStartException>(() =>
+            client.StartSampleWorkstationTestTaskAsync(
+                "SAMPLE-WORKSTATION-01",
+                "TEST-001",
+                CancellationToken.None));
+
+        Assert.True(exception.OutcomeUnknown);
+        Assert.Contains("厂家响应超时", exception.Message, StringComparison.Ordinal);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Sample_workstation_test_start_treats_malformed_failure_as_unknown()
+    {
+        var handler = new RecordingHandler(_ => new HttpResponseMessage(HttpStatusCode.BadGateway)
+        {
+            Content = new StringContent("not-json")
+        });
+        using var httpClient = CreateClient(handler);
+        var client = new MesClient(httpClient);
+
+        var exception = await Assert.ThrowsAsync<SampleWorkstationTestStartException>(() =>
+            client.StartSampleWorkstationTestTaskAsync(
+                "SAMPLE-WORKSTATION-01",
+                "TEST-001",
+                CancellationToken.None));
+
+        Assert.True(exception.OutcomeUnknown);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
     public async Task ShineLab_config_and_command_use_high_level_mes_routes()
     {
         var response = new ShineLabCommandResponse(
