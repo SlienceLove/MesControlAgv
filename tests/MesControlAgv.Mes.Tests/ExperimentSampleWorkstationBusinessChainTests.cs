@@ -220,10 +220,12 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         Assert.Equal(2, current.Revision);
     }
 
-    [Fact]
-    public async Task Prepared_task_import_is_idempotent_and_closes_with_frozen_task_and_barcodes_once()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Prepared_task_import_is_idempotent_and_closes_with_frozen_task_and_barcodes_once(bool defaultTips)
     {
-        var gateway = new RecordingWorkstation();
+        var gateway = new RecordingWorkstation { DefaultTips = defaultTips };
         using var factory = ConfigureGateway(new PhysicalMesWebApplicationFactory(PhysicalProfile()), gateway);
         using var client = factory.CreateClient();
         var workflow = await PublishWorkflowAsync(client);
@@ -255,6 +257,9 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         Assert.Equal(ExperimentWorkstationPreparationStatus.Prepared, prepared.Status);
         Assert.NotEqual("TEST-001", prepared.VendorTaskNo);
         Assert.Equal([sample1.SampleId, sample1.SampleId, sample2.SampleId], prepared.Payload.Transfers.Select(row => row.SourceSampleId).ToArray());
+        Assert.Equal(prepared.Payload.SourceTemplate.Transfers, prepared.Payload.GeneratedTemplate.Transfers);
+        if (defaultTips)
+            Assert.All(prepared.Payload.GeneratedTemplate.Transfers, row => Assert.Equal((0, 0), (row.TipX, row.TipY)));
         Assert.Equal(1, gateway.TemplateReadCalls);
         Assert.Equal(0, gateway.ImportCalls);
         Assert.Equal(0, gateway.BarcodeUpdateCalls);
@@ -790,6 +795,7 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         public string? StartDeviceId { get; private set; } public string? StartTaskNo { get; private set; }
         public SampleWorkstationTaskBarcodes? StartBarcodes { get; private set; }
         public bool FailBarcodeUpdate { get; init; }
+        public bool DefaultTips { get; init; }
         public List<ConsumedObservation> ConsumedObservations { get; } = [];
         private (SampleWorkstationDeviceState State, int Raw, int Error, SampleWorkstationTaskState Task) Current => _observation++ switch { 0 => (SampleWorkstationDeviceState.Idle, 0, 0, SampleWorkstationTaskState.Completed), 1 => (SampleWorkstationDeviceState.Running, 1, 3, SampleWorkstationTaskState.Running), _ => (SampleWorkstationDeviceState.Idle, 0, 0, SampleWorkstationTaskState.Completed) };
         private (SampleWorkstationDeviceState State, int Raw, int Error, SampleWorkstationTaskState Task)? _snapshot;
@@ -820,11 +826,11 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
             return new SampleWorkstationTaskImportResponse(id, [template.TaskNo], DateTimeOffset.UtcNow)
             { ReadbackVerified = true, FileSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)), Template = template };
         }
-        private static SampleWorkstationTaskTemplate Template(string taskNo) => new(taskNo, "Prepared task",
+        private SampleWorkstationTaskTemplate Template(string taskNo) => new(taskNo, "Prepared task",
         [
-            new("L1", "TIP", 1, 1, "SOURCE-A", 1, 1, "TARGET", 1, 1, 100),
-            new("L2", "TIP", 1, 2, "SOURCE-A", 1, 1, "TARGET", 1, 2, 100),
-            new("L3", "TIP", 1, 3, "SOURCE-B", 2, 1, "TARGET", 1, 3, 100)
+            new("L1", "TIP", DefaultTips ? 0 : 1, DefaultTips ? 0 : 1, "SOURCE-A", 1, 1, "TARGET", 1, 1, 100),
+            new("L2", "TIP", DefaultTips ? 0 : 1, DefaultTips ? 0 : 2, "SOURCE-A", 1, 1, "TARGET", 1, 2, 100),
+            new("L3", "TIP", DefaultTips ? 0 : 1, DefaultTips ? 0 : 3, "SOURCE-B", 2, 1, "TARGET", 1, 3, 100)
         ]);
         private static SampleWorkstationCommandResponse Command(string id, string task, SampleWorkstationCommandOperation operation) { using var json = JsonDocument.Parse("null"); return new SampleWorkstationCommandResponse(id, operation, 0, json.RootElement.Clone(), DateTimeOffset.UtcNow) { TaskNo = task, Acknowledged = true }; }
         public Task<IReadOnlyList<SampleWorkstationTaskSummaryResponse>> GetTasksAsync(string id, SampleWorkstationTaskQuery query, CancellationToken ct) => throw new NotSupportedException(); public Task<SampleWorkstationTaskDetailsResponse> GetTaskDetailsAsync(string id, string task, CancellationToken ct) => throw new NotSupportedException(); public Task<SampleWorkstationProtocolResponse> GetProtocolReadAsync(string id, SampleWorkstationProtocolOperation op, SampleWorkstationProtocolReadQuery query, CancellationToken ct) => throw new NotSupportedException();

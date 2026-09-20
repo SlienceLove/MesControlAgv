@@ -111,9 +111,16 @@ public static class SampleWorkstationTemplateFile
         var tasks = ReadSheet(sheets[0], TaskHeaders);
         if (tasks.Count != 1) throw new ArgumentException("Exactly one task per workstation template is supported.");
         if (tasks[0][2].Length != 0 || tasks[0][3].Length != 0) throw new ArgumentException("Layout/workflow values are not part of the verified template format.");
-        var rows = ReadSheet(sheets[1], TransferHeaders).Select(v => new SampleWorkstationTransferRow(
-            Required(v[0]), Required(v[1]), Positive(v[2]), Positive(v[3]),
-            Required(v[4]), Positive(v[5]), Positive(v[6]), Required(v[7]), Positive(v[8]), Positive(v[9]), Positive(v[10]))).ToArray();
+        var rows = ReadSheet(sheets[1], TransferHeaders).Select(v =>
+        {
+            if (!int.TryParse(v[2], NumberStyles.None, CultureInfo.InvariantCulture, out var tipX) ||
+                !int.TryParse(v[3], NumberStyles.None, CultureInfo.InvariantCulture, out var tipY))
+                throw new ArgumentException("Tip coordinates must be integers, not empty or inferred defaults.");
+            ValidateTipCoordinates(tipX, tipY);
+            return new SampleWorkstationTransferRow(
+                Required(v[0]), Required(v[1]), tipX, tipY,
+                Required(v[4]), Positive(v[5]), Positive(v[6]), Required(v[7]), Positive(v[8]), Positive(v[9]), Positive(v[10]));
+        }).ToArray();
         if (rows.Length == 0) throw new ArgumentException("At least one transfer is required.");
         return new(Required(tasks[0][0]), Required(tasks[0][1]), rows);
     }
@@ -125,9 +132,12 @@ public static class SampleWorkstationTemplateFile
         var tasks = new[] { TaskHeaders, new[] { Required(template.TaskNo), Required(template.TaskName), "", "" } };
         var transfers = new List<string[]> { TransferHeaders };
         foreach (var row in template.Transfers)
-            transfers.Add([Required(row.LiquidCode), Required(row.TipModule), Number(row.TipX), Number(row.TipY),
+        {
+            ValidateTipCoordinates(row.TipX, row.TipY);
+            transfers.Add([Required(row.LiquidCode), Required(row.TipModule), row.TipX.ToString(CultureInfo.InvariantCulture), row.TipY.ToString(CultureInfo.InvariantCulture),
                 Required(row.SourceModule), Number(row.SourceX), Number(row.SourceY), Required(row.TargetModule),
                 Number(row.TargetX), Number(row.TargetY), Number(row.VolumeMicroliters)]);
+        }
         if (transfers.Count == 1) throw new ArgumentException("At least one transfer is required.");
         using var output = new MemoryStream();
         using (var zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
@@ -186,6 +196,15 @@ public static class SampleWorkstationTemplateFile
 
     public static bool SameContent(SampleWorkstationTaskTemplate expected, SampleWorkstationTaskTemplate actual) =>
         expected.TaskNo == actual.TaskNo && expected.TaskName == actual.TaskName && actual.Transfers is not null && expected.Transfers.SequenceEqual(actual.Transfers);
+
+    private static void ValidateTipCoordinates(int x, int y)
+    {
+        // The captured vendor default is a complete (0,0) pair. Preserve it;
+        // actual tip selection belongs to the workstation, not the controller.
+        if (!((x == 0 && y == 0) || (x > 0 && y > 0)))
+            throw new ArgumentException("Tip coordinates must both be positive, or exactly (0,0) for the vendor default.");
+    }
+
     private static string Required(string value) => string.IsNullOrWhiteSpace(value) || value != value.Trim()
         ? throw new ArgumentException("Required template text must be nonempty without surrounding whitespace.") : value;
     private static string Number(int value) => value > 0 ? value.ToString(CultureInfo.InvariantCulture) : throw new ArgumentException("Coordinates and volume must be positive integers.");

@@ -173,6 +173,44 @@ public sealed class SampleWorkstationTemplateTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Zero_tip_import_preserves_every_transfer_and_does_not_treat_positive_readback_as_equivalent(bool changedTip)
+    {
+        var original = SampleWorkstationTemplateFile.Read(SampleWorkstationZeroTipTemplateTests.CapturedBytes());
+        var expected = original with
+        {
+            TaskNo = "LOCAL-test-50ul",
+            Transfers = original.Transfers.Select(row => row with { VolumeMicroliters = 50 }).ToArray()
+        };
+        var actual = changedTip ? expected with
+        {
+            Transfers = expected.Transfers.Select(row => row with { TipX = 1, TipY = 1 }).ToArray()
+        } : expected;
+        var bytes = SampleWorkstationTemplateFile.Write(expected);
+        var handler = new Handler("""{"Code":200,"Data":"导入成功"}""", Download(SampleWorkstationTemplateFile.Write(actual)));
+        using var source = new MemoryStream(bytes);
+        if (changedTip)
+        {
+            var error = await Assert.ThrowsAsync<SampleWorkstationProtocolException>(() =>
+                Driver(handler).ImportTasksAsync("WS-01", "local-preview.xlsx", source, CancellationToken.None));
+            Assert.Equal(SampleWorkstationErrorCodes.TemplateMismatch, error.ErrorCode);
+        }
+        else
+        {
+            var result = await Driver(handler).ImportTasksAsync("WS-01", "local-preview.xlsx", source, CancellationToken.None);
+            Assert.True(result.ReadbackVerified);
+            Assert.True(SampleWorkstationTemplateFile.SameContent(expected, result.Template!));
+        }
+        Assert.Equal(2, handler.Calls.Count);
+        Assert.Equal(HttpMethod.Post, handler.Calls[0].Method);
+        Assert.Equal("/Service/ImportExperimentalTask", handler.Calls[0].Uri.AbsolutePath);
+        Assert.Equal(SampleWorkstationTemplateFile.EncodeUpload("local-preview.xlsx", bytes), handler.Calls[0].Body);
+        Assert.Equal(HttpMethod.Get, handler.Calls[1].Method);
+        Assert.Equal("/Service/GetExperimentalTaskTemplate?TaskNo=LOCAL-test-50ul", handler.Calls[1].Uri.PathAndQuery);
+    }
+
+    [Theory]
     [InlineData("source")]
     [InlineData("target")]
     [InlineData("volume")]
