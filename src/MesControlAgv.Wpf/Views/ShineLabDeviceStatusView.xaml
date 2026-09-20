@@ -20,8 +20,13 @@
                 <TextBlock Margin="0,4,0,0" Foreground="Gray"
                            Text="{Binding InstrumentDescription}" />
             </StackPanel>
-            <Button DockPanel.Dock="Right" Width="100" Height="34"
-                    Command="{Binding RefreshCommand}" Content="刷新状态" />
+            <WrapPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
+                <Button Margin="0,0,8,0" Padding="12,6" Content="单任务模板" Click="SingleTaskTemplate_Click"
+                        Visibility="{Binding IsSampleWorkstationSelected, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                <Button Margin="0,0,8,0" Padding="12,6" Content="批量导入任务" Click="BatchTaskImport_Click"
+                        Visibility="{Binding IsSampleWorkstationSelected, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                <Button Width="100" Height="34" Command="{Binding RefreshCommand}" Content="刷新状态" />
+            </WrapPanel>
         </DockPanel>
 
         <!-- The two items are peer instruments.  The opening/dispensing page

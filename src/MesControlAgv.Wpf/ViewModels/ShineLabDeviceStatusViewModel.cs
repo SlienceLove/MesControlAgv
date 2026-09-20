@@ -33,6 +33,8 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
     public const string IonChromatographyInstrument = "离子色谱";
     public const string SampleWorkstationInstrument = "开盖分液";
     public const string DefaultSampleWorkstationDeviceId = "SAMPLE-WORKSTATION-01";
+    internal IMesClient TaskTemplateClient => _mes;
+    internal string TaskTemplateDeviceId => _sampleWorkstationDeviceId;
 
     private readonly IMesClient _mes;
     private readonly string _sampleWorkstationDeviceId;
@@ -151,7 +153,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
 
     public string InstrumentDescription => IsIonChromatographySelected
         ? "显示离子色谱及其子设备（如 D160+、自动进样器 18i）的在线与运行状态"
-        : "显示开盖分液工作站的只读状态、错误信息与最近任务";
+        : "查看工作站状态与最近任务；支持单任务模板和 Excel 批量导入";
 
     /// <summary>
     /// Only ion-chromatography responses are exposed through this collection.
@@ -326,7 +328,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
         : string.IsNullOrWhiteSpace(WorkstationReadErrors)
             ? IsWorkstationTestControlVisible
                 ? "联调测试入口已启用；仅可二次确认后启动已有任务。"
-                : "仅展示只读状态，不提供初始化、启动、任务导入或删除操作。"
+                : "状态区为只读；任务模板与导入请使用顶部入口，导入不会自动启动。"
             : $"只读接口部分不可用：{WorkstationReadErrors}";
     public string WorkstationReadErrors => _sampleWorkstationSnapshot is null
         ? string.Empty

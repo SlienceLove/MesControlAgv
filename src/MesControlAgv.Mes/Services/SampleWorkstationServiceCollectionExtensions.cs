@@ -27,6 +27,7 @@ public static class SampleWorkstationServiceCollectionExtensions
         services.AddScoped<ISampleWorkstationTemplateReader>(provider => provider.GetRequiredService<SampleWorkstationAdapterClient>());
         services.AddScoped<ISampleWorkstationTaskImporter>(provider => provider.GetRequiredService<SampleWorkstationAdapterClient>());
         services.AddScoped<ISampleWorkstationCapabilityReader>(provider => provider.GetRequiredService<SampleWorkstationAdapterClient>());
+        services.AddScoped<WorkstationBatchImportService>();
         return services;
     }
 }

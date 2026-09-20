@@ -10,7 +10,7 @@ using MesControlAgv.Wpf.WorkflowCanvas;
 
 namespace MesControlAgv.Wpf;
 
-public partial class App : Application
+public partial class App : System.Windows.Application
 {
     private readonly CancellationTokenSource _startupCancellation = new();
     private LocalSimulatorRuntime? _localRuntime;

@@ -6,6 +6,18 @@ namespace MesControlAgv.Wpf.Tests;
 public sealed class MesHttpTimeoutHandlerTests
 {
     [Fact]
+    public async Task Batch_import_has_its_own_finite_budget()
+    {
+        using var client = new HttpClient(new MesHttpTimeoutHandler(
+            writeTimeout: TimeSpan.FromMilliseconds(20),
+            batchImportTimeout: TimeSpan.FromSeconds(2),
+            innerHandler: new DelayHandler(TimeSpan.FromMilliseconds(100))))
+        { BaseAddress = new Uri("http://localhost/"), Timeout = Timeout.InfiniteTimeSpan };
+        using var response = await client.PostAsync("api/workstations/WS-01/task-batches/import", null);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        await Assert.ThrowsAsync<TimeoutException>(() => client.PostAsync("api/other", null));
+    }
+    [Fact]
     public async Task Ordinary_read_uses_the_short_timeout()
     {
         using var client = CreateClient(new DelayHandler(TimeSpan.FromSeconds(5)));

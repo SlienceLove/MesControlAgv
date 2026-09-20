@@ -117,6 +117,8 @@ public sealed record DashboardWorkflowExecution(
 
 public interface IMesClient
 {
+    Task<WorkstationBatchResult> ImportWorkstationBatchAsync(string deviceId, WorkstationBatchRequest request, CancellationToken token) =>
+        Task.FromException<WorkstationBatchResult>(new NotSupportedException("MES 尚未提供批量任务导入接口。"));
     Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<DashboardTask>> GetTasksAsync(DateOnly date, CancellationToken cancellationToken) => GetTasksAsync(cancellationToken);
     Task<KpiDashboard> GetKpiDashboardAsync(DateOnly date, CancellationToken cancellationToken);

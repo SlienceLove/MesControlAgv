@@ -21,6 +21,18 @@ namespace MesControlAgv.Wpf.Services;
 
 public sealed class MesClient(HttpClient client) : IMesClient
 {
+    public async Task<WorkstationBatchResult> ImportWorkstationBatchAsync(string deviceId, WorkstationBatchRequest request, CancellationToken token)
+    {
+        using var response = await client.PostAsJsonAsync($"api/workstations/{Uri.EscapeDataString(deviceId)}/task-batches/import", request, token);
+        if (!response.IsSuccessStatusCode)
+        {
+            if (response.StatusCode == HttpStatusCode.NotFound)
+                throw new InvalidOperationException("现场 MES 尚未部署批量导入接口；本地模板编辑和 Excel 预览仍可使用。");
+            throw new InvalidOperationException($"导入请求返回 {(int)response.StatusCode}：{await response.Content.ReadAsStringAsync(token)}");
+        }
+        return await response.Content.ReadFromJsonAsync<WorkstationBatchResult>(token)
+            ?? throw new InvalidOperationException("未收到可确认的导入结果，请按请求编号核对。");
+    }
     public Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken) =>
         GetTasksAsync(DateOnly.FromDateTime(DateTime.UtcNow), cancellationToken);
 
