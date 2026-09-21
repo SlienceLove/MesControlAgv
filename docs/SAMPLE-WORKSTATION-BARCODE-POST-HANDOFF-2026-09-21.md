@@ -1,5 +1,7 @@
 # 条码POST适配及正式启动验收交接（2026-09-21）
 
+> 后续人工收尾及同库新任务验证见[接续交接](SAMPLE-WORKSTATION-MANUAL-END-HANDOFF-2026-09-21.md)。本页保留此前失败历史。
+
 > 后续14:20厂商更新复测见[启动已接受但现场仅初始化](diagnostics/2026-09-21-workstation-start-accepted-init-only.md)：新任务WS76C00540582D9E1BEA已收到启动成功确认，但未观测到Running，现场仅初始化；30秒观察窗口后Unknown，没有停止或重发指令。本页保留13:19失败历史。
 
 ## 结论
