@@ -1,5 +1,7 @@
 # 现场恢复后的新任务验证（2026-09-21 16:02）
 
+> 16:07更新：启动后曾正常返回运行态，但随后任务状态读取连续两次被远端关闭连接；独立读取设备状态和事件也同样无响应。Adapter健康、工作站仍配置vendor-http；中控Run目前仍Running，不能以此证明现场继续运行。等待现场核对厂家主程序、监听服务和实际动作，不补发任何控制命令。
+
 用户明确确认“现场恢复了，继续新的测试”。沿用feature/workstation-ml-template-validation独立工作区，HEAD88700ef，生产代码a6af9dc不变，不重新构建/部署/清库。MES15053、Adapter15052及原验收数据库不变。
 
 验证号FIELD-RECOVERED-20260921-1602。本轮为新任务，不重放上一轮WSCEAD74AFFB073CBF8B。旧任务人工终止、Failed和资源释放见[接续交接](../SAMPLE-WORKSTATION-MANUAL-END-HANDOFF-2026-09-21.md)。
@@ -28,3 +30,5 @@
 
 证据目录artifacts/workstation-recovered-field-20260921-1602/（ignored、本机保留）：preflight.json、central-preparation.json、frozen-import/、import-result.json、import-readback.json、readback-comparison.json、admit-result.json、poll-01.json。
 下一步仅查询本Run/device-operations及厂家任务状态、设备状态、事件；结合用户现场反馈确认是否实际分液。完成需Completed+Idle0+事件0及中控Completed/资源释放共同成立；若转Unknown则保留占用和原请求，不自动重试，不沿用上一轮人工收尾授权。
+
+后续读回证据poll-02.json、poll-03.json及connection-readback.json记录`Remote end closed connection without response`。无法据此断言厂家进程崩溃、网络断开或任务已停止；需要现场确认。没有通过HTTP写请求重试探测，也未重启任何服务。
