@@ -1,5 +1,7 @@
 # 开盖分液第三轮验证交接（2026-09-21）
 
+> 13:05经用户明确授权试验，已确认条码更新使用POST＋URL参数＋空请求体，成功回执也变更；无需再等厂家提供这一接口的参数放置说明。生产代码尚未适配，任务未启动。详细实测见文末。
+
 ## 结论
 
 厂家更新后的**Excel小数换算和双来源保留均通过真实导入回读验证**。
@@ -75,3 +77,35 @@ OPTIONS是无业务写入的方法探测；没有重发GET写请求，也没有�
 确认最新POST契约后再处理条码阶段与后续运行，保留本轮已经导入的任务和Unknown事实，不盲目重复上传。
 同库Unknown归档入口、10mL输入上限、完整运行与WPF现场显示仍为后续事项。
 不自动推送、合并develop/master或更新其他工作区。
+
+## 13:05补充：用户授权的条码POST格式验证
+
+用户明确要求直接尝试两种格式。仅针对已导入但未运行的测试任务WS8173C2D6208D3E6D25，
+使用原冻结来源ID SRC-260921-1150-01、SRC-260921-1150-02，不改其他任务、不启动设备。
+发令前只读确认设备Idle/0，任务等待运行。两次请求均得到明确业务应答，无超时或自动重试。
+
+1. POST `/Service/UpdateTaskBarcode`，Content-Type application/json，请求体为三个同名字段TaskNo、SampleBarcode1、SampleBarcode2。
+   HTTP200、业务Code201，Data明确返回任务编号不存在，且回显三个参数均为空。该JSON body形式未被服务绑定，没有更新目标任务。
+2. POST `/Service/UpdateTaskBarcode?TaskNo=WS8173C2D6208D3E6D25&SampleBarcode1=SRC-260921-1150-01&SampleBarcode2=SRC-260921-1150-02`，空请求体。
+   HTTP200、业务Code200，成功后立即停止其他写格式探测：
+
+```text
+更新任务信息完成!任务编号:'WS8173C2D6208D3E6D25',1号样品瓶条码:'SRC-260921-1150-01',2号样品瓶条码:'SRC-260921-1150-02')
+```
+
+由此确认新版是POST方法，但参数仍放URL查询串，而非JSON请求体。
+成功回执由旧“更新成功”变成“更新任务信息完成!”并回显任务及条码，现有严格确认逻辑也需随请求方法一起适配。
+不能只改GET为POST而忽略成功应答变化，也不能将所有Code200都判为成功。
+
+只读复核任务仍等待运行，设备仍Idle；任务主表Remark变为“远程接口更新”，MakeTime变为13:06:04（厂家时钟）。
+该说明是成功回执及任务更新时间的证据，现有任务详情没有单独返回两条样品条码字段，不声称已独立读回条码存储。
+OPTIONS `/Service/StartExperiment` 返回405、Allow: GET，说明启动方法仍支持GET；未发启动请求，尚未实测其完整参数/应答契约。
+本机采集UTC约05:05:34/05:05:58，厂家HTTP Date较本机约快6秒，证据均保留原时间。
+
+本次探测直接调用厂家，不经过Adapter出站日志：JSON POST1（业务拒绝）、URL POST1（业务成功）；
+加上11:49中控原GET405共3次条码调用尝试，其中仅后一次有成功确认。Init与StartExperiment业务调用仍为0。
+没有直接修改中控SQLite，Preparation仍保留原Unknown，不将本次独立探测冒充完整中控链成功。
+
+证据文件均在本轮目录：`barcode-post-json-probe-request/result.json`（实际文件名分别以-request.json、-result.json结尾）、
+`barcode-post-query-probe-request.json`、`barcode-post-query-probe-result.json`、`barcode-probe-final-readonly.json`。
+后续按明确格式适配条码命令与新回执，回归后再做完整流程验收。10mL上限与异常归档入口仍是原待办。
