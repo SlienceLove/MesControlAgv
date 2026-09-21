@@ -14,6 +14,128 @@ namespace MesControlAgv.Mes.Tests;
 public sealed class WorkflowSampleWorkstationWorkerTests
 {
     [Fact]
+    public async Task Retained_manual_end_allows_waiting_task_once_then_observes_new_running_and_completion()
+    {
+        await using var fixture = await WorkstationFixture.CreateAsync();
+        var runId = await fixture.PublishExecuteAndConfirmAsync();
+        var ended = Observation.Idle(SampleWorkstationTaskState.Waiting) with { ErrorCode = 1 };
+        var gateway = fixture.CreateGateway(ended, ended, Observation.Idle(SampleWorkstationTaskState.Waiting),
+            Observation.Running(), Observation.Idle(SampleWorkstationTaskState.Completed));
+        var dispatcher = fixture.CreateDispatcher(gateway);
+
+        await dispatcher.ProcessAsync(CancellationToken.None);
+        await dispatcher.ProcessAsync(CancellationToken.None);
+
+        Assert.Equal(1, gateway.StartCalls);
+        Assert.Equal(0, gateway.InitializeCalls);
+        Assert.Equal(5, gateway.ObservationCount);
+        Assert.Equal(WorkflowRuntimeStatus.Completed, (await fixture.Workflows.GetExecutionAsync(runId, CancellationToken.None))!.RuntimeStatus);
+    }
+
+    [Theory]
+    [InlineData("completed")]
+    [InlineData("running")]
+    [InlineData("unknown-task")]
+    [InlineData("unknown-event")]
+    [InlineData("fault")]
+    [InlineData("offline")]
+    [InlineData("paused")]
+    [InlineData("initializing")]
+    [InlineData("unrecognized")]
+    [InlineData("identity")]
+    public async Task Retained_manual_end_readiness_does_not_relax_other_requirements(string mode)
+    {
+        await using var fixture = await WorkstationFixture.CreateAsync();
+        await fixture.PublishExecuteAndConfirmAsync();
+        var ended = Observation.Idle(SampleWorkstationTaskState.Waiting) with { ErrorCode = 1 };
+        var observation = mode switch
+        {
+            "completed" => ended with { TaskState = SampleWorkstationTaskState.Completed },
+            "running" => ended with { TaskState = SampleWorkstationTaskState.Running },
+            "unknown-task" => ended with { TaskState = SampleWorkstationTaskState.Unknown },
+            "unknown-event" => ended with { ErrorCode = 99 },
+            "fault" => ended with { DeviceState = SampleWorkstationDeviceState.Faulted, RawDeviceState = 4 },
+            "offline" => ended with { DeviceState = SampleWorkstationDeviceState.Offline, RawDeviceState = 5 },
+            "paused" => ended with { DeviceState = SampleWorkstationDeviceState.Paused, RawDeviceState = 3 },
+            "initializing" => ended with { DeviceState = SampleWorkstationDeviceState.Initializing, RawDeviceState = 2 },
+            "unrecognized" => ended with { ErrorRecognized = false },
+            "identity" => ended with { TaskNoOverride = "OTHER" },
+            _ => throw new ArgumentException(mode)
+        };
+        var gateway = fixture.CreateGateway(observation);
+        await fixture.CreateDispatcher(gateway).ProcessAsync(CancellationToken.None);
+        Assert.Equal(0, gateway.StartCalls);
+        Assert.Equal(0, gateway.InitializeCalls);
+    }
+
+    [Theory]
+    [InlineData(SampleWorkstationTaskState.Waiting)]
+    [InlineData(SampleWorkstationTaskState.Running)]
+    [InlineData(SampleWorkstationTaskState.Completed)]
+    public async Task Unchanged_old_manual_end_never_fabricates_running_or_completion(SampleWorkstationTaskState taskState)
+    {
+        await using var fixture = await WorkstationFixture.CreateAsync();
+        var runId = await fixture.PublishExecuteAndConfirmAsync();
+        var ended = Observation.Idle(SampleWorkstationTaskState.Waiting) with { ErrorCode = 1 };
+        var gateway = fixture.CreateGateway(ended, ended with { TaskState = taskState });
+        var dispatcher = fixture.CreateDispatcher(gateway, startObservationTimeoutMs: 25);
+        await dispatcher.ProcessAsync(CancellationToken.None);
+        await dispatcher.ProcessAsync(CancellationToken.None);
+        Assert.Equal(1, gateway.StartCalls);
+        Assert.Equal(WorkflowRuntimeStatus.Unknown, (await fixture.Workflows.GetExecutionAsync(runId, CancellationToken.None))!.RuntimeStatus);
+        var operation = Assert.Single(await fixture.Workflows.ListDeviceOperationsAsync(runId, CancellationToken.None));
+        Assert.Equal(WorkflowDeviceOperationStatus.Unknown, operation.Status);
+        Assert.Contains("No Running evidence", operation.LastError);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Manual_end_after_baseline_clears_is_a_new_interruption(bool running)
+    {
+        await using var fixture = await WorkstationFixture.CreateAsync();
+        var runId = await fixture.PublishExecuteAndConfirmAsync();
+        var ended = Observation.Idle(SampleWorkstationTaskState.Waiting) with { ErrorCode = 1 };
+        var gateway = fixture.CreateGateway(ended, running ? Observation.Running() : Observation.Idle(SampleWorkstationTaskState.Waiting), ended);
+        await fixture.CreateDispatcher(gateway).ProcessAsync(CancellationToken.None);
+        Assert.Equal(1, gateway.StartCalls);
+        var operation = Assert.Single(await fixture.Workflows.ListDeviceOperationsAsync(runId, CancellationToken.None));
+        Assert.Equal(WorkflowDeviceOperationStatus.Unknown, operation.Status);
+        Assert.Contains("error/result code 1", operation.LastError);
+    }
+
+    [Theory]
+    [InlineData("fault")]
+    [InlineData("offline")]
+    [InlineData("paused")]
+    [InlineData("unknown-task")]
+    [InlineData("unrecognized")]
+    [InlineData("error")]
+    [InlineData("identity")]
+    public async Task Historical_baseline_cannot_mask_other_post_start_failures(string mode)
+    {
+        await using var fixture = await WorkstationFixture.CreateAsync();
+        var runId = await fixture.PublishExecuteAndConfirmAsync();
+        var ended = Observation.Idle(SampleWorkstationTaskState.Waiting) with { ErrorCode = 1 };
+        var bad = mode switch
+        {
+            "fault" => ended with { DeviceState = SampleWorkstationDeviceState.Faulted, RawDeviceState = 4 },
+            "offline" => ended with { DeviceState = SampleWorkstationDeviceState.Offline, RawDeviceState = 5 },
+            "paused" => ended with { DeviceState = SampleWorkstationDeviceState.Paused, RawDeviceState = 3 },
+            "unknown-task" => ended with { TaskState = SampleWorkstationTaskState.Unknown },
+            "unrecognized" => ended with { ErrorRecognized = false },
+            "error" => ended with { ErrorCode = -2 },
+            "identity" => ended with { TaskNoOverride = "OTHER" },
+            _ => throw new ArgumentException(mode)
+        };
+        var gateway = fixture.CreateGateway(ended, bad);
+        await fixture.CreateDispatcher(gateway).ProcessAsync(CancellationToken.None);
+        Assert.Equal(1, gateway.StartCalls);
+        Assert.Equal(2, gateway.ObservationCount);
+        Assert.Equal(WorkflowRuntimeStatus.Unknown, (await fixture.Workflows.GetExecutionAsync(runId, CancellationToken.None))!.RuntimeStatus);
+    }
+
+    [Fact]
     public async Task Existing_task_dispatcher_leaves_legacy_template_nodes_for_the_legacy_worker()
     {
         await using var fixture = await WorkstationFixture.CreateAsync();
@@ -419,6 +541,8 @@ public sealed class WorkflowSampleWorkstationWorkerTests
         SampleWorkstationTaskState TaskState,
         string RawTaskState)
     {
+        public bool ErrorRecognized { get; init; } = true;
+        public string? TaskNoOverride { get; init; }
         public static Observation Idle(SampleWorkstationTaskState taskState) =>
             new(SampleWorkstationDeviceState.Idle, 0, 0, taskState, taskState.ToString());
 
@@ -480,7 +604,7 @@ public sealed class WorkflowSampleWorkstationWorkerTests
                 deviceId,
                 Current.ErrorCode,
                 Current.ErrorCode switch { 0 => "TaskCompleted", 3 => "ExperimentStarted", _ => "Error" },
-                true,
+                Current.ErrorRecognized,
                 clock.GetUtcNow()));
 
         public Task<SampleWorkstationTaskStateResponse> GetTaskStateAsync(
@@ -493,7 +617,7 @@ public sealed class WorkflowSampleWorkstationWorkerTests
             clock.Advance(TimeSpan.FromMilliseconds(10));
             return Task.FromResult(new SampleWorkstationTaskStateResponse(
                 deviceId,
-                taskNo,
+                current.TaskNoOverride ?? taskNo,
                 current.TaskState,
                 current.RawTaskState,
                 clock.GetUtcNow()));
