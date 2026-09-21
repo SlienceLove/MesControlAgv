@@ -100,6 +100,7 @@ public sealed class SampleWorkstationModuleTests
     [Theory]
     [InlineData("start", "启动成功", "/Service/StartExperiment", true)]
     [InlineData("barcodes", "更新成功", "/Service/UpdateTaskBarcode", true)]
+    [InlineData("barcodes", "更新任务信息完成!任务编号:'TASK-01',1号样品瓶条码:'来源+A&1',2号样品瓶条码:'B/2')", "/Service/UpdateTaskBarcode", true)]
     [InlineData("barcodes", "更新成功", "/Service/UpdateTaskBarcode", false)]
     public async Task V102_json_body_binds_both_barcodes_and_respects_control_policy(
         string action, string ack, string vendorPath, bool enabled)
@@ -118,6 +119,7 @@ public sealed class SampleWorkstationModuleTests
         response.EnsureSuccessStatusCode();
         Assert.Equal(1, vendor.RequestCount);
         Assert.Equal(vendorPath, vendor.LastUri!.AbsolutePath);
+        Assert.Equal(action == "barcodes" ? HttpMethod.Post : HttpMethod.Get, vendor.LastMethod);
         var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(vendor.LastUri.Query);
         Assert.Equal("来源+A&1", query["SampleBarcode1"]);
         Assert.Equal("B/2", query["SampleBarcode2"]);

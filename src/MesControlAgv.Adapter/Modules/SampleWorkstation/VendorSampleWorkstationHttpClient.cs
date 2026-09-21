@@ -42,6 +42,13 @@ public sealed class VendorSampleWorkstationHttpClient(HttpClient client)
         return SendAsync(HttpMethod.Post, path, query: null, content, cancellationToken);
     }
 
+    /// <summary>Verified barcode command: POST with URL query parameters and no request body.</summary>
+    public Task<VendorSampleWorkstationResponse> PostCommandAsync(
+        string path,
+        IReadOnlyDictionary<string, string?> query,
+        CancellationToken cancellationToken) =>
+        SendAsync(HttpMethod.Post, path, query, content: null, cancellationToken);
+
     internal async Task<VendorSampleWorkstationResponse> SendAsync(
         HttpMethod method,
         string path,
