@@ -1,5 +1,7 @@
 # 开盖分液 Excel mL 兼容与现场验证交接
 
+> 后续进度见[2026-09-21第三轮验证](SAMPLE-WORKSTATION-VALIDATION-HANDOFF-2026-09-21.md)：双来源和小数回读已通过，新增条码接口GET405/Allow:POST阻塞，尚未启动。本页保留前两轮历史证据。
+
 ## 当前结论
 
 代码已提交 `d62b602`，分支 `feature/workstation-ml-template-validation`，起点develop `ad2d958`。
