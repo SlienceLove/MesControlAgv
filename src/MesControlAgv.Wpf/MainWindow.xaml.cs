@@ -15,6 +15,7 @@ public partial class MainWindow : Window
     private bool _twinStartupApplied;
     private AccessClient? _accessClient;
     private AccessUser? _accessUser;
+    private bool _accessDemo;
     public MainWindow()
     {
         InitializeComponent();
@@ -27,25 +28,49 @@ public partial class MainWindow : Window
         EnsureInitialTabSelection();
     }
 
-    public void SetAccessSession(AccessClient client, AccessUser user)
+    public void SetAccessSession(AccessClient client, AccessUser user, bool demo = false)
     {
-        _accessClient = client; _accessUser = user;
+        _accessClient = client; _accessUser = user; _accessDemo = demo;
         AccessUserText.Text = $"{user.DisplayName} · {AccessRoles.Display(user.Role)}";
         AccessManageButton.Visibility = user.Role == AccessRoles.Administrator ? Visibility.Visible : Visibility.Collapsed;
+        AccessPasswordButton.Visibility = Visibility.Visible;
         AccessLogoutButton.Visibility = Visibility.Visible;
     }
 
     private async void AccessLogout_Click(object sender, RoutedEventArgs e)
     {
-        try { if (_accessClient is not null) await _accessClient.LogoutAsync(CancellationToken.None); }
-        finally { Application.Current.Shutdown(); }
+        if (_accessClient is null) return;
+        try { await _accessClient.LogoutAsync(CancellationToken.None); } catch { }
+        _accessClient.ClearSession(); _accessUser = null; Hide();
+        var login = new LoginWindow(_accessClient, _accessDemo);
+        if (login.ShowDialog() == true && login.Result is not null)
+        {
+            _accessClient.SetSession(login.Result); SetAccessSession(_accessClient, login.Result.User, _accessDemo); Show(); return;
+        }
+        Application.Current.Shutdown();
     }
 
     private void AccessManage_Click(object sender, RoutedEventArgs e)
     {
         if (_accessClient is null || _accessUser?.Role != AccessRoles.Administrator) return;
-        try { new UserManagementWindow(_accessClient) { Owner = this }.ShowDialog(); }
+        try
+        {
+            var dialog = new UserManagementWindow(_accessClient) { Owner = this };
+            dialog.ShowDialog();
+            if (dialog.SessionInvalidated) Application.Current.Shutdown();
+        }
         catch (Exception ex) { MessageBox.Show(this, $"用户管理打开失败：{ex.Message}", "用户权限管理", MessageBoxButton.OK, MessageBoxImage.Error); }
+    }
+
+    private void AccessPassword_Click(object sender, RoutedEventArgs e)
+    {
+        if (_accessClient is null) return;
+        var dialog = new AccountEditorWindow(_accessClient, AccountEditorMode.ChangePassword) { Owner = this };
+        dialog.ShowDialog();
+        if (dialog.SessionInvalidated)
+        {
+            Application.Current.Shutdown();
+        }
     }
 
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)

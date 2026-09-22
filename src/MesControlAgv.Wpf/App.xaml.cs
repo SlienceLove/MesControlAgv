@@ -122,7 +122,7 @@ public partial class App : Application
                     return;
                 }
                 loginResult = login.Result;
-                accessClient.ApplyToken(loginResult.Token);
+                accessClient.SetSession(loginResult);
             }
             var mesClient = new MesClient(mesHttpClient);
             ISimulatorControlClient? simulatorClient = null;
@@ -161,7 +161,7 @@ public partial class App : Application
                         StringComparison.OrdinalIgnoreCase),
                 sampleWorkstationTestControlEnabled: sampleWorkstationTestControlEnabled);
             var window = new MainWindow { DataContext = _viewModel };
-            if (accessMode.Enabled && loginResult is not null) window.SetAccessSession(accessClient, loginResult.User);
+            if (accessMode.Enabled && loginResult is not null) window.SetAccessSession(accessClient, loginResult.User, accessMode.Demo);
             window.Closed += (_, _) =>
             {
                 _viewModel?.Dispose();

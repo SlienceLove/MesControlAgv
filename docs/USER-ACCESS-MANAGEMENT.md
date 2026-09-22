@@ -21,3 +21,9 @@
 WPF 已接入登录窗口、当前用户/角色显示、退出登录和管理员“用户管理”窗口。管理员可查看、创建、启停账号和重置密码；操作员及只读用户不显示入口。客户演示包和启动器在 `artifacts/user-access-demo/`，启动器通过环境变量注入本地演示账号：`admin / DemoAdmin2026`、`operator / DemoUser2026`、`viewer / DemoUser2026`；FieldSimulation 配置本身不保存口令，缺少口令会拒绝启动。生产配置必须通过安全配置覆盖，不能直接使用演示口令。
 
 串行回归：MES 585 项、WPF 623 项全部通过；Release 演示发布成功。已手工确认登录页、管理员角色显示、用户管理窗口、`/api/access/users` 读取和只读账号写入 403。服务端会覆盖 actor、operatorName、operatorAccount、requestedBy、createdBy、updatedBy、submittedBy、approvedBy、authorizedBy、completedBy 等身份字段，避免客户端污染审计或物理授权。模式接口网络异常不会再静默跳过登录。未启用现场 PhysicalAcceptance 登录，也未改变开盖分液会话或现场服务。
+
+## 下一阶段完成项
+
+已补齐账号日常闭环：管理员可以编辑姓名/角色、启停账号和重置密码；所有用户可在右上角修改自己的密码；修改密码、停用账号或角色变更会结束相关会话；退出登录会返回登录窗口，不停止 MES、Adapter 或模拟任务。用户管理表格为只读展示，操作通过明确弹窗完成，避免误编辑。
+
+新增 AccessClient 会话/错误处理测试 2 项；全量 MES/WPF 回归继续使用串行模式，避免并行 MSBuild 内存峰值。演示包仍从 `artifacts/user-access-demo/Start-Demo.ps1` 启动，Adapter 使用隔离端口 5941。
