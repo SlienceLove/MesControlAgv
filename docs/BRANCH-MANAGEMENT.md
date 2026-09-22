@@ -15,6 +15,7 @@
 | master | 已通过本轮离线回归的统一基线；现场部署仍需现场验收 | 接收 develop |
 | develop | 唯一集成入口 | 功能、UI 分支先汇入这里 |
 | feature/wpf-ui-layout-optimization | 后续界面优化 | develop |
+| feature/user-access-management | 本地登录、三角色权限及隔离客户演示；独立 worktree user-access-management | develop |
 | feature/sample-workstation-http-readonly | 已暂停，最终归档源 4fbddc4 | 已集成，后续任务重新从统一基线开始 |
 | feature/material-management | 已集成的物料功能历史 | 保留追溯，不继续分叉 |
 | feature/physical-admission-v2 | 已集成的准入与物料历史 74cfb88 | 保留追溯，不继续分叉 |
