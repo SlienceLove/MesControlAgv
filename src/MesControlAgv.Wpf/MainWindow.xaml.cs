@@ -16,11 +16,13 @@ public partial class MainWindow : Window
     private AccessClient? _accessClient;
     private AccessUser? _accessUser;
     private bool _accessDemo;
+    private CancellationTokenSource? _sessionMonitorCancellation;
     public MainWindow()
     {
         InitializeComponent();
         InitializeTwinFullScreen();
         Loaded += MainWindow_Loaded;
+        Closed += (_, _) => _sessionMonitorCancellation?.Cancel();
 
         // The grouped sidebar's checked state is only a visual affordance and
         // does not raise a Click event during startup. Keep the content host
@@ -35,19 +37,16 @@ public partial class MainWindow : Window
         AccessManageButton.Visibility = user.Role == AccessRoles.Administrator ? Visibility.Visible : Visibility.Collapsed;
         AccessPasswordButton.Visibility = Visibility.Visible;
         AccessLogoutButton.Visibility = Visibility.Visible;
+        _sessionMonitorCancellation?.Cancel();
+        _sessionMonitorCancellation = new CancellationTokenSource();
+        _ = MonitorAccessSessionAsync(_sessionMonitorCancellation.Token);
     }
 
     private async void AccessLogout_Click(object sender, RoutedEventArgs e)
     {
         if (_accessClient is null) return;
         try { await _accessClient.LogoutAsync(CancellationToken.None); } catch { }
-        _accessClient.ClearSession(); _accessUser = null; Hide();
-        var login = new LoginWindow(_accessClient, _accessDemo);
-        if (login.ShowDialog() == true && login.Result is not null)
-        {
-            _accessClient.SetSession(login.Result); SetAccessSession(_accessClient, login.Result.User, _accessDemo); Show(); return;
-        }
-        Application.Current.Shutdown();
+        Reauthenticate();
     }
 
     private void AccessManage_Click(object sender, RoutedEventArgs e)
@@ -57,7 +56,7 @@ public partial class MainWindow : Window
         {
             var dialog = new UserManagementWindow(_accessClient) { Owner = this };
             dialog.ShowDialog();
-            if (dialog.SessionInvalidated) Application.Current.Shutdown();
+            if (dialog.SessionInvalidated) Reauthenticate();
         }
         catch (Exception ex) { MessageBox.Show(this, $"用户管理打开失败：{ex.Message}", "用户权限管理", MessageBoxButton.OK, MessageBoxImage.Error); }
     }
@@ -67,10 +66,41 @@ public partial class MainWindow : Window
         if (_accessClient is null) return;
         var dialog = new AccountEditorWindow(_accessClient, AccountEditorMode.ChangePassword) { Owner = this };
         dialog.ShowDialog();
-        if (dialog.SessionInvalidated)
+        if (dialog.SessionInvalidated) Reauthenticate();
+    }
+
+    private void Reauthenticate()
+    {
+        if (_accessClient is null) { Application.Current.Shutdown(); return; }
+        _accessClient.ClearSession(); _accessUser = null; Hide();
+        var login = new LoginWindow(_accessClient, _accessDemo);
+        if (login.ShowDialog() == true && login.Result is not null)
         {
-            Application.Current.Shutdown();
+            _accessClient.SetSession(login.Result);
+            SetAccessSession(_accessClient, login.Result.User, _accessDemo);
+            Show();
+            return;
         }
+        Application.Current.Shutdown();
+    }
+
+    private async Task MonitorAccessSessionAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
+                if (_accessClient is null) return;
+                await _accessClient.GetCurrentUserAsync(cancellationToken);
+            }
+        }
+        catch (AccessRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+        {
+            if (!cancellationToken.IsCancellationRequested) Reauthenticate();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch { /* transient network failures are retried on the next interval */ }
     }
 
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
