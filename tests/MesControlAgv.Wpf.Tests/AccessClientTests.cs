@@ -38,6 +38,37 @@ public sealed class AccessClientTests
         Assert.Null(client.CurrentUser);
     }
 
+    [Fact]
+    public async Task Session_monitor_retries_network_failures_but_stops_on_unauthorized()
+    {
+        var attempts = 0; var updated = 0; var canceled = new CancellationTokenSource();
+        var user = new AccessUser(Guid.NewGuid(), "operator", "操作员", AccessRoles.Operator, true, null);
+        var monitor = new AccessSessionMonitor(_ =>
+        {
+            attempts++;
+            if (attempts < 3) throw new HttpRequestException("offline");
+            canceled.Cancel(); return Task.FromResult(user);
+        }, _ => Task.CompletedTask);
+        await monitor.RunAsync(_ => updated++, () => Assert.True(false), canceled.Token);
+        Assert.Equal(3, attempts); Assert.Equal(0, updated);
+
+        var revoked = false;
+        var unauthorized = new AccessSessionMonitor(_ => Task.FromException<AccessUser>(
+            new AccessRequestException(System.Net.HttpStatusCode.Unauthorized, "expired")), _ => Task.CompletedTask);
+        await unauthorized.RunAsync(_ => { }, () => revoked = true, CancellationToken.None);
+        Assert.True(revoked);
+    }
+
+    [Fact]
+    public void Viewer_presentation_exposes_only_read_pages_and_actions()
+    {
+        Assert.True(AccessUiPolicy.CanNavigate(AccessRoles.Viewer, "KpiDashboardTab"));
+        Assert.False(AccessUiPolicy.CanNavigate(AccessRoles.Viewer, "AgvCommunicationTab"));
+        Assert.True(AccessUiPolicy.CanUseAction(AccessRoles.Viewer, "刷新"));
+        Assert.False(AccessUiPolicy.CanUseAction(AccessRoles.Viewer, "创建任务"));
+        Assert.True(AccessUiPolicy.CanNavigate(AccessRoles.Operator, "ExperimentSchedulingTab"));
+    }
+
     private sealed class Handler(Func<HttpRequestMessage, HttpResponseMessage> response) : HttpMessageHandler
     {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)

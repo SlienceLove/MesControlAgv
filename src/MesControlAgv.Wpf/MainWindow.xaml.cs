@@ -3,6 +3,8 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Media;
+using System.Windows.Input;
+using System.Windows.Controls.Primitives;
 using MesControlAgv.Wpf.ViewModels;
 using MesControlAgv.Wpf.Services;
 using MesControlAgv.Contracts;
@@ -23,6 +25,7 @@ public partial class MainWindow : Window
         InitializeTwinFullScreen();
         Loaded += MainWindow_Loaded;
         Closed += (_, _) => _sessionMonitorCancellation?.Cancel();
+        AddHandler(UIElement.PreviewMouseDownEvent, new MouseButtonEventHandler(AccessPreviewMouseDown), true);
 
         // The grouped sidebar's checked state is only a visual affordance and
         // does not raise a Click event during startup. Keep the content host
@@ -33,13 +36,11 @@ public partial class MainWindow : Window
     public void SetAccessSession(AccessClient client, AccessUser user, bool demo = false)
     {
         _accessClient = client; _accessUser = user; _accessDemo = demo;
-        AccessUserText.Text = $"{user.DisplayName} · {AccessRoles.Display(user.Role)}";
-        AccessManageButton.Visibility = user.Role == AccessRoles.Administrator ? Visibility.Visible : Visibility.Collapsed;
-        AccessPasswordButton.Visibility = Visibility.Visible;
-        AccessLogoutButton.Visibility = Visibility.Visible;
+        UpdateAccessPresentation(user);
         _sessionMonitorCancellation?.Cancel();
         _sessionMonitorCancellation = new CancellationTokenSource();
-        _ = MonitorAccessSessionAsync(_sessionMonitorCancellation.Token);
+        _ = new AccessSessionMonitor(_accessClient.GetCurrentUserAsync)
+            .RunAsync(UpdateAccessPresentation, Reauthenticate, _sessionMonitorCancellation.Token);
     }
 
     private async void AccessLogout_Click(object sender, RoutedEventArgs e)
@@ -84,23 +85,39 @@ public partial class MainWindow : Window
         Application.Current.Shutdown();
     }
 
-    private async Task MonitorAccessSessionAsync(CancellationToken cancellationToken)
+    private void UpdateAccessPresentation(AccessUser user)
     {
-        try
+        _accessUser = user;
+        AccessUserText.Text = $"{user.DisplayName} · {AccessRoles.Display(user.Role)}";
+        AccessUserText.ToolTip = AccessUiPolicy.Summary(user.Role);
+        AccessManageButton.Visibility = user.Role == AccessRoles.Administrator ? Visibility.Visible : Visibility.Collapsed;
+        AccessPasswordButton.Visibility = Visibility.Visible;
+        AccessLogoutButton.Visibility = Visibility.Visible;
+        foreach (var button in FindVisualChildren<RadioButton>(NavigationSidebar))
+            if (button.Tag is string page) button.IsEnabled = AccessUiPolicy.CanNavigate(user.Role, page);
+    }
+
+    private void AccessPreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (_accessUser?.Role != AccessRoles.Viewer || e.OriginalSource is not DependencyObject source) return;
+        var button = FindAncestor<ButtonBase>(source);
+        if (button is RadioButton) return;
+        var label = button?.Content switch { TextBlock text => text.Text, string text => text, _ => null };
+        if (button is not null && !AccessUiPolicy.CanUseAction(_accessUser.Role, label))
         {
-            while (!cancellationToken.IsCancellationRequested)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
-                if (_accessClient is null) return;
-                await _accessClient.GetCurrentUserAsync(cancellationToken);
-            }
+            e.Handled = true;
+            MessageBox.Show(this, "只读账号不能执行此操作。", "当前账号权限", MessageBoxButton.OK, MessageBoxImage.Information);
         }
-        catch (AccessRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+    }
+
+    private static T? FindAncestor<T>(DependencyObject? current) where T : DependencyObject
+    {
+        while (current is not null)
         {
-            if (!cancellationToken.IsCancellationRequested) Reauthenticate();
+            if (current is T match) return match;
+            current = VisualTreeHelper.GetParent(current);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
-        catch { /* transient network failures are retried on the next interval */ }
+        return null;
     }
 
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
@@ -136,6 +153,12 @@ public partial class MainWindow : Window
     {
         if (sender is not RadioButton { Tag: string tabName })
         {
+            return;
+        }
+
+        if (_accessUser is not null && !AccessUiPolicy.CanNavigate(_accessUser.Role, tabName))
+        {
+            MessageBox.Show(this, AccessUiPolicy.Summary(_accessUser.Role), "当前账号权限", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
