@@ -1,0 +1,19 @@
+<Window x:Class="MesControlAgv.Wpf.Views.UserManagementWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="用户权限管理" Width="980" Height="620" WindowStartupLocation="CenterOwner" Background="#F3F6FB">
+    <Grid Margin="20">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel><TextBlock Text="用户权限管理" FontSize="24" FontWeight="SemiBold" Foreground="#123158"/><TextBlock Text="固定角色：管理员、操作员、只读用户；账号变更会立即使旧会话失效。" Margin="0,7,0,14" Foreground="#667085"/></StackPanel>
+        <DataGrid x:Name="UsersGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+            <DataGrid.Columns><DataGridTextColumn Header="账号" Binding="{Binding Username}" Width="160"/><DataGridTextColumn Header="姓名" Binding="{Binding DisplayName}" Width="*"/><DataGridTextColumn Header="角色" Binding="{Binding RoleDisplay}" Width="130"/><DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled}" Width="80"/><DataGridTextColumn Header="最近登录" Binding="{Binding LastLogin}" Width="220"/></DataGrid.Columns>
+        </DataGrid>
+        <Grid Grid.Row="2" Margin="0,14,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel Margin="0,0,10,0"><TextBlock Text="新账号"/><TextBox x:Name="NewUsername" Margin="0,5,0,0"/></StackPanel>
+            <StackPanel Grid.Column="1" Margin="0,0,10,0"><TextBlock Text="姓名"/><TextBox x:Name="NewDisplayName" Margin="0,5,0,0"/></StackPanel>
+            <StackPanel Grid.Column="2" Margin="0,0,10,0"><TextBlock Text="角色 / 初始密码"/><WrapPanel><ComboBox x:Name="NewRole" Width="125" Margin="0,5,7,0"><ComboBoxItem Content="管理员" Tag="Administrator"/><ComboBoxItem Content="操作员" Tag="Operator" IsSelected="True"/><ComboBoxItem Content="只读用户" Tag="Viewer"/></ComboBox><PasswordBox x:Name="NewPassword" Width="150" Margin="0,5,0,0"/></WrapPanel></StackPanel>
+            <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Bottom"><Button Content="创建账号" Click="Create_Click" Padding="12,7" Background="#1769AA" Foreground="White"/><Button Content="启用/停用选中" Click="Toggle_Click" Padding="12,7" Margin="8,0,0,0"/><Button Content="重置密码" Click="Reset_Click" Padding="12,7" Margin="8,0,0,0"/></StackPanel>
+        </Grid>
+        <TextBlock Grid.Row="2" x:Name="Status" Margin="0,52,0,0" Foreground="#D92D20" TextWrapping="Wrap"/>
+    </Grid>
+</Window>

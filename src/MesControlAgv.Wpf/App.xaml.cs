@@ -7,6 +7,8 @@ using MesControlAgv.Wpf.Services;
 using MesControlAgv.Wpf.Modules;
 using MesControlAgv.Wpf.ViewModels;
 using MesControlAgv.Wpf.WorkflowCanvas;
+using MesControlAgv.Wpf.Views;
+using MesControlAgv.Contracts;
 
 namespace MesControlAgv.Wpf;
 
@@ -100,11 +102,29 @@ public partial class App : Application
             // and state-changing requests retain their own larger budgets.
             // This keeps an unplugged UI responsive without turning a slow
             // device mutation into an unnecessary unknown outcome.
-            var mesClient = new MesClient(new HttpClient(new MesHttpTimeoutHandler())
+            var mesHttpClient = new HttpClient(new MesHttpTimeoutHandler())
             {
                 BaseAddress = mesUrl,
                 Timeout = Timeout.InfiniteTimeSpan
-            });
+            };
+            var accessClient = new AccessClient(mesHttpClient);
+            var accessMode = await accessClient.GetModeAsync(_startupCancellation.Token);
+            AccessLoginResponse? loginResult = null;
+            if (accessMode.Enabled)
+            {
+                startupWindow.SetStatus("等待用户登录...");
+                var login = new LoginWindow(accessClient, accessMode.Demo);
+                if (login.ShowDialog() != true || login.Result is null)
+                {
+                    _startupCompleted = true;
+                    startupWindow.Close();
+                    Shutdown();
+                    return;
+                }
+                loginResult = login.Result;
+                accessClient.ApplyToken(loginResult.Token);
+            }
+            var mesClient = new MesClient(mesHttpClient);
             ISimulatorControlClient? simulatorClient = null;
             if (isSimulator)
             {
@@ -141,6 +161,7 @@ public partial class App : Application
                         StringComparison.OrdinalIgnoreCase),
                 sampleWorkstationTestControlEnabled: sampleWorkstationTestControlEnabled);
             var window = new MainWindow { DataContext = _viewModel };
+            if (accessMode.Enabled && loginResult is not null) window.SetAccessSession(accessClient, loginResult.User);
             window.Closed += (_, _) =>
             {
                 _viewModel?.Dispose();

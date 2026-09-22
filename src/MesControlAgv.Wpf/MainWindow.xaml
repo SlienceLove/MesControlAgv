@@ -275,6 +275,9 @@
                                    Text="智能制造运营与任务协同" />
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock x:Name="AccessUserText" Margin="0,0,10,0" Foreground="#475467" VerticalAlignment="Center" />
+                        <Button x:Name="AccessManageButton" Content="用户管理" Visibility="Collapsed" Click="AccessManage_Click" Margin="0,0,8,0" Padding="10,4" />
+                        <Button x:Name="AccessLogoutButton" Content="退出登录" Visibility="Collapsed" Click="AccessLogout_Click" Margin="0,0,8,0" Padding="10,4" />
                         <Border Padding="10,5" Background="#ECFDF3" CornerRadius="12">
                             <StackPanel Orientation="Horizontal">
                                 <Ellipse Width="7" Height="7" Margin="0,0,6,0" VerticalAlignment="Center"

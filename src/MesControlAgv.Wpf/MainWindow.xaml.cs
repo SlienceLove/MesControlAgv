@@ -4,12 +4,17 @@ using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Media;
 using MesControlAgv.Wpf.ViewModels;
+using MesControlAgv.Wpf.Services;
+using MesControlAgv.Contracts;
+using MesControlAgv.Wpf.Views;
 
 namespace MesControlAgv.Wpf;
 
 public partial class MainWindow : Window
 {
     private bool _twinStartupApplied;
+    private AccessClient? _accessClient;
+    private AccessUser? _accessUser;
     public MainWindow()
     {
         InitializeComponent();
@@ -20,6 +25,27 @@ public partial class MainWindow : Window
         // does not raise a Click event during startup. Keep the content host
         // deterministic even when WPF has not selected an item yet.
         EnsureInitialTabSelection();
+    }
+
+    public void SetAccessSession(AccessClient client, AccessUser user)
+    {
+        _accessClient = client; _accessUser = user;
+        AccessUserText.Text = $"{user.DisplayName} · {AccessRoles.Display(user.Role)}";
+        AccessManageButton.Visibility = user.Role == AccessRoles.Administrator ? Visibility.Visible : Visibility.Collapsed;
+        AccessLogoutButton.Visibility = Visibility.Visible;
+    }
+
+    private async void AccessLogout_Click(object sender, RoutedEventArgs e)
+    {
+        try { if (_accessClient is not null) await _accessClient.LogoutAsync(CancellationToken.None); }
+        finally { Application.Current.Shutdown(); }
+    }
+
+    private void AccessManage_Click(object sender, RoutedEventArgs e)
+    {
+        if (_accessClient is null || _accessUser?.Role != AccessRoles.Administrator) return;
+        try { new UserManagementWindow(_accessClient) { Owner = this }.ShowDialog(); }
+        catch (Exception ex) { MessageBox.Show(this, $"用户管理打开失败：{ex.Message}", "用户权限管理", MessageBoxButton.OK, MessageBoxImage.Error); }
     }
 
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
