@@ -11,7 +11,8 @@ public sealed class AccessClient(HttpClient client)
     public async Task<AccessMode> GetModeAsync(CancellationToken cancellationToken)
     {
         using var response = await client.GetAsync("api/access/mode", cancellationToken);
-        if (!response.IsSuccessStatusCode) return new(false, false);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return new(false, false);
+        if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"无法读取登录服务状态（HTTP {(int)response.StatusCode}）。");
         return await response.Content.ReadFromJsonAsync<AccessMode>(cancellationToken) ?? new(false, false);
     }
     public async Task<AccessLoginResponse> LoginAsync(string username, string password, CancellationToken cancellationToken)

@@ -5,7 +5,7 @@
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <StackPanel><TextBlock Text="用户权限管理" FontSize="24" FontWeight="SemiBold" Foreground="#123158"/><TextBlock Text="固定角色：管理员、操作员、只读用户；账号变更会立即使旧会话失效。" Margin="0,7,0,14" Foreground="#667085"/></StackPanel>
         <DataGrid x:Name="UsersGrid" Grid.Row="1" AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
-            <DataGrid.Columns><DataGridTextColumn Header="账号" Binding="{Binding Username}" Width="160"/><DataGridTextColumn Header="姓名" Binding="{Binding DisplayName}" Width="*"/><DataGridTextColumn Header="角色" Binding="{Binding RoleDisplay}" Width="130"/><DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled}" Width="80"/><DataGridTextColumn Header="最近登录" Binding="{Binding LastLogin}" Width="220"/></DataGrid.Columns>
+            <DataGrid.Columns><DataGridTextColumn Header="账号" Binding="{Binding Username, Mode=OneWay}" Width="160"/><DataGridTextColumn Header="姓名" Binding="{Binding DisplayName, Mode=OneWay}" Width="*"/><DataGridTextColumn Header="角色" Binding="{Binding RoleDisplay, Mode=OneWay}" Width="130"/><DataGridCheckBoxColumn Header="启用" Binding="{Binding Enabled, Mode=OneWay}" Width="80"/><DataGridTextColumn Header="最近登录" Binding="{Binding LastLogin, Mode=OneWay}" Width="220"/></DataGrid.Columns>
         </DataGrid>
         <Grid Grid.Row="2" Margin="0,14,0,0">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>

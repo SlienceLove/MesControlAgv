@@ -119,8 +119,11 @@ public static class AccessModule
     public static AccessUser Current(HttpContext c) => (AccessUser)c.Items[typeof(AccessUser)]!;
     private static string Token(HttpContext c) => c.Request.Headers.Authorization.ToString().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
         ? c.Request.Headers.Authorization.ToString()[7..].Trim() : "";
-    private static bool IsActor(string name) => name.Equals("actor", StringComparison.OrdinalIgnoreCase)
-        || name.Equals("operatorName", StringComparison.OrdinalIgnoreCase) || name.Equals("operatorAccount", StringComparison.OrdinalIgnoreCase);
+    private static bool IsActor(string name) => new[]
+        {
+            "actor", "operatorName", "operatorAccount", "requestedBy", "createdBy", "updatedBy",
+            "submittedBy", "approvedBy", "authorizedBy", "completedBy"
+        }.Contains(name, StringComparer.OrdinalIgnoreCase);
     private static void NormalizeActors(JsonNode? node, string actor)
     {
         if (node is JsonObject obj)

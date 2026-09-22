@@ -18,6 +18,6 @@
 
 已完成本地演示链路：`AccessStore` 独立 SQLite 账号库、PBKDF2 密码哈希、8 小时会话、失败锁定、会话撤销、管理员最后账号保护；MES 中间件统一执行 401/403，登录身份覆盖业务请求中的 actor/operatorName，旧的物理准入逻辑仍保留。
 
-WPF 已接入登录窗口、当前用户/角色显示、退出登录和管理员“用户管理”窗口。管理员可查看、创建、启停账号和重置密码；操作员及只读用户不显示入口。客户演示包和启动器在 `artifacts/user-access-demo/`，使用 FieldSimulation、独立本地数据目录和本地账号：`admin / DemoAdmin2026`、`operator / DemoUser2026`、`viewer / DemoUser2026`。这些口令只用于本地演示，生产配置必须通过环境变量或安全配置覆盖，不能直接使用。
+WPF 已接入登录窗口、当前用户/角色显示、退出登录和管理员“用户管理”窗口。管理员可查看、创建、启停账号和重置密码；操作员及只读用户不显示入口。客户演示包和启动器在 `artifacts/user-access-demo/`，启动器通过环境变量注入本地演示账号：`admin / DemoAdmin2026`、`operator / DemoUser2026`、`viewer / DemoUser2026`；FieldSimulation 配置本身不保存口令，缺少口令会拒绝启动。生产配置必须通过安全配置覆盖，不能直接使用演示口令。
 
-串行回归：MES 585 项、WPF 623 项全部通过；Release 演示发布成功。已手工确认登录页、管理员角色显示、`/api/access/users` 读取和只读账号写入 403。未启用现场 PhysicalAcceptance 登录，也未改变开盖分液会话或现场服务。
+串行回归：MES 585 项、WPF 623 项全部通过；Release 演示发布成功。已手工确认登录页、管理员角色显示、用户管理窗口、`/api/access/users` 读取和只读账号写入 403。服务端会覆盖 actor、operatorName、operatorAccount、requestedBy、createdBy、updatedBy、submittedBy、approvedBy、authorizedBy、completedBy 等身份字段，避免客户端污染审计或物理授权。模式接口网络异常不会再静默跳过登录。未启用现场 PhysicalAcceptance 登录，也未改变开盖分液会话或现场服务。
