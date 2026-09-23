@@ -1,5 +1,7 @@
 using MesControlAgv.Contracts;
 using MesControlAgv.Mes.Access;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
 
@@ -51,14 +53,69 @@ public sealed class AccessStoreTests
         Assert.True(AccessPolicy.Allows(AccessRoles.Administrator, "POST", "/api/access/users"));
     }
 
-    private static AccessStore New(string path, bool demo) => new(new AccessSettings
+    [Fact]
+    public void Lockout_recovers_after_five_minutes_and_session_expires_at_eight_hours()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"access-{Guid.NewGuid():N}.db");
+        var time = new TestTime();
+        try
+        {
+            var store = New(path, demo: false, time);
+            for (var i = 0; i < 5; i++) Assert.Null(store.Login(new("admin", "wrong-password")));
+            time.Advance(TimeSpan.FromSeconds(299));
+            Assert.Null(store.Login(new("admin", "DemoAdmin2026")));
+            time.Advance(TimeSpan.FromSeconds(1));
+            var login = store.Login(new("admin", "DemoAdmin2026"));
+            Assert.NotNull(login);
+            time.Advance(TimeSpan.FromHours(8) - TimeSpan.FromSeconds(1));
+            Assert.NotNull(store.Authenticate(login.Token));
+            time.Advance(TimeSpan.FromSeconds(1));
+            Assert.Null(store.Authenticate(login.Token));
+        }
+        finally { TryDelete(path); }
+    }
+
+    [Fact]
+    public void Stored_credentials_are_hashed_and_existing_accounts_survive_restart()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"access-{Guid.NewGuid():N}.db");
+        try
+        {
+            var store = New(path, demo: false);
+            var login = store.Login(new("admin", "DemoAdmin2026"))!;
+            var options = new DbContextOptionsBuilder<AccessDatabase>().UseSqlite(new SqliteConnectionStringBuilder { DataSource = path }.ToString()).Options;
+            using (var db = new AccessDatabase(options))
+            {
+                Assert.NotEqual("DemoAdmin2026", Assert.Single(db.Accounts).PasswordHash);
+                Assert.NotEqual(login.Token, Assert.Single(db.Sessions).Id);
+                Assert.DoesNotContain(db.Events, e => e.Target.Contains(login.Token));
+            }
+            var restarted = New(path, demo: false);
+            Assert.Equal(login.User.Id, Assert.Single(restarted.List()).Id);
+            Assert.NotNull(restarted.Authenticate(login.Token));
+        }
+        finally { TryDelete(path); }
+    }
+
+    private sealed class TestTime : TimeProvider
+    {
+        private DateTimeOffset _now = new(2026, 9, 23, 0, 0, 0, TimeSpan.Zero);
+        public override DateTimeOffset GetUtcNow() => _now;
+        public void Advance(TimeSpan amount) => _now += amount;
+    }
+
+    private static AccessStore New(string path, bool demo, TimeProvider? time = null) => new(new AccessSettings
     {
         Enabled = true, Demo = demo, DatabasePath = path,
         BootstrapPassword = "DemoAdmin2026", DemoPassword = "DemoUser2026"
-    }, new HostEnvironment { ContentRootPath = Path.GetDirectoryName(path)! }, TimeProvider.System);
+    }, new HostEnvironment { ContentRootPath = Path.GetDirectoryName(path)! }, time ?? TimeProvider.System);
 
     private static void TryDelete(string path)
-    { foreach (var file in new[] { path, path + "-wal", path + "-shm" }) try { File.Delete(file); } catch { } }
+    {
+        using var pool = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path }.ToString());
+        SqliteConnection.ClearPool(pool);
+        foreach (var file in new[] { path, path + "-wal", path + "-shm" }) File.Delete(file);
+    }
 
     private sealed class HostEnvironment : IHostEnvironment
     {

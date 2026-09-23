@@ -48,8 +48,17 @@ public static class AccessModule
         app.UseRateLimiter();
         app.Use(async (context, next) =>
         {
-            if (!settings.Enabled) { await next(context); return; }
             var path = context.Request.Path.Value?.TrimEnd('/').ToLowerInvariant() ?? "";
+            if (!settings.Enabled)
+            {
+                // Reject before endpoint argument binding can resolve AccessStore and
+                // initialize an account database on an instance that never opted in.
+                if (path.StartsWith("/api/access/", StringComparison.Ordinal) && path != "/api/access/mode")
+                    await Error(context, 503, "此实例未启用登录。");
+                else
+                    await next(context);
+                return;
+            }
             if (path is "/health" or "/api/access/mode" or "/api/access/login") { await next(context); return; }
             var store = context.RequestServices.GetRequiredService<AccessStore>();
             var token = Token(context);
@@ -66,7 +75,9 @@ public static class AccessModule
                 var query = context.Request.Query.ToDictionary(x => x.Key, x => x.Value);
                 foreach (var key in query.Keys.Where(IsActor).ToArray()) query[key] = user.Username;
                 context.Request.Query = new QueryCollection(query);
-                if (context.Request.ContentType?.StartsWith("application/json", StringComparison.OrdinalIgnoreCase) == true)
+                // Match the same JSON media types accepted by ASP.NET endpoint binding,
+                // including application/*+json; otherwise identity normalization can be bypassed.
+                if (context.Request.HasJsonContentType())
                 {
                     if (context.Request.ContentLength is > 8 * 1024 * 1024) { await Error(context, 413, "请求体过大。"); return; }
                     try
@@ -83,6 +94,11 @@ public static class AccessModule
                         {
                             var node = await JsonNode.ParseAsync(buffer, cancellationToken: context.RequestAborted);
                             NormalizeActors(node, user.Username);
+                            // "operator" is also a workflow comparison field. Only AUBO's
+                            // root-level program request alias denotes a user identity.
+                            if (node is JsonObject root && IsArmProgramRequest(path))
+                                foreach (var key in root.Select(x => x.Key).Where(x => x.Equals("operator", StringComparison.OrdinalIgnoreCase)).ToArray())
+                                    root[key] = user.Username;
                             var bytes = Encoding.UTF8.GetBytes(node?.ToJsonString() ?? "null");
                             using var normalized = new MemoryStream(bytes);
                             var original = context.Request.Body;
@@ -124,6 +140,8 @@ public static class AccessModule
             "actor", "operatorName", "operatorAccount", "requestedBy", "createdBy", "updatedBy",
             "submittedBy", "approvedBy", "authorizedBy", "completedBy"
         }.Contains(name, StringComparer.OrdinalIgnoreCase);
+    private static bool IsArmProgramRequest(string path) => path.Split('/', StringSplitOptions.RemoveEmptyEntries)
+        is ["api", "robot-arms", _, "program", "load" or "run" or "stop"];
     private static void NormalizeActors(JsonNode? node, string actor)
     {
         if (node is JsonObject obj)

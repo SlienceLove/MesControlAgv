@@ -4,6 +4,20 @@ namespace MesControlAgv.Mes.Tests;
 
 public sealed class DefaultConfigurationContractTests
 {
+    [Theory]
+    [InlineData("appsettings.json")]
+    [InlineData("appsettings.FieldSimulation.json")]
+    [InlineData("appsettings.PhysicalAcceptance.json")]
+    public void Shared_profiles_do_not_implicitly_enable_demo_authentication(string fileName)
+    {
+        using var document = LoadConfiguration(fileName);
+        if (document.RootElement.TryGetProperty("Access", out var access))
+        {
+            if (access.TryGetProperty("Enabled", out var enabled)) Assert.False(enabled.GetBoolean());
+            if (access.TryGetProperty("Demo", out var demo)) Assert.False(demo.GetBoolean());
+        }
+    }
+
     [Fact]
     public void Mes_root_configuration_is_physical_safe_by_default()
     {
