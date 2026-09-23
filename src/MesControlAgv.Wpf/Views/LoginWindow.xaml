@@ -20,7 +20,7 @@
             <TextBlock x:Name="Hint" Foreground="#D92D20" TextWrapping="Wrap" MinHeight="38"/>
             <Button x:Name="LoginButton" Content="登录" Click="Login_Click" Height="42" Background="#1769AA" Foreground="White" FontSize="15"/>
         </StackPanel>
-        <StackPanel Grid.Row="2">
+        <StackPanel Grid.Row="2" x:Name="DemoCredentials">
             <TextBlock Text="管理员：admin / DemoAdmin2026" Foreground="#667085" FontSize="11"/>
             <TextBlock Text="操作员、只读用户：operator 或 viewer / DemoUser2026" Foreground="#667085" FontSize="11" Margin="0,4,0,0"/>
         </StackPanel>

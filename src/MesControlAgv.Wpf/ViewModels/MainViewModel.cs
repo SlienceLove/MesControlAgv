@@ -421,10 +421,14 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 
     public async Task StartAsync()
     {
+        var cancellation = _shutdown.Token;
         await RefreshAsync();
-        await Materials.RefreshAsync(_shutdown.Token);
+        cancellation.ThrowIfCancellationRequested();
+        await Materials.RefreshAsync(cancellation);
         await ShineLabTaskDispatch.RefreshTasksAsync();
-        await Readiness.RefreshAsync(_shutdown.Token);
+        cancellation.ThrowIfCancellationRequested();
+        await Readiness.RefreshAsync(cancellation);
+        cancellation.ThrowIfCancellationRequested();
         // When MES is unavailable (for example while the field Ethernet is
         // intentionally unplugged), seed the editor from the local SMAP
         // station mapping instead of exposing legacy profile station IDs.
@@ -449,9 +453,10 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             return;
         }
 
-        TaskRefreshInterval = await ResolveTaskRefreshIntervalAsync(_shutdown.Token);
+        TaskRefreshInterval = await ResolveTaskRefreshIntervalAsync(cancellation);
+        cancellation.ThrowIfCancellationRequested();
         _timer = new PeriodicTimer(TaskRefreshInterval);
-        _refreshLoop = RefreshLoopAsync(_timer, _shutdown.Token);
+        _refreshLoop = RefreshLoopAsync(_timer, cancellation);
     }
 
     /// <summary>

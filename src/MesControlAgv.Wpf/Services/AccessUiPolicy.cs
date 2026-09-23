@@ -17,8 +17,8 @@ public static class AccessUiPolicy
         AccessRoles.Viewer => ViewerPages.Contains(page),
         _ => false
     };
-    public static bool CanUseAction(string role, string? label) => role != AccessRoles.Viewer && AccessRoles.IsValid(role)
-        || ReadActions.Contains(label?.Trim() ?? "");
+    public static bool CanUseAction(string role, string? label) => AccessRoles.IsValid(role)
+        && (role != AccessRoles.Viewer || ReadActions.Contains(label?.Trim() ?? ""));
     public static string Summary(string role) => role switch
     {
         AccessRoles.Administrator => "管理员 · 用户、配置及业务操作权限（仍须满足设备准入）",

@@ -17,7 +17,10 @@ public partial class MainWindow : Window
     private bool _twinStartupApplied;
     private AccessClient? _accessClient;
     private AccessUser? _accessUser;
-    private bool _accessDemo;
+    private bool _sessionEnding;
+    private bool _reauthenticationPending;
+    private readonly HashSet<Window> _watchedSessionDialogs = [];
+    public event EventHandler? SessionEnded;
     private CancellationTokenSource? _sessionMonitorCancellation;
     public MainWindow()
     {
@@ -25,7 +28,8 @@ public partial class MainWindow : Window
         InitializeTwinFullScreen();
         Loaded += MainWindow_Loaded;
         Closed += (_, _) => _sessionMonitorCancellation?.Cancel();
-        AddHandler(UIElement.PreviewMouseDownEvent, new MouseButtonEventHandler(AccessPreviewMouseDown), true);
+        PageFrame.AddHandler(UIElement.PreviewMouseDownEvent, new MouseButtonEventHandler(AccessPreviewMouseDown), true);
+        PageFrame.AddHandler(UIElement.PreviewKeyDownEvent, new KeyEventHandler(AccessPreviewKeyDown), true);
 
         // The grouped sidebar's checked state is only a visual affordance and
         // does not raise a Click event during startup. Keep the content host
@@ -35,7 +39,7 @@ public partial class MainWindow : Window
 
     public void SetAccessSession(AccessClient client, AccessUser user, bool demo = false)
     {
-        _accessClient = client; _accessUser = user; _accessDemo = demo;
+        _accessClient = client; _accessUser = user;
         UpdateAccessPresentation(user);
         _sessionMonitorCancellation?.Cancel();
         _sessionMonitorCancellation = new CancellationTokenSource();
@@ -45,8 +49,16 @@ public partial class MainWindow : Window
 
     private async void AccessLogout_Click(object sender, RoutedEventArgs e)
     {
-        if (_accessClient is null) return;
-        try { await _accessClient.LogoutAsync(CancellationToken.None); } catch { }
+        if (_accessClient is null || _sessionEnding || !AccessLogoutButton.IsEnabled) return;
+        if (MessageBox.Show(this, "退出登录将清除当前页面中未保存的内容，后台任务继续运行。是否继续？", "退出登录", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        AccessLogoutButton.IsEnabled = false;
+        _sessionMonitorCancellation?.Cancel();
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await _accessClient.LogoutAsync(timeout.Token);
+        }
+        catch { /* Discard the local token even if the server is unavailable. */ }
         Reauthenticate();
     }
 
@@ -57,7 +69,7 @@ public partial class MainWindow : Window
         {
             var dialog = new UserManagementWindow(_accessClient) { Owner = this };
             dialog.ShowDialog();
-            if (dialog.SessionInvalidated) Reauthenticate();
+            if (dialog.SessionInvalidated || _reauthenticationPending) Reauthenticate();
         }
         catch (Exception ex) { MessageBox.Show(this, $"用户管理打开失败：{ex.Message}", "用户权限管理", MessageBoxButton.OK, MessageBoxImage.Error); }
     }
@@ -67,26 +79,37 @@ public partial class MainWindow : Window
         if (_accessClient is null) return;
         var dialog = new AccountEditorWindow(_accessClient, AccountEditorMode.ChangePassword) { Owner = this };
         dialog.ShowDialog();
-        if (dialog.SessionInvalidated) Reauthenticate();
+        if (dialog.SessionInvalidated || _reauthenticationPending) Reauthenticate();
     }
 
     private void Reauthenticate()
     {
-        if (_accessClient is null) { Application.Current.Shutdown(); return; }
-        _accessClient.ClearSession(); _accessUser = null; Hide();
-        var login = new LoginWindow(_accessClient, _accessDemo);
-        if (login.ShowDialog() == true && login.Result is not null)
+        if (_sessionEnding) return;
+        _sessionMonitorCancellation?.Cancel();
+        _accessClient?.ClearSession();
+        _reauthenticationPending = true;
+        // Do not tear down an owned editor while its HTTP response is being handled.
+        if (OwnedWindows.Count > 0)
         {
-            _accessClient.SetSession(login.Result);
-            SetAccessSession(_accessClient, login.Result.User, _accessDemo);
-            Show();
+            foreach (Window dialog in OwnedWindows)
+                if (_watchedSessionDialogs.Add(dialog))
+                    dialog.Closed += (_, _) => Dispatcher.BeginInvoke(new Action(Reauthenticate));
+            AccessUserText.Text = "会话已失效，请关闭弹窗后重新登录";
+            PageFrame.IsEnabled = false;
             return;
         }
-        Application.Current.Shutdown();
+        _sessionEnding = true;
+        _accessUser = null;
+        IsEnabled = false;
+        Hide();
+        SessionEnded?.Invoke(this, EventArgs.Empty);
     }
 
     private void UpdateAccessPresentation(AccessUser user)
     {
+        if (_sessionEnding || _reauthenticationPending) return;
+        if (_accessUser is not null && (_accessUser.Id != user.Id || _accessUser.Role != user.Role || !user.Enabled))
+        { Reauthenticate(); return; }
         _accessUser = user;
         AccessUserText.Text = $"{user.DisplayName} · {AccessRoles.Display(user.Role)}";
         AccessUserText.ToolTip = AccessUiPolicy.Summary(user.Role);
@@ -95,19 +118,45 @@ public partial class MainWindow : Window
         AccessLogoutButton.Visibility = Visibility.Visible;
         foreach (var button in FindVisualChildren<RadioButton>(NavigationSidebar))
             if (button.Tag is string page) button.IsEnabled = AccessUiPolicy.CanNavigate(user.Role, page);
+        Dispatcher.BeginInvoke(new Action(ApplyPageAccess), System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
     private void AccessPreviewMouseDown(object sender, MouseButtonEventArgs e)
     {
         if (_accessUser?.Role != AccessRoles.Viewer || e.OriginalSource is not DependencyObject source) return;
         var button = FindAncestor<ButtonBase>(source);
-        if (button is RadioButton) return;
+        if (button is null or RadioButton or RepeatButton or DataGridColumnHeader) return;
         var label = button?.Content switch { TextBlock text => text.Text, string text => text, _ => null };
-        if (button is not null && !AccessUiPolicy.CanUseAction(_accessUser.Role, label))
+        if (!AccessUiPolicy.CanUseAction(_accessUser.Role, label))
         {
             e.Handled = true;
             MessageBox.Show(this, "只读账号不能执行此操作。", "当前账号权限", MessageBoxButton.OK, MessageBoxImage.Information);
         }
+    }
+
+    private void AccessPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (_accessUser?.Role != AccessRoles.Viewer || e.Key is not (Key.Enter or Key.Space) || e.OriginalSource is not DependencyObject source) return;
+        var button = FindAncestor<Button>(source);
+        if (button is null) return;
+        var label = button.Content switch { TextBlock text => text.Text, string text => text, _ => null };
+        if (!AccessUiPolicy.CanUseAction(_accessUser.Role, label)) e.Handled = true;
+    }
+
+    private void ApplyPageAccess()
+    {
+        if (_accessUser is null || _sessionEnding) return;
+        foreach (var nav in FindVisualChildren<RadioButton>(NavigationSidebar))
+            if (nav.Tag is string page) nav.IsEnabled = AccessUiPolicy.CanNavigate(_accessUser.Role, page);
+        if (MainTabs.SelectedItem is TabItem selected && !AccessUiPolicy.CanNavigate(_accessUser.Role, selected.Name))
+            MainTabs.SelectedItem = KpiDashboardTab;
+        if (_accessUser.Role != AccessRoles.Viewer) return;
+        foreach (var button in FindVisualChildren<Button>(PageFrame))
+        {
+            var label = button.Content switch { TextBlock text => text.Text, string text => text, _ => null };
+            if (!AccessUiPolicy.CanUseAction(_accessUser.Role, label)) button.IsEnabled = false;
+        }
+        foreach (var grid in FindVisualChildren<DataGrid>(PageFrame)) grid.IsReadOnly = true;
     }
 
     private static T? FindAncestor<T>(DependencyObject? current) where T : DependencyObject
@@ -115,7 +164,8 @@ public partial class MainWindow : Window
         while (current is not null)
         {
             if (current is T match) return match;
-            current = VisualTreeHelper.GetParent(current);
+            current = current is Visual or System.Windows.Media.Media3D.Visual3D
+                ? VisualTreeHelper.GetParent(current) : LogicalTreeHelper.GetParent(current);
         }
         return null;
     }
@@ -123,6 +173,7 @@ public partial class MainWindow : Window
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         EnsureInitialTabSelection();
+        ApplyPageAccess();
         if (_twinStartupApplied || DataContext is not MainViewModel model) return;
         _twinStartupApplied = true;
         if (model.StartupDiagnostics is { CanStart: true, TwinSchematicFollow: true } &&
@@ -175,6 +226,7 @@ public partial class MainWindow : Window
 
     private void MainTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (PageFrame is not null) Dispatcher.BeginInvoke(new Action(ApplyPageAccess), System.Windows.Threading.DispatcherPriority.Loaded);
         if (IsTwinFullScreen && MainTabs.SelectedItem != DigitalTwinTab) SetTwinFullScreen(false);
         if (MainTabs.SelectedItem is not TabItem selectedTab)
         {
