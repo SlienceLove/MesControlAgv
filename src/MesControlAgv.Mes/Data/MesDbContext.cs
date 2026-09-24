@@ -55,6 +55,10 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
     public DbSet<ShineLabTaskRecord> ShineLabTasks => Set<ShineLabTaskRecord>();
 
     public DbSet<ShineLabTaskEventRecord> ShineLabTaskEvents => Set<ShineLabTaskEventRecord>();
+    public DbSet<ShineLabPushEvidence> ShineLabPushEvidence => Set<ShineLabPushEvidence>();
+    public DbSet<ShineLabTaskSample> ShineLabTaskSamples => Set<ShineLabTaskSample>();
+    public DbSet<ShineLabCommandAttempt> ShineLabCommandAttempts => Set<ShineLabCommandAttempt>();
+    public DbSet<ShineLabCommandReplyEvidence> ShineLabCommandReplies => Set<ShineLabCommandReplyEvidence>();
 
     public DbSet<PhysicalSafetyActionRecord> PhysicalSafetyActions => Set<PhysicalSafetyActionRecord>();
 
@@ -434,6 +438,32 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.Property(task => task.LastError).HasMaxLength(2048);
             entity.HasIndex(task => task.TaskUuid).IsUnique();
             entity.HasIndex(task => new { task.Status, task.UpdatedAtUtc });
+        });
+
+        modelBuilder.Entity<ShineLabPushEvidence>(entity =>
+        {
+            entity.ToTable("ShineLabPushEvidence");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => item.DeduplicationKey);
+            entity.HasIndex(item => new { item.EquipmentCode, item.ReceivedAtUtcTicks });
+        });
+
+        modelBuilder.Entity<ShineLabTaskSample>(entity =>
+        {
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => item.SampleId).IsUnique();
+            entity.HasIndex(item => new { item.TaskUuid, item.RowNumber }).IsUnique();
+        });
+
+        modelBuilder.Entity<ShineLabCommandAttempt>(entity =>
+        {
+            entity.HasKey(item => item.StrId);
+            entity.HasIndex(item => new { item.TaskUuid, item.PreparedAtUtcTicks });
+        });
+        modelBuilder.Entity<ShineLabCommandReplyEvidence>(entity =>
+        {
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => new { item.StrId, item.ReceivedAtUtcTicks });
         });
 
         modelBuilder.Entity<ShineLabTaskEventRecord>(entity =>

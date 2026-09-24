@@ -97,12 +97,15 @@ builder.Services.AddHttpClient<IIonChromatographyStatusReader, IonChromatography
 builder.Services.AddOptions<ShineLabTcpOptions>()
     .Bind(builder.Configuration.GetSection(ShineLabTcpOptions.SectionName))
     .Validate(options => options.Port is >= 1 and <= 65535, "ShineLabTcp:Port must be between 1 and 65535.")
+    .Validate(options => Enum.IsDefined(options.PayloadProfile), "ShineLabTcp:PayloadProfile must be Rike, DcSeq or DcSeqSingleChannel.")
+    .Validate(options => Enum.IsDefined(options.CertificationReplyMode), "Unknown ShineLab Certification reply mode.")
     .Validate(options => options.StaleAfterSeconds > 0, "ShineLabTcp:StaleAfterSeconds must be positive.")
     .Validate(options => options.CommandTimeoutMs > 0, "ShineLabTcp:CommandTimeoutMs must be positive.")
     .Validate(options => options.ReadBufferBytes is >= 1024 and <= 1_048_576, "ShineLabTcp:ReadBufferBytes must be between 1024 and 1048576.")
     .ValidateOnStart();
 builder.Services.AddSingleton<ShineLabStatusHub>();
 builder.Services.AddSingleton<ShineLabConnectionManager>();
+builder.Services.AddSingleton<ShineLabCommandJournal>();
 builder.Services.AddSingleton<ShineLabCommandService>();
 builder.Services.AddScoped<ShineLabTaskRepository>();
 builder.Services.AddScoped<ShineLabTaskService>();
@@ -1514,6 +1517,64 @@ static async Task EnsureShineLabTablesAsync(MesDbContext database)
             OccurredAtUtc TEXT NOT NULL
         );
         """,
+        """
+        CREATE TABLE IF NOT EXISTS ShineLabPushEvidence (
+            Id TEXT NOT NULL PRIMARY KEY,
+            EquipmentCode TEXT NOT NULL,
+            StrId TEXT NOT NULL,
+            Method TEXT NOT NULL,
+            BodyJson TEXT NOT NULL,
+            RawJson TEXT NULL,
+            ConnectionId TEXT NULL,
+            WireFormat TEXT NULL,
+            TaskUuid TEXT NULL,
+            Correlation TEXT NOT NULL,
+            DeduplicationKey TEXT NULL,
+            IsDuplicate INTEGER NOT NULL,
+            ReceivedAtUtcTicks INTEGER NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ShineLabTaskSamples (
+            Id TEXT NOT NULL PRIMARY KEY,
+            TaskUuid TEXT NOT NULL,
+            EquipmentCode TEXT NOT NULL,
+            RowNumber INTEGER NOT NULL,
+            SourceSampleId TEXT NOT NULL,
+            SampleId TEXT NOT NULL,
+            SampleName TEXT NOT NULL,
+            Channel TEXT NOT NULL,
+            ConfigAttempted INTEGER NOT NULL,
+            SampleFinishObserved INTEGER NOT NULL,
+            TaskFinishObserved INTEGER NOT NULL,
+            EndMissionObserved INTEGER NOT NULL,
+            ResultJson TEXT NULL,
+            ResultConflict INTEGER NOT NULL,
+            LastReceivedAtUtcTicks INTEGER NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ShineLabCommandAttempts (
+            StrId TEXT NOT NULL PRIMARY KEY, EquipmentCode TEXT NOT NULL,
+            Method TEXT NOT NULL, TaskUuid TEXT NULL, Action INTEGER NULL,
+            RawJson TEXT NOT NULL, ConnectionId TEXT NOT NULL, WireFormat TEXT NOT NULL,
+            PreparedAtUtcTicks INTEGER NOT NULL, WriteCompletedAtUtcTicks INTEGER NULL,
+            WaitOutcome TEXT NOT NULL, FirstResponseJson TEXT NULL, ResponseConflict INTEGER NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ShineLabCommandReplies (
+            Id TEXT NOT NULL PRIMARY KEY, StrId TEXT NOT NULL, EquipmentCode TEXT NOT NULL,
+            Method TEXT NOT NULL, RawJson TEXT NOT NULL, ConnectionId TEXT NOT NULL,
+            ReceivedAtUtcTicks INTEGER NOT NULL, TaskUuid TEXT NULL, Correlation TEXT NOT NULL
+        );
+        """,
+        "CREATE INDEX IF NOT EXISTS IX_ShineLabCommandAttempts_TaskUuid_PreparedAtUtcTicks ON ShineLabCommandAttempts (TaskUuid, PreparedAtUtcTicks);",
+        "CREATE INDEX IF NOT EXISTS IX_ShineLabCommandReplies_StrId_ReceivedAtUtcTicks ON ShineLabCommandReplies (StrId, ReceivedAtUtcTicks);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ShineLabTaskSamples_SampleId ON ShineLabTaskSamples (SampleId);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ShineLabTaskSamples_TaskUuid_RowNumber ON ShineLabTaskSamples (TaskUuid, RowNumber);",
+        "CREATE INDEX IF NOT EXISTS IX_ShineLabPushEvidence_DeduplicationKey ON ShineLabPushEvidence (DeduplicationKey);",
+        "CREATE INDEX IF NOT EXISTS IX_ShineLabPushEvidence_EquipmentCode_ReceivedAtUtcTicks ON ShineLabPushEvidence (EquipmentCode, ReceivedAtUtcTicks);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_ShineLabTasks_TaskUuid ON ShineLabTasks (TaskUuid);",
         "CREATE INDEX IF NOT EXISTS IX_ShineLabTasks_Status_UpdatedAtUtc ON ShineLabTasks (Status, UpdatedAtUtc);",
         "CREATE INDEX IF NOT EXISTS IX_ShineLabTaskEvents_TaskUuid_OccurredAtUtc ON ShineLabTaskEvents (TaskUuid, OccurredAtUtc);"
@@ -1526,6 +1587,17 @@ static async Task EnsureShineLabTablesAsync(MesDbContext database)
         await command.ExecuteNonQueryAsync();
     }
 
+    await EnsureColumnsAsync(connection, "ShineLabPushEvidence",
+    [
+        ("RawJson", "TEXT NULL"),
+        ("ConnectionId", "TEXT NULL"),
+        ("WireFormat", "TEXT NULL")
+    ]);
+    await EnsureColumnsAsync(connection, "ShineLabTasks",
+    [
+        ("ConfigRequestId", "TEXT NULL"),
+        ("CommandRequestId", "TEXT NULL")
+    ]);
 }
 
 static async Task EnsurePhysicalSafetyActionTablesAsync(MesDbContext database)

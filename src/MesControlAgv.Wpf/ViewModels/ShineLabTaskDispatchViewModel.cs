@@ -113,7 +113,7 @@ public sealed class ShineLabTaskDispatchViewModel : INotifyPropertyChanged
             OnPropertyChanged(nameof(LastResponseText));
             Upsert(LastTask);
             Message = LastTask.Status == "Configured"
-                ? "任务已持久化，Config 已被 ShineLab 接收。"
+                ? "任务已持久化，ShineLab 已回复 Config 成功；样品是否实际添加及目标序列仍需核对，运行中追加可能自动执行。"
                 : $"Config 结果：{LastTask.Status} / {LastTask.LastError}";
         }
         catch (Exception exception)

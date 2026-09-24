@@ -311,8 +311,10 @@ public sealed class MainWindowNavigationTests
         Assert.Null(failure);
     }
 
-    [Fact]
-    public void Device_status_stacks_selected_device_details_in_compact_window()
+    [Theory]
+    [InlineData(820)]
+    [InlineData(1440)]
+    public void Device_status_prioritizes_sample_records_without_checkboxes(int width)
     {
         Exception? failure = null;
         var thread = new Thread(() =>
@@ -322,24 +324,27 @@ public sealed class MainWindowNavigationTests
                 var window = new MainWindow
                 {
                     WindowState = WindowState.Normal,
-                    Width = 820,
+                    Width = width,
                     Height = 480
                 };
                 window.Show();
                 var tabs = Assert.IsType<TabControl>(window.FindName("MainTabs"));
                 tabs.SelectedItem = Assert.IsType<TabItem>(window.FindName("ShineLabDeviceStatusTab"));
-                window.Measure(new Size(820, 480));
-                window.Arrange(new Rect(0, 0, 820, 480));
+                window.Measure(new Size(width, 480));
+                window.Arrange(new Rect(0, 0, width, 480));
                 window.UpdateLayout();
 
                 var view = Assert.Single(FindVisualChildren<Views.ShineLabDeviceStatusView>(window));
                 var workspace = Assert.IsType<Grid>(view.FindName("DeviceSummaryGrid"));
-                var details = Assert.IsType<ScrollViewer>(view.FindName("SelectedDeviceScrollViewer"));
-
-                Assert.Equal(1, Grid.GetRow(details));
-                Assert.Equal(0, Grid.GetColumn(details));
-                Assert.Equal(2, Grid.GetColumnSpan(details));
-                Assert.True(workspace.ActualWidth < 800);
+                var records = Assert.IsType<DataGrid>(view.FindName("IonTasksGrid"));
+                var toolbar = Assert.IsType<WrapPanel>(view.FindName("IonOnlineToolbar"));
+                Assert.True(records.ActualHeight > toolbar.ActualHeight);
+                Assert.True(records.ActualWidth >= workspace.ActualWidth - 2);
+                Assert.Empty(records.Columns.OfType<DataGridCheckBoxColumn>());
+                Assert.Null(view.FindName("DeviceListHost"));
+                Assert.Null(view.FindName("SelectedDeviceScrollViewer"));
+                Assert.Equal(new[] { "样品名称", "样品编号", "时间", "状态", "检测结果" },
+                    records.Columns.Select(column => column.Header?.ToString()));
 
                 window.Close();
             }

@@ -1,0 +1,2 @@
+sampleId,sampleName,sampleType,position,mPos,instrumentMethod,processingMethod,injectionVolume,injectionVolumeUnit,cycleCount
+STD-25,STD-25_WPF_TEST,0,1,1,AP-1常规,09220922_TCP_TEST,25,uL,1

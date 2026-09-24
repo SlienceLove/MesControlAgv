@@ -189,6 +189,11 @@
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="AGV 通讯与调度" />
                                 </RadioButton>
+                                <RadioButton Tag="ShineLabControlTab" Visibility="Collapsed"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="离子色谱控制" />
+                                </RadioButton>
                                 <RadioButton Tag="AuboArmTab"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
@@ -275,6 +280,14 @@
                                    Text="智能制造运营与任务协同" />
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SelectedItem.Name, ElementName=MainTabs}" Value="InstrumentTaskImportTab"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                    <DataTrigger Binding="{Binding SelectedItem.Name, ElementName=MainTabs}" Value="ShineLabDeviceStatusTab"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
                         <Border Padding="10,5" Background="#ECFDF3" CornerRadius="12">
                             <StackPanel Orientation="Horizontal">
                                 <Ellipse Width="7" Height="7" Margin="0,0,6,0" VerticalAlignment="Center"
@@ -417,7 +430,11 @@
         </Grid>
     </TabItem>
     <TabItem x:Name="ShineLabDeviceStatusTab" Header="设备状态查询" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
-        <views:ShineLabDeviceStatusView DataContext="{Binding ShineLabDeviceStatus}" />
+        <views:ShineLabDeviceStatusView DataContext="{Binding ShineLabDeviceStatus}"
+            ControlModel="{Binding DataContext.ShineLabControl, RelativeSource={RelativeSource AncestorType=Window}}" />
+    </TabItem>
+    <TabItem x:Name="ShineLabControlTab" Header="离子色谱控制（已归入设备与导入页）" Visibility="Collapsed" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <views:ShineLabControlView DataContext="{Binding ShineLabControl}" />
     </TabItem>
     <TabItem x:Name="ShineLabTaskDispatchTab" Visibility="Collapsed" Header="ShineLab 任务下发（实验）" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:ShineLabTaskDispatchView DataContext="{Binding ShineLabTaskDispatch}" />

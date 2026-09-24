@@ -23,7 +23,8 @@ public sealed class ShineLabTcpServer(
     ShineLabStatusHub statusHub,
     ShineLabConnectionManager connectionManager,
     ILogger<ShineLabTcpServer> logger,
-    IServiceScopeFactory? scopeFactory = null) : BackgroundService
+    IServiceScopeFactory? scopeFactory = null,
+    IOptionsMonitor<ShineLabTcpOptions>? liveOptions = null) : BackgroundService
 {
     private const int InvalidFrameLimit = 8;
     private const int UnidentifiedSampleLimit = 5;
@@ -109,6 +110,7 @@ public sealed class ShineLabTcpServer(
             var invalidFrameCount = 0;
             var unidentifiedFrameCount = 0;
             var loggedFallback = false;
+            var samples = new Dictionary<string, int>(StringComparer.Ordinal);
 
             if (_options.SendCertificationOnConnect)
             {
@@ -196,7 +198,22 @@ public sealed class ShineLabTcpServer(
                         continue;
                     }
 
+                    var receivedAtUtc = DateTimeOffset.UtcNow;
                     invalidFrameCount = 0;
+                    if ((liveOptions?.CurrentValue ?? _options).CaptureProtocolSamples)
+                    {
+                        var sampleKey = message.StrMethod == "Certification"
+                            ? $"Certification/{(liveOptions?.CurrentValue ?? _options).CertificationReplyMode}"
+                            : message.StrMethod;
+                        var count = samples.GetValueOrDefault(sampleKey);
+                        // Full results/lifecycle evidence must not disappear
+                        // after yesterday's first three samples on a long connection.
+                        if (count < 3 || message.StrMethod is "Result" or "SampleFinish" or "TaskFinish" or "EndMission" or "TaskError")
+                        {
+                            samples[sampleKey] = Math.Min(count + 1, 3);
+                            logger.LogInformation("ShineLab diagnostic RX {ConnectionId} {Json}", connectionId, json);
+                        }
+                    }
                     clientTimeout.CancelAfter(TimeSpan.FromSeconds(Math.Max(1, _options.StaleAfterSeconds)));
                     logger.LogDebug(
                         "Received ShineLab {WireFormat} frame {Method}/{StrId} from {EquipmentCode}; {Summary}",
@@ -279,6 +296,10 @@ public sealed class ShineLabTcpServer(
 
                     equipmentCode = effectiveCode;
                     connectionManager.Register(equipmentCode, connectionId, wireFrame.Format, stream);
+                    if (message.StrMethod is "Config" or "Command")
+                        await connectionManager.RecordReplyAsync(message.StrId, message.StrMethod, equipmentCode,
+                            message.Body, new ShineLabPushContext(json, connectionId, wireFrame.Format.ToString(), receivedAtUtc),
+                            stoppingToken);
                     var isCommandResponse = connectionManager.TryCompleteResponse(
                         message.StrId,
                         message.StrMethod,
@@ -293,7 +314,9 @@ public sealed class ShineLabTcpServer(
                             message.StrMethod,
                             equipmentCode,
                             message.Body,
-                            stoppingToken);
+                            stoppingToken,
+                            message.StrId,
+                            new ShineLabPushContext(json, connectionId, wireFrame.Format.ToString(), receivedAtUtc));
                     }
 
                     if (isCertification)
@@ -376,22 +399,20 @@ public sealed class ShineLabTcpServer(
         await stream.FlushAsync(cancellationToken);
     }
 
-    private static Task ReplyToCertificationAsync(
+    private Task ReplyToCertificationAsync(
         Stream stream,
         ShineLabMessage message,
         ShineLabWireFormat wireFormat,
-        CancellationToken cancellationToken) =>
-        SendJsonAsync(
-            stream,
-            new
-            {
-                strID = message.StrId,
-                strMethod = message.StrMethod,
-                equipmentCode = message.EquipmentCode,
-                body = new { result = "Success", msg = "" }
-            },
-            wireFormat,
-            cancellationToken);
+        CancellationToken cancellationToken)
+    {
+        var options = liveOptions?.CurrentValue ?? _options;
+        var reply = ShineLabCertificationReply.Build(message.StrId, message.StrMethod,
+            message.EquipmentCode, options.CertificationReplyMode);
+        if (options.CaptureProtocolSamples)
+            logger.LogInformation("ShineLab diagnostic Certification TX mode={Mode} {Json}",
+                options.CertificationReplyMode, reply.GetRawText());
+        return SendJsonAsync(stream, reply, wireFormat, cancellationToken);
+    }
 
     private static bool TryParse(string json, out ShineLabMessage message, out string error)
     {

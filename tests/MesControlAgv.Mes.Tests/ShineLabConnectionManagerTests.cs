@@ -66,7 +66,9 @@ public sealed class ShineLabConnectionManagerTests
         Assert.False(pending.IsCompleted);
 
         manager.Unregister("conn-1");
-        await Assert.ThrowsAsync<IOException>(() => pending);
+        var failure = await Assert.ThrowsAsync<ShineLabCommandTransportException>(() => pending);
+        using var sent = JsonDocument.Parse(firstStream.ToArray());
+        Assert.Equal(sent.RootElement.GetProperty("strID").GetString(), failure.StrId);
     }
 
     [Fact]
@@ -95,7 +97,9 @@ public sealed class ShineLabConnectionManagerTests
 
         manager.Register("STN61_01", "conn-3", ShineLabWireFormat.LineJson, reconnectStream);
 
-        await Assert.ThrowsAsync<IOException>(() => replaced);
+        var failure = await Assert.ThrowsAsync<ShineLabCommandTransportException>(() => replaced);
+        using var sent = JsonDocument.Parse(firstStream.ToArray());
+        Assert.Equal(sent.RootElement.GetProperty("strID").GetString(), failure.StrId);
         Assert.False(survivor.IsCompleted);
     }
 }
