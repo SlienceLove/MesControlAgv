@@ -171,6 +171,11 @@ public interface IMesClient
         string deviceId,
         string taskNo,
         CancellationToken cancellationToken) =>
+        Task.FromException<SampleWorkstationCommandResponse>(new SampleWorkstationTestStartException(
+            SampleWorkstationBarcodeValidation.MissingMessage(null)!, outcomeUnknown: false));
+    Task<SampleWorkstationCommandResponse> StartSampleWorkstationTestTaskAsync(
+        string deviceId, string taskNo, SampleWorkstationTaskBarcodes barcodes,
+        CancellationToken cancellationToken) =>
         Task.FromException<SampleWorkstationCommandResponse>(
             new NotSupportedException("Sample workstation test control is not supported by this MES client."));
     Task<ShineLabCommandResponse> SendShineLabConfigAsync(

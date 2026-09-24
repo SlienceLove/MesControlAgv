@@ -32,7 +32,7 @@ public sealed class SampleWorkstationGatewayModuleTests
         using var adapter = new AdapterHandler(status, payload);
         await using var app = await CreateHostAsync(adapter);
         using var client = app.GetTestClient();
-        using var response = await client.PostAsync("/api/workstations/WS-01/tasks/TASK-01/start", null);
+        using var response = await client.PostAsJsonAsync("/api/workstations/WS-01/tasks/TASK-01/start", new SampleWorkstationTaskBarcodes { SampleBarcode1 = "A", SampleBarcode2 = "B" });
         Assert.Equal(status, (int)response.StatusCode);
         var result = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(code, result.GetProperty("errorCode").GetString());
@@ -72,7 +72,7 @@ public sealed class SampleWorkstationGatewayModuleTests
         using var adapter = new AdapterHandler(200, JsonSerializer.Serialize(ack));
         await using var app = await CreateHostAsync(adapter);
         using var client = app.GetTestClient();
-        using var response = await client.PostAsync("/api/workstations/WS-01/tasks/TASK-01/start", null);
+        using var response = await client.PostAsJsonAsync("/api/workstations/WS-01/tasks/TASK-01/start", new SampleWorkstationTaskBarcodes { SampleBarcode1 = "A", SampleBarcode2 = "B" });
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<SampleWorkstationCommandResponse>();
         Assert.True(result!.Acknowledged);
@@ -89,7 +89,7 @@ public sealed class SampleWorkstationGatewayModuleTests
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            gateway.StartTaskAsync("WS-01", "TASK-01", cancellation.Token));
+            gateway.StartTaskAsync("WS-01", "TASK-01", new SampleWorkstationTaskBarcodes { SampleBarcode1 = "A", SampleBarcode2 = "B" }, cancellation.Token));
         Assert.InRange(adapter.Calls, 0, 1);
     }
 

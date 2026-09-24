@@ -165,9 +165,9 @@
             <Border x:Name="WorkstationTestPanel" Grid.Row="3" Margin="0,8,0,0" Padding="10"
                     Background="#FFF8E8" BorderBrush="#E2B04A" BorderThickness="1" CornerRadius="6"
                     Visibility="{Binding IsWorkstationTestControlVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
-                <ScrollViewer MaxHeight="54" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <ScrollViewer x:Name="WorkstationTestScroll" MaxHeight="54" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel>
-                        <TextBlock Text="联调测试 · 正式运行由实验工作流统一调度" Foreground="#7A3E00" TextWrapping="Wrap"/>
+                        <TextBlock Text="联调测试 · 向下滚动填写双瓶条码" Foreground="#7A3E00" TextWrapping="Wrap"/>
                         <WrapPanel Margin="0,6,0,0">
                             <Button x:Name="WorkstationTestStartButton" Padding="12,6" Margin="0,0,12,0"
                                     Command="{Binding StartWorkstationTestTaskCommand}" Content="启动测试任务"/>
@@ -175,6 +175,19 @@
                             <TextBlock Text="{Binding SelectedWorkstationTaskNo}" VerticalAlignment="Center" Margin="0,0,12,0"/>
                             <TextBlock Text="{Binding SelectedWorkstationTaskState}" VerticalAlignment="Center"/>
                         </WrapPanel>
+                        <WrapPanel Margin="0,6,0,0">
+                            <StackPanel Orientation="Horizontal" Margin="0,0,12,0">
+                                <TextBlock Text="1号样品瓶条码" VerticalAlignment="Center"/>
+                                <TextBox x:Name="WorkstationBarcode1Input" Width="180" Margin="6,0,0,0"
+                                         Text="{Binding WorkstationSampleBarcode1, UpdateSourceTrigger=PropertyChanged}"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="2号样品瓶条码" VerticalAlignment="Center"/>
+                                <TextBox x:Name="WorkstationBarcode2Input" Width="180" Margin="6,0,0,0"
+                                         Text="{Binding WorkstationSampleBarcode2, UpdateSourceTrigger=PropertyChanged}"/>
+                            </StackPanel>
+                        </WrapPanel>
+                        <TextBlock Text="两条均必填；联调时可手动填写测试编号，系统不会自动生成或代填。" Foreground="#7A3E00" TextWrapping="Wrap" Margin="0,4,0,0"/>
                         <TextBlock Text="{Binding WorkstationTestControlMessage}" TextWrapping="Wrap" Margin="0,6,0,0"/>
                     </StackPanel>
                 </ScrollViewer>

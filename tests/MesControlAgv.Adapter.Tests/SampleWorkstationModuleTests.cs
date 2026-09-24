@@ -15,6 +15,28 @@ namespace MesControlAgv.Adapter.Tests;
 
 public sealed class SampleWorkstationModuleTests
 {
+    [Theory]
+    [InlineData(null, "1号、2号")]
+    [InlineData("null", "1号、2号")]
+    [InlineData("{}", "1号、2号")]
+    [InlineData("{\"sampleBarcode1\":\"A\"}", "2号")]
+    [InlineData("{\"sampleBarcode2\":\"B\"}", "1号")]
+    [InlineData("{\"sampleBarcode1\":\" \",\"sampleBarcode2\":\"B\"}", "1号")]
+    [InlineData("{\"sampleBarcode1\":\"A\",\"sampleBarcode2\":null}", "2号")]
+    public async Task Start_route_rejects_missing_barcodes_before_any_vendor_request(string? body, string bottle)
+    {
+        using var vendor = new VendorHandler("{\"Code\":200,\"Data\":\"启动成功\"}");
+        await using var app = await CreateHostAsync(vendor, control: true);
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using var content = body is null ? null : new StringContent(body, Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync("/api/workstations/WS-01/tasks/TASK-01/start", content);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Contains($"缺少{bottle}样品瓶条码", problem.GetProperty("detail").GetString());
+        Assert.False(problem.GetProperty("outcomeUnknown").GetBoolean());
+        Assert.Equal(0, vendor.RequestCount);
+    }
+
     [Fact]
     public async Task Short_task_page_preserves_rows_before_explicit_end_of_list()
     {
@@ -306,7 +328,7 @@ public sealed class SampleWorkstationModuleTests
         using var vendor = new VendorHandler(body);
         await using var app = await CreateHostAsync(vendor, control: true);
         using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
-        using var response = await client.PostAsync("/api/workstations/WS-01/tasks/TASK-01/start", null);
+        using var response = await client.PostAsJsonAsync("/api/workstations/WS-01/tasks/TASK-01/start", new SampleWorkstationTaskBarcodes { SampleBarcode1 = "A", SampleBarcode2 = "B" });
         Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
         var problem = await response.Content.ReadFromJsonAsync<JsonElement>();
         Assert.Equal(code, problem.GetProperty("errorCode").GetString());
@@ -322,14 +344,14 @@ public sealed class SampleWorkstationModuleTests
         using var vendor = new VendorHandler("""{"Code":200,"Data":"启动成功"}""");
         await using var app = await CreateHostAsync(vendor, control: true);
         using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
-        using var response = await client.PostAsync("/api/workstations/WS-01/tasks/TASK-01/start", null);
+        using var response = await client.PostAsJsonAsync("/api/workstations/WS-01/tasks/TASK-01/start", new SampleWorkstationTaskBarcodes { SampleBarcode1 = "A", SampleBarcode2 = "B" });
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<SampleWorkstationCommandResponse>();
         Assert.True(result!.Acknowledged);
         Assert.Equal("TASK-01", result.TaskNo);
         Assert.Equal("WS-01", result.DeviceId);
         Assert.Equal(HttpMethod.Get, vendor.LastMethod);
-        Assert.Equal("/Service/StartExperiment?TaskNo=TASK-01", vendor.LastUri!.PathAndQuery);
+        Assert.Equal("/Service/StartExperiment?TaskNo=TASK-01&SampleBarcode1=A&SampleBarcode2=B", vendor.LastUri!.PathAndQuery);
         Assert.Equal(1, vendor.RequestCount);
     }
 

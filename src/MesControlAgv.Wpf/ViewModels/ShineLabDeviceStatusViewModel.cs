@@ -57,8 +57,11 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
     private string _connectionStatus = "尚未读取";
     private string _message = "等待 ShineLab TCP Client 推送状态...";
     private string _workstationTestControlMessage = "请选择已有任务进行联调测试。";
+    private string _workstationSampleBarcode1 = string.Empty;
+    private string _workstationSampleBarcode2 = string.Empty;
     private bool _isRefreshing;
     private bool _isWorkstationTestBusy;
+    private bool _refreshingWorkstationTaskRows;
     private bool _disposed;
     private string _selectedInstrument = IonChromatographyInstrument;
     private long _refreshVersion;
@@ -293,13 +296,29 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
         get => _selectedWorkstationTask;
         set
         {
+            var previousTaskNo = _selectedWorkstationTask?.TaskNo;
             if (!SetField(ref _selectedWorkstationTask, value)) return;
+            if (!_refreshingWorkstationTaskRows && !string.Equals(previousTaskNo, value?.TaskNo, StringComparison.Ordinal))
+            {
+                WorkstationSampleBarcode1 = string.Empty;
+                WorkstationSampleBarcode2 = string.Empty;
+            }
             OnPropertyChanged(nameof(SelectedWorkstationTaskNo));
             OnPropertyChanged(nameof(SelectedWorkstationTaskState));
             RaiseWorkstationTestCommandCanExecuteChanged();
         }
     }
     public string SelectedWorkstationTaskNo => SelectedWorkstationTask?.TaskNo ?? "未选择";
+    public string WorkstationSampleBarcode1
+    {
+        get => _workstationSampleBarcode1;
+        set => SetField(ref _workstationSampleBarcode1, value);
+    }
+    public string WorkstationSampleBarcode2
+    {
+        get => _workstationSampleBarcode2;
+        set => SetField(ref _workstationSampleBarcode2, value);
+    }
     public string SelectedWorkstationTaskState => SelectedWorkstationTask is { } task
         ? FormatWorkstationTaskState(task.State, task.RawState)
         : "-";
@@ -426,9 +445,20 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
             return;
         }
 
+        var barcodes = new SampleWorkstationTaskBarcodes
+        {
+            SampleBarcode1 = WorkstationSampleBarcode1,
+            SampleBarcode2 = WorkstationSampleBarcode2
+        };
+        if (SampleWorkstationBarcodeValidation.MissingMessage(barcodes) is { } missingMessage)
+        {
+            WorkstationTestControlMessage = missingMessage;
+            return;
+        }
+        barcodes = SampleWorkstationBarcodeValidation.Normalize(barcodes);
         if (!_sampleWorkstationTestConfirmation.Confirm(
                 "确认启动开盖分液测试任务",
-                $"设备：{_sampleWorkstationDeviceId}\n任务：{selected.TaskNo}\n当前状态：{SelectedWorkstationTaskState}\n\n确认后只发送一次启动请求，是否继续？"))
+                $"设备：{_sampleWorkstationDeviceId}\n任务：{selected.TaskNo}\n当前状态：{SelectedWorkstationTaskState}\n1号样品瓶条码：{barcodes.SampleBarcode1}\n2号样品瓶条码：{barcodes.SampleBarcode2}\n\n确认后只发送一次启动请求，是否继续？"))
         {
             WorkstationTestControlMessage = "已取消，未发送请求。";
             return;
@@ -441,6 +471,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
             response = await _mes.StartSampleWorkstationTestTaskAsync(
                 _sampleWorkstationDeviceId,
                 selected.TaskNo,
+                barcodes,
                 cancellationToken);
         }
         catch (SampleWorkstationTestStartException exception) when (!exception.OutcomeUnknown)
@@ -642,7 +673,8 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
         SampleWorkstationDashboardSnapshot? snapshot,
         string? preferredTaskNo = null)
     {
-        var selectedTaskNo = preferredTaskNo ?? SelectedWorkstationTask?.TaskNo;
+        var previousTaskNo = SelectedWorkstationTask?.TaskNo;
+        var selectedTaskNo = preferredTaskNo ?? previousTaskNo;
         var previous = _sampleWorkstationSnapshot;
         var effective = snapshot;
         if (snapshot is null && previous is not null)
@@ -672,21 +704,27 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
 
         _sampleWorkstationSnapshot = effective;
         _workstationRunReadAt = DateTimeOffset.UtcNow;
-        WorkstationTasks.Clear();
-        if (effective?.Tasks is { } tasks)
+        // DataGrid may push a transient null selection while ItemsSource is rebuilt.
+        // Preserve operator input for the same task, but never carry it to a different task.
+        _refreshingWorkstationTaskRows = true;
+        try
         {
-            foreach (var task in tasks.OrderByDescending(item => item.RecordNumber))
+            WorkstationTasks.Clear();
+            if (effective?.Tasks is { } tasks)
             {
-                WorkstationTasks.Add(task);
+                foreach (var task in tasks.OrderByDescending(item => item.RecordNumber))
+                    WorkstationTasks.Add(task);
             }
+            SelectedWorkstationTask = selectedTaskNo is null
+                ? null
+                : WorkstationTasks.FirstOrDefault(task => string.Equals(task.TaskNo, selectedTaskNo, StringComparison.Ordinal));
         }
-
-        SelectedWorkstationTask = selectedTaskNo is null
-            ? null
-            : WorkstationTasks.FirstOrDefault(task => string.Equals(
-                task.TaskNo,
-                selectedTaskNo,
-                StringComparison.Ordinal));
+        finally { _refreshingWorkstationTaskRows = false; }
+        if (!string.Equals(previousTaskNo, SelectedWorkstationTask?.TaskNo, StringComparison.Ordinal))
+        {
+            WorkstationSampleBarcode1 = string.Empty;
+            WorkstationSampleBarcode2 = string.Empty;
+        }
         RaiseWorkstationProperties();
         RaiseWorkstationTestCommandCanExecuteChanged();
         return effective;
