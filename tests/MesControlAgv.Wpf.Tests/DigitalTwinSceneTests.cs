@@ -94,6 +94,6 @@ public sealed class DigitalTwinSceneTests
             .SelectMany(m => m.GetProperty("primitives").EnumerateArray())
             .Sum(p => document.RootElement.GetProperty("accessors")[p.GetProperty("indices").GetInt32()]
                 .GetProperty("count").GetInt32() / 3);
-        Assert.Equal(1287310, triangles);
+        Assert.Equal(1098558, triangles); // Removed 188,464 static-robot + 288 obsolete-box faces only.
     }
 }

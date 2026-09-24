@@ -20,6 +20,7 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        if (args.Length == 3 && args[0] == "--model-review") return ModelReview.Run(args[1],args[2]);
         if (args.Length == 2 && args[0] == "--fullscreen") return FullScreenSmoke.Run(args[1]);
         if (args.Length == 2 && args[0] == "--fullscreen-keyboard") return FullScreenSmoke.Run(args[1], nativeKeyboard: true);
         if (args.Length == 2 && args[0] == "--inspect-startup")

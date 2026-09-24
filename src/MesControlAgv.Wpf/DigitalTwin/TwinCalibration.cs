@@ -16,7 +16,7 @@ public sealed record TwinCalibration(double Theta, double Tx, double Tz, double 
     TwinCalibrationSettings Settings)
 {
     public const string MapMd5 = "9BD67A8B01F4DA2617CE67E5F8A8D6B1";
-    public const string AssetSha256 = "96ca7f34c189c9c1add62c29441a7a9b16e67619c96659c259dca7ea8412671a";
+    public const string AssetSha256 = "acb34c95e5c53c713d0a4c5246f90bb179c90ae9371626307621522c24df0e5a";
     public static IReadOnlyList<TwinMapPoint> Stations { get; } = Array.AsReadOnly(new[] {
         new TwinMapPoint("LM1", 0, .8), new("LM7", 5.344, -1.174), new("LM2", 6.148, -1.304),
         new("LM6", 3.671, 1.085), new("LM4", -2.989, -1.102), new("LM5", -2.989, -2.798) });
