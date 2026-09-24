@@ -204,17 +204,30 @@ public sealed partial class SampleWorkstationDriver(
         EnsureDeviceId(deviceId);
         ArgumentNullException.ThrowIfNull(query);
         ValidateQuery(query);
-        var response = await vendor.GetAsync(
-            "GetTaskInformationList",
-            new Dictionary<string, string?>
-            {
-                ["State"] = ToVendorTaskFilter(query.State),
-                ["StartTime"] = query.StartDate ?? string.Empty,
-                ["EndTime"] = query.EndDate ?? string.Empty,
-                ["StartNo"] = query.StartNo.ToString(CultureInfo.InvariantCulture),
-                ["RecordNum"] = query.RecordNum.ToString(CultureInfo.InvariantCulture)
-            },
-            cancellationToken);
+        VendorSampleWorkstationResponse response;
+        try
+        {
+            response = await vendor.GetAsync(
+                "GetTaskInformationList",
+                new Dictionary<string, string?>
+                {
+                    ["State"] = ToVendorTaskFilter(query.State),
+                    ["StartTime"] = query.StartDate ?? string.Empty,
+                    ["EndTime"] = query.EndDate ?? string.Empty,
+                    ["StartNo"] = query.StartNo.ToString(CultureInfo.InvariantCulture),
+                    ["RecordNum"] = query.RecordNum.ToString(CultureInfo.InvariantCulture)
+                },
+                cancellationToken);
+        }
+        catch (SampleWorkstationProtocolException exception) when (
+            exception.VendorCode == 201 &&
+            exception.VendorData is { ValueKind: JsonValueKind.String } data &&
+            string.Equals(data.GetString()?.Trim(), "无数据", StringComparison.Ordinal))
+        {
+            // Field-verified empty task page. Keep this exception local to the list
+            // read: code 201 must still fail for commands, templates and other reads.
+            return [];
+        }
         if (response.Data.ValueKind != JsonValueKind.Array)
             throw new SampleWorkstationProtocolException("Task list Data must be an array.");
 

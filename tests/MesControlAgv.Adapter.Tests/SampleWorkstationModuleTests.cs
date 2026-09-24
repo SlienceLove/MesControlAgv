@@ -15,6 +15,116 @@ namespace MesControlAgv.Adapter.Tests;
 
 public sealed class SampleWorkstationModuleTests
 {
+    [Fact]
+    public async Task Short_task_page_preserves_rows_before_explicit_end_of_list()
+    {
+        var starts = new List<int>();
+        using var vendor = new VendorHandler("")
+        {
+            ResponseFactory = request =>
+            {
+                var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri!.Query);
+                var start = int.Parse(query["StartNo"].ToString());
+                starts.Add(start);
+                return start == 1
+                    ? JsonSerializer.Serialize(new { Code = 200, Data = Enumerable.Range(1, 29).Select(i =>
+                        new { R_No = i, TaskNo = $"TASK-{i}", TaskName = $"Task {i}", State = "等待运行", MakeTime = "2026-09-24 13:00:00" }) })
+                    : "{\"Code\":201,\"Data\":\"无数据\"}";
+            }
+        };
+        await using var app = await CreateHostAsync(vendor, control: false);
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        var first = (await client.GetFromJsonAsync<SampleWorkstationTaskSummaryResponse[]>(
+            "/api/workstations/WS-01/tasks?startNo=1&recordNum=100"))!;
+        Assert.Equal(29, first.Length);
+        Assert.Equal(Enumerable.Range(1, 29).Select(i => $"TASK-{i}"), first.Select(row => row.TaskNo));
+        var end = (await client.GetFromJsonAsync<SampleWorkstationTaskSummaryResponse[]>(
+            $"/api/workstations/WS-01/tasks?startNo={1 + first.Length}&recordNum=100"))!;
+        Assert.Empty(end);
+        Assert.Equal(new[] { 1, 30 }, starts);
+        Assert.Equal(2, vendor.RequestCount);
+        Assert.All(vendor.Paths, path => Assert.Equal("/Service/GetTaskInformationList", path));
+    }
+
+    [Theory]
+    [InlineData(1, "{\"Code\":201,\"Data\":\"无数据\"}")]
+    [InlineData(30, "{\"Code\":201,\"Data\":\"无数据\"}")]
+    [InlineData(30, "{\"code\":\"201\",\"data\":\" 无数据 \"}")]
+    public async Task Task_list_explicit_no_data_is_an_empty_page(int startNo, string body)
+    {
+        using var vendor = new VendorHandler(body);
+        await using var app = await CreateHostAsync(vendor, control: false);
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using var response = await client.GetAsync($"/api/workstations/WS-01/tasks?startNo={startNo}&recordNum=100");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Empty((await response.Content.ReadFromJsonAsync<SampleWorkstationTaskSummaryResponse[]>())!);
+        Assert.Equal(1, vendor.RequestCount);
+        Assert.Equal(HttpMethod.Get, vendor.LastMethod);
+        Assert.Equal("/Service/GetTaskInformationList", vendor.LastUri!.AbsolutePath);
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(vendor.LastUri.Query);
+        Assert.Equal(startNo.ToString(), query["StartNo"].ToString());
+        Assert.Equal("100", query["RecordNum"].ToString());
+        Assert.True(query.ContainsKey("StartTime"));
+        Assert.True(query.ContainsKey("EndTime"));
+    }
+
+    [Theory]
+    [InlineData("{\"Code\":201,\"Data\":\"数据库错误\"}")]
+    [InlineData("{\"Code\":201,\"Data\":\"查询失败，无数据\"}")]
+    [InlineData("{\"Code\":201,\"Data\":null}")]
+    [InlineData("{\"Code\":201,\"Data\":[]}")]
+    [InlineData("{\"Code\":201,\"Data\":{}}")]
+    [InlineData("{\"Code\":201,\"Data\":true}")]
+    [InlineData("{\"Code\":201,\"Data\":\"\"}")]
+    [InlineData("{\"Code\":500,\"Data\":\"无数据\"}")]
+    [InlineData("{\"Code\":200,\"Data\":\"无数据\"}")]
+    [InlineData("{\"Data\":\"无数据\"}")]
+    public async Task Task_list_does_not_hide_other_failures_as_empty(string body)
+    {
+        using var vendor = new VendorHandler(body);
+        await using var app = await CreateHostAsync(vendor, control: false);
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using var response = await client.GetAsync("/api/workstations/WS-01/tasks?startNo=30&recordNum=100");
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        Assert.Equal(1, vendor.RequestCount);
+    }
+
+    [Theory]
+    [InlineData("status")]
+    [InlineData("tasks/TASK-01")]
+    [InlineData("tasks/TASK-01/state")]
+    [InlineData("tasks/TASK-01/template")]
+    [InlineData("protocol/MaterialTypeParameterList")]
+    public async Task No_data_on_other_reads_remains_a_failure(string path)
+    {
+        using var vendor = new VendorHandler("{\"Code\":201,\"Data\":\"无数据\"}");
+        await using var app = await CreateHostAsync(vendor, control: false);
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using var response = await client.GetAsync($"/api/workstations/WS-01/{path}");
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        Assert.Equal(1, vendor.RequestCount);
+    }
+
+    [Theory]
+    [InlineData("initialize")]
+    [InlineData("tasks/TASK-01/start")]
+    [InlineData("tasks/TASK-01/barcodes")]
+    [InlineData("tasks/import?fileName=task.xlsx")]
+    public async Task No_data_never_acknowledges_a_write_or_retries_it(string path)
+    {
+        using var vendor = new VendorHandler("{\"Code\":201,\"Data\":\"无数据\"}");
+        await using var app = await CreateHostAsync(vendor, control: true);
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using HttpContent content = path.Contains("import", StringComparison.Ordinal)
+            ? new ByteArrayContent(File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Fixtures", "workstation-test-001.xlsx")))
+            : JsonContent.Create(new SampleWorkstationTaskBarcodes { SampleBarcode1 = "A", SampleBarcode2 = "B" });
+        if (path.Contains("import", StringComparison.Ordinal))
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        using var response = await client.PostAsync($"/api/workstations/WS-01/{path}", content);
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+        Assert.Equal(1, vendor.RequestCount);
+    }
+
     [Theory]
     [InlineData(SampleWorkstationTemplateVolumeUnit.Microliters)]
     [InlineData(SampleWorkstationTemplateVolumeUnit.Milliliters)]
