@@ -22,4 +22,13 @@ public sealed record ShineLabDeviceStatusResponse(
     string? AlarmMessage,
     DateTimeOffset LastSeenAtUtc,
     DateTimeOffset? TaskStartedAtUtc = null,
-    DateTimeOffset? TaskFinishedAtUtc = null);
+    DateTimeOffset? TaskFinishedAtUtc = null,
+    ShineLabProtocolEventObservation? LastProtocolEvent = null);
+
+/// <summary>Historical protocol evidence, not a declaration of task completion.</summary>
+public sealed record ShineLabProtocolEventObservation(
+    string StrId,
+    string Method,
+    string? SampleId,
+    DateTimeOffset ReceivedAtUtc,
+    DateTimeOffset? ReportedFinishAtUtc);

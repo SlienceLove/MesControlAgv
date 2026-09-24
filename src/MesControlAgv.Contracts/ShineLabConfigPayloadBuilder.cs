@@ -9,17 +9,55 @@ namespace MesControlAgv.Contracts;
 /// </summary>
 public static class ShineLabConfigPayloadBuilder
 {
-    public static JsonElement Build(ShineLabConfigRequest request)
+    public static JsonElement Build(
+        ShineLabConfigRequest request,
+        ShineLabPayloadProfile profile = ShineLabPayloadProfile.Rike)
     {
         ArgumentNullException.ThrowIfNull(request);
+        if (!Enum.IsDefined(profile))
+            throw new ArgumentOutOfRangeException(nameof(profile));
         if (string.IsNullOrWhiteSpace(request.TaskUuid))
             throw new ArgumentException("TaskUuid is required.", nameof(request));
         if (request.SampleData is null || request.SampleData.Count == 0)
             throw new ArgumentException("At least one sampleData row is required.", nameof(request));
 
         var firstChannel = request.SampleData[0].Channel;
-        if (string.IsNullOrWhiteSpace(firstChannel))
+        var singleChannel = profile == ShineLabPayloadProfile.DcSeqSingleChannel;
+        if (!singleChannel && string.IsNullOrWhiteSpace(firstChannel))
             throw new ArgumentException("At least one sampleData row must specify Channel.", nameof(request));
+
+        if (profile is ShineLabPayloadProfile.DcSeq or ShineLabPayloadProfile.DcSeqSingleChannel)
+        {
+            // The vendor's 2026-09-21 sequence contract has one channel per
+            // Config. Reject mixed channels instead of silently routing them
+            // all through the first sample's channel.
+            var sampleIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var sample in request.SampleData)
+            {
+                if (singleChannel && !string.IsNullOrWhiteSpace(sample.Channel))
+                    throw new ArgumentException("Single-channel DCSeq must not specify Channel.", nameof(request));
+                if (!singleChannel && !string.Equals(sample.Channel, firstChannel, StringComparison.Ordinal))
+                    throw new ArgumentException("DCSeq Config must contain a single channel.", nameof(request));
+                if (string.IsNullOrWhiteSpace(sample.SampleId) || !sampleIds.Add(sample.SampleId))
+                    throw new ArgumentException("DCSeq sampleId must be nonempty and unique within the sequence.", nameof(request));
+                if (!int.TryParse(sample.Type, out var type) || type is < 0 or > 5)
+                    throw new ArgumentException("DCSeq sample type must be an integer from 0 to 5.", nameof(request));
+            }
+
+            var samples = request.SampleData.Select(sample => new
+                {
+                    sampleId = sample.SampleId,
+                    sampleName = sample.SampleName,
+                    type = int.Parse(sample.Type),
+                    position = sample.Position,
+                    mPos = sample.MPos
+                }).ToArray();
+            // Vendor confirmation: for a single instrument omit channel entirely,
+            // rather than writing an empty string or a placeholder "A".
+            return singleChannel
+                ? JsonSerializer.SerializeToElement(new { sampleData = samples })
+                : JsonSerializer.SerializeToElement(new { channel = firstChannel, sampleData = samples });
+        }
 
         return JsonSerializer.SerializeToElement(new
         {

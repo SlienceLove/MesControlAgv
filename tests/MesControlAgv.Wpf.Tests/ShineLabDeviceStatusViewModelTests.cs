@@ -7,6 +7,21 @@ namespace MesControlAgv.Wpf.Tests;
 public sealed class ShineLabDeviceStatusViewModelTests
 {
     [Fact]
+    public async Task Dcseq_instrument_offline_does_not_display_as_tcp_disconnected()
+    {
+        var mes = new FakeMesClient([])
+        {
+            ShineLabDeviceStatuses =
+            [new("STN61_01", "D160+", true, 99, "InstrumentOffline", false,
+                null, null, null, null, null, null, null, null, null, DateTimeOffset.UtcNow)]
+        };
+        var viewModel = new ShineLabDeviceStatusViewModel(mes);
+        await viewModel.RefreshAsync();
+        Assert.Equal("在线", viewModel.SelectedOnline);
+        Assert.Equal("仪器离线（通讯模块在线）", viewModel.SelectedStateDisplay);
+    }
+
+    [Fact]
     public async Task Refresh_lists_pushed_devices_and_projects_selected_task_state()
     {
         var mes = new FakeMesClient([])

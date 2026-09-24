@@ -83,6 +83,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
             _mes,
             sampleWorkstationTestControlEnabled: sampleWorkstationTestControlEnabled);
         ShineLabTaskDispatch = new ShineLabTaskDispatchViewModel(_mes);
+        ShineLabControl = new ShineLabControlViewModel(_mes);
         ShineLabSequenceImport = new ShineLabSequenceImportViewModel(mes: _mes);
         _modules = new ControlCenterViewModel(WorkflowEditor, _mes, ModuleRegistry);
         Materials = new MaterialManagementViewModel(_mes);
@@ -155,6 +156,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public IonChromatographyViewModel IonChromatography { get; }
     public ShineLabDeviceStatusViewModel ShineLabDeviceStatus { get; }
     public ShineLabTaskDispatchViewModel ShineLabTaskDispatch { get; }
+    public ShineLabControlViewModel ShineLabControl { get; }
     public ShineLabSequenceImportViewModel ShineLabSequenceImport { get; }
     public MaterialManagementViewModel Materials { get; }
     public StartupConfigurationReport StartupDiagnostics { get; }

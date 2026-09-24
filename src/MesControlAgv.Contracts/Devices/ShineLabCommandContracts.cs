@@ -28,7 +28,9 @@ public sealed record ShineLabCommandRequest(
     string? SampleName = null,
     string? Channel = null,
     string? DetectionMethod = null,
-    string? CleanTime = null);
+    string? CleanTime = null,
+    string? StrAction = null,
+    string? Param = null);
 
 public sealed record ShineLabCommandResponse(
     string StrId,
@@ -67,4 +69,19 @@ public sealed record ShineLabTaskEventResponse(
 
 public sealed record ShineLabTaskDetailResponse(
     ShineLabTaskResponse Task,
-    IReadOnlyList<ShineLabTaskEventResponse> Events);
+    IReadOnlyList<ShineLabTaskEventResponse> Events,
+    IReadOnlyList<ShineLabTaskSampleResponse>? Samples = null,
+    string ResultState = "NotTracked");
+
+public sealed record ShineLabTaskSampleResponse(
+    int RowNumber,
+    string SourceSampleId,
+    string SampleId,
+    string SampleName,
+    bool ConfigAttempted,
+    bool SampleFinishObserved,
+    bool TaskFinishObserved,
+    bool EndMissionObserved,
+    string? ResultJson,
+    bool ResultConflict,
+    long? LastReceivedAtUtcTicks);

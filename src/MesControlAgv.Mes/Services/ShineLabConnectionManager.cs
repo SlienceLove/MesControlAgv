@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Net.Sockets;
 using System.Text.Json;
 using MesControlAgv.Contracts;
+using MesControlAgv.Mes.Entities;
 
 namespace MesControlAgv.Mes.Services;
 
@@ -33,7 +34,25 @@ public sealed record ShineLabConnectionSnapshot(
 /// already identified one.  The server remains the only writer; WPF/MES callers
 /// never touch the underlying socket or serial transport.
 /// </summary>
-public sealed class ShineLabConnectionManager : IDisposable
+public sealed class ShineLabCommandTimeoutException(string id, Exception inner)
+    : TimeoutException("ShineLab reply wait timed out; the request identity is retained.", inner)
+{
+    public string StrId { get; } = id;
+}
+
+public sealed class ShineLabCommandTransportException(string id, Exception inner)
+    : IOException("ShineLab command outcome is unknown because the connection failed.", inner)
+{
+    public string StrId { get; } = id;
+}
+
+public sealed class ShineLabCommandCanceledException(string id, OperationCanceledException inner)
+    : OperationCanceledException("ShineLab wait was canceled; execution may already have started.", inner, inner.CancellationToken)
+{
+    public string StrId { get; } = id;
+}
+
+public sealed class ShineLabConnectionManager(ShineLabCommandJournal? journal = null) : IDisposable
 {
     private readonly object _sync = new();
     private readonly Dictionary<string, PendingCommand> _pending = new(StringComparer.Ordinal);
@@ -173,7 +192,8 @@ public sealed class ShineLabConnectionManager : IDisposable
         string equipmentCode,
         JsonElement body)
     {
-        if (string.IsNullOrWhiteSpace(strId) || body.ValueKind != JsonValueKind.Object)
+        if (string.IsNullOrWhiteSpace(strId) ||
+            !ShineLabCommandJournal.TryResponse(strId, strMethod, equipmentCode, body, out _))
             return false;
         if (!body.TryGetProperty("result", out var resultElement) ||
             resultElement.ValueKind != JsonValueKind.String)
@@ -187,7 +207,9 @@ public sealed class ShineLabConnectionManager : IDisposable
         TaskCompletionSource<ShineLabCommandResult>? completion;
         lock (_sync)
         {
-            if (!_pending.Remove(strId, out var pending)) return false;
+            if (!_pending.TryGetValue(strId, out var pending) || pending.Method != strMethod ||
+                !pending.EquipmentCode.Equals(equipmentCode, StringComparison.OrdinalIgnoreCase)) return false;
+            _pending.Remove(strId);
             completion = pending.Completion;
         }
 
@@ -200,7 +222,9 @@ public sealed class ShineLabConnectionManager : IDisposable
         string method,
         JsonElement body,
         TimeSpan timeout,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? taskUuid = null,
+        int? action = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(equipmentCode);
         ArgumentException.ThrowIfNullOrWhiteSpace(method);
@@ -216,9 +240,10 @@ public sealed class ShineLabConnectionManager : IDisposable
                 ?? throw new ShineLabNotConnectedException(equipmentCode);
             if (connection.WireFormat == ShineLabWireFormat.Unknown)
                 throw new InvalidOperationException("ShineLab wire format has not been identified yet.");
-            _pending[strId] = new PendingCommand(completion, connection.ConnectionId);
+            _pending[strId] = new PendingCommand(completion, connection.ConnectionId, method, connection.EquipmentCode);
         }
 
+        var prepared = false;
         try
         {
             await connection.WriteGate.WaitAsync(cancellationToken);
@@ -231,23 +256,49 @@ public sealed class ShineLabConnectionManager : IDisposable
                     equipmentCode = connection.EquipmentCode,
                     body
                 };
-                var frame = ShineLabWireCodec.EncodeJson(
-                    JsonSerializer.Serialize(message),
-                    connection.WireFormat);
+                var json = JsonSerializer.Serialize(message);
+                var frame = ShineLabWireCodec.EncodeJson(json, connection.WireFormat);
+                if (journal is not null)
+                {
+                    await journal.PrepareAsync(new ShineLabCommandAttempt
+                    {
+                        StrId = strId, Method = method, EquipmentCode = connection.EquipmentCode,
+                        TaskUuid = taskUuid, Action = action, RawJson = json,
+                        ConnectionId = connection.ConnectionId, WireFormat = connection.WireFormat.ToString(),
+                        PreparedAtUtcTicks = DateTimeOffset.UtcNow.UtcTicks
+                    }, cancellationToken);
+                    prepared = true;
+                }
                 await connection.Stream.WriteAsync(frame, cancellationToken);
                 await connection.Stream.FlushAsync(cancellationToken);
+                if (prepared) await journal!.RecordWaitAsync(strId, "Sent", CancellationToken.None);
             }
             finally
             {
                 connection.WriteGate.Release();
             }
 
-            return await completion.Task.WaitAsync(timeout, cancellationToken);
+            var response = await completion.Task.WaitAsync(timeout, cancellationToken);
+            if (prepared) await journal!.RecordWaitAsync(strId, "ReplyWithinWait", CancellationToken.None);
+            return response;
+        }
+        catch (OperationCanceledException exception)
+        {
+            lock (_sync) _pending.Remove(strId);
+            if (prepared) await journal!.RecordWaitAsync(strId, "Canceled", CancellationToken.None);
+            throw new ShineLabCommandCanceledException(strId, exception);
+        }
+        catch (TimeoutException exception)
+        {
+            lock (_sync) _pending.Remove(strId);
+            if (prepared) await journal!.RecordWaitAsync(strId, "TimedOut", CancellationToken.None);
+            throw new ShineLabCommandTimeoutException(strId, exception);
         }
         catch (Exception exception) when (exception is IOException or SocketException or ObjectDisposedException)
         {
             lock (_sync) _pending.Remove(strId);
-            throw new IOException("ShineLab command outcome is unknown because the connection failed.", exception);
+            if (prepared) await journal!.RecordWaitAsync(strId, "TransportError", CancellationToken.None);
+            throw new ShineLabCommandTransportException(strId, exception);
         }
         catch
         {
@@ -255,6 +306,10 @@ public sealed class ShineLabConnectionManager : IDisposable
             throw;
         }
     }
+
+    public Task RecordReplyAsync(string id, string method, string equipment, JsonElement body,
+        ShineLabPushContext context, CancellationToken token) =>
+        journal?.RecordReplyAsync(id, method, equipment, body, context, token) ?? Task.CompletedTask;
 
     private void CompletePendingForConnection(string connectionId, Exception exception)
     {
@@ -296,7 +351,9 @@ public sealed class ShineLabConnectionManager : IDisposable
 
     private sealed record PendingCommand(
         TaskCompletionSource<ShineLabCommandResult> Completion,
-        string ConnectionId);
+        string ConnectionId,
+        string Method,
+        string EquipmentCode);
 
     private sealed record Connection(
         string EquipmentCode,

@@ -7,7 +7,8 @@ namespace MesControlAgv.Mes.Services;
 /// </summary>
 public sealed class ShineLabTaskRecoveryService(
     IServiceScopeFactory scopeFactory,
-    ILogger<ShineLabTaskRecoveryService> logger) : IHostedService
+    ILogger<ShineLabTaskRecoveryService> logger,
+    ShineLabCommandJournal? journal = null) : IHostedService
 {
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -16,6 +17,7 @@ public sealed class ShineLabTaskRecoveryService(
         var count = await repository.MarkInterruptedTasksUnknownAsync(cancellationToken);
         if (count > 0)
             logger.LogWarning("Recovered {Count} interrupted ShineLab tasks as Unknown.", count);
+        if (journal is not null) await journal.RecoverUnappliedRepliesAsync(cancellationToken);
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;

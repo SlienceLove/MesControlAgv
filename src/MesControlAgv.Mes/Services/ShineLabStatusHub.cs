@@ -34,10 +34,32 @@ public sealed class ShineLabStatusHub(IOptions<ShineLabTcpOptions> configuredOpt
                 _devices[code] = state;
             }
 
+            if (connectionId is not null && state.ConnectionId != connectionId)
+                state.LastDeviceStatusAtUtc = null;
             state.ConnectionActive = true;
             state.ConnectionId = connectionId ?? state.ConnectionId;
             state.LastSeenAtUtc = DateTimeOffset.UtcNow;
             state.LastStrId = strId;
+
+            // DCSeq finish messages are observations, not established task outcomes.
+            // In field tests SampleFinish arrived while analysis was still running.
+            if (_options.PayloadProfile != ShineLabPayloadProfile.Rike &&
+                method is "SampleFinish" or "TaskFinish" or "EndMission" or "Result" or "TaskError")
+            {
+                state.LastProtocolEvent = new(strId, method,
+                    ReadString(body, "sampleId", "sampleID"), state.LastSeenAtUtc,
+                    ParseDate(body, "finishDate"));
+                if (method == "TaskError")
+                {
+                    // An explicit fault must remain visible, even though it
+                    // does not establish a task's final outcome or stop scope.
+                    state.Status = 2;
+                    state.State = "Error";
+                    state.AlarmCode = ReadString(body, "errorCode", "alarmCode");
+                    state.AlarmMessage = ReadString(body, "errorMsg", "errorMessage", "msg");
+                }
+                return;
+            }
 
             switch (method)
             {
@@ -53,6 +75,7 @@ public sealed class ShineLabStatusHub(IOptions<ShineLabTcpOptions> configuredOpt
                     break;
 
                 case "Certification":
+                    state.LastDeviceStatusAtUtc = null;
                     state.State = "Connected";
                     state.Status = 0;
                     state.HasActiveTask = false;
@@ -69,6 +92,8 @@ public sealed class ShineLabStatusHub(IOptions<ShineLabTcpOptions> configuredOpt
 
                 case "Device":
                 case "UpdateInfo":
+                    if (ReadInt(body, "status") is not null)
+                        state.LastDeviceStatusAtUtc = state.LastSeenAtUtc;
                     ApplyUpdate(state, body);
                     break;
 
@@ -133,6 +158,18 @@ public sealed class ShineLabStatusHub(IOptions<ShineLabTcpOptions> configuredOpt
         }
     }
 
+    public bool HasFreshIdleDeviceStatus(string equipmentCode, TimeSpan maxAge, DateTimeOffset? now = null)
+    {
+        lock (_sync)
+        {
+            if (!_devices.TryGetValue(equipmentCode.Trim(), out var state) || !state.ConnectionActive ||
+                state.Status != 0 || state.HasActiveTask || state.State != "Idle" ||
+                state.LastDeviceStatusAtUtc is not { } receivedAt) return false;
+            var age = (now ?? DateTimeOffset.UtcNow) - receivedAt;
+            return age >= TimeSpan.Zero && age <= maxAge;
+        }
+    }
+
     public IReadOnlyList<ShineLabDeviceStatusResponse> GetStatuses(DateTimeOffset? now = null)
     {
         var observedAt = now ?? DateTimeOffset.UtcNow;
@@ -160,6 +197,34 @@ public sealed class ShineLabStatusHub(IOptions<ShineLabTcpOptions> configuredOpt
     private void ApplyUpdate(DeviceState state, JsonElement body)
     {
         var status = ReadInt(body, "status");
+        if (_options.PayloadProfile != ShineLabPayloadProfile.Rike)
+        {
+            // Missing fields in DCSeq Device are not evidence that an earlier
+            // sample/stage is still current. Keep historical events separately.
+            if (status is null) return;
+            state.Status = status.Value;
+            state.TaskUuid = ReadString(body, "task_uuid", "taskUuid", "taskId");
+            state.SampleId = ReadString(body, "sampleId", "sampleID");
+            state.SampleName = ReadString(body, "sampleName");
+            state.Channel = ReadString(body, "channel");
+            state.Position = ReadInt(body, "position");
+            state.Stage = ReadString(body, "stage", "currentStage");
+            state.Progress = ReadInt(body, "progress", "percent");
+            state.TaskStartedAtUtc = ParseDate(body, "startDate", "startTime");
+            state.TaskFinishedAtUtc = null;
+            state.HasActiveTask = status == 1;
+            state.State = status switch
+            {
+                0 => "Idle",
+                1 => "Running",
+                2 => "Error",
+                99 => "InstrumentOffline",
+                _ => $"Unknown({status})"
+            };
+            state.AlarmCode = status == 0 ? null : ReadString(body, "errorCode", "alarmCode");
+            state.AlarmMessage = status == 0 ? null : ReadString(body, "errorMsg", "errorMessage", "alarmMessage");
+            return;
+        }
         if (status is { } value) state.Status = value;
         ApplyCommonTaskFields(state, body);
         state.AlarmCode = ReadString(body, "errorCode", "alarmCode") ?? state.AlarmCode;
@@ -239,7 +304,8 @@ public sealed class ShineLabStatusHub(IOptions<ShineLabTcpOptions> configuredOpt
             state.AlarmMessage,
             state.LastSeenAtUtc,
             state.TaskStartedAtUtc,
-            state.TaskFinishedAtUtc);
+            state.TaskFinishedAtUtc,
+            state.LastProtocolEvent);
     }
 
     private static string DisplayName(string code) => code.ToUpperInvariant() switch
@@ -302,6 +368,7 @@ public sealed class ShineLabStatusHub(IOptions<ShineLabTcpOptions> configuredOpt
         public bool ConnectionActive { get; set; }
         public string? ConnectionId { get; set; }
         public DateTimeOffset LastSeenAtUtc { get; set; }
+        public DateTimeOffset? LastDeviceStatusAtUtc { get; set; }
         public string? LastStrId { get; set; }
         public int Status { get; set; }
         public string State { get; set; } = "Offline";
@@ -317,5 +384,6 @@ public sealed class ShineLabStatusHub(IOptions<ShineLabTcpOptions> configuredOpt
         public string? AlarmMessage { get; set; }
         public DateTimeOffset? TaskStartedAtUtc { get; set; }
         public DateTimeOffset? TaskFinishedAtUtc { get; set; }
+        public ShineLabProtocolEventObservation? LastProtocolEvent { get; set; }
     }
 }

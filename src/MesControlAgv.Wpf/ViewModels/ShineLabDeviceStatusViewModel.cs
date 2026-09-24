@@ -777,6 +777,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
             "idle" or "ready" or "standby" or "空闲" or "就绪" => "空闲",
             "paused" or "pause" or "暂停" => "暂停",
             "fault" or "faulted" or "error" or "故障" => "故障",
+            "instrumentoffline" => "仪器离线（通讯模块在线）",
             null or "" => "未知",
             _ => state ?? "未知"
         };

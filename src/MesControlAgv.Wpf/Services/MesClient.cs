@@ -429,6 +429,22 @@ public sealed class MesClient(HttpClient client) : IMesClient
 
     private sealed record WorkstationProblemDetail(string? Detail, bool? OutcomeUnknown);
 
+    public async Task<ShineLabServerStatusResponse> GetShineLabServerStatusAsync(CancellationToken cancellationToken) =>
+        await client.GetFromJsonAsync<ShineLabServerStatusResponse>("api/shinelab/server/status", cancellationToken)
+        ?? throw new InvalidOperationException("MES returned no ShineLab server status.");
+
+    public async Task<ShineLabTaskDetailResponse?> GetShineLabTaskDetailAsync(string taskUuid, CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync($"api/shinelab/tasks/{Uri.EscapeDataString(taskUuid)}", cancellationToken);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<ShineLabTaskDetailResponse>(cancellationToken);
+    }
+
+    public async Task<System.Text.Json.JsonElement> GetShineLabTaskConfigPreviewAsync(string taskUuid, CancellationToken cancellationToken) =>
+        await client.GetFromJsonAsync<System.Text.Json.JsonElement>(
+            $"api/shinelab/tasks/{Uri.EscapeDataString(taskUuid)}/config-preview", cancellationToken);
+
     public async Task<ShineLabCommandResponse> SendShineLabConfigAsync(
         string equipmentCode,
         ShineLabConfigRequest request,

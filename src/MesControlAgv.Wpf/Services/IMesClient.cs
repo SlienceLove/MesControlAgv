@@ -172,6 +172,13 @@ public interface IMesClient
         ShineLabConfigRequest request,
         CancellationToken cancellationToken) =>
         Task.FromException<ShineLabCommandResponse>(new NotSupportedException("ShineLab Config is not supported by this MES client."));
+    Task<ShineLabServerStatusResponse> GetShineLabServerStatusAsync(CancellationToken cancellationToken) =>
+        Task.FromException<ShineLabServerStatusResponse>(new NotSupportedException("ShineLab server status is unavailable."));
+    Task<ShineLabTaskDetailResponse?> GetShineLabTaskDetailAsync(string taskUuid, CancellationToken cancellationToken) =>
+        Task.FromException<ShineLabTaskDetailResponse?>(new NotSupportedException("ShineLab task detail is unavailable."));
+    Task<System.Text.Json.JsonElement> GetShineLabTaskConfigPreviewAsync(string taskUuid, CancellationToken cancellationToken) =>
+        Task.FromException<System.Text.Json.JsonElement>(new NotSupportedException("ShineLab task preview is unavailable."));
+    /* Existing device command API below intentionally stays separate from managed tasks. */
     Task<ShineLabCommandResponse> SendShineLabCommandAsync(
         string equipmentCode,
         ShineLabCommandRequest request,

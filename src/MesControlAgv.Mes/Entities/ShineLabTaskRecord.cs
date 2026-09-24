@@ -11,6 +11,8 @@ public sealed class ShineLabTaskRecord
     public string ConfigJson { get; set; } = string.Empty;
     public string? ConfigResponseJson { get; set; }
     public string? CommandResponseJson { get; set; }
+    public string? ConfigRequestId { get; set; }
+    public string? CommandRequestId { get; set; }
     public string? ResultJson { get; set; }
     public string? LastError { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;

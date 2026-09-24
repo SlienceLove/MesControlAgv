@@ -15,6 +15,13 @@ public sealed class ShineLabTcpOptions
     public int StaleAfterSeconds { get; set; } = 10;
     public int CommandTimeoutMs { get; set; } = 10000;
     public int ReadBufferBytes { get; set; } = 8192;
+    // Reloaded on each authentication request; default preserves the prior wire reply.
+    public ShineLabCertificationReplyMode CertificationReplyMode { get; set; }
+    public bool CaptureProtocolSamples { get; set; }
+    // Explicit capability gate: enable only after the vendor module is updated.
+    public bool EnableTrayCommands { get; set; }
+    public MesControlAgv.Contracts.ShineLabPayloadProfile PayloadProfile { get; set; }
+        = MesControlAgv.Contracts.ShineLabPayloadProfile.Rike;
     /// <summary>
     /// Diagnostic-only compatibility probe. Disabled by default because the
     /// production protocol expects the downstream client to initiate
