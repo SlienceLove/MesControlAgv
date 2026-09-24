@@ -15,6 +15,7 @@
 | master | 已通过本轮离线回归的统一基线；现场部署仍需现场验收 | 接收 develop |
 | develop | 唯一集成入口 | 功能、UI 分支先汇入这里 |
 | feature/wpf-ui-layout-optimization | 后续界面优化 | develop |
+| feature/workstation-import-reconciliation | 从develop 2d73132建立；独立人工结案审计、只读核对与WPF异常批次入口，原Unknown日志不改 | 验证后合入develop；现场结案和切换另行确认 |
 | fix/workstation-text-task-id | 从develop 9210fe8建立；ead3010新增WS文本编号与新导入长纯数字拦截，保留历史回读/重放和Unknown阻断 | 已合入develop f0034ca；不自动部署或解除现场异常批次 |
 | feature/digital-twin-single-agv | 用户于2026-09-24授权接管并补提交模型清理成果；8d6c54f删除冗余静态机器人/盒体，配套指纹与测试一并提交 | 已合入develop 9da0526；原证据与规划草稿保留，后续任务从最新develop开始 |
 | fix/workstation-empty-task-page | 从 develop e547c94 建立；仅修复任务列表末页201“无数据”的兼容，独立目录 .worktrees/workstation-empty-page；0e70445 已集成 | develop efea896，网关现场切换另行确认 |

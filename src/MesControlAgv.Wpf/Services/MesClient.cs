@@ -21,6 +21,41 @@ namespace MesControlAgv.Wpf.Services;
 
 public sealed class MesClient(HttpClient client) : IMesClient
 {
+    public async Task<IReadOnlyList<WorkstationBatchReviewItem>> GetWorkstationBatchReviewsAsync(string deviceId, CancellationToken token)
+    {
+        using var response = await client.GetAsync($"api/workstations/{Uri.EscapeDataString(deviceId)}/task-batches/reviews", token);
+        await EnsureReviewResponseAsync(response, token);
+        var rows = await response.Content.ReadFromJsonAsync<WorkstationBatchReviewItem[]>(token)
+            ?? throw new InvalidOperationException("未收到异常批次核对列表。");
+        if (rows.Any(row => row is null || row.DeviceId != deviceId || row.RequestId == Guid.Empty || string.IsNullOrWhiteSpace(row.TaskNo)))
+            throw new InvalidOperationException("核对列表身份不匹配，禁止确认。");
+        return rows;
+    }
+
+    public async Task<WorkstationBatchReconciliation> ReconcileWorkstationBatchAsync(string deviceId, Guid requestId,
+        WorkstationBatchReconcileRequest request, CancellationToken token)
+    {
+        request = request with { Actor = request.Actor.Trim(), Reason = request.Reason.Trim(),
+            ExpectedPayloadHash = request.ExpectedPayloadHash.ToUpperInvariant(), ExpectedJournalSha256 = request.ExpectedJournalSha256.ToUpperInvariant() };
+        using var response = await client.PostAsJsonAsync($"api/workstations/{Uri.EscapeDataString(deviceId)}/task-batches/{requestId:D}/reconcile-created", request, token);
+        await EnsureReviewResponseAsync(response, token);
+        var audit = await response.Content.ReadFromJsonAsync<WorkstationBatchReconciliation>(token)
+            ?? throw new InvalidOperationException("未收到人工确认记录，请刷新核对，不要重复提交。");
+        if (audit.DeviceId != deviceId || audit.RequestId != requestId || audit.TaskNo != request.TaskNo ||
+            audit.PayloadHash != request.ExpectedPayloadHash || audit.JournalSha256 != request.ExpectedJournalSha256 ||
+            audit.Confirmation != request || audit.Outcome != "CreatedWithReadbackException")
+            throw new InvalidOperationException("人工确认回执身份或内容不匹配，请刷新核对。");
+        return audit;
+    }
+
+    private static async Task EnsureReviewResponseAsync(HttpResponseMessage response, CancellationToken token)
+    {
+        if (response.IsSuccessStatusCode) return;
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            throw new InvalidOperationException("现场 MES 尚未部署核对接口，或原批次不存在；未确认结案。");
+        throw new InvalidOperationException($"核对请求返回 {(int)response.StatusCode}：{await response.Content.ReadAsStringAsync(token)}");
+    }
+
     public async Task<WorkstationBatchResult> ImportWorkstationBatchAsync(string deviceId, WorkstationBatchRequest request, CancellationToken token)
     {
         using var response = await client.PostAsJsonAsync($"api/workstations/{Uri.EscapeDataString(deviceId)}/task-batches/import", request, token);

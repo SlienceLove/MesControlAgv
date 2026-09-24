@@ -6,7 +6,7 @@ using MesControlAgv.Contracts;
 namespace MesControlAgv.Mes.Services;
 
 /// <summary>Explicit import only. Never initializes or starts a workstation.</summary>
-public sealed class WorkstationBatchImportService(
+public sealed partial class WorkstationBatchImportService(
     ISampleWorkstationReader reader, ISampleWorkstationCapabilityReader capabilities,
     ISampleWorkstationTaskImporter importer, IConfiguration configuration, IHostEnvironment? environment = null)
 {
@@ -30,15 +30,21 @@ public sealed class WorkstationBatchImportService(
             var path = Path.Combine(JournalDirectory, request.RequestId.ToString("N") + ".json");
             if (File.Exists(path))
             {
-                var previous = Read(path);
+                var (previous, journalHash) = ReadJournalSnapshot(path);
                 if (previous.PayloadHash != hash) throw new InvalidOperationException("请求编号已用于不同内容，请核对导入记录。");
-                return previous with { Items = previous.Items.Select(i => i.Status == "Importing" ? i with { Status = "Unknown", Message = "上次导入中断，必须人工核对；不会重新下发。" } : i).ToArray() };
+                var reconciliations = previous.Items.Where(NeedsReview)
+                    .Select(item => ReadReconciliation(previous, item, journalHash)).OfType<WorkstationBatchReconciliation>().ToArray();
+                return previous with
+                {
+                    Items = previous.Items.Select(i => i.Status == "Importing" ? i with { Status = "Unknown", Message = "上次导入中断，必须人工核对；不会重新下发。" } : i).ToArray(),
+                    Reconciliations = reconciliations
+                };
             }
             foreach (var file in Directory.EnumerateFiles(JournalDirectory, "*.json"))
             {
-                var previous = Read(file);
+                var (previous, journalHash) = ReadJournalSnapshot(file);
                 if (string.Equals(previous.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase) &&
-                    previous.Items.Any(i => i.Status is "Importing" or "Unknown"))
+                    previous.Items.Where(NeedsReview).Any(i => ReadReconciliation(previous, i, journalHash) is null))
                     throw new InvalidOperationException("此设备有结果不确定的批次。请先人工核对，禁止重复导入。");
             }
             // Keep historical request replay above this new-import gate. Never rewrite old identities.
@@ -112,8 +118,6 @@ public sealed class WorkstationBatchImportService(
         if (status.DeviceId != deviceId || !status.Online || status.State != SampleWorkstationDeviceState.Idle)
             throw new InvalidOperationException("工作站须在线且空闲后才能导入。");
     }
-    private static WorkstationBatchResult Read(string path) => JsonSerializer.Deserialize<WorkstationBatchResult>(File.ReadAllBytes(path))
-        ?? throw new InvalidOperationException("导入日志无法读取，请人工核对。");
     private static void Save(string path, WorkstationBatchResult result)
     {
         var temp = path + ".tmp";
