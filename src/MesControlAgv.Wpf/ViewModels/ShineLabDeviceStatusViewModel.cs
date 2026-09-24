@@ -153,7 +153,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
 
     public string InstrumentDescription => IsIonChromatographySelected
         ? "显示离子色谱及其子设备（如 D160+、自动进样器 18i）的在线与运行状态"
-        : "查看工作站状态与最近任务；支持单任务模板和 Excel 批量导入";
+        : "查看当前库任务；支持单任务模板和 Excel 批量导入";
 
     /// <summary>
     /// Only ion-chromatography responses are exposed through this collection.
@@ -314,6 +314,28 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
             ? "未知"
             : status.Online && status.State != SampleWorkstationDeviceState.Offline ? "在线" : "离线";
     public string WorkstationState => FormatWorkstationState(_sampleWorkstationSnapshot?.Status);
+    public string WorkstationOperatorOnline => !string.IsNullOrWhiteSpace(_sampleWorkstationSnapshot?.StatusReadError)
+        ? "状态未更新" : WorkstationOnline;
+    public string WorkstationOperatorNotice
+    {
+        get
+        {
+            var snapshot = _sampleWorkstationSnapshot;
+            if (snapshot is null) return "尚未获取设备信息，请刷新。";
+            var notices = new List<string>();
+            // Vendor codes 0/1/3 are completed/manually ended/started events, not alarms.
+            if (snapshot.Status?.State == SampleWorkstationDeviceState.Faulted || snapshot.Error?.ErrorCode is < 0 or 2)
+                notices.Add("设备有报警记录，请到设备端确认处理。");
+            else if (snapshot.Error is { Recognized: false } || snapshot.Error?.ErrorCode is > 3)
+                notices.Add("设备返回待确认信息，请到设备端核对。");
+            if (!string.IsNullOrWhiteSpace(snapshot.TasksReadError))
+                notices.Add("任务列表未更新；已有记录为上次读取结果，请刷新重试。");
+            if (!string.IsNullOrWhiteSpace(snapshot.StatusReadError) || !string.IsNullOrWhiteSpace(snapshot.ErrorReadError))
+                notices.Add("设备状态信息未完整更新，请刷新重试。");
+            return string.Join(" ", notices);
+        }
+    }
+    public bool HasWorkstationOperatorNotice => WorkstationOperatorNotice.Length > 0;
     public string WorkstationRawState => _sampleWorkstationSnapshot?.Status is { } status
         ? status.RawState.ToString(System.Globalization.CultureInfo.InvariantCulture)
         : "-";
@@ -714,6 +736,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
         {
             nameof(SampleWorkstationSnapshot), nameof(WorkstationStatus), nameof(WorkstationErrorResponse),
             nameof(HasWorkstationData), nameof(WorkstationConnectionStatus), nameof(WorkstationOnline),
+            nameof(WorkstationOperatorOnline), nameof(WorkstationOperatorNotice), nameof(HasWorkstationOperatorNotice),
             nameof(WorkstationState), nameof(WorkstationRawState), nameof(WorkstationError),
             nameof(WorkstationObservedAt), nameof(WorkstationAvailabilityMessage), nameof(WorkstationReadErrors),
             nameof(WorkstationTaskCount),
