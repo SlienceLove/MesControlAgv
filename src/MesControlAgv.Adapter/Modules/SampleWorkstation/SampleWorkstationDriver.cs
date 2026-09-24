@@ -131,7 +131,8 @@ public sealed partial class SampleWorkstationDriver(
             options.Enabled && options.ControlEnabled
                 ? Enum.GetValues<SampleWorkstationCommandOperation>() : [],
             options.Enabled
-                ? ProtocolOperations.Keys.Except(options.UnsupportedProtocolOperations).ToArray() : []));
+                ? ProtocolOperations.Keys.Except(options.UnsupportedProtocolOperations).ToArray() : [])
+        { TemplateVolumeUnit = options.TemplateVolumeUnit });
     }
 
     public async Task<SampleWorkstationStatusResponse> GetStatusAsync(

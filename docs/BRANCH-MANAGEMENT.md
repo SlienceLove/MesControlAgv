@@ -15,7 +15,9 @@
 | master | 已通过本轮离线回归的统一基线；现场部署仍需现场验收 | 接收 develop |
 | develop | 唯一集成入口 | 功能、UI 分支先汇入这里 |
 | feature/wpf-ui-layout-optimization | 后续界面优化 | develop |
-| feature/workstation-ml-template-validation | 从develop ad2d958建立，开盖分液Excel mL兼容与真机验收；复用本会话独立worktree | develop，完成验证后由集成会话合入 |
+| feature/workstation-ml-template-validation | 开盖分液 mL、条码 POST、手动结束后续跑；9b639cb 已于 2026-09-24 合入本地 develop | 后续任务以更新后的 develop 为起点 |
+| feature/workstation-template-batch | 单任务模板与批量导入；3d80c37 已于 2026-09-24 合入本地 develop | 本轮单位集成修复在 develop，原工作区未被修改 |
+| feature/shinelab-dcseq-protocol | 离子色谱通讯、样品关联、托盘与操作员页面；43fb941 已于 2026-09-24 合入本地 develop | 后续任务以更新后的 develop 为起点 |
 | feature/sample-workstation-http-readonly | 已暂停，最终归档源 4fbddc4 | 已集成，后续任务重新从统一基线开始 |
 | feature/material-management | 已集成的物料功能历史 | 保留追溯，不继续分叉 |
 | feature/physical-admission-v2 | 已集成的准入与物料历史 74cfb88 | 保留追溯，不继续分叉 |
@@ -41,6 +43,14 @@
 本轮离线回归：Adapter 451、MES 582、WPF 623、WorkflowContract 74，合计 1,730 项通过。包括新物料台账样品独立准入、历史样品绑定及独立物料导航检查。未运行现场设备动作。
 
 本轮没有合入三设备工作目录中未提交的执行草稿；之前的 archive/three-device-wip-20260920 快照保留其早期状态，原工作目录仍保留后续修改。原 UI 目录的旧数字孪生草稿在同步前保存在定名 stash 中，不覆盖已集成的数字孪生源。
+
+## 2026-09-24 本地集成检查点
+
+用户授权本会话接管 `.worktrees/branch-integration`，按 UI `c377c8a` → 模板/批量 `3d80c37` → 现场修复 `9b639cb` → 离子色谱 `43fb941` 串行合入 develop，合并点 `9e6c5d1`。恢复引用为 `archive/develop-before-ui-workstation-shinelab-20260924`（`ad2d958`）。设备页冲突保留两种工作站模板入口和离子色谱记录列表，不显示无法从 AQ 查询的勾选状态。
+
+集成补齐批量导入厂家文件单位的获取、换算、传递、回读核对及持久化；缺少单位的旧 Adapter 不执行批量导入。详见[本轮集成交接](INTEGRATION-UI-WORKSTATION-SHINELAB-2026-09-24.md)。
+
+本轮仅本地 develop 集成验证；master 仍为 `ad2d958`，未推送、未部署、未替换现场服务或操作设备，也未同步/修改其他会话的源分支工作目录。此前 1,730 项统计属于旧基线，不代表本轮验证。
 
 ## 后续工作规则
 

@@ -184,7 +184,7 @@ public sealed partial class ExperimentWorkstationPreparationViewModelTests
         await vm.BeginTemplateModeAsync();
         BindSingleSource(vm, samples[0]);
         var failedSave = client.HoldNextPrepare();
-        var saveMessage = MessageContaining(vm, "save failed");
+        var saveMessage = MessageWhenIdle(vm, "save failed");
 
         vm.SaveCommand.Execute(null);
         await failedSave.Requested.Task;
@@ -195,7 +195,7 @@ public sealed partial class ExperimentWorkstationPreparationViewModelTests
         client.CurrentByJob[job.JobId] = Prepared(ExperimentWorkstationPreparationStatus.Prepared, job, verification);
         await vm.LoadAsync(job, schedule, workflow, verification, samples, CancellationToken.None);
         var failedImport = client.HoldNextImport();
-        var importMessage = MessageContaining(vm, "import failed");
+        var importMessage = MessageWhenIdle(vm, "import failed");
         vm.ImportCommand.Execute(null);
         await failedImport.Requested.Task;
         failedImport.Gate.SetException(new InvalidOperationException("import failed"));
@@ -295,16 +295,19 @@ public sealed partial class ExperimentWorkstationPreparationViewModelTests
         vm.BottleBindings[0].SelectedSource = vm.SourceKeys[0];
     }
 
-    private static Task MessageContaining(ExperimentWorkstationPreparationViewModel vm, string expected)
+    private static async Task MessageWhenIdle(ExperimentWorkstationPreparationViewModel vm, string expected)
     {
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         vm.PropertyChanged += Handler;
-        return completion.Task;
+        try { await completion.Task.WaitAsync(TimeSpan.FromSeconds(5)); }
+        finally { vm.PropertyChanged -= Handler; }
         void Handler(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
         {
-            if (args.PropertyName == nameof(vm.Message) && vm.Message.Contains(expected, StringComparison.Ordinal))
+            // Message is raised inside catch; IsBusy is cleared later in finally.
+            // Await both events instead of racing the async command's cleanup.
+            if (args.PropertyName is nameof(vm.Message) or nameof(vm.IsBusy) &&
+                !vm.IsBusy && vm.Message.Contains(expected, StringComparison.Ordinal))
             {
-                vm.PropertyChanged -= Handler;
                 completion.TrySetResult();
             }
         }

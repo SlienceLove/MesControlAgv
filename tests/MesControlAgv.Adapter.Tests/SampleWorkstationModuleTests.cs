@@ -16,6 +16,19 @@ namespace MesControlAgv.Adapter.Tests;
 public sealed class SampleWorkstationModuleTests
 {
     [Theory]
+    [InlineData(SampleWorkstationTemplateVolumeUnit.Microliters)]
+    [InlineData(SampleWorkstationTemplateVolumeUnit.Milliliters)]
+    public async Task Capabilities_advertise_configured_template_unit_without_vendor_calls(SampleWorkstationTemplateVolumeUnit unit)
+    {
+        using var vendor = new VendorHandler("{}");
+        await using var app = await CreateHostAsync(vendor, control: true, unit: unit.ToString());
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        var result = await client.GetFromJsonAsync<SampleWorkstationCapabilitiesResponse>("/api/workstations/WS-01/capabilities");
+        Assert.Equal(unit, result!.TemplateVolumeUnit);
+        Assert.Equal(0, vendor.RequestCount);
+    }
+
+    [Theory]
     [InlineData("Milliliters", true)]
     [InlineData("Microliters", false)]
     [InlineData(null, false)]

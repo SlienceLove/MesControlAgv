@@ -321,8 +321,12 @@ public sealed class MainWindowNavigationTests
         {
             try
             {
+                var mes = new FakeMesClient([]);
+                using var statusModel = new ViewModels.ShineLabDeviceStatusViewModel(mes);
+                var controlModel = new ViewModels.ShineLabControlViewModel(mes);
                 var window = new MainWindow
                 {
+                    DataContext = new { ShineLabDeviceStatus = statusModel, ShineLabControl = controlModel },
                     WindowState = WindowState.Normal,
                     Width = width,
                     Height = 480
@@ -345,6 +349,24 @@ public sealed class MainWindowNavigationTests
                 Assert.Null(view.FindName("SelectedDeviceScrollViewer"));
                 Assert.Equal(new[] { "样品名称", "样品编号", "时间", "状态", "检测结果" },
                     records.Columns.Select(column => column.Header?.ToString()));
+
+                // Both sides of the integration must remain reachable after switching instruments.
+                var model = Assert.IsType<ViewModels.ShineLabDeviceStatusViewModel>(view.DataContext);
+                Assert.Same(controlModel, view.ControlModel);
+                var template = Assert.Single(FindVisualChildren<Button>(view).Where(b => Equals(b.Content, "单任务模板")));
+                var batch = Assert.Single(FindVisualChildren<Button>(view).Where(b => Equals(b.Content, "批量导入任务")));
+                Assert.False(template.IsVisible);
+                Assert.False(batch.IsVisible);
+                model.SelectedInstrument = ViewModels.ShineLabDeviceStatusViewModel.SampleWorkstationInstrument;
+                window.UpdateLayout();
+                Assert.True(template.IsVisible);
+                Assert.True(batch.IsVisible);
+                Assert.False(workspace.IsVisible);
+                model.SelectedInstrument = ViewModels.ShineLabDeviceStatusViewModel.IonChromatographyInstrument;
+                window.UpdateLayout();
+                Assert.True(workspace.IsVisible);
+                Assert.False(template.IsVisible);
+                Assert.False(batch.IsVisible);
 
                 window.Close();
             }

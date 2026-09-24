@@ -44,6 +44,8 @@ public sealed class WorkstationBatchImportService(
             var caps = await capabilities.GetCapabilitiesAsync(deviceId, cancellationToken);
             if (caps.DeviceId != deviceId || !caps.Enabled || !caps.ControlEnabled || !caps.TaskImportSupported)
                 throw new InvalidOperationException("设备未开放任务导入；可继续编辑或导出本地模板。");
+            if (caps.TemplateVolumeUnit is not { } fileVolumeUnit || !Enum.IsDefined(fileVolumeUnit))
+                throw new InvalidOperationException("设备网关未提供有效的厂家模板体积单位，请升级或核对 Adapter 配置；未执行导入。");
             await EnsureIdleAsync(deviceId, cancellationToken);
             var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var startNo = 1;
@@ -60,7 +62,8 @@ public sealed class WorkstationBatchImportService(
             var duplicate = request.Tasks.FirstOrDefault(t => existing.Contains(t.TaskNo));
             if (duplicate is not null) throw new InvalidOperationException($"任务 {duplicate.TaskNo} 已存在；不会覆盖，请使用新编号。");
             var items = request.Tasks.Select(t => new WorkstationBatchItem(t.TaskNo, t.TaskName, "Pending", null)).ToArray();
-            WorkstationBatchResult Snapshot() => new(request.RequestId, deviceId, hash, items.ToArray(), DateTimeOffset.UtcNow, request.Actor);
+            WorkstationBatchResult Snapshot() => new(request.RequestId, deviceId, hash, items.ToArray(), DateTimeOffset.UtcNow, request.Actor)
+            { FileVolumeUnit = fileVolumeUnit };
             Save(path, Snapshot());
             for (var i = 0; i < request.Tasks.Count; i++)
             {
@@ -70,7 +73,7 @@ public sealed class WorkstationBatchImportService(
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     await EnsureIdleAsync(deviceId, cancellationToken);
-                    bytes = SampleWorkstationTemplateFile.Write(request.Tasks[i]);
+                    bytes = SampleWorkstationTemplateFile.Write(request.Tasks[i], fileVolumeUnit);
                 }
                 catch (Exception ex)
                 {
@@ -82,8 +85,9 @@ public sealed class WorkstationBatchImportService(
                 try
                 {
                     using var stream = new MemoryStream(bytes, writable: false);
-                    var imported = await importer.ImportTasksAsync(deviceId, request.Tasks[i].TaskNo + ".xlsx", stream, cancellationToken);
+                    var imported = await importer.ImportTasksAsync(deviceId, request.Tasks[i].TaskNo + ".xlsx", stream, cancellationToken, fileVolumeUnit);
                     if (!imported.ReadbackVerified || imported.Template is null || imported.DeviceId != deviceId ||
+                        imported.FileVolumeUnit != fileVolumeUnit ||
                         !SampleWorkstationTemplateFile.SameContent(request.Tasks[i], imported.Template))
                         throw new InvalidOperationException("导入后回读内容不一致。");
                     items[i] = items[i] with { Status = "Imported", Message = "已导入并回读验证；未启动。" };

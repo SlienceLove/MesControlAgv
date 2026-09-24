@@ -14,6 +14,56 @@ namespace MesControlAgv.Mes.Tests;
 
 public sealed class WorkstationBatchImportTests : IDisposable
 {
+    [Fact]
+    public async Task Milliliter_batch_converts_vendor_cells_and_replays_the_original_unit_without_writes()
+    {
+        var gateway = new Gateway { Unit = SampleWorkstationTemplateVolumeUnit.Milliliters };
+        var request = Request();
+        var result = await Service(gateway).ImportAsync("WS-01", request, CancellationToken.None);
+        Assert.All(result.Items, i => Assert.Equal("Imported", i.Status));
+        Assert.Equal(SampleWorkstationTemplateVolumeUnit.Milliliters, result.FileVolumeUnit);
+        Assert.Equal(3, gateway.Uploads.Count);
+        foreach (var upload in gateway.Uploads)
+        {
+            Assert.Equal(SampleWorkstationTemplateVolumeUnit.Milliliters, upload.Unit);
+            using var stream = new MemoryStream(upload.Bytes);
+            using var zip = new System.IO.Compression.ZipArchive(stream);
+            using var sheet = zip.GetEntry("xl/worksheets/sheet2.xml")!.Open();
+            var xml = System.Xml.Linq.XDocument.Load(sheet);
+            System.Xml.Linq.XNamespace ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+            var cell = xml.Descendants(ns + "c").Single(c => (string?)c.Attribute("r") == "K2");
+            Assert.Equal("0.05", cell.Value);
+            Assert.Equal(50, SampleWorkstationTemplateFile.Read(upload.Bytes, upload.Unit).Transfers.Single().VolumeMicroliters);
+        }
+        gateway.Unit = SampleWorkstationTemplateVolumeUnit.Microliters;
+        var replay = await Service(gateway).ImportAsync("WS-01", request, CancellationToken.None);
+        Assert.Equal(result.FileVolumeUnit, replay.FileVolumeUnit);
+        Assert.Equal(3, gateway.Writes);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData((SampleWorkstationTemplateVolumeUnit)99)]
+    public async Task Unadvertised_or_invalid_unit_is_rejected_before_import(SampleWorkstationTemplateVolumeUnit? unit)
+    {
+        var gateway = new Gateway { Unit = unit };
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Service(gateway).ImportAsync("WS-01", Request(), CancellationToken.None));
+        Assert.Equal(0, gateway.Writes);
+        Assert.Empty(gateway.PageStarts);
+    }
+
+    [Fact]
+    public async Task Wrong_readback_unit_stops_following_rows_and_replay_does_not_resend()
+    {
+        var gateway = new Gateway { Unit = SampleWorkstationTemplateVolumeUnit.Milliliters, WrongReadbackUnit = true };
+        var request = Request();
+        var result = await Service(gateway).ImportAsync("WS-01", request, CancellationToken.None);
+        Assert.Equal(new[] { "Unknown", "Pending", "Pending" }, result.Items.Select(i => i.Status));
+        await Service(gateway).ImportAsync("WS-01", request, CancellationToken.None);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Service(gateway).ImportAsync("WS-01", Request(), CancellationToken.None));
+        Assert.Equal(1, gateway.Writes);
+    }
+
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "mes-batch-test-" + Guid.NewGuid().ToString("N"));
     private WorkstationBatchImportService Service(Gateway gateway) => new(gateway, gateway, gateway,
         new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["WorkstationBatch:JournalDirectory"] = _directory }).Build());
@@ -104,8 +154,11 @@ public sealed class WorkstationBatchImportTests : IDisposable
     {
         public int Writes; public int FailOn; public bool Mismatch; public bool Duplicate; public bool Busy; public bool Enabled = true;
         public bool DuplicateOnSecondPage; public List<int> PageStarts = [];
+        public SampleWorkstationTemplateVolumeUnit? Unit = SampleWorkstationTemplateVolumeUnit.Microliters;
+        public bool WrongReadbackUnit;
+        public List<(byte[] Bytes, SampleWorkstationTemplateVolumeUnit Unit)> Uploads = [];
         public Task<SampleWorkstationCapabilitiesResponse> GetCapabilitiesAsync(string id, CancellationToken token) =>
-            System.Threading.Tasks.Task.FromResult(new SampleWorkstationCapabilitiesResponse(id, true, Enabled, true, [SampleWorkstationCommandOperation.ImportTasks], []));
+            System.Threading.Tasks.Task.FromResult(new SampleWorkstationCapabilitiesResponse(id, true, Enabled, true, [SampleWorkstationCommandOperation.ImportTasks], []) { TemplateVolumeUnit = Unit });
         public Task<SampleWorkstationStatusResponse> GetStatusAsync(string id, CancellationToken token) =>
             System.Threading.Tasks.Task.FromResult(new SampleWorkstationStatusResponse(id, "EQ", true, Busy ? SampleWorkstationDeviceState.Running : SampleWorkstationDeviceState.Idle, 0, DateTimeOffset.UtcNow));
         public Task<IReadOnlyList<SampleWorkstationTaskSummaryResponse>> GetTasksAsync(string id, SampleWorkstationTaskQuery query, CancellationToken token)
@@ -116,12 +169,15 @@ public sealed class WorkstationBatchImportTests : IDisposable
             return System.Threading.Tasks.Task.FromResult<IReadOnlyList<SampleWorkstationTaskSummaryResponse>>(
                 taskNo is null ? [] : [new(1, taskNo, taskNo, SampleWorkstationTaskState.Waiting, "0", "", null)]);
         }
-        public async Task<SampleWorkstationTaskImportResponse> ImportTasksAsync(string id, string name, Stream content, CancellationToken token)
+        public async Task<SampleWorkstationTaskImportResponse> ImportTasksAsync(string id, string name, Stream content, CancellationToken token,
+            SampleWorkstationTemplateVolumeUnit fileVolumeUnit = SampleWorkstationTemplateVolumeUnit.Microliters)
         {
             var bytes = await SampleWorkstationTemplateFile.ReadBytesAsync(content, token);
-            var template = SampleWorkstationTemplateFile.Read(bytes); Writes++;
+            Uploads.Add((bytes, fileVolumeUnit));
+            var template = SampleWorkstationTemplateFile.Read(bytes, fileVolumeUnit); Writes++;
             if (Writes == FailOn && !Mismatch) throw new HttpRequestException("Upload response lost");
-            return new(id, [template.TaskNo], DateTimeOffset.UtcNow) { Template = template, ReadbackVerified = !(Writes == FailOn && Mismatch) };
+            return new(id, [template.TaskNo], DateTimeOffset.UtcNow) { Template = template, ReadbackVerified = !(Writes == FailOn && Mismatch),
+                FileVolumeUnit = WrongReadbackUnit ? SampleWorkstationTemplateVolumeUnit.Microliters : fileVolumeUnit };
         }
         public Task<SampleWorkstationErrorResponse> GetErrorsAsync(string id, CancellationToken token) => throw new NotSupportedException();
         public Task<SampleWorkstationTaskDetailsResponse> GetTaskDetailsAsync(string id, string task, CancellationToken token) => throw new NotSupportedException();
