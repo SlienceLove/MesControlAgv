@@ -15,6 +15,7 @@
 | master | 已通过本轮离线回归的统一基线；现场部署仍需现场验收 | 接收 develop |
 | develop | 唯一集成入口 | 功能、UI 分支先汇入这里 |
 | feature/wpf-ui-layout-optimization | 后续界面优化 | develop |
+| feature/device-current-task-display | 从 develop 4855e14 建立；两设备当前任务显示与 MES 只读设备状态时间字段 | 同一任务前后端联动，验证后合入 develop |
 | feature/workstation-ml-template-validation | 开盖分液 mL、条码 POST、手动结束后续跑；9b639cb 已于 2026-09-24 合入本地 develop | 后续任务以更新后的 develop 为起点 |
 | feature/workstation-template-batch | 单任务模板与批量导入；3d80c37 已于 2026-09-24 合入本地 develop | 本轮单位集成修复在 develop，原工作区未被修改 |
 | feature/shinelab-dcseq-protocol | 离子色谱通讯、样品关联、托盘与操作员页面；43fb941 已于 2026-09-24 合入本地 develop | 后续任务以更新后的 develop 为起点 |
@@ -57,6 +58,8 @@
 上述集成完成后，用户另行明确授权本会话接管主目录 `D:/Project/Github/Mes` 的 UI 分支。已从 `c377c8a` 快进同步已验证 develop `6aac6d4`，原未跟踪现场资料保留。本轮仅在 UI 分支修改开盖分液设备页布局与展示属性，验证后串行合入 develop；其他功能工作区仍不修改。实现范围及 701 项 WPF 回归记录见[紧凑设备页交接](WORKSTATION-COMPACT-UI-2026-09-24.md)。未自动部署、推送或推进 master。
 
 ## 后续工作规则
+
+2026-09-24 用户确认两个设备页增加紧凑当前任务栏。因发现心跳时间与设备状态更新时间不同，本会话在已授权主目录从相同基线建立 `feature/device-current-task-display`，保留本轮未提交改动；UI 分支仍保留原基线。仅扩展只读响应时间字段，不修改设备协议/控制。详见[当前任务展示说明](DEVICE-CURRENT-TASK-UI-2026-09-24.md)。
 
 1. 先确认 develop 与工作分支起点，并检查工作目录是否有未提交文件。
 2. UI 优化在 feature/wpf-ui-layout-optimization；功能变更使用从 develop 新建的明确任务分支。

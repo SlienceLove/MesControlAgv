@@ -21,7 +21,12 @@ public sealed class WorkstationCompactLayoutTests
     [InlineData(820, 480, true, true)]
     public async Task Tasks_fill_available_space_and_scroll_without_moving_controls(int width, int height, bool testControls, bool stale)
     {
-        var mes = new FakeMesClient([]) { SampleWorkstationSnapshot = Snapshot() };
+        var runningSnapshot = Snapshot();
+        var mes = new FakeMesClient([]) { SampleWorkstationSnapshot = runningSnapshot with
+        {
+            Status = runningSnapshot.Status! with { State = SampleWorkstationDeviceState.Running, RawState = 1 },
+            Tasks = runningSnapshot.Tasks.Select(t => t.RecordNumber == 5 ? t with { State = SampleWorkstationTaskState.Running } : t).ToArray()
+        } };
         using var model = new ShineLabDeviceStatusViewModel(mes, sampleWorkstationTestControlEnabled: testControls)
         { SelectedInstrument = ShineLabDeviceStatusViewModel.SampleWorkstationInstrument };
         await model.RefreshAsync();
@@ -58,6 +63,10 @@ public sealed class WorkstationCompactLayoutTests
                 Assert.True(table.ActualHeight > toolbar.ActualHeight);
                 Assert.True(table.ActualWidth >= workspace.ActualWidth - 2);
                 Assert.Equal(60, table.Items.Count);
+                var currentTask = Assert.IsType<TextBlock>(view.FindName("WorkstationCurrentTaskText"));
+                Assert.True(currentTask.IsVisible);
+                AssertInBounds(currentTask, window);
+                Assert.Contains(stale ? "无法确认" : "TASK-005", currentTask.Text);
                 Assert.True(table.IsReadOnly);
                 Assert.Empty(table.Columns.OfType<DataGridCheckBoxColumn>());
                 var notice = Assert.IsType<TextBlock>(view.FindName("WorkstationNotice"));
@@ -156,6 +165,64 @@ public sealed class WorkstationCompactLayoutTests
             Assert.NotEqual("在线", model.WorkstationOperatorOnline);
             Assert.Empty(model.WorkstationTasks);
         }
+    }
+
+    [Theory]
+    [InlineData(820)]
+    [InlineData(1440)]
+    public async Task Ion_current_task_binding_is_independent_of_selected_history_and_timer_stops_on_close(int width)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var task = new ShineLabTaskResponse(Guid.NewGuid(), "TASK-CURRENT", "STN61_01", "Running", "Running", now, now, now, null, null);
+        var records = new System.Collections.ObjectModel.ObservableCollection<ShineLabOperatorTaskRow>
+        {
+            new(task, new(task, [], [new(1, "STD-25", "123456789", "正在检测的样品", true, false, false, false, null, false, null)]))
+        };
+        var mes = new FakeMesClient([]) { ShineLabDeviceStatuses =
+            [new("STN61_01", "离子色谱", true, 1, "Running", true, null, "123456789", null, null, null, null, null, null, null, now)
+                { LastDeviceStatusAtUtc = now }] };
+        using var model = new ShineLabDeviceStatusViewModel(mes, ionTaskRecords: records);
+        await model.RefreshAsync();
+        RunSta(() =>
+        {
+            var window = new MainWindow { Width = width, Height = 480, WindowState = WindowState.Normal,
+                DataContext = new { ShineLabDeviceStatus = model, ShineLabControl = new ShineLabControlViewModel(mes) } };
+            try
+            {
+                window.Show();
+                Assert.IsType<TabControl>(window.FindName("MainTabs")).SelectedItem = window.FindName("ShineLabDeviceStatusTab");
+                window.UpdateLayout();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle); // Deliver the queued Loaded event.
+                var view = Assert.Single(Children<ShineLabDeviceStatusView>(window));
+                var current = Assert.IsType<TextBlock>(view.FindName("IonCurrentTaskText"));
+                Assert.Contains("正在检测的样品", current.Text);
+                Assert.Contains("STD-25", current.Text);
+                Assert.DoesNotContain("123456789", current.Text);
+                AssertInBounds(current, window);
+                var table = Assert.IsType<DataGrid>(view.FindName("IonTasksGrid"));
+                Assert.True(table.ActualHeight > 60);
+                AssertInBounds(table, window);
+                SaveEvidence(window, $"ion-current-{width}.png");
+                var timer = Assert.IsType<DispatcherTimer>(typeof(ShineLabDeviceStatusView)
+                    .GetField("_currentTaskTimer", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(view));
+                Assert.True(timer.IsEnabled);
+                window.Hide();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                Assert.False(timer.IsEnabled);
+                var invalidatedOnResume = false;
+                model.PropertyChanged += (_, e) => invalidatedOnResume |= e.PropertyName == nameof(model.IonCurrentTaskSummary);
+                window.Show();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                Assert.True(timer.IsEnabled);
+                Assert.True(invalidatedOnResume);
+                window.Close();
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                Assert.False(timer.IsEnabled);
+                Assert.Null(mes.LastShineLabCommand);
+                Assert.Equal(0, mes.SampleWorkstationStartCallCount);
+            }
+            finally { window.Close(); }
+        });
     }
 
     private static ShineLabDeviceStatusViewModel Model(FakeMesClient mes) => new(mes)

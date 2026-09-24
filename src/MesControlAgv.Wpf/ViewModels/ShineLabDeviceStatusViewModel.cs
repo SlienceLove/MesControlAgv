@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
@@ -37,6 +38,11 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
     internal string TaskTemplateDeviceId => _sampleWorkstationDeviceId;
 
     private readonly IMesClient _mes;
+    private readonly IReadOnlyCollection<ShineLabOperatorTaskRow> _ionTaskRecords;
+    private readonly string _ionEquipmentCode;
+    private bool _ionRunReadSucceeded;
+    private DateTimeOffset? _ionRunReadAt;
+    private DateTimeOffset? _workstationRunReadAt;
     private readonly string _sampleWorkstationDeviceId;
     private readonly bool _sampleWorkstationTestControlEnabled;
     private readonly ISampleWorkstationTestConfirmation _sampleWorkstationTestConfirmation;
@@ -64,11 +70,16 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
         ISampleWorkstationTestConfirmation? sampleWorkstationTestConfirmation = null,
         TimeSpan? workstationObservationInterval = null,
         TimeSpan? workstationObservationTimeout = null,
-        int maximumObservationPolls = 300)
+        int maximumObservationPolls = 300,
+        IReadOnlyCollection<ShineLabOperatorTaskRow>? ionTaskRecords = null,
+        string ionEquipmentCode = "STN61_01")
     {
         if (maximumObservationPolls <= 0)
             throw new ArgumentOutOfRangeException(nameof(maximumObservationPolls));
         _mes = mes;
+        _ionEquipmentCode = ionEquipmentCode;
+        _ionTaskRecords = ionTaskRecords ?? Array.Empty<ShineLabOperatorTaskRow>();
+        if (_ionTaskRecords is INotifyCollectionChanged observable) observable.CollectionChanged += IonTaskRecordsChanged;
         _sampleWorkstationDeviceId = string.IsNullOrWhiteSpace(sampleWorkstationDeviceId)
             ? DefaultSampleWorkstationDeviceId
             : sampleWorkstationDeviceId.Trim();
@@ -314,6 +325,38 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
             ? "未知"
             : status.Online && status.State != SampleWorkstationDeviceState.Offline ? "在线" : "离线";
     public string WorkstationState => FormatWorkstationState(_sampleWorkstationSnapshot?.Status);
+    public string WorkstationCurrentTaskSummary => InstrumentCurrentTaskPresenter.Workstation(
+        _sampleWorkstationSnapshot, _workstationRunReadAt, DateTimeOffset.UtcNow);
+    public string IonCurrentTaskSummary
+    {
+        get
+        {
+            var matches = Devices.Where(d => d.EquipmentCode.Equals(_ionEquipmentCode, StringComparison.OrdinalIgnoreCase)).ToArray();
+            return InstrumentCurrentTaskPresenter.Ion(matches.Length == 1 ? matches[0] : null,
+                _ionRunReadSucceeded, _ionRunReadAt, _ionTaskRecords, DateTimeOffset.UtcNow);
+        }
+    }
+    public string IonOperatorOnline
+    {
+        get
+        {
+            if (!_ionRunReadSucceeded || _ionRunReadAt is not { } readAt || DateTimeOffset.UtcNow - readAt > TimeSpan.FromSeconds(60))
+                return "在线状态未确认";
+            var devices = Devices.Where(d => d.EquipmentCode.Equals(_ionEquipmentCode, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (devices.Length != 1) return "在线状态未确认";
+            var device = devices[0];
+            return device.Online && device.Status != 99 && DateTimeOffset.UtcNow - device.LastSeenAtUtc <= TimeSpan.FromSeconds(60)
+                ? "在线" : "离线";
+        }
+    }
+    public void InvalidateCurrentTaskDisplay()
+    {
+        OnPropertyChanged(nameof(IonCurrentTaskSummary));
+        OnPropertyChanged(nameof(IonOperatorOnline));
+        OnPropertyChanged(nameof(WorkstationCurrentTaskSummary));
+    }
+    private void IonTaskRecordsChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
+        OnPropertyChanged(nameof(IonCurrentTaskSummary));
     public string WorkstationOperatorOnline => !string.IsNullOrWhiteSpace(_sampleWorkstationSnapshot?.StatusReadError)
         ? "状态未更新" : WorkstationOnline;
     public string WorkstationOperatorNotice
@@ -512,6 +555,8 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
         {
             if (!IsRefreshCurrent(instrument, refreshVersion)) return;
             ConnectionStatus = "已取消";
+            if (instrument == IonChromatographyInstrument) _ionRunReadSucceeded = false;
+            else _workstationRunReadAt = null;
             Message = "状态查询已取消。";
         }
         catch (Exception exception)
@@ -525,6 +570,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
             }
             else
             {
+                _ionRunReadSucceeded = false;
                 ConnectionStatus = "MES 不可用";
                 Message = exception.Message;
             }
@@ -532,6 +578,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
         finally
         {
             IsRefreshing = false;
+            InvalidateCurrentTaskDisplay();
         }
     }
 
@@ -542,6 +589,8 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
     {
         var statuses = await _mes.GetShineLabDeviceStatusesAsync(cancellationToken);
         if (!IsRefreshCurrent(IonChromatographyInstrument, refreshVersion)) return;
+        _ionRunReadSucceeded = true;
+        _ionRunReadAt = DateTimeOffset.UtcNow;
         Devices.Clear();
         IonSubdevices.Clear();
         foreach (var status in statuses)
@@ -622,6 +671,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
         }
 
         _sampleWorkstationSnapshot = effective;
+        _workstationRunReadAt = DateTimeOffset.UtcNow;
         WorkstationTasks.Clear();
         if (effective?.Tasks is { } tasks)
         {
@@ -736,6 +786,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
         {
             nameof(SampleWorkstationSnapshot), nameof(WorkstationStatus), nameof(WorkstationErrorResponse),
             nameof(HasWorkstationData), nameof(WorkstationConnectionStatus), nameof(WorkstationOnline),
+            nameof(WorkstationCurrentTaskSummary),
             nameof(WorkstationOperatorOnline), nameof(WorkstationOperatorNotice), nameof(HasWorkstationOperatorNotice),
             nameof(WorkstationState), nameof(WorkstationRawState), nameof(WorkstationError),
             nameof(WorkstationObservedAt), nameof(WorkstationAvailabilityMessage), nameof(WorkstationReadErrors),
@@ -824,6 +875,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
 
     public void Dispose()
     {
+        if (_ionTaskRecords is INotifyCollectionChanged observable) observable.CollectionChanged -= IonTaskRecordsChanged;
         _disposed = true;
         _workstationObservationCancellation?.Cancel();
         _isWorkstationTestBusy = false;
