@@ -128,9 +128,8 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
             {
                 EnsureWorkstation(policy.EnsureControlEnabled(deviceId));
                 taskNo = SampleWorkstationTaskRoute.ReadCommandTaskNo(request.HttpContext.Features.Get<IHttpRequestFeature>()?.RawTarget, taskNo);
-                return barcodes is null
-                    ? await driver.StartTaskAsync(deviceId, taskNo, cancellationToken)
-                    : await driver.StartTaskAsync(deviceId, taskNo, barcodes, cancellationToken);
+                return await driver.StartTaskAsync(deviceId, taskNo,
+                    SampleWorkstationBarcodeValidation.Normalize(barcodes), cancellationToken);
             }, isCommand: true));
 
         endpoints.MapPost("/api/workstations/{deviceId}/tasks/{taskNo}/barcodes", async (

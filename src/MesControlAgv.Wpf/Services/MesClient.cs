@@ -389,17 +389,26 @@ public sealed class MesClient(HttpClient client) : IMesClient
                 : detail);
     }
 
-    public async Task<SampleWorkstationCommandResponse> StartSampleWorkstationTestTaskAsync(
+    public Task<SampleWorkstationCommandResponse> StartSampleWorkstationTestTaskAsync(
         string deviceId,
         string taskNo,
+        CancellationToken cancellationToken) =>
+        Task.FromException<SampleWorkstationCommandResponse>(new SampleWorkstationTestStartException(
+            SampleWorkstationBarcodeValidation.MissingMessage(null)!, outcomeUnknown: false));
+
+    public async Task<SampleWorkstationCommandResponse> StartSampleWorkstationTestTaskAsync(
+        string deviceId, string taskNo, SampleWorkstationTaskBarcodes barcodes,
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
         ArgumentException.ThrowIfNullOrWhiteSpace(taskNo);
+        if (SampleWorkstationBarcodeValidation.MissingMessage(barcodes) is { } message)
+            throw new SampleWorkstationTestStartException(message, outcomeUnknown: false);
+        barcodes = SampleWorkstationBarcodeValidation.Normalize(barcodes);
         var path =
             $"api/workstations/{Uri.EscapeDataString(deviceId)}/tasks/{Uri.EscapeDataString(taskNo)}/start";
 
-        using var response = await client.PostAsync(path, content: null, cancellationToken);
+        using var response = await client.PostAsJsonAsync(path, barcodes, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             var problem = await TryReadProblemDetailAsync(response.Content, cancellationToken);

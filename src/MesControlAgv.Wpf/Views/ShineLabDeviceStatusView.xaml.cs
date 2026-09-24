@@ -20,6 +20,7 @@ public partial class ShineLabDeviceStatusView : UserControl
     public ShineLabDeviceStatusView()
     {
         InitializeComponent();
+        SizeChanged += (_, _) => WorkstationTestScroll.MaxHeight = ActualHeight >= 500 ? 150 : 54;
         Loaded += RefreshIonRecordsOnLoad;
         Loaded += (_, _) => UpdateCurrentTaskTimer();
         IsVisibleChanged += (_, _) => UpdateCurrentTaskTimer();

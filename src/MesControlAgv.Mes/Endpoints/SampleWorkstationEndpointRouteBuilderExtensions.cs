@@ -83,9 +83,8 @@ public static class SampleWorkstationEndpointRouteBuilderExtensions
                 () =>
                 {
                     taskNo = SampleWorkstationTaskRoute.ReadCommandTaskNo(request.HttpContext.Features.Get<IHttpRequestFeature>()?.RawTarget, taskNo);
-                    return barcodes is null
-                        ? controller.StartTaskAsync(deviceId, taskNo, cancellationToken)
-                        : barcodeController.StartTaskAsync(deviceId, taskNo, barcodes, cancellationToken);
+                    return barcodeController.StartTaskAsync(deviceId, taskNo,
+                        SampleWorkstationBarcodeValidation.Normalize(barcodes), cancellationToken);
                 },
                 cancellationToken, isCommand: true));
 

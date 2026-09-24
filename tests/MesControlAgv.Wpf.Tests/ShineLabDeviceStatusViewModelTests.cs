@@ -6,6 +6,62 @@ namespace MesControlAgv.Wpf.Tests;
 
 public sealed class ShineLabDeviceStatusViewModelTests
 {
+    [Theory]
+    [InlineData("", "", "1号、2号")]
+    [InlineData(" ", "B", "1号")]
+    [InlineData("A", "\t", "2号")]
+    [InlineData(null, "B", "1号")]
+    public async Task Missing_barcodes_do_not_open_confirmation_or_send_start(string? first, string second, string bottle)
+    {
+        var mes = new FakeMesClient([]) { SampleWorkstationSnapshot = IdleSnapshot(SampleWorkstationTaskState.Waiting) };
+        var confirmation = new WorkstationConfirmationStub(true);
+        using var model = CreateTestControlViewModel(mes, confirmation);
+        await model.RefreshAsync();
+        model.SelectedWorkstationTask = Assert.Single(model.WorkstationTasks);
+        model.WorkstationSampleBarcode1 = first!;
+        model.WorkstationSampleBarcode2 = second;
+        await model.StartSelectedWorkstationTestTaskAsync();
+        Assert.Contains($"缺少{bottle}样品瓶条码", model.WorkstationTestControlMessage);
+        Assert.Equal(0, confirmation.CallCount);
+        Assert.Equal(0, mes.SampleWorkstationStartCallCount);
+        Assert.False(model.IsWorkstationTestBusy);
+    }
+
+    [Fact]
+    public async Task Refresh_preserves_same_task_barcodes_but_switching_task_clears_them()
+    {
+        var mes = new FakeMesClient([]) { SampleWorkstationSnapshot = IdleSnapshot(SampleWorkstationTaskState.Waiting) };
+        using var model = CreateTestControlViewModel(mes, new WorkstationConfirmationStub(true));
+        await model.RefreshAsync();
+        model.SelectedWorkstationTask = Assert.Single(model.WorkstationTasks);
+        model.WorkstationSampleBarcode1 = "TEST-1";
+        model.WorkstationSampleBarcode2 = "TEST-2";
+        await model.RefreshAsync();
+        Assert.Equal("TEST-1", model.WorkstationSampleBarcode1);
+        Assert.Equal("TEST-2", model.WorkstationSampleBarcode2);
+        model.SelectedWorkstationTask = model.SelectedWorkstationTask! with { TaskNo = "OTHER" };
+        Assert.Empty(model.WorkstationSampleBarcode1);
+        Assert.Empty(model.WorkstationSampleBarcode2);
+        Assert.Equal(0, mes.SampleWorkstationStartCallCount);
+    }
+
+    [Fact]
+    public async Task Start_captures_and_trims_explicit_test_barcodes()
+    {
+        var mes = new FakeMesClient([]) { SampleWorkstationSnapshot = IdleSnapshot(SampleWorkstationTaskState.Waiting) };
+        var confirmation = new WorkstationConfirmationStub(true);
+        using var model = CreateTestControlViewModel(mes, confirmation);
+        await model.RefreshAsync();
+        model.SelectedWorkstationTask = Assert.Single(model.WorkstationTasks);
+        model.WorkstationSampleBarcode1 = " TEST-1 ";
+        model.WorkstationSampleBarcode2 = " TEST-2 ";
+        await model.StartSelectedWorkstationTestTaskAsync();
+        Assert.Equal(new() { SampleBarcode1 = "TEST-1", SampleBarcode2 = "TEST-2" }, mes.LastWorkstationStartBarcodes);
+        Assert.Contains("1号样品瓶条码：TEST-1", confirmation.Message);
+        Assert.Contains("2号样品瓶条码：TEST-2", confirmation.Message);
+        Assert.Equal(1, mes.SampleWorkstationStartCallCount);
+    }
+
     [Fact]
     public async Task Dcseq_instrument_offline_does_not_display_as_tcp_disconnected()
     {
@@ -164,6 +220,8 @@ public sealed class ShineLabDeviceStatusViewModelTests
         var viewModel = CreateTestControlViewModel(mes, new WorkstationConfirmationStub(result: true));
         await viewModel.RefreshAsync();
         viewModel.SelectedWorkstationTask = Assert.Single(viewModel.WorkstationTasks);
+        viewModel.WorkstationSampleBarcode1 = "TEST-BOTTLE-1";
+        viewModel.WorkstationSampleBarcode2 = "TEST-BOTTLE-2";
         mes.SampleWorkstationSnapshot = new SampleWorkstationDashboardSnapshot(
             null,
             null,
@@ -233,6 +291,8 @@ public sealed class ShineLabDeviceStatusViewModelTests
         var viewModel = CreateTestControlViewModel(mes, confirmation);
         await viewModel.RefreshAsync();
         viewModel.SelectedWorkstationTask = Assert.Single(viewModel.WorkstationTasks);
+        viewModel.WorkstationSampleBarcode1 = "TEST-BOTTLE-1";
+        viewModel.WorkstationSampleBarcode2 = "TEST-BOTTLE-2";
         Assert.True(viewModel.StartWorkstationTestTaskCommand.CanExecute(null));
 
         await viewModel.StartSelectedWorkstationTestTaskAsync();
@@ -256,6 +316,8 @@ public sealed class ShineLabDeviceStatusViewModelTests
         var viewModel = CreateTestControlViewModel(mes, confirmation, maximumObservationPolls: 3);
         await viewModel.RefreshAsync();
         viewModel.SelectedWorkstationTask = Assert.Single(viewModel.WorkstationTasks);
+        viewModel.WorkstationSampleBarcode1 = "TEST-BOTTLE-1";
+        viewModel.WorkstationSampleBarcode2 = "TEST-BOTTLE-2";
 
         await viewModel.StartSelectedWorkstationTestTaskAsync();
 
@@ -280,6 +342,8 @@ public sealed class ShineLabDeviceStatusViewModelTests
             maximumObservationPolls: 2);
         await viewModel.RefreshAsync();
         viewModel.SelectedWorkstationTask = Assert.Single(viewModel.WorkstationTasks);
+        viewModel.WorkstationSampleBarcode1 = "TEST-BOTTLE-1";
+        viewModel.WorkstationSampleBarcode2 = "TEST-BOTTLE-2";
 
         await viewModel.StartSelectedWorkstationTestTaskAsync();
 
@@ -299,6 +363,8 @@ public sealed class ShineLabDeviceStatusViewModelTests
         var viewModel = CreateTestControlViewModel(mes, new WorkstationConfirmationStub(result: true));
         await viewModel.RefreshAsync();
         viewModel.SelectedWorkstationTask = Assert.Single(viewModel.WorkstationTasks);
+        viewModel.WorkstationSampleBarcode1 = "TEST-BOTTLE-1";
+        viewModel.WorkstationSampleBarcode2 = "TEST-BOTTLE-2";
 
         await viewModel.StartSelectedWorkstationTestTaskAsync();
 
@@ -327,6 +393,8 @@ public sealed class ShineLabDeviceStatusViewModelTests
         var viewModel = CreateTestControlViewModel(mes, new WorkstationConfirmationStub(result: true));
         await viewModel.RefreshAsync();
         viewModel.SelectedWorkstationTask = Assert.Single(viewModel.WorkstationTasks);
+        viewModel.WorkstationSampleBarcode1 = "TEST-BOTTLE-1";
+        viewModel.WorkstationSampleBarcode2 = "TEST-BOTTLE-2";
 
         await viewModel.StartSelectedWorkstationTestTaskAsync();
 
@@ -348,6 +416,8 @@ public sealed class ShineLabDeviceStatusViewModelTests
         var viewModel = CreateTestControlViewModel(mes, new WorkstationConfirmationStub(result: true));
         await viewModel.RefreshAsync();
         viewModel.SelectedWorkstationTask = Assert.Single(viewModel.WorkstationTasks);
+        viewModel.WorkstationSampleBarcode1 = "TEST-BOTTLE-1";
+        viewModel.WorkstationSampleBarcode2 = "TEST-BOTTLE-2";
 
         await viewModel.StartSelectedWorkstationTestTaskAsync();
 
@@ -377,6 +447,8 @@ public sealed class ShineLabDeviceStatusViewModelTests
             observationInterval: TimeSpan.FromSeconds(1));
         await viewModel.RefreshAsync();
         viewModel.SelectedWorkstationTask = Assert.Single(viewModel.WorkstationTasks);
+        viewModel.WorkstationSampleBarcode1 = "TEST-BOTTLE-1";
+        viewModel.WorkstationSampleBarcode2 = "TEST-BOTTLE-2";
 
         await viewModel.StartSelectedWorkstationTestTaskAsync(cancellation.Token);
 
@@ -400,6 +472,8 @@ public sealed class ShineLabDeviceStatusViewModelTests
             observationTimeout: TimeSpan.FromMilliseconds(20));
         await viewModel.RefreshAsync();
         viewModel.SelectedWorkstationTask = Assert.Single(viewModel.WorkstationTasks);
+        viewModel.WorkstationSampleBarcode1 = "TEST-BOTTLE-1";
+        viewModel.WorkstationSampleBarcode2 = "TEST-BOTTLE-2";
 
         await viewModel.StartSelectedWorkstationTestTaskAsync();
 
@@ -431,6 +505,8 @@ public sealed class ShineLabDeviceStatusViewModelTests
             maximumObservationPolls: 3);
         await viewModel.RefreshAsync();
         viewModel.SelectedWorkstationTask = Assert.Single(viewModel.WorkstationTasks);
+        viewModel.WorkstationSampleBarcode1 = "TEST-BOTTLE-1";
+        viewModel.WorkstationSampleBarcode2 = "TEST-BOTTLE-2";
 
         await viewModel.StartSelectedWorkstationTestTaskAsync();
 
@@ -460,6 +536,8 @@ public sealed class ShineLabDeviceStatusViewModelTests
             observationInterval: TimeSpan.FromSeconds(1));
         await viewModel.RefreshAsync();
         viewModel.SelectedWorkstationTask = Assert.Single(viewModel.WorkstationTasks);
+        viewModel.WorkstationSampleBarcode1 = "TEST-BOTTLE-1";
+        viewModel.WorkstationSampleBarcode2 = "TEST-BOTTLE-2";
 
         await viewModel.StartSelectedWorkstationTestTaskAsync();
 
@@ -537,10 +615,12 @@ public sealed class ShineLabDeviceStatusViewModelTests
     private sealed class WorkstationConfirmationStub(bool result) : ISampleWorkstationTestConfirmation
     {
         public int CallCount { get; private set; }
+        public string? Message { get; private set; }
 
         public bool Confirm(string title, string message)
         {
             CallCount++;
+            Message = message;
             Assert.Contains("TEST-001", message, StringComparison.Ordinal);
             return result;
         }

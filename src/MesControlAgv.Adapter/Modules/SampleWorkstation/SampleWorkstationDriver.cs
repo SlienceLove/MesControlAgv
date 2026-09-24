@@ -57,7 +57,6 @@ public sealed partial class SampleWorkstationDriver(
         string deviceId, string taskNo, SampleWorkstationTaskBarcodes barcodes,
         CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(barcodes);
         return StartTaskCoreAsync(deviceId, taskNo, barcodes, cancellationToken);
     }
 
@@ -67,6 +66,7 @@ public sealed partial class SampleWorkstationDriver(
     {
         EnsureControlEnabled(deviceId);
         taskNo = RequireTaskNo(taskNo);
+        barcodes = SampleWorkstationBarcodeValidation.Normalize(barcodes);
         var response = await vendor.ExecuteCommandAsync(
             "StartExperiment",
             CreateTaskQuery(taskNo, barcodes),

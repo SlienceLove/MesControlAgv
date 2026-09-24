@@ -528,11 +528,14 @@ internal sealed class FakeMesClient(IReadOnlyList<DashboardTask> tasks) : IMesCl
             ? gate.Task
             : Task.FromResult(SampleWorkstationSnapshot);
     }
+    public SampleWorkstationTaskBarcodes? LastWorkstationStartBarcodes { get; private set; }
     public Task<SampleWorkstationCommandResponse> StartSampleWorkstationTestTaskAsync(
         string deviceId,
         string taskNo,
+        SampleWorkstationTaskBarcodes barcodes,
         CancellationToken cancellationToken)
     {
+        LastWorkstationStartBarcodes = barcodes;
         SampleWorkstationStartCallCount++;
         LastSampleWorkstationStart = (deviceId, taskNo);
         return SampleWorkstationStartException is { } exception

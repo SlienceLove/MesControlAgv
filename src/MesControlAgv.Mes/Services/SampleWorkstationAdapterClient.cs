@@ -27,9 +27,9 @@ public sealed class SampleWorkstationAdapterClient(HttpClient client)
         string deviceId,
         string taskNo,
         CancellationToken cancellationToken) =>
-        PostAsync<SampleWorkstationCommandResponse>(
-            $"api/workstations/{EscapeRequired(deviceId, nameof(deviceId))}/tasks/{EscapeRequired(taskNo, nameof(taskNo))}/start",
-            cancellationToken);
+        Task.FromException<SampleWorkstationCommandResponse>(new SampleWorkstationGatewayException(
+            400, SampleWorkstationErrorCodes.InvalidRequest,
+            SampleWorkstationBarcodeValidation.MissingMessage(null)!, false));
 
     public Task<SampleWorkstationCommandResponse> StartTaskAsync(
         string deviceId, string taskNo, SampleWorkstationTaskBarcodes barcodes,
@@ -45,9 +45,10 @@ public sealed class SampleWorkstationAdapterClient(HttpClient client)
         string deviceId, string taskNo, string action, SampleWorkstationTaskBarcodes barcodes,
         CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(barcodes);
-        ArgumentException.ThrowIfNullOrWhiteSpace(barcodes.SampleBarcode1);
-        ArgumentException.ThrowIfNullOrWhiteSpace(barcodes.SampleBarcode2);
+        // Known pre-send rejection must not be reported by workflow callers as an unknown device outcome.
+        if (SampleWorkstationBarcodeValidation.MissingMessage(barcodes) is { } message)
+            throw new SampleWorkstationGatewayException(400, SampleWorkstationErrorCodes.InvalidRequest, message, false);
+        barcodes = SampleWorkstationBarcodeValidation.Normalize(barcodes);
         var path = $"api/workstations/{EscapeRequired(deviceId, nameof(deviceId))}/tasks/{EscapeRequired(taskNo, nameof(taskNo))}/{action}";
         return SendAsync<SampleWorkstationCommandResponse>(HttpMethod.Post, path,
             JsonContent.Create(barcodes), cancellationToken);

@@ -13,6 +13,54 @@ namespace MesControlAgv.Wpf.Tests;
 public sealed class WorkstationCompactLayoutTests
 {
     [Theory]
+    [InlineData(820, 480)]
+    [InlineData(1440, 900)]
+    public async Task Barcode_inputs_remain_accessible_and_same_task_refresh_preserves_typing(int width, int height)
+    {
+        await RunStaAsync(async () =>
+        {
+            var mes = new FakeMesClient([]) { SampleWorkstationSnapshot = Snapshot() };
+            using var model = new ShineLabDeviceStatusViewModel(mes, sampleWorkstationTestControlEnabled: true)
+            { SelectedInstrument = ShineLabDeviceStatusViewModel.SampleWorkstationInstrument };
+            await model.RefreshAsync();
+            var window = new MainWindow { Width = width, Height = height, WindowState = WindowState.Normal,
+                DataContext = new { ShineLabDeviceStatus = model, ShineLabControl = new ShineLabControlViewModel(mes) } };
+            try
+            {
+                window.Show();
+                Assert.IsType<TabControl>(window.FindName("MainTabs")).SelectedItem = window.FindName("ShineLabDeviceStatusTab");
+                window.UpdateLayout();
+                var view = Assert.Single(Children<ShineLabDeviceStatusView>(window));
+                var table = Assert.IsType<DataGrid>(view.FindName("WorkstationTasksGrid"));
+                table.SelectedItem = model.WorkstationTasks[0];
+                var selected = model.SelectedWorkstationTask!.TaskNo;
+                var first = Assert.IsType<TextBox>(view.FindName("WorkstationBarcode1Input"));
+                var second = Assert.IsType<TextBox>(view.FindName("WorkstationBarcode2Input"));
+                first.Text = "TEST-1"; first.GetBindingExpression(TextBox.TextProperty)!.UpdateSource();
+                second.Text = "TEST-2"; second.GetBindingExpression(TextBox.TextProperty)!.UpdateSource();
+                await model.RefreshAsync();
+                window.UpdateLayout();
+                Assert.Equal(selected, model.SelectedWorkstationTask!.TaskNo);
+                Assert.Equal("TEST-1", model.WorkstationSampleBarcode1);
+                Assert.Equal("TEST-2", model.WorkstationSampleBarcode2);
+                foreach (var input in new[] { first, second })
+                {
+                    input.BringIntoView(); window.UpdateLayout();
+                    window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                    Assert.True(input.IsVisible);
+                    AssertInBounds(input, window);
+                }
+                SaveEvidence(window, $"barcode-inputs-{width}.png");
+                table.SelectedItem = model.WorkstationTasks[1];
+                Assert.Empty(model.WorkstationSampleBarcode1);
+                Assert.Empty(model.WorkstationSampleBarcode2);
+                Assert.Equal(0, mes.SampleWorkstationStartCallCount);
+            }
+            finally { window.Close(); }
+        });
+    }
+
+    [Theory]
     [InlineData(820, 480, false, false)]
     [InlineData(820, 480, true, false)]
     [InlineData(1440, 900, false, false)]
@@ -223,6 +271,25 @@ public sealed class WorkstationCompactLayoutTests
             }
             finally { window.Close(); }
         });
+    }
+
+    private static Task RunStaAsync(Func<Task> action)
+    {
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var thread = new Thread(() =>
+        {
+            var dispatcher = Dispatcher.CurrentDispatcher;
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext(dispatcher));
+            dispatcher.BeginInvoke(new Action(async () =>
+            {
+                try { await action(); completion.TrySetResult(); }
+                catch (Exception ex) { completion.TrySetException(ex); }
+                finally { dispatcher.InvokeShutdown(); }
+            }));
+            Dispatcher.Run();
+        });
+        thread.SetApartmentState(ApartmentState.STA); thread.IsBackground = true; thread.Start();
+        return completion.Task.WaitAsync(TimeSpan.FromSeconds(15));
     }
 
     private static ShineLabDeviceStatusViewModel Model(FakeMesClient mes) => new(mes)

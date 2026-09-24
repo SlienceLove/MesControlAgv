@@ -16,6 +16,28 @@ namespace MesControlAgv.Mes.Tests;
 public sealed class SampleWorkstationApiTests(MesWebApplicationFactory factory)
     : IClassFixture<MesWebApplicationFactory>
 {
+    [Theory]
+    [InlineData(null, "1号、2号")]
+    [InlineData("null", "1号、2号")]
+    [InlineData("{}", "1号、2号")]
+    [InlineData("{\"sampleBarcode1\":\"A\"}", "2号")]
+    [InlineData("{\"sampleBarcode2\":\"B\"}", "1号")]
+    [InlineData("{\"sampleBarcode1\":\" \",\"sampleBarcode2\":\"B\"}", "1号")]
+    [InlineData("{\"sampleBarcode1\":\"A\",\"sampleBarcode2\":null}", "2号")]
+    public async Task Missing_start_barcodes_are_known_rejection_with_no_gateway_call(string? body, string bottle)
+    {
+        var controller = new StubController();
+        using var configuredFactory = ConfigureReader(new StubReader(), controller);
+        using var client = configuredFactory.CreateClient();
+        using var content = body is null ? null : new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync("/api/workstations/SAMPLE-WORKSTATION-01/tasks/TASK-01/start", content);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        var problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement;
+        Assert.Contains($"缺少{bottle}样品瓶条码", problem.GetProperty("detail").GetString());
+        Assert.False(problem.GetProperty("outcomeUnknown").GetBoolean());
+        Assert.Empty(controller.Calls);
+    }
+
     [Fact]
     public async Task Read_endpoints_proxy_normalized_adapter_contracts()
     {
@@ -52,13 +74,13 @@ public sealed class SampleWorkstationApiTests(MesWebApplicationFactory factory)
         var initialize = await client.PostAsync(
             "/api/workstations/SAMPLE-WORKSTATION-01/initialize",
             content: null);
-        var start = await client.PostAsync(
+        var start = await client.PostAsJsonAsync(
             "/api/workstations/SAMPLE-WORKSTATION-01/tasks/TASK-01/start",
-            content: null);
+            new SampleWorkstationTaskBarcodes { SampleBarcode1 = "A", SampleBarcode2 = "B" });
 
         Assert.Equal(HttpStatusCode.OK, initialize.StatusCode);
         Assert.Equal(HttpStatusCode.OK, start.StatusCode);
-        Assert.Equal(["initialize", "start:TASK-01"], controller.Calls);
+        Assert.Equal(["initialize", "start-with-barcodes:TASK-01"], controller.Calls);
     }
 
     [Fact]

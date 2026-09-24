@@ -14,6 +14,34 @@ namespace MesControlAgv.Mes.Tests;
 public sealed class WorkflowSampleWorkstationWorkerTests
 {
     [Fact]
+    public async Task Unprepared_start_using_real_adapter_client_is_known_failure_without_transport()
+    {
+        await using var fixture = await WorkstationFixture.CreateAsync();
+        var runId = await fixture.PublishExecuteAndConfirmAsync();
+        var reader = fixture.CreateGateway(Observation.Idle(SampleWorkstationTaskState.Waiting));
+        using var handler = new NoSendHandler();
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://adapter.invalid/") };
+        var dispatcher = new WorkflowSampleWorkstationDispatcher(fixture.Workflows, reader,
+            new SampleWorkstationAdapterClient(http), fixture.Profile,
+            new WorkflowSampleWorkstationWorkerOptions { Enabled = true }, fixture.Clock);
+        await dispatcher.ProcessAsync(CancellationToken.None);
+        var operation = Assert.Single(await fixture.Workflows.ListDeviceOperationsAsync(runId, CancellationToken.None));
+        Assert.Equal(WorkflowDeviceOperationStatus.Failed, operation.Status);
+        Assert.Contains("1号、2号", operation.LastError);
+        Assert.Equal(0, handler.Calls);
+    }
+
+    private sealed class NoSendHandler : HttpMessageHandler
+    {
+        public int Calls { get; private set; }
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        {
+            Calls++;
+            throw new InvalidOperationException("No HTTP request is allowed");
+        }
+    }
+
+    [Fact]
     public async Task Retained_manual_end_allows_waiting_task_once_then_observes_new_running_and_completion()
     {
         await using var fixture = await WorkstationFixture.CreateAsync();
