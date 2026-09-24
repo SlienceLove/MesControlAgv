@@ -305,7 +305,7 @@ public sealed class ShineLabStatusHub(IOptions<ShineLabTcpOptions> configuredOpt
             state.LastSeenAtUtc,
             state.TaskStartedAtUtc,
             state.TaskFinishedAtUtc,
-            state.LastProtocolEvent);
+            state.LastProtocolEvent) { LastDeviceStatusAtUtc = state.LastDeviceStatusAtUtc };
     }
 
     private static string DisplayName(string code) => code.ToUpperInvariant() switch

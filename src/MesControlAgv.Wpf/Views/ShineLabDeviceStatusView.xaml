@@ -8,16 +8,16 @@
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
     </UserControl.Resources>
 
-    <Grid Margin="0,12,0,0">
+    <Grid Margin="0,6,0,0">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <DockPanel Margin="0,0,0,8">
+        <DockPanel Margin="0,0,0,6">
             <StackPanel DockPanel.Dock="Left">
-                <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding InstrumentTitle}" />
+                <TextBlock FontSize="20" FontWeight="SemiBold" Text="{Binding InstrumentTitle}" />
             </StackPanel>
             <WrapPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
                 <Button Margin="0,0,8,0" Padding="12,6" Content="单任务模板" Click="SingleTaskTemplate_Click"
@@ -31,12 +31,12 @@
 
         <!-- The two items are peer instruments.  The opening/dispensing page
              is not derived from or filtered out of the ShineLab list. -->
-        <TabControl Grid.Row="1" Margin="0,0,0,8"
+        <TabControl Grid.Row="1" Margin="0,0,0,6"
                     ItemsSource="{Binding InstrumentOptions}"
                     SelectedItem="{Binding SelectedInstrument, Mode=TwoWay}">
             <TabControl.ItemTemplate>
                 <DataTemplate>
-                    <TextBlock Padding="18,8" FontSize="16" FontWeight="SemiBold" Text="{Binding}" />
+                    <TextBlock Padding="18,5" FontSize="16" FontWeight="SemiBold" Text="{Binding}" />
                 </DataTemplate>
             </TabControl.ItemTemplate>
             <TabControl.ContentTemplate>
@@ -59,13 +59,17 @@
                 </Grid.RowDefinitions>
                 <WrapPanel x:Name="IonOnlineToolbar" Margin="0,0,0,12">
                     <Border Background="#F1F5F9" CornerRadius="5" Padding="12,7" Margin="0,0,10,0">
-                        <TextBlock Text="{Binding OperatorOnlineText}" FontWeight="SemiBold"/>
+                        <TextBlock Text="{Binding DataContext.IonOperatorOnline, RelativeSource={RelativeSource AncestorType={x:Type views:ShineLabDeviceStatusView}}}" FontWeight="SemiBold"/>
                     </Border>
-                    <Button Content="刷新样品记录" Command="{Binding RefreshCommand}" Padding="12,6" Margin="0,0,10,0"/>
+                    <Button Content="刷新样品记录" Click="RefreshIonRecordsOnLoad" Padding="12,6" Margin="0,0,10,0"/>
                     <Button Content="托盘弹出" Command="{Binding TrayPopupCommand}" Padding="12,6" Margin="0,0,8,0"/>
                     <Button Content="托盘复位" Command="{Binding TrayResetCommand}" Padding="12,6"/>
                 </WrapPanel>
                 <StackPanel Grid.Row="1" Margin="0,0,0,10">
+                    <TextBlock x:Name="IonCurrentTaskText" Margin="0,0,0,4" Foreground="#175CD3"
+                               Text="{Binding DataContext.IonCurrentTaskSummary, RelativeSource={RelativeSource AncestorType={x:Type views:ShineLabDeviceStatusView}}, StringFormat=当前任务：{0}}"
+                               ToolTip="{Binding DataContext.IonCurrentTaskSummary, RelativeSource={RelativeSource AncestorType={x:Type views:ShineLabDeviceStatusView}}}"
+                               TextTrimming="CharacterEllipsis"/>
                     <TextBlock Text="中控样品记录" FontSize="18" FontWeight="SemiBold"/>
                     <TextBlock Text="仅显示中控记录，不代表 AQ 的完整序列；AQ 中手动添加或修改的样品不在此同步。"
                                Foreground="#64748B" TextWrapping="Wrap" Margin="0,4,0,0"/>
@@ -108,7 +112,7 @@
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
-            <WrapPanel x:Name="WorkstationOnlineToolbar" Margin="0,0,0,8">
+            <WrapPanel x:Name="WorkstationOnlineToolbar" Margin="0,0,0,6">
                 <Border Background="#F1F5F9" CornerRadius="5" Padding="12,7" Margin="0,0,12,0">
                     <TextBlock x:Name="WorkstationOnlineText" Text="{Binding WorkstationOperatorOnline}" FontWeight="SemiBold"/>
                 </Border>
@@ -116,10 +120,15 @@
                 <TextBlock Text="{Binding WorkstationTaskCount, StringFormat=已读取 {0} 条}" Foreground="#64748B"
                            Margin="12,0,0,0" VerticalAlignment="Center"/>
             </WrapPanel>
-            <TextBlock x:Name="WorkstationNotice" Grid.Row="1" Text="{Binding WorkstationOperatorNotice}"
+            <StackPanel Grid.Row="1">
+                <TextBlock x:Name="WorkstationCurrentTaskText" Margin="0,0,0,4" Foreground="#175CD3"
+                           Text="{Binding WorkstationCurrentTaskSummary, StringFormat=当前任务：{0}}"
+                           ToolTip="{Binding WorkstationCurrentTaskSummary}" TextTrimming="CharacterEllipsis"/>
+                <TextBlock x:Name="WorkstationNotice" Text="{Binding WorkstationOperatorNotice}"
                        TextTrimming="CharacterEllipsis" ToolTip="{Binding WorkstationOperatorNotice}"
                        Foreground="#9A6700" Margin="0,0,0,8"
                        Visibility="{Binding HasWorkstationOperatorNotice, Converter={StaticResource BooleanToVisibilityConverter}}"/>
+            </StackPanel>
             <Grid Grid.Row="2">
                 <DataGrid x:Name="WorkstationTasksGrid" ItemsSource="{Binding WorkstationTasks}"
                           SelectedItem="{Binding SelectedWorkstationTask, Mode=TwoWay}"
