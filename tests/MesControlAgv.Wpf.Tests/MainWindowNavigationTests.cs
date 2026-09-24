@@ -89,6 +89,24 @@ public sealed class MainWindowNavigationTests
                 var materialTags = FindVisualChildren<RadioButton>(materialsGroup).Select(item => item.Tag as string).ToArray();
                 Assert.Contains("MaterialManagementTab", materialTags);
                 Assert.Contains("SampleManagementTab", materialTags);
+                var sampleButton = FindVisualChildren<RadioButton>(materialsGroup)
+                    .Single(item => item.Tag as string == "SampleManagementTab");
+                Assert.Equal("样品管理", Assert.IsType<TextBlock>(sampleButton.Content).Text);
+                foreach (var hiddenTabName in new[] { "MapDashboardTab", "ReadinessTab" })
+                {
+                    var hiddenButton = FindVisualChildren<RadioButton>(sidebar)
+                        .Single(item => item.Tag as string == hiddenTabName);
+                    Assert.Equal(Visibility.Collapsed, hiddenButton.Visibility);
+                    Assert.Equal(Visibility.Collapsed, Assert.IsType<TabItem>(window.FindName(hiddenTabName)).Visibility);
+                }
+                Assert.Equal(Visibility.Visible, FindVisualChildren<RadioButton>(sidebar)
+                    .Single(item => item.Tag as string == "DigitalTwinTab").Visibility);
+                sampleButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                Assert.Same(window.FindName("SampleManagementTab"), tabs.SelectedItem);
+                var materialsButton = FindVisualChildren<RadioButton>(materialsGroup)
+                    .Single(item => item.Tag as string == "MaterialManagementTab");
+                materialsButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                Assert.Same(window.FindName("MaterialManagementTab"), tabs.SelectedItem);
                 var overview = FindVisualChildren<Expander>(sidebar).Single(item => Equals(item.Header, "运营总览"));
                 Assert.DoesNotContain(FindVisualChildren<RadioButton>(overview), item =>
                     item.Tag as string is "MaterialManagementTab" or "SampleManagementTab");
