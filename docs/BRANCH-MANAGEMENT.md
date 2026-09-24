@@ -15,7 +15,7 @@
 | master | 已通过本轮离线回归的统一基线；现场部署仍需现场验收 | 接收 develop |
 | develop | 唯一集成入口 | 功能、UI 分支先汇入这里 |
 | feature/wpf-ui-layout-optimization | 后续界面优化 | develop |
-| fix/workstation-empty-task-page | 从 develop e547c94 建立；仅修复任务列表末页201“无数据”的兼容，独立目录 .worktrees/workstation-empty-page | 验证后交由集成会话合入 develop |
+| fix/workstation-empty-task-page | 从 develop e547c94 建立；仅修复任务列表末页201“无数据”的兼容，独立目录 .worktrees/workstation-empty-page；0e70445 已集成 | develop efea896，网关现场切换另行确认 |
 | feature/device-current-task-display | 从 develop 4855e14 建立；两设备当前任务显示与 MES 只读设备状态时间字段，c4a6098 已集成 | develop dca6a2c 已通过 WPF 730 / MES 731，后续现场部署另行确认 |
 | feature/workstation-ml-template-validation | 开盖分液 mL、条码 POST、手动结束后续跑；9b639cb 已于 2026-09-24 合入本地 develop | 后续任务以更新后的 develop 为起点 |
 | feature/workstation-template-batch | 单任务模板与批量导入；3d80c37 已于 2026-09-24 合入本地 develop | 本轮单位集成修复在 develop，原工作区未被修改 |
