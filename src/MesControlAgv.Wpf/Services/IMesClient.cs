@@ -117,6 +117,10 @@ public sealed record DashboardWorkflowExecution(
 
 public interface IMesClient
 {
+    Task<IReadOnlyList<WorkstationBatchReviewItem>> GetWorkstationBatchReviewsAsync(string deviceId, CancellationToken token) =>
+        Task.FromException<IReadOnlyList<WorkstationBatchReviewItem>>(new NotSupportedException("MES 尚未提供异常批次核对接口。"));
+    Task<WorkstationBatchReconciliation> ReconcileWorkstationBatchAsync(string deviceId, Guid requestId, WorkstationBatchReconcileRequest request, CancellationToken token) =>
+        Task.FromException<WorkstationBatchReconciliation>(new NotSupportedException("MES 尚未提供异常批次核对接口。"));
     Task<WorkstationBatchResult> ImportWorkstationBatchAsync(string deviceId, WorkstationBatchRequest request, CancellationToken token) =>
         Task.FromException<WorkstationBatchResult>(new NotSupportedException("MES 尚未提供批量任务导入接口。"));
     Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken);

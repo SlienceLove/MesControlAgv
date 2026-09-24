@@ -25,6 +25,8 @@ public partial class WorkstationTaskWindow : Window
         _client = client; _deviceId = deviceId;
         TransferGrid.ItemsSource = _rows; _rows.Add(new());
         TaskNo.Text = NewNumber(); TaskName.Text = "新建分液任务"; Actor.Text = Environment.UserName;
+        ReviewActor.Text = Environment.UserName;
+        ReviewGrid.ItemsSource = _reviewRows;
         WorkspaceTabs.SelectedIndex = batch ? 1 : 0;
         SourceTasks.ItemsSource = _sourceTasks;
         SourceTasks.Text = sourceTaskNo ?? "";
@@ -149,7 +151,7 @@ public partial class WorkstationTaskWindow : Window
         catch (Exception ex)
         {
             ImportResult.Text = $"请求编号：{request.RequestId}\n未获得完整成功确认，不会自动重试。\n{ex.Message}";
-            Status.Text = "请保留请求编号核对结果；不要用新编号重复下发同一批次。";
+            Status.Text = "请保留请求编号核对结果；不要用新编号重复下发同一批次。可在“异常批次核对”页查看待核对记录。";
         }
         finally { _busy = false; WorkspaceTabs.IsEnabled = true; }
     }

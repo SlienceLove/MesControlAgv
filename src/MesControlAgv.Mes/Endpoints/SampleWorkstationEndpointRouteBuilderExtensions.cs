@@ -10,6 +10,24 @@ public static class SampleWorkstationEndpointRouteBuilderExtensions
 {
     public static IEndpointRouteBuilder MapSampleWorkstationEndpoints(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapGet("/api/workstations/{deviceId}/task-batches/reviews", async (
+            string deviceId, WorkstationBatchImportService service, CancellationToken token) =>
+        {
+            try { return Results.Ok(await service.GetReviewItemsAsync(deviceId, token)); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { detail = ex.Message }); }
+            catch (InvalidOperationException ex) { return Results.Conflict(new { detail = ex.Message }); }
+            catch (IOException) { return Results.Conflict(new { detail = "导入记录正在使用或无法访问，请稍后核对。" }); }
+        });
+        endpoints.MapPost("/api/workstations/{deviceId}/task-batches/{requestId:guid}/reconcile-created", async (
+            string deviceId, Guid requestId, WorkstationBatchReconcileRequest request, WorkstationBatchImportService service, CancellationToken token) =>
+        {
+            try { return Results.Ok(await service.ReconcileCreatedAsync(deviceId, requestId, request, token)); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { detail = ex.Message }); }
+            catch (KeyNotFoundException ex) { return Results.NotFound(new { detail = ex.Message }); }
+            catch (InvalidOperationException ex) { return Results.Conflict(new { detail = ex.Message }); }
+            catch (IOException) { return Results.Conflict(new { detail = "记录正在使用或结案保存未能确认；请刷新核对，不要重复提交。" }); }
+            catch (SampleWorkstationGatewayException ex) { return Results.Problem(ex.Message, statusCode: ex.StatusCode); }
+        });
         endpoints.MapPost("/api/workstations/{deviceId}/task-batches/import", async (
             string deviceId, WorkstationBatchRequest request, WorkstationBatchImportService service, CancellationToken cancellationToken) =>
         {
