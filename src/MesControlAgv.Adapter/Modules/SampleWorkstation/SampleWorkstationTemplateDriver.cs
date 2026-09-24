@@ -47,6 +47,7 @@ public sealed partial class SampleWorkstationDriver
             throw new ArgumentException("Import file volume unit differs from the configured vendor Excel unit; prepare a new task.");
         var bytes = await SampleWorkstationTemplateFile.ReadBytesAsync(content, cancellationToken);
         var expected = SampleWorkstationTemplateFile.Read(bytes, fileVolumeUnit);
+        WorkstationTaskNumber.EnsureSafeForImport(expected.TaskNo);
         using var body = new ByteArrayContent(SampleWorkstationTemplateFile.EncodeUpload(fileName, bytes));
         // Vendor WCFTestToolsDLH sends this raw Base64 frame with application/json;
         // it is deliberately NOT JSON-serialized or multipart-wrapped.
