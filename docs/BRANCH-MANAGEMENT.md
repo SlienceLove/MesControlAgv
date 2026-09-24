@@ -15,7 +15,7 @@
 | master | 已通过本轮离线回归的统一基线；现场部署仍需现场验收 | 接收 develop |
 | develop | 唯一集成入口 | 功能、UI 分支先汇入这里 |
 | feature/wpf-ui-layout-optimization | 后续界面优化 | develop |
-| fix/workstation-start-barcode-validation | 从develop 7ccff42建立；启动前双瓶条码校验及WPF/MES/Adapter联动，独立目录.worktrees/workstation-start-barcode-validation | 验证后合入develop；不自动部署或启动设备 |
+| fix/workstation-start-barcode-validation | 从develop 7ccff42建立；95d0f27补齐启动前双瓶条码校验及WPF/MES/Adapter联动，独立目录.worktrees/workstation-start-barcode-validation | 已合入develop d1f3c74；完整2072项及集成MES26/WPF72项通过；未部署或启动设备 |
 | feature/workstation-import-reconciliation | 从develop 2d73132建立；6248e3f新增独立人工结案审计、只读核对与WPF异常批次入口，原Unknown日志不改 | 已合入develop 5aa3cad；集成回归MES批次51项、WPF核对11项通过；现场结案须显式确认 |
 | fix/workstation-text-task-id | 从develop 9210fe8建立；ead3010新增WS文本编号与新导入长纯数字拦截，保留历史回读/重放和Unknown阻断 | 已合入develop f0034ca；不自动部署或解除现场异常批次 |
 | feature/digital-twin-single-agv | 用户于2026-09-24授权接管并补提交模型清理成果；8d6c54f删除冗余静态机器人/盒体，配套指纹与测试一并提交 | 已合入develop 9da0526；原证据与规划草稿保留，后续任务从最新develop开始 |
