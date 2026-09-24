@@ -62,6 +62,8 @@
                         <TextBlock Text="{Binding DataContext.IonOperatorOnline, RelativeSource={RelativeSource AncestorType={x:Type views:ShineLabDeviceStatusView}}}" FontWeight="SemiBold"/>
                     </Border>
                     <Button Content="刷新样品记录" Click="RefreshIonRecordsOnLoad" Padding="12,6" Margin="0,0,10,0"/>
+                    <Button x:Name="IonImportTasksButton" Content="导入样品任务" Click="ImportIonTasks_Click"
+                            IsEnabled="{Binding IsInteractive}" Padding="12,6" Margin="0,0,10,0"/>
                     <Button Content="托盘弹出" Command="{Binding TrayPopupCommand}" Padding="12,6" Margin="0,0,8,0"/>
                     <Button Content="托盘复位" Command="{Binding TrayResetCommand}" Padding="12,6"/>
                 </WrapPanel>
@@ -98,7 +100,7 @@
                 </Grid>
                 <StackPanel Grid.Row="3" Margin="0,8,0,0">
                     <TextBlock Text="{Binding OperatorReply}" TextWrapping="Wrap"/>
-                    <TextBlock Text="样品导入、下发及检测结果详情请进入“仪器任务导入”。" Foreground="#64748B" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                    <TextBlock Text="点击“导入样品任务”进行导入、下发或查看检测结果。" Foreground="#64748B" Margin="0,4,0,0" TextWrapping="Wrap"/>
                 </StackPanel>
             </Grid>
         </Grid>
