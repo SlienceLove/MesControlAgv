@@ -13,6 +13,32 @@ namespace MesControlAgv.Wpf.Tests;
 
 public sealed class WorkstationTemplateSelectionTests
 {
+    [Fact]
+    public void Long_numeric_id_cannot_enter_preview_but_letter_prefixed_id_can() => Run(window =>
+    {
+        Click(window, "FillReference");
+        foreach (var row in Control<DataGrid>(window, "TransferGrid").Items.Cast<TransferEditorRow>())
+        { row.LiquidCode = "L"; row.TipModule = "T"; row.SourceModule = "S"; row.TargetModule = "D"; }
+        Control<TextBox>(window, "TaskNo").Text = "20260924143809983251";
+        Click(window, "PreviewSingle");
+        Assert.False(Control<Button>(window, "ImportButton").IsEnabled);
+        Assert.Empty(Control<DataGrid>(window, "PreviewGrid").Items);
+        Assert.Contains("15 位", Control<TextBlock>(window, "Status").Text);
+        Control<TextBox>(window, "TaskNo").Text = "WS0123456789ABCDEF01";
+        Click(window, "PreviewSingle");
+        Assert.True(Control<Button>(window, "ImportButton").IsEnabled);
+    });
+
+    [Fact]
+    public void Historical_numeric_template_is_copied_under_a_new_text_identity() => Run(window =>
+    {
+        Control<ComboBox>(window, "SourceTasks").Text = "20260924143809983251";
+        Click(window, "CopySource");
+        Assert.Matches("^WS[0-9A-F]{18}$", Control<TextBox>(window, "TaskNo").Text);
+        Assert.Equal(Template().Transfers[0], Assert.Single(Control<DataGrid>(window, "TransferGrid").Items.Cast<TransferEditorRow>()).ToContract());
+    }, _ => Json(new SampleWorkstationTemplateResponse("WS-01", "historical.xlsx", [], "",
+        Template("20260924143809983251"), DateTimeOffset.UtcNow)));
+
     private static SampleWorkstationTaskTemplate Template(string number = "SOURCE01") => new(number, "现有分液任务",
         [new("L01", "TIP01", 0, 0, "SRC01", 2, 3, "DST01", 4, 5, 125)]);
 
@@ -54,6 +80,7 @@ public sealed class WorkstationTemplateSelectionTests
             Click(window, "CopySource");
             Assert.NotEqual(numberBefore, Control<TextBox>(window, "TaskNo").Text);
             Assert.NotEqual("SOURCE01", Control<TextBox>(window, "TaskNo").Text);
+            Assert.Matches("^WS[0-9A-F]{18}$", Control<TextBox>(window, "TaskNo").Text);
             Assert.Equal(Template().Transfers[0], Assert.Single(Control<DataGrid>(window, "TransferGrid").Items.Cast<TransferEditorRow>()).ToContract());
             Assert.Contains("来源任务保持不变", Control<TextBlock>(window, "Status").Text);
             Click(window, "PreviewSingle");

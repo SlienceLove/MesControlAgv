@@ -15,6 +15,61 @@ namespace MesControlAgv.Mes.Tests;
 public sealed class WorkstationBatchImportTests : IDisposable
 {
     [Fact]
+    public async Task New_numeric_identity_is_rejected_before_vendor_reads_or_writes()
+    {
+        var gateway = new Gateway();
+        var request = Request() with { Tasks = [Task("20260924143809983251")] };
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => Service(gateway).ImportAsync("WS-01", request, CancellationToken.None));
+        Assert.Contains("15 位", error.Message);
+        Assert.Equal(0, gateway.Writes);
+        Assert.Equal(0, gateway.Reads);
+        Assert.Empty(gateway.PageStarts);
+        Assert.Empty(Directory.GetFiles(_directory, "*.json"));
+    }
+
+    [Fact]
+    public async Task Distinct_text_ids_can_share_a_task_name_and_are_imported_once()
+    {
+        var gateway = new Gateway { Unit = SampleWorkstationTemplateVolumeUnit.Milliliters };
+        var request = Request() with { Tasks = Enumerable.Range(0, 3)
+            .Select(_ => Task(WorkstationTaskNumber.Create()) with { TaskName = "test" }).ToArray() };
+        var result = await Service(gateway).ImportAsync("WS-01", request, CancellationToken.None);
+        Assert.All(result.Items, item => Assert.Equal("Imported", item.Status));
+        Assert.Equal(request.Tasks.Select(task => task.TaskNo), result.Items.Select(item => item.TaskNo));
+        Assert.All(gateway.Uploads, upload => Assert.Matches("^WS[0-9A-F]{18}$",
+            SampleWorkstationTemplateFile.Read(upload.Bytes, upload.Unit).TaskNo));
+        await Service(gateway).ImportAsync("WS-01", request, CancellationToken.None);
+        Assert.Equal(3, gateway.Writes);
+    }
+
+    [Theory]
+    [InlineData("Unknown", "Unknown")]
+    [InlineData("Importing", "Unknown")]
+    [InlineData("Imported", "Imported")]
+    public async Task Historical_numeric_request_replays_original_record_without_reimport(string savedStatus, string returnedStatus)
+    {
+        var request = Request() with { Tasks = [Task("20260924143809983251")] };
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
+            new { DeviceId = "WS-01", request.Actor, request.Tasks })));
+        var previous = new WorkstationBatchResult(request.RequestId, "WS-01", hash,
+            [new(request.Tasks[0].TaskNo, request.Tasks[0].TaskName, savedStatus, "historical")], DateTimeOffset.UtcNow, request.Actor);
+        Directory.CreateDirectory(_directory);
+        var file = Path.Combine(_directory, request.RequestId.ToString("N") + ".json");
+        var original = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(previous);
+        File.WriteAllBytes(file, original);
+        var gateway = new Gateway();
+        var result = await Service(gateway).ImportAsync("WS-01", request, CancellationToken.None);
+        Assert.Equal(returnedStatus, Assert.Single(result.Items).Status);
+        Assert.Equal(original, File.ReadAllBytes(file));
+        Assert.Equal(0, gateway.Writes);
+        Assert.Equal(0, gateway.Reads);
+        Assert.Empty(gateway.PageStarts);
+        if (savedStatus != "Imported")
+            await Assert.ThrowsAsync<InvalidOperationException>(() => Service(gateway).ImportAsync("WS-01", Request(), CancellationToken.None));
+        Assert.Equal(0, gateway.Writes);
+    }
+
+    [Fact]
     public async Task Milliliter_batch_converts_vendor_cells_and_replays_the_original_unit_without_writes()
     {
         var gateway = new Gateway { Unit = SampleWorkstationTemplateVolumeUnit.Milliliters };
@@ -152,17 +207,24 @@ public sealed class WorkstationBatchImportTests : IDisposable
 
     private sealed class Gateway : ISampleWorkstationReader, ISampleWorkstationCapabilityReader, ISampleWorkstationTaskImporter
     {
-        public int Writes; public int FailOn; public bool Mismatch; public bool Duplicate; public bool Busy; public bool Enabled = true;
+        public int Writes; public int Reads; public int FailOn; public bool Mismatch; public bool Duplicate; public bool Busy; public bool Enabled = true;
         public bool DuplicateOnSecondPage; public List<int> PageStarts = [];
         public SampleWorkstationTemplateVolumeUnit? Unit = SampleWorkstationTemplateVolumeUnit.Microliters;
         public bool WrongReadbackUnit;
         public List<(byte[] Bytes, SampleWorkstationTemplateVolumeUnit Unit)> Uploads = [];
-        public Task<SampleWorkstationCapabilitiesResponse> GetCapabilitiesAsync(string id, CancellationToken token) =>
-            System.Threading.Tasks.Task.FromResult(new SampleWorkstationCapabilitiesResponse(id, true, Enabled, true, [SampleWorkstationCommandOperation.ImportTasks], []) { TemplateVolumeUnit = Unit });
-        public Task<SampleWorkstationStatusResponse> GetStatusAsync(string id, CancellationToken token) =>
-            System.Threading.Tasks.Task.FromResult(new SampleWorkstationStatusResponse(id, "EQ", true, Busy ? SampleWorkstationDeviceState.Running : SampleWorkstationDeviceState.Idle, 0, DateTimeOffset.UtcNow));
+        public Task<SampleWorkstationCapabilitiesResponse> GetCapabilitiesAsync(string id, CancellationToken token)
+        {
+            Reads++;
+            return System.Threading.Tasks.Task.FromResult(new SampleWorkstationCapabilitiesResponse(id, true, Enabled, true, [SampleWorkstationCommandOperation.ImportTasks], []) { TemplateVolumeUnit = Unit });
+        }
+        public Task<SampleWorkstationStatusResponse> GetStatusAsync(string id, CancellationToken token)
+        {
+            Reads++;
+            return System.Threading.Tasks.Task.FromResult(new SampleWorkstationStatusResponse(id, "EQ", true, Busy ? SampleWorkstationDeviceState.Running : SampleWorkstationDeviceState.Idle, 0, DateTimeOffset.UtcNow));
+        }
         public Task<IReadOnlyList<SampleWorkstationTaskSummaryResponse>> GetTasksAsync(string id, SampleWorkstationTaskQuery query, CancellationToken token)
         {
+            Reads++;
             PageStarts.Add(query.StartNo);
             var taskNo = DuplicateOnSecondPage ? query.StartNo switch { 1 => "OTHER", 2 => "T002", _ => null }
                 : Duplicate && query.StartNo == 1 ? "T002" : null;

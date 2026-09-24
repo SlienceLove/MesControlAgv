@@ -41,6 +41,8 @@ public sealed class WorkstationBatchImportService(
                     previous.Items.Any(i => i.Status is "Importing" or "Unknown"))
                     throw new InvalidOperationException("此设备有结果不确定的批次。请先人工核对，禁止重复导入。");
             }
+            // Keep historical request replay above this new-import gate. Never rewrite old identities.
+            foreach (var task in request.Tasks) WorkstationTaskNumber.EnsureSafeForImport(task.TaskNo);
             var caps = await capabilities.GetCapabilitiesAsync(deviceId, cancellationToken);
             if (caps.DeviceId != deviceId || !caps.Enabled || !caps.ControlEnabled || !caps.TaskImportSupported)
                 throw new InvalidOperationException("设备未开放任务导入；可继续编辑或导出本地模板。");

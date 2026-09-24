@@ -23,7 +23,7 @@ public sealed class WorkstationTaskWindowTests
                 var tabs = Assert.IsType<TabControl>(window.FindName("WorkspaceTabs"));
                 Assert.Equal(batch ? 1 : 0, tabs.SelectedIndex);
                 var taskNo = Assert.IsType<TextBox>(window.FindName("TaskNo"));
-                Assert.Matches("^[0-9]{20}$", taskNo.Text);
+                Assert.Matches("^WS[0-9A-F]{18}$", taskNo.Text);
                 var import = Assert.IsType<Button>(window.FindName("ImportButton"));
                 Assert.False(import.IsEnabled);
                 if (batch)

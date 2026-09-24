@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.IO;
-using System.Security.Cryptography;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -32,7 +31,7 @@ public partial class WorkstationTaskWindow : Window
         _editorBaseline = EditorSnapshot();
         Closing += (_, e) => { if (_busy) { e.Cancel = true; Status.Text = "正在处理请求，请等待结果后关闭。"; } };
     }
-    private static string NewNumber() => DateTime.Now.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture) + RandomNumberGenerator.GetInt32(100000, 1000000);
+    private static string NewNumber() => WorkstationTaskNumber.Create();
     private void NewNumber_Click(object s, RoutedEventArgs e) => TaskNo.Text = NewNumber();
     private void AddRow_Click(object s, RoutedEventArgs e) => _rows.Add(new());
     private void RemoveRow_Click(object s, RoutedEventArgs e) { if (TransferGrid.SelectedItem is TransferEditorRow row) _rows.Remove(row); }
@@ -105,6 +104,7 @@ public partial class WorkstationTaskWindow : Window
         if (_submitted) throw new InvalidOperationException("本窗口已提交过导入，请先核对结果；新批次请重新打开窗口。");
         ClearPreview();
         WorkstationBatchWorkbook.Validate(tasks);
+        foreach (var task in tasks) WorkstationTaskNumber.EnsureSafeForImport(task.TaskNo);
         EnsureNoReferenceCodes(tasks);
         _preview = tasks;
         PreviewGrid.ItemsSource = tasks; PreviewGrid.SelectedIndex = 0;
