@@ -169,8 +169,8 @@ internal static class Program
                 Check(moving.GetProperty("ground").GetProperty("aligned").GetBoolean(),"Confirmed transform not applied to map overlay");
                 foreach(var id in new[]{"d160-a","autosampler-a","decapper-a"})
                     Check(Node(initial,id).GetProperty("position").ToString()==Node(moving,id).GetProperty("position").ToString(),"Static device moved: "+id);
-                Check(moving.GetProperty("modelTriangles").GetInt32()==1287310,"Model geometry changed");
-                Check(moving.GetProperty("triangles").GetInt32()<=1288000,"Ground geometry budget exceeded");
+                Check(moving.GetProperty("modelTriangles").GetInt32()==1098558,"Model geometry changed");
+                Check(moving.GetProperty("triangles").GetInt32()<=1099300,"Ground geometry budget exceeded");
                 Check(moving.GetProperty("nodes").GetArrayLength()==4,"AGV and arm were split");
                 using(var capture=File.Create(Path.Combine(output,"offline-pose-follow.png")))
                     await core.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png,capture);
