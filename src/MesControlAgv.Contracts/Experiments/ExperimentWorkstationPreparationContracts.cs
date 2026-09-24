@@ -77,6 +77,9 @@ public sealed record PreparedWorkstationTransfer
 
 public sealed record ExperimentWorkstationPreparationPayload
 {
+    // Omit the old µL default so reserialization does not alter historical snapshot hashes.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public SampleWorkstationTemplateVolumeUnit FileVolumeUnit { get; init; }
     public string SourceTemplateFileName { get; init; } = string.Empty;
     public string SourceTemplateFileSha256 { get; init; } = string.Empty;
     public SampleWorkstationTaskTemplate SourceTemplate { get; init; } =

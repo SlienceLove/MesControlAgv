@@ -31,7 +31,7 @@ public sealed class SampleWorkstationDriverTests
             result.Operation);
         Assert.Equal("TASK&01", result.TaskNo);
         var sent = Assert.Single(handler.Requests);
-        Assert.Equal(HttpMethod.Get, sent.Method);
+        Assert.Equal(start ? HttpMethod.Get : HttpMethod.Post, sent.Method);
         Assert.Equal(start ? "/Service/StartExperiment" : "/Service/UpdateTaskBarcode", sent.Uri.AbsolutePath);
         var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(sent.Uri.Query);
         Assert.Equal(3, query.Count);

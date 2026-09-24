@@ -102,7 +102,8 @@ public interface ISampleWorkstationBarcodeCommands
 public interface ISampleWorkstationTaskImporter
 {
     Task<SampleWorkstationTaskImportResponse> ImportTasksAsync(
-        string deviceId, string fileName, Stream content, CancellationToken cancellationToken);
+        string deviceId, string fileName, Stream content, CancellationToken cancellationToken,
+        SampleWorkstationTemplateVolumeUnit fileVolumeUnit = SampleWorkstationTemplateVolumeUnit.Microliters);
 }
 
 public interface ISampleWorkstationDriver

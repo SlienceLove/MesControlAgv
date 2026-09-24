@@ -9,6 +9,42 @@ namespace MesControlAgv.Mes.Tests;
 
 public sealed class SampleWorkstationTemplateClientTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Milliliter_file_unit_is_sent_and_requires_matching_ack(bool wrongUnit)
+    {
+        var template = Example();
+        var unit = SampleWorkstationTemplateVolumeUnit.Milliliters;
+        var file = SampleWorkstationTemplateFile.Write(template, unit);
+        using var handler = new Handler(JsonContent.Create(new SampleWorkstationTaskImportResponse("WS-01", [template.TaskNo], DateTimeOffset.UtcNow)
+        {
+            FileVolumeUnit = wrongUnit ? SampleWorkstationTemplateVolumeUnit.Microliters : unit,
+            ReadbackVerified = true, Template = template, FileSha256 = Convert.ToHexString(SHA256.HashData(file))
+        }));
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://adapter.invalid/") };
+        using var source = new MemoryStream(file);
+        var client = new SampleWorkstationAdapterClient(http);
+        if (wrongUnit)
+            await Assert.ThrowsAsync<SampleWorkstationGatewayException>(() => client.ImportTasksAsync("WS-01", "task.xlsx", source, CancellationToken.None, unit));
+        else
+            Assert.Equal(50, (await client.ImportTasksAsync("WS-01", "task.xlsx", source, CancellationToken.None, unit)).Template!.Transfers.Single().VolumeMicroliters);
+        Assert.Equal("Milliliters", Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(handler.Uri!.Query)["fileVolumeUnit"]);
+        Assert.Equal(file, handler.Bytes);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public void Legacy_payload_serialization_does_not_add_a_default_unit()
+    {
+        var options = new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web);
+        var original = System.Text.Json.JsonSerializer.Serialize(new MesControlAgv.Contracts.Experiments.ExperimentWorkstationPreparationPayload(), options);
+        Assert.DoesNotContain("fileVolumeUnit", original);
+        var restored = System.Text.Json.JsonSerializer.Deserialize<MesControlAgv.Contracts.Experiments.ExperimentWorkstationPreparationPayload>(original, options)!;
+        Assert.Equal(SampleWorkstationTemplateVolumeUnit.Microliters, restored.FileVolumeUnit);
+        Assert.Equal(original, System.Text.Json.JsonSerializer.Serialize(restored, options));
+    }
+
     private static SampleWorkstationTaskTemplate Example() => new("MES-TASK-001", "中控任务",
         [new("CGRJ-001", "QT-001", 1, 1, "CYC-001-1000", 1, 1, "FYB-001", 1, 1, 50)]);
 

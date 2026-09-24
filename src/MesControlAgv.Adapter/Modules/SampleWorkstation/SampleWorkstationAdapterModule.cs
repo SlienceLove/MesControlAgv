@@ -68,14 +68,15 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
             }));
 
         endpoints.MapPost("/api/workstations/{deviceId}/tasks/import", async (
-            string deviceId, string fileName, HttpRequest request, ISampleWorkstationDriver driver,
+            string deviceId, string fileName, SampleWorkstationTemplateVolumeUnit? fileVolumeUnit, HttpRequest request, ISampleWorkstationDriver driver,
             DeviceOperationPolicy policy, CancellationToken cancellationToken) =>
             await ExecuteAsync(async () =>
             {
                 EnsureWorkstation(policy.EnsureControlEnabled(deviceId));
                 if (!string.Equals(request.ContentType?.Split(';')[0].Trim(), "application/octet-stream", StringComparison.OrdinalIgnoreCase))
                     throw new ArgumentException("Template import requires application/octet-stream XLSX content.");
-                return await driver.ImportTasksAsync(deviceId, fileName, request.Body, cancellationToken);
+                return await driver.ImportTasksAsync(deviceId, fileName, request.Body, cancellationToken,
+                    fileVolumeUnit ?? SampleWorkstationTemplateVolumeUnit.Microliters);
             }, isCommand: true));
 
         endpoints.MapGet("/api/workstations/{deviceId}/capabilities", async (

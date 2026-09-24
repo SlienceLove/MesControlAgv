@@ -15,6 +15,35 @@ namespace MesControlAgv.Adapter.Tests;
 
 public sealed class SampleWorkstationModuleTests
 {
+    [Theory]
+    [InlineData("Milliliters", true)]
+    [InlineData("Microliters", false)]
+    [InlineData(null, false)]
+    [InlineData("9", false)]
+    public async Task Milliliter_import_endpoint_requires_matching_explicit_file_unit(string? unit, bool accepted)
+    {
+        var template = SampleWorkstationTemplateFile.Read(File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Fixtures", "workstation-test-001.xlsx")));
+        var file = SampleWorkstationTemplateFile.Write(template, SampleWorkstationTemplateVolumeUnit.Milliliters);
+        using var vendor = new VendorHandler("")
+        {
+            ResponseFactory = request => request.Method == HttpMethod.Post ? """{"Code":200,"Data":"导入成功"}"""
+                : JsonSerializer.Serialize(new { Code = 200, Data = new { FileName = "task.xlsx", FileData = Convert.ToBase64String(file) } })
+        };
+        await using var app = await CreateHostAsync(vendor, control: true, unit: "Milliliters");
+        using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
+        using var content = new ByteArrayContent(file);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+        using var response = await client.PostAsync("/api/workstations/WS-01/tasks/import?fileName=task.xlsx" + (unit is null ? "" : "&fileVolumeUnit=" + unit), content);
+        Assert.Equal(accepted ? HttpStatusCode.OK : HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.Equal(accepted ? 2 : 0, vendor.RequestCount);
+        if (accepted)
+        {
+            var result = (await response.Content.ReadFromJsonAsync<SampleWorkstationTaskImportResponse>())!;
+            Assert.Equal(SampleWorkstationTemplateVolumeUnit.Milliliters, result.FileVolumeUnit);
+            Assert.Equal(50, result.Template!.Transfers.Single().VolumeMicroliters);
+        }
+    }
+
     [Fact]
     public async Task Import_rejects_wrong_media_type_without_sending_a_command()
     {
@@ -71,6 +100,7 @@ public sealed class SampleWorkstationModuleTests
     [Theory]
     [InlineData("start", "启动成功", "/Service/StartExperiment", true)]
     [InlineData("barcodes", "更新成功", "/Service/UpdateTaskBarcode", true)]
+    [InlineData("barcodes", "更新任务信息完成!任务编号:'TASK-01',1号样品瓶条码:'来源+A&1',2号样品瓶条码:'B/2')", "/Service/UpdateTaskBarcode", true)]
     [InlineData("barcodes", "更新成功", "/Service/UpdateTaskBarcode", false)]
     public async Task V102_json_body_binds_both_barcodes_and_respects_control_policy(
         string action, string ack, string vendorPath, bool enabled)
@@ -89,6 +119,7 @@ public sealed class SampleWorkstationModuleTests
         response.EnsureSuccessStatusCode();
         Assert.Equal(1, vendor.RequestCount);
         Assert.Equal(vendorPath, vendor.LastUri!.AbsolutePath);
+        Assert.Equal(action == "barcodes" ? HttpMethod.Post : HttpMethod.Get, vendor.LastMethod);
         var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(vendor.LastUri.Query);
         Assert.Equal("来源+A&1", query["SampleBarcode1"]);
         Assert.Equal("B/2", query["SampleBarcode2"]);
@@ -211,13 +242,14 @@ public sealed class SampleWorkstationModuleTests
         Assert.Equal(1, vendor.RequestCount);
     }
 
-    private static async Task<WebApplication> CreateHostAsync(VendorHandler vendor, bool control, bool enabled = true)
+    private static async Task<WebApplication> CreateHostAsync(VendorHandler vendor, bool control, bool enabled = true, string unit = "Microliters")
     {
         var builder = WebApplication.CreateBuilder();
         builder.Logging.ClearProviders();
         var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["Devices:SampleWorkstation:DeviceId"] = "WS-01",
+            ["Devices:SampleWorkstation:TemplateVolumeUnit"] = unit,
             ["Devices:SampleWorkstation:EquipmentNo"] = "EQ-01",
             // All requests are intercepted by VendorHandler; satisfy deployment URL validation.
             ["Devices:SampleWorkstation:BaseUrl"] = "http://127.0.0.1/Service/",
