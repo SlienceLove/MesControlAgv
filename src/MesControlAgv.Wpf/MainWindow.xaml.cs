@@ -26,7 +26,7 @@ public partial class MainWindow : Window
     {
         EnsureInitialTabSelection();
         if (DataContext is MainViewModel && string.Equals(Environment.GetEnvironmentVariable("WPF_START_PAGE"), "ShineLabControl", StringComparison.Ordinal))
-            MainTabs.SelectedItem = InstrumentTaskImportTab;
+            MainTabs.SelectedItem = ShineLabDeviceStatusTab;
         if (_twinStartupApplied || DataContext is not MainViewModel model) return;
         _twinStartupApplied = true;
         if (model.StartupDiagnostics is { CanStart: true, TwinSchematicFollow: true } &&

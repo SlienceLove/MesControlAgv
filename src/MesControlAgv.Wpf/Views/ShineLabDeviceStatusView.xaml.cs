@@ -8,6 +8,7 @@ namespace MesControlAgv.Wpf.Views;
 public partial class ShineLabDeviceStatusView : UserControl
 {
     private readonly DispatcherTimer _currentTaskTimer = new() { Interval = TimeSpan.FromSeconds(5) };
+    private ShineLabTaskWindow? _taskWindow;
     public static readonly DependencyProperty ControlModelProperty = DependencyProperty.Register(nameof(ControlModel),
         typeof(ShineLabControlViewModel), typeof(ShineLabDeviceStatusView));
     public ShineLabControlViewModel? ControlModel
@@ -31,6 +32,16 @@ public partial class ShineLabDeviceStatusView : UserControl
     }
 
     private void SingleTaskTemplate_Click(object sender, RoutedEventArgs e) => OpenTaskWorkspace(false);
+    private async void ImportIonTasks_Click(object sender, RoutedEventArgs e)
+    {
+        if (ControlModel is not { IsBusy: false } model) return;
+        if (_taskWindow is not null) { _taskWindow.Activate(); return; }
+        _taskWindow = new ShineLabTaskWindow(model) { Owner = Window.GetWindow(this) };
+        try { _taskWindow.ShowDialog(); }
+        finally { _taskWindow = null; }
+        await model.RefreshAsync(); // Read back records after explicit user operations; never dispatch.
+        await RefreshCurrentTaskAsync();
+    }
     private void BatchTaskImport_Click(object sender, RoutedEventArgs e) => OpenTaskWorkspace(true);
     private void OpenTaskWorkspace(bool batch)
     {

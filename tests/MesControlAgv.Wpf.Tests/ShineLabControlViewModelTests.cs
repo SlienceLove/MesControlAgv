@@ -256,7 +256,7 @@ public sealed class ShineLabControlViewModelTests
     }
 
     [Fact]
-    public void New_page_is_accessible_from_main_navigation_and_renders_without_device_writes()
+    public void Task_dialog_reuses_model_and_renders_without_device_writes()
     {
         Exception? failure = null;
         var thread = new Thread(() =>
@@ -265,16 +265,14 @@ public sealed class ShineLabControlViewModelTests
             {
                 var mes = new StubMes();
                 var vm = new ShineLabControlViewModel(mes, new Confirm());
-                var window = new MainWindow { WindowState = WindowState.Normal, Width = 1200, Height = 800 };
-                var tabs = Assert.IsType<TabControl>(window.FindName("MainTabs"));
-                var tab = Assert.IsType<TabItem>(window.FindName("InstrumentTaskImportTab"));
-                var import = Assert.IsType<Views.InstrumentTaskImportView>(tab.Content);
-                import.DataContext = new { ShineLabControl = vm };
-                window.Show(); tabs.SelectedItem = tab; window.UpdateLayout();
+                var window = new Views.ShineLabTaskWindow(vm);
+                window.Show(); window.UpdateLayout();
+                var import = Assert.IsType<Views.ShineLabControlView>(window.FindName("TaskView"));
+                Assert.Same(vm, import.DataContext);
                 Assert.True(import.ActualWidth > 0);
                 Assert.True(import.ActualHeight > 0);
-                var oldTab = Assert.IsType<TabItem>(window.FindName("ShineLabControlTab"));
-                Assert.Equal(Visibility.Collapsed, oldTab.Visibility);
+                Assert.Equal(Visibility.Visible, Assert.IsType<TabItem>(import.FindName("ImportTab")).Visibility);
+                Assert.Equal(Visibility.Visible, Assert.IsType<TabItem>(import.FindName("ResultsTab")).Visibility);
                 Assert.Empty(mes.DeviceCommands);
                 Assert.Equal(0, mes.ConfigCount);
                 window.Close();
@@ -421,6 +419,154 @@ public sealed class ShineLabControlViewModelTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = respond(request) });
     }
+    [Theory]
+    [InlineData(820, 560)]
+    [InlineData(1200, 760)]
+    public void Device_button_opens_owned_task_dialog_and_reopening_preserves_draft(int width, int height)
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            Window? owner = null;
+            try
+            {
+                var mes = new StubMes();
+                var vm = new ShineLabControlViewModel(mes, new Confirm());
+                var sample = new ShineLabDirectSampleTask(2, "TEST-DRAFT", "离线弹窗样品", "未知样品", 0, "", 1, "1:A1", "", "AQ核对", "AQ核对", null, 25, "µL", 1);
+                vm.ImportedSamples.Add(sample); vm.SelectedImport = sample;
+                using var status = new ShineLabDeviceStatusViewModel(mes);
+                var view = new Views.ShineLabDeviceStatusView { DataContext = status, ControlModel = vm };
+                owner = new Window { Content = view, Width = 850, Height = 600 };
+                owner.Show(); owner.UpdateLayout();
+                var button = Assert.IsType<Button>(view.FindName("IonImportTasksButton"));
+                Assert.True(button.IsVisible);
+                for (var iteration = 0; iteration < 2; iteration++)
+                {
+                    var opened = false;
+                    owner.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(() =>
+                    {
+                        Views.ShineLabTaskWindow? dialog = null;
+                        try
+                        {
+                            dialog = Assert.Single(owner.OwnedWindows.OfType<Views.ShineLabTaskWindow>());
+                            opened = true;
+                            dialog.Width = width; dialog.Height = height; dialog.UpdateLayout();
+                            Assert.Same(vm, dialog.DataContext);
+                            Assert.Same(sample, Assert.Single(vm.ImportedSamples));
+                            Assert.Same(sample, vm.SelectedImport);
+                            var control = Assert.IsType<Views.ShineLabControlView>(dialog.FindName("TaskView"));
+                            var tabs = Assert.IsType<TabControl>(control.FindName("SectionTabs"));
+                            Assert.Same(control.FindName("ImportTab"), tabs.SelectedItem);
+                            Assert.True(control.ActualWidth > 0 && control.ActualHeight > 0);
+                            SaveDialogEvidence(dialog, $"import-dialog-{width}.png");
+                            tabs.SelectedItem = control.FindName("ResultsTab"); dialog.UpdateLayout();
+                            dialog.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                            Assert.True(Assert.IsType<DataGrid>(control.FindName("OperatorResultGrid")).IsVisible);
+                            SaveDialogEvidence(dialog, $"results-dialog-{width}.png");
+                            Assert.Empty(mes.DeviceCommands); Assert.Equal(0, mes.ConfigCount); Assert.Equal(0, mes.CreateCount);
+                        }
+                        catch (Exception ex) { failure = ex; }
+                        finally { dialog?.Close(); }
+                    }));
+                    button.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+                    Assert.True(opened); Assert.Null(failure);
+                    Assert.Empty(owner.OwnedWindows.OfType<Views.ShineLabTaskWindow>());
+                }
+            }
+            catch (Exception ex) { failure = ex; }
+            finally { owner?.Close(); Dispatcher.CurrentDispatcher.InvokeShutdown(); }
+        });
+        thread.SetApartmentState(ApartmentState.STA); thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(20))); Assert.Null(failure);
+    }
+
+    [Fact]
+    public void Task_dialog_cannot_close_while_request_is_pending()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            Views.ShineLabTaskWindow? window = null;
+            try
+            {
+                var mes = new StubMes { StatusGate = new() };
+                var model = new ShineLabControlViewModel(mes, new Confirm());
+                window = new Views.ShineLabTaskWindow(model);
+                window.Show(); window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                Assert.True(model.IsBusy);
+                window.Close(); Assert.True(window.IsVisible);
+                mes.StatusGate.SetResult([]);
+                window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                Assert.False(model.IsBusy);
+                window.Close(); Assert.False(window.IsVisible);
+                Assert.Empty(mes.DeviceCommands); Assert.Equal(0, mes.ConfigCount);
+            }
+            catch (Exception ex) { failure = ex; }
+            finally { window?.Close(); Dispatcher.CurrentDispatcher.InvokeShutdown(); }
+        });
+        thread.SetApartmentState(ApartmentState.STA); thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(15))); Assert.Null(failure);
+    }
+
+    [Fact]
+    public async Task Prepared_identity_and_send_eligibility_survive_dialog_reopen_without_duplicate_creation()
+    {
+        var mes = new StubMes();
+        var model = new ShineLabControlViewModel(mes, new Confirm());
+        await model.RefreshAsync();
+        var sample = new ShineLabDirectSampleTask(2, "PREPARED", "已预检样品", "未知样品", 0, "", 1, "1:A1", "", "AQ核对", "AQ核对", null, 25, "µL", 1);
+        model.ImportedSamples.Add(sample); model.SelectedImport = sample;
+        await model.PrepareSelectedAsync();
+        Assert.True(model.CanSendConfig);
+        var taskId = mes.Task!.TaskUuid;
+        var summary = model.PreparedSummary;
+        var preview = model.ConfigPreview;
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            try
+            {
+                for (var i = 0; i < 2; i++)
+                {
+                    var dialog = new Views.ShineLabTaskWindow(model);
+                    try
+                    {
+                        dialog.Show(); dialog.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                        Assert.True(model.CanSendConfig);
+                        Assert.Equal(taskId, mes.Task.TaskUuid);
+                        Assert.Equal(summary, model.PreparedSummary);
+                        Assert.Equal(preview, model.ConfigPreview);
+                    }
+                    finally { dialog.Close(); }
+                }
+            }
+            catch (Exception ex) { failure = ex; }
+            finally { Dispatcher.CurrentDispatcher.InvokeShutdown(); }
+        });
+        thread.SetApartmentState(ApartmentState.STA); thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(15))); Assert.Null(failure);
+        Assert.Equal(1, mes.CreateCount); // Opening/closing alone never prepares again.
+        await model.PrepareSelectedAsync();
+        Assert.Equal(taskId, mes.Task.TaskUuid);
+        Assert.Equal(2, mes.CreateCount); // Explicit re-preflight repeats the idempotent request.
+        Assert.Equal(taskId, Assert.Single(mes.CreatedRequestIds.Distinct()));
+        Assert.Equal(0, mes.ConfigCount);
+        Assert.Empty(mes.DeviceCommands);
+    }
+
+    private static void SaveDialogEvidence(Window window, string name)
+    {
+        var directory = Environment.GetEnvironmentVariable("MES_UI_EVIDENCE_DIRECTORY");
+        if (string.IsNullOrWhiteSpace(directory)) return;
+        Directory.CreateDirectory(directory);
+        var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight,
+            96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+        bitmap.Render(window);
+        var encoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
+        encoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(bitmap));
+        using var output = File.Create(Path.Combine(directory, name)); encoder.Save(output);
+    }
+
     private sealed class StubMes : IMesClient
     {
         public bool Enabled { get; set; } = true;
@@ -429,7 +575,9 @@ public sealed class ShineLabControlViewModelTests
         public bool Online { get; set; } = true;
         public DateTimeOffset? LastSeen { get; set; }
         public bool StatusThrows { get; set; }
+        public TaskCompletionSource<IReadOnlyList<ShineLabDeviceStatusResponse>>? StatusGate { get; set; }
         public int CreateCount { get; private set; }
+        public List<string> CreatedRequestIds { get; } = [];
         public int ConfigCount { get; private set; }
         public bool ConfigThrows { get; set; }
         public ShineLabTaskResponse? Task { get; set; }
@@ -453,11 +601,12 @@ public sealed class ShineLabControlViewModelTests
         public Task<ShineLabServerStatusResponse> GetShineLabServerStatusAsync(CancellationToken token) => System.Threading.Tasks.Task.FromResult(new ShineLabServerStatusResponse(true, "192.168.10.11", 5500, 60, 10000, Profile, Enabled));
         public Task<IReadOnlyList<ShineLabDeviceStatusResponse>> GetShineLabDeviceStatusesAsync(CancellationToken token) =>
             StatusThrows ? throw new HttpRequestException("status unavailable") :
+            StatusGate is { } gate ? gate.Task :
             System.Threading.Tasks.Task.FromResult<IReadOnlyList<ShineLabDeviceStatusResponse>>([new("STN61_01", "test", Online, Status,
                 Status == 0 ? "Idle" : "Running", Status == 1, null, null, null, null, null, null, null, null, null, LastSeen ?? DateTimeOffset.UtcNow)]);
         public Task<ShineLabTaskResponse> CreateShineLabTaskAsync(ShineLabTaskCreateRequest request, CancellationToken token)
         {
-            CreateCount++; _request = request;
+            CreateCount++; CreatedRequestIds.Add(request.TaskUuid); _request = request;
             Task ??= new(Guid.NewGuid(), request.TaskUuid, request.EquipmentCode, "Created", "Created", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, null, null, null);
             return System.Threading.Tasks.Task.FromResult(Task);
         }

@@ -146,7 +146,6 @@
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="任务排程" />
                                 </RadioButton>
-                                <RadioButton Tag="InstrumentTaskImportTab" Style="{StaticResource NavigationRadioButtonStyle}" Click="NavigationButton_Click"><TextBlock Text="仪器任务导入" /></RadioButton>
                                 <RadioButton Tag="MapDashboardTab" Visibility="Collapsed"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
@@ -188,11 +187,6 @@
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="AGV 通讯与调度" />
-                                </RadioButton>
-                                <RadioButton Tag="ShineLabControlTab" Visibility="Collapsed"
-                                             Style="{StaticResource NavigationRadioButtonStyle}"
-                                             Click="NavigationButton_Click">
-                                    <TextBlock Text="离子色谱控制" />
                                 </RadioButton>
                                 <RadioButton Tag="AuboArmTab"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
@@ -283,7 +277,6 @@
                         <StackPanel.Style>
                             <Style TargetType="StackPanel">
                                 <Style.Triggers>
-                                    <DataTrigger Binding="{Binding SelectedItem.Name, ElementName=MainTabs}" Value="InstrumentTaskImportTab"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
                                     <DataTrigger Binding="{Binding SelectedItem.Name, ElementName=MainTabs}" Value="ShineLabDeviceStatusTab"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
                                 </Style.Triggers>
                             </Style>
@@ -433,9 +426,6 @@
         <views:ShineLabDeviceStatusView DataContext="{Binding ShineLabDeviceStatus}"
             ControlModel="{Binding DataContext.ShineLabControl, RelativeSource={RelativeSource AncestorType=Window}}" />
     </TabItem>
-    <TabItem x:Name="ShineLabControlTab" Header="离子色谱控制（已归入设备与导入页）" Visibility="Collapsed" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
-        <views:ShineLabControlView DataContext="{Binding ShineLabControl}" />
-    </TabItem>
     <TabItem x:Name="ShineLabTaskDispatchTab" Visibility="Collapsed" Header="ShineLab 任务下发（实验）" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:ShineLabTaskDispatchView DataContext="{Binding ShineLabTaskDispatch}" />
     </TabItem>
@@ -447,9 +437,6 @@
     </TabItem>
     <TabItem x:Name="AuboArmTab" Header="AUBO 机械臂" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:AuboArmControlView DataContext="{Binding AuboArm}" />
-    </TabItem>
-    <TabItem x:Name="InstrumentTaskImportTab" Header="仪器任务导入" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
-        <views:InstrumentTaskImportView />
     </TabItem>
     <TabItem x:Name="SampleManagementTab" Header="样品管理" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:SampleManagementView DataContext="{Binding Samples}" />

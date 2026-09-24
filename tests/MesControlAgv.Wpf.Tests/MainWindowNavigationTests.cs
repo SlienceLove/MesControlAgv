@@ -9,6 +9,38 @@ namespace MesControlAgv.Wpf.Tests;
 public sealed class MainWindowNavigationTests
 {
     [Fact]
+    public void Legacy_shinelab_start_page_opens_device_status_without_a_task_dialog()
+    {
+        Exception? failure = null;
+        var thread = new Thread(() =>
+        {
+            var previous = Environment.GetEnvironmentVariable("WPF_START_PAGE");
+            MainWindow? window = null;
+            try
+            {
+                Environment.SetEnvironmentVariable("WPF_START_PAGE", "ShineLabControl");
+                using var model = new ViewModels.MainViewModel(new FakeMesClient([]));
+                window = new MainWindow { DataContext = model, WindowState = WindowState.Normal, Width = 1000, Height = 700 };
+                window.Show(); window.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+                var tabs = Assert.IsType<TabControl>(window.FindName("MainTabs"));
+                Assert.Same(window.FindName("ShineLabDeviceStatusTab"), tabs.SelectedItem);
+                Assert.Null(window.FindName("InstrumentTaskImportTab"));
+                Assert.Null(window.FindName("ShineLabControlTab"));
+                Assert.Empty(window.OwnedWindows.OfType<Views.ShineLabTaskWindow>());
+            }
+            catch (Exception exception) { failure = exception; }
+            finally
+            {
+                window?.Close();
+                Environment.SetEnvironmentVariable("WPF_START_PAGE", previous);
+                Dispatcher.CurrentDispatcher.InvokeShutdown();
+            }
+        });
+        thread.SetApartmentState(ApartmentState.STA); thread.Start();
+        Assert.True(thread.Join(TimeSpan.FromSeconds(15))); Assert.Null(failure);
+    }
+
+    [Fact]
     public void Kpi_tab_is_selected_and_rendered_on_initial_show()
     {
         Exception? failure = null;
@@ -114,8 +146,8 @@ public sealed class MainWindowNavigationTests
                 Assert.Contains("任务与设备", groupHeaders);
                 Assert.Contains("实验工作流", groupHeaders);
                 Assert.Contains("系统与诊断", groupHeaders);
-                Assert.Single(instrumentImportButtons);
-                Assert.Equal(Visibility.Visible, instrumentImportButtons[0].Visibility);
+                Assert.Empty(instrumentImportButtons);
+                Assert.Null(window.FindName("InstrumentTaskImportTab"));
 
                 agvButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
 
