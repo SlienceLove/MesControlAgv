@@ -23,3 +23,4 @@
 - 页面隐藏/关闭后停止定时器，恢复可见立即通知重新计算；测试在 WPF Dispatcher 实际处理 Loaded/Unloaded 后检查状态，避免用未加载控件推断生命周期。
 - 只读代码审查指出 LastSeenAtUtc 可被心跳续期，已改为同时校验 LastDeviceStatusAtUtc；复核通过。旧 MES 缺字段不宣称已确认当前任务，历史 SampleFinish/TaskFinish/Result 仍不被当作真实终态。
 - 证据位于主目录 `artifacts/current-task-ui-20260924/`，仅本机保留，不提交。未发送设备动作、未重启 MES 或现有 WPF，未推送或推进 master。
+- 功能提交 `c4a6098` 已合入 develop `dca6a2c`。集成目录再次完成 WPF 730 / MES 731 全量回归；整套解决方案构建 0 警告、0 错误。验证后同步回本会话已授权的 UI 分支，原功能分支保留以便追溯。
