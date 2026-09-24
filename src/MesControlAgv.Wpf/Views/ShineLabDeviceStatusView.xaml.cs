@@ -12,6 +12,16 @@ public partial class ShineLabDeviceStatusView : UserControl
         InitializeComponent();
     }
 
+    private void SingleTaskTemplate_Click(object sender, RoutedEventArgs e) => OpenTaskWorkspace(false);
+    private void BatchTaskImport_Click(object sender, RoutedEventArgs e) => OpenTaskWorkspace(true);
+    private void OpenTaskWorkspace(bool batch)
+    {
+        if (DataContext is not ViewModels.ShineLabDeviceStatusViewModel vm) return;
+        var dialog = new WorkstationTaskWindow(vm.TaskTemplateClient, vm.TaskTemplateDeviceId,
+            vm.SelectedWorkstationTask?.TaskNo, batch) { Owner = Window.GetWindow(this) };
+        dialog.ShowDialog();
+    }
+
     private void DeviceSummaryGrid_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (DeviceSummaryGrid.ActualWidth <= 0)

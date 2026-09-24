@@ -10,6 +10,14 @@ public static class SampleWorkstationEndpointRouteBuilderExtensions
 {
     public static IEndpointRouteBuilder MapSampleWorkstationEndpoints(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapPost("/api/workstations/{deviceId}/task-batches/import", async (
+            string deviceId, WorkstationBatchRequest request, WorkstationBatchImportService service, CancellationToken cancellationToken) =>
+        {
+            try { return Results.Ok(await service.ImportAsync(deviceId, request, cancellationToken)); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { detail = ex.Message }); }
+            catch (InvalidOperationException ex) { return Results.Conflict(new { detail = ex.Message }); }
+            catch (SampleWorkstationGatewayException ex) { return Results.Problem(ex.Message, statusCode: ex.StatusCode); }
+        });
         endpoints.MapGet("/api/workstations/{deviceId}/tasks/{taskNo}/template", async (
             string deviceId, string taskNo, HttpRequest request, ISampleWorkstationTemplateReader reader,
             CancellationToken cancellationToken) =>

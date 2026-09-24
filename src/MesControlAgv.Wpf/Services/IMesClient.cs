@@ -117,6 +117,8 @@ public sealed record DashboardWorkflowExecution(
 
 public interface IMesClient
 {
+    Task<WorkstationBatchResult> ImportWorkstationBatchAsync(string deviceId, WorkstationBatchRequest request, CancellationToken token) =>
+        Task.FromException<WorkstationBatchResult>(new NotSupportedException("MES 尚未提供批量任务导入接口。"));
     Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<DashboardTask>> GetTasksAsync(DateOnly date, CancellationToken cancellationToken) => GetTasksAsync(cancellationToken);
     Task<KpiDashboard> GetKpiDashboardAsync(DateOnly date, CancellationToken cancellationToken);
@@ -655,6 +657,10 @@ public interface IMesClient
         CompleteExperimentSampleVerificationRequest request,
         CancellationToken cancellationToken) =>
         Task.FromException<ExperimentSampleVerification>(new NotSupportedException("Experiment sample verification APIs are not supported by this MES client."));
+
+    Task<IReadOnlyList<SampleWorkstationTaskSummaryResponse>> GetSampleWorkstationTasksAsync(
+        string deviceId, int startNo, int recordNum, CancellationToken cancellationToken) =>
+        Task.FromException<IReadOnlyList<SampleWorkstationTaskSummaryResponse>>(new NotSupportedException("当前客户端不支持工作站任务列表。"));
 
     Task<SampleWorkstationTemplateResponse> GetSampleWorkstationTemplateAsync(
         string deviceId,
