@@ -15,6 +15,7 @@
 | master | 已通过本轮离线回归的统一基线；现场部署仍需现场验收 | 接收 develop |
 | develop | 唯一集成入口 | 功能、UI 分支先汇入这里 |
 | feature/wpf-ui-layout-optimization | 后续界面优化 | develop |
+| feature/digital-twin-single-agv | 用户于2026-09-24授权接管并补提交模型清理成果；8d6c54f删除冗余静态机器人/盒体，配套指纹与测试一并提交 | 已合入develop 9da0526；原证据与规划草稿保留，后续任务从最新develop开始 |
 | fix/workstation-empty-task-page | 从 develop e547c94 建立；仅修复任务列表末页201“无数据”的兼容，独立目录 .worktrees/workstation-empty-page；0e70445 已集成 | develop efea896，网关现场切换另行确认 |
 | feature/device-current-task-display | 从 develop 4855e14 建立；两设备当前任务显示与 MES 只读设备状态时间字段，c4a6098 已集成 | develop dca6a2c 已通过 WPF 730 / MES 731，后续现场部署另行确认 |
 | feature/workstation-ml-template-validation | 开盖分液 mL、条码 POST、手动结束后续跑；9b639cb 已于 2026-09-24 合入本地 develop | 后续任务以更新后的 develop 为起点 |
@@ -59,6 +60,8 @@
 上述集成完成后，用户另行明确授权本会话接管主目录 `D:/Project/Github/Mes` 的 UI 分支。已从 `c377c8a` 快进同步已验证 develop `6aac6d4`，原未跟踪现场资料保留。本轮仅在 UI 分支修改开盖分液设备页布局与展示属性，验证后串行合入 develop；其他功能工作区仍不修改。实现范围及 701 项 WPF 回归记录见[紧凑设备页交接](WORKSTATION-COMPACT-UI-2026-09-24.md)。未自动部署、推送或推进 master。
 
 ## 后续工作规则
+
+2026-09-24 数字孪生补集成：用户确认此前模型清理未提交，授权本会话接管 `.worktrees/digital-twin-single-agv`。按限定文件提交8d6c54f并合入develop 9da0526，未合入three-device-sequence的未提交执行草稿。合入后Node24、WPF733项通过（排除会越界写历史产物的2项旧RPA演练），原生WPF/WebView离线位姿冒烟通过。发布新WPF候选包，尚未切换现场窗口/网关、未推送或推进master，详见[本轮模型集成记录](DIGITAL-TWIN-MODEL-INTEGRATION-2026-09-24.md)。
 
 2026-09-24 UI 后续：用户确认删除独立“仪器任务导入”页面，离子色谱导入改为设备状态页按钮弹窗。实施在已授权 UI 主目录，保留开盖分液模板/批量入口；WPF735项通过。详见[导入弹窗交接](ION-IMPORT-DIALOG-2026-09-24.md)。本轮不改 MES、设备协议或运行服务，验证后串行合入 develop。
 
