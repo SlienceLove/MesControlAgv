@@ -7,7 +7,7 @@ namespace MesControlAgv.Wpf.Tests;
 public sealed class DetectionStandardsViewTests
 {
     [Fact]
-    public void Material_page_contains_standard_tab_and_sample_assessment_dialog_loads()
+    public void Material_page_has_no_standard_tab_and_sample_assessment_dialog_loads()
     {
         Exception? failure = null;
         var thread = new Thread(() =>
@@ -16,8 +16,8 @@ public sealed class DetectionStandardsViewTests
             {
                 var page = new MaterialManagementView();
                 var tabs = Assert.IsType<TabControl>(page.FindName("MaterialTabs"));
-                Assert.Contains(tabs.Items.OfType<TabItem>(), item =>
-                    (string?)item.Header == "检测标准" && item.Content is DetectionStandardsView);
+                Assert.DoesNotContain(tabs.Items.OfType<TabItem>(), item =>
+                    (string?)item.Header == "检测标准");
                 var dialog = new DetectionAssessmentDialog();
                 Assert.Equal("样品检测判定", dialog.Title);
                 dialog.Close();

@@ -173,6 +173,12 @@
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="样品管理" />
                                 </RadioButton>
+                                <RadioButton Tag="DetectionStandardsTab"
+                                             AutomationProperties.AutomationId="DetectionStandardsNavigation"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="检测标准" />
+                                </RadioButton>
                             </StackPanel>
                         </Expander>
 
@@ -665,6 +671,9 @@
         </TabItem>
     <TabItem x:Name="MaterialManagementTab" Header="物料管理" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:MaterialManagementView DataContext="{Binding Materials}" x:Name="MaterialManagementView" />
+    </TabItem>
+    <TabItem x:Name="DetectionStandardsTab" Header="检测标准" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <views:DetectionStandardsView DataContext="{Binding Materials.DetectionStandards}" x:Name="DetectionStandardsView" />
     </TabItem>
                 </TabControl>
             </Border>

@@ -1,7 +1,6 @@
 <UserControl x:Class="MesControlAgv.Wpf.Views.MaterialManagementView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:local="clr-namespace:MesControlAgv.Wpf.Views"
              HorizontalContentAlignment="Stretch"
              VerticalContentAlignment="Stretch">
     <Grid Margin="0,8,0,0">
@@ -61,10 +60,6 @@
                         <ItemsControl ItemsSource="{Binding ImportIssues}" />
                     </Border>
                 </Grid>
-            </TabItem>
-
-            <TabItem Header="检测标准">
-                <local:DetectionStandardsView DataContext="{Binding DetectionStandards}" />
             </TabItem>
 
             <TabItem Header="耗材库存">

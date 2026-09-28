@@ -121,6 +121,12 @@ public sealed class MainWindowNavigationTests
                 var materialTags = FindVisualChildren<RadioButton>(materialsGroup).Select(item => item.Tag as string).ToArray();
                 Assert.Contains("MaterialManagementTab", materialTags);
                 Assert.Contains("SampleManagementTab", materialTags);
+                Assert.Contains("DetectionStandardsTab", materialTags);
+                var standardsButton = FindVisualChildren<RadioButton>(sidebar)
+                    .Single(button => string.Equals(button.Tag as string, "DetectionStandardsTab", StringComparison.Ordinal));
+                Assert.Equal("检测标准", Assert.IsType<TextBlock>(standardsButton.Content).Text);
+                var standardsTab = Assert.IsType<TabItem>(window.FindName("DetectionStandardsTab"));
+                Assert.IsType<Views.DetectionStandardsView>(window.FindName("DetectionStandardsView"));
                 var sampleButton = FindVisualChildren<RadioButton>(materialsGroup)
                     .Single(item => item.Tag as string == "SampleManagementTab");
                 Assert.Equal("样品管理", Assert.IsType<TextBlock>(sampleButton.Content).Text);
@@ -139,6 +145,8 @@ public sealed class MainWindowNavigationTests
                     .Single(item => item.Tag as string == "MaterialManagementTab");
                 materialsButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
                 Assert.Same(window.FindName("MaterialManagementTab"), tabs.SelectedItem);
+                standardsButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+                Assert.Same(standardsTab, tabs.SelectedItem);
                 var overview = FindVisualChildren<Expander>(sidebar).Single(item => Equals(item.Header, "运营总览"));
                 Assert.DoesNotContain(FindVisualChildren<RadioButton>(overview), item =>
                     item.Tag as string is "MaterialManagementTab" or "SampleManagementTab");
