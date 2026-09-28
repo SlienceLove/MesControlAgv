@@ -49,6 +49,15 @@ public sealed class SampleMaterialRecord
     public DateTime UpdatedAtUtc { get; set; }
 }
 
+public sealed class SampleBatchDetectionMethodRecord
+{
+    public string SampleBatchId { get; set; } = string.Empty;
+    public string MethodCode { get; set; } = string.Empty;
+    public Guid RequestId { get; set; }
+    public string CreatedBy { get; set; } = string.Empty;
+    public DateTime CreatedAtUtc { get; set; }
+}
+
 public sealed class MaterialLotRecord
 {
     public Guid LotId { get; set; }

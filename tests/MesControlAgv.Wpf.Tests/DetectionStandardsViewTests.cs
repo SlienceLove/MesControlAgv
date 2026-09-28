@@ -21,6 +21,8 @@ public sealed class DetectionStandardsViewTests
                 var dialog = new DetectionAssessmentDialog();
                 Assert.Equal("样品检测判定", dialog.Title);
                 dialog.Close();
+                Assert.Equal("新建样品", new CreateSampleDialog().Title);
+                Assert.Equal("新增耗材", new CreateConsumableDialog().Title);
             }
             catch (Exception exception) { failure = exception; }
         });

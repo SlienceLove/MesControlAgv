@@ -93,6 +93,96 @@ public sealed class DetectionStandardsViewModelTests
         Assert.False(model.SaveCommand.CanExecute(null));
     }
 
+    [Fact]
+    public async Task Single_sample_create_inherits_existing_batch_method()
+    {
+        var client = new StubClient();
+        var standard = await client.SaveDetectionStandardAsync(new SaveDetectionStandardRequest
+        {
+            MethodCode = "HJ 125", Name = "批次方法", Actor = "test",
+            Indicators = [new DetectionIndicatorRule { Name = "氯离子", Unit = "mg/L", UpperLimit = 5 }]
+        }, CancellationToken.None);
+        var samples = new[] { new SampleMaterial
+        {
+            Barcode = "S-OLD", SampleBatchId = "B-ONE", DetectionMethodCode = standard.MethodCode
+        } };
+        var model = new CreateSampleViewModel(client, samples, "tester", () => Task.CompletedTask);
+        await model.LoadAsync();
+        model.BatchId = "B-ONE";
+        model.Barcode = "S-NEW";
+
+        Assert.True(model.IsMethodLocked);
+        Assert.Equal(standard.MethodCode, model.SelectedStandard?.MethodCode);
+        await model.SaveAsync();
+
+        Assert.True(model.IsSaved);
+        Assert.Equal("B-ONE", client.LastMaterialImport?.Samples[0].SampleBatchId);
+        Assert.Null(client.LastMaterialImport?.Samples[0].DetectionMethodCode);
+    }
+
+    [Fact]
+    public async Task Single_sample_create_inherits_inactive_bound_method()
+    {
+        var client = new StubClient();
+        var samples = new[] { new SampleMaterial
+        {
+            Barcode = "S-OLD", SampleBatchId = "B-STOPPED", DetectionMethodCode = "HJ STOPPED"
+        } };
+        var model = new CreateSampleViewModel(client, samples, "tester", () => Task.CompletedTask);
+        await model.LoadAsync();
+        model.BatchId = "B-STOPPED";
+        model.Barcode = "S-NEW";
+
+        Assert.True(model.IsMethodLocked);
+        Assert.Equal("HJ STOPPED", model.BoundMethodCode);
+        Assert.Null(model.SelectedStandard);
+        await model.SaveAsync();
+
+        Assert.True(model.IsSaved);
+        Assert.Null(client.LastMaterialImport?.Samples[0].DetectionMethodCode);
+    }
+
+    [Fact]
+    public async Task Single_consumable_create_uses_full_receive_contract()
+    {
+        var client = new StubClient();
+        var model = new CreateConsumableViewModel(client, [], "tester", () => Task.CompletedTask)
+        {
+            MaterialCode = "BUFFER-1", MaterialName = "缓冲液", LotCode = "LOT-1",
+            Quantity = "5", Unit = "mL", Barcode = "LOT-BARCODE-1",
+            Specification = "100mL", LocationCode = "DEFAULT",
+            ManufactureDate = new DateTime(2026, 9, 1), ExpiryDate = new DateTime(2027, 9, 1)
+        };
+
+        await model.SaveAsync();
+
+        Assert.True(model.IsSaved);
+        Assert.Equal("LOT-BARCODE-1", client.LastReceive?.Barcode);
+        Assert.Equal("100mL", client.LastReceive?.Specification);
+        Assert.Equal(5m, client.LastReceive?.Quantity);
+        Assert.Equal(2027, client.LastReceive?.ExpiryDate?.Year);
+    }
+
+    [Fact]
+    public async Task Bound_sample_selects_its_method_in_assessment_dialog()
+    {
+        var client = new StubClient();
+        var standard = await client.SaveDetectionStandardAsync(new SaveDetectionStandardRequest
+        {
+            MethodCode = "HJ 126", Name = "批次方法", Actor = "test",
+            Indicators = [new DetectionIndicatorRule { Name = "氯离子", Unit = "mg/L", UpperLimit = 5 }]
+        }, CancellationToken.None);
+        var model = new DetectionAssessmentViewModel(client, new SampleMaterial
+        {
+            SampleId = Guid.NewGuid(), SampleBatchId = "B-TWO", DetectionMethodCode = standard.MethodCode
+        }, "tester");
+
+        await model.LoadAsync();
+
+        Assert.Equal(standard.MethodCode, model.SelectedStandard?.MethodCode);
+        Assert.False(model.IsMethodSelectionEnabled);
+    }
+
     private sealed class StubClient : IMesClient
     {
         public List<DetectionStandardRevision> Revisions { get; } = [];
@@ -100,6 +190,8 @@ public sealed class DetectionStandardsViewModelTests
         public DetectionAssessmentRequest? LastAssessment { get; private set; }
         public DetectionAssessmentRequest? PendingPreview { get; private set; }
         public TaskCompletionSource<DetectionAssessment>? PreviewGate { get; set; }
+        public MaterialImportRequest? LastMaterialImport { get; private set; }
+        public ReceiveMaterialRequest? LastReceive { get; private set; }
 
         public Task<IReadOnlyList<DetectionStandardRevision>> GetDetectionStandardsAsync(
             string? search, bool includeHistory, CancellationToken token) =>
@@ -130,6 +222,32 @@ public sealed class DetectionStandardsViewModelTests
 
         public Task<IReadOnlyList<DetectionAssessment>> GetDetectionAssessmentHistoryAsync(
             Guid sampleId, CancellationToken token) => Task.FromResult<IReadOnlyList<DetectionAssessment>>([]);
+
+        public Task<MaterialImportPreview> PreviewMaterialImportAsync(
+            MaterialImportRequest request, CancellationToken token) =>
+            Task.FromResult(new MaterialImportPreview { RequestId = request.RequestId, AcceptedCount = 1 });
+
+        public Task<MaterialCommandResult<MaterialImportResult>> ImportMaterialsAsync(
+            MaterialImportRequest request, CancellationToken token)
+        {
+            LastMaterialImport = request;
+            return Task.FromResult(new MaterialCommandResult<MaterialImportResult>
+            {
+                RequestId = request.RequestId,
+                Data = new MaterialImportResult { RequestId = request.RequestId, ImportedSamples = request.Samples.Count }
+            });
+        }
+
+        public Task<MaterialCommandResult<MaterialLotInventory>> ReceiveMaterialAsync(
+            ReceiveMaterialRequest request, CancellationToken token)
+        {
+            LastReceive = request;
+            return Task.FromResult(new MaterialCommandResult<MaterialLotInventory>
+            {
+                RequestId = request.RequestId,
+                Data = new MaterialLotInventory { MaterialCode = request.MaterialCode, LotCode = request.LotCode }
+            });
+        }
 
         public Task<DetectionAssessment> PreviewDetectionAssessmentAsync(
             DetectionAssessmentRequest request, CancellationToken token)

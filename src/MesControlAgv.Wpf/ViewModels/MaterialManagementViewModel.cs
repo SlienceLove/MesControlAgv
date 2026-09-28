@@ -63,6 +63,11 @@ public sealed class MaterialManagementViewModel : INotifyPropertyChanged, IDispo
     public ObservableCollection<MaterialTraceEvent> TraceEvents { get; } = [];
     public ObservableCollection<MaterialImportIssue> ImportIssues { get; } = [];
     public DetectionStandardsViewModel DetectionStandards { get; }
+    public CreateSampleViewModel CreateSampleEditor() =>
+        new(_mes, Samples.ToList(), _actor, () => RefreshAsync());
+
+    public CreateConsumableViewModel CreateConsumableEditor() =>
+        new(_mes, Inventory.ToList(), _actor, () => RefreshAsync());
     public SampleMaterial? SelectedSample
     {
         get => _selectedSample;
@@ -438,6 +443,7 @@ public sealed class MaterialManagementViewModel : INotifyPropertyChanged, IDispo
                     RowNumber = index + 1,
                     Barcode = Get(row, "barcode", "条码", "samplebarcode", "样品条码"),
                     SampleBatchId = Get(row, "samplebatchid", "batchid", "样品批次", "批次"),
+                    DetectionMethodCode = Get(row, "detectionmethodcode", "methodcode", "检测方法", "方法编号", "标准编号"),
                     MaterialCode = Get(row, "materialcode", "物料编码"),
                     SampleType = Get(row, "sampletype", "样品类型"),
                     LocationCode = Get(row, "locationcode", "库位")

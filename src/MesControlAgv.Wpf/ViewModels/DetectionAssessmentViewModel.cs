@@ -39,6 +39,7 @@ public sealed class DetectionAssessmentViewModel : INotifyPropertyChanged
     public DetectionAssessment? SelectedHistory { get => _selectedHistory; set => SetField(ref _selectedHistory, value); }
     public string VerdictText => Preview is null ? string.Empty : $"预览结论：{Label(Preview.Verdict)}";
     public bool IsSaved { get; private set; }
+    public bool IsMethodSelectionEnabled => string.IsNullOrWhiteSpace(Sample.DetectionMethodCode);
 
     public DetectionStandardRevision? SelectedStandard
     {
@@ -70,10 +71,19 @@ public sealed class DetectionAssessmentViewModel : INotifyPropertyChanged
             await Task.WhenAll(standardsTask, historyTask);
             Standards.Clear();
             foreach (var item in await standardsTask) Standards.Add(item);
+            if (!IsMethodSelectionEnabled)
+                SelectedStandard = Standards.FirstOrDefault(item =>
+                    string.Equals(item.MethodCode, Sample.DetectionMethodCode, StringComparison.OrdinalIgnoreCase));
             History.Clear();
             foreach (var item in await historyTask) History.Add(item);
             SelectedHistory = History.FirstOrDefault();
-            Status = Standards.Count == 0 ? "暂无启用的检测标准，请先到“检测标准”页签创建。" : "选择检测方法和本次检测的指标。";
+            Status = !IsMethodSelectionEnabled && SelectedStandard is null
+                ? $"批次绑定的方法 {Sample.DetectionMethodCode} 已停用或不存在，暂不能创建新判定。"
+                : Standards.Count == 0
+                    ? "暂无启用的检测标准，请先到“检测标准”页签创建。"
+                    : IsMethodSelectionEnabled
+                        ? "选择检测方法和本次检测的指标。"
+                        : $"已使用批次绑定的方法 {Sample.DetectionMethodCode}。";
         }
         catch (Exception exception) { Status = $"加载检测数据失败：{exception.Message}"; }
     }

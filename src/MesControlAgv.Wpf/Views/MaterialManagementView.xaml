@@ -30,6 +30,7 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <WrapPanel Margin="0,0,0,10">
+                        <Button Margin="0,0,8,0" Padding="12,6" Click="CreateSample_Click" Content="新建样品" />
                         <TextBlock VerticalAlignment="Center" Text="导入类型" />
                         <ComboBox Width="90" Margin="8,0,12,0"
                                   ItemsSource="{Binding ImportModes}"
@@ -49,6 +50,7 @@
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="样品条码" Binding="{Binding Barcode}" Width="1.5*" />
                             <DataGridTextColumn Header="样品批次" Binding="{Binding SampleBatchId}" Width="1.2*" />
+                            <DataGridTextColumn Header="检测方法" Binding="{Binding DetectionMethodCode}" Width="1.2*" />
                             <DataGridTextColumn Header="类型" Binding="{Binding SampleType}" Width="*" />
                             <DataGridTextColumn Header="状态" Binding="{Binding Status}" Width="*" />
                             <DataGridTextColumn Header="库位" Binding="{Binding Location.LocationCode}" Width="*" />
@@ -70,6 +72,7 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
                     <WrapPanel Margin="0,0,0,10">
+                        <Button Margin="0,0,8,0" Padding="12,6" Click="CreateConsumable_Click" Content="新增耗材" />
                         <TextBox Width="130" Margin="0,0,8,0" Text="{Binding InventoryMaterialCode, UpdateSourceTrigger=PropertyChanged}" ToolTip="物料编码" />
                         <TextBox Width="130" Margin="0,0,8,0" Text="{Binding InventoryLotCode, UpdateSourceTrigger=PropertyChanged}" ToolTip="批号" />
                         <TextBox Width="110" Margin="0,0,8,0" Text="{Binding InventoryLocationCode, UpdateSourceTrigger=PropertyChanged}" ToolTip="库位" />

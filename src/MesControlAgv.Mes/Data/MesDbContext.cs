@@ -84,6 +84,8 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
 
     public DbSet<SampleMaterialRecord> SampleMaterials => Set<SampleMaterialRecord>();
 
+    public DbSet<SampleBatchDetectionMethodRecord> SampleBatchDetectionMethods => Set<SampleBatchDetectionMethodRecord>();
+
     public DbSet<DetectionStandardRevisionRecord> DetectionStandardRevisions => Set<DetectionStandardRevisionRecord>();
 
     public DbSet<DetectionIndicatorRuleRecord> DetectionIndicatorRules => Set<DetectionIndicatorRuleRecord>();
@@ -540,6 +542,18 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
                 .WithMany()
                 .HasForeignKey(sample => sample.BoundExperimentJobId)
                 .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<SampleBatchDetectionMethodRecord>(entity =>
+        {
+            entity.ToTable("SampleBatchDetectionMethods");
+            entity.HasKey(item => item.SampleBatchId);
+            entity.Property(item => item.SampleBatchId).HasMaxLength(256).IsRequired();
+            entity.Property(item => item.MethodCode).HasMaxLength(128).IsRequired();
+            entity.Property(item => item.CreatedBy).HasMaxLength(256).IsRequired();
+            entity.HasIndex(item => item.MethodCode);
+            entity.HasOne<MaterialOperationRecord>().WithMany()
+                .HasForeignKey(item => item.RequestId).OnDelete(DeleteBehavior.NoAction);
         });
 
         modelBuilder.Entity<DetectionStandardRevisionRecord>(entity =>

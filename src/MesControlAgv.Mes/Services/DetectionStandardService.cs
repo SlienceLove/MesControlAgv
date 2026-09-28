@@ -238,6 +238,10 @@ public sealed class DetectionStandardService(MesDbContext database)
         var revision = await database.DetectionStandardRevisions.AsNoTracking().Include(item => item.Indicators)
             .SingleOrDefaultAsync(item => item.RevisionId == request.RevisionId, cancellationToken)
             ?? throw new KeyNotFoundException("检测标准修订不存在。");
+        var batchMethod = await database.SampleBatchDetectionMethods.AsNoTracking()
+            .SingleOrDefaultAsync(item => item.SampleBatchId == sample.SampleBatchId, cancellationToken);
+        if (batchMethod is not null && batchMethod.MethodCode != revision.MethodCode)
+            throw new InvalidOperationException("样品批次已绑定其他检测方法。");
         if (!revision.IsActive) throw new InvalidOperationException("检测标准修订已停用，请重新选择当前版本。");
         if (request.Measurements is null || request.Measurements.Count is 0 or > 100)
             throw new ArgumentException("至少选择一个、至多 100 个指标。");

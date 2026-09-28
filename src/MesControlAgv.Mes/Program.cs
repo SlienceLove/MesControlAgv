@@ -1149,6 +1149,16 @@ static async Task EnsureMaterialManagementTablesAsync(MesDbContext database)
         );
         """,
         """
+        CREATE TABLE IF NOT EXISTS SampleBatchDetectionMethods (
+            SampleBatchId TEXT NOT NULL PRIMARY KEY,
+            MethodCode TEXT NOT NULL,
+            RequestId TEXT NOT NULL,
+            CreatedBy TEXT NOT NULL,
+            CreatedAtUtc TEXT NOT NULL,
+            FOREIGN KEY (RequestId) REFERENCES MaterialOperations(RequestId) ON DELETE NO ACTION
+        );
+        """,
+        """
         CREATE TABLE IF NOT EXISTS MaterialLots (
             LotId TEXT NOT NULL PRIMARY KEY,
             MaterialId TEXT NOT NULL,
@@ -1266,6 +1276,7 @@ static async Task EnsureMaterialManagementTablesAsync(MesDbContext database)
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_SampleMaterials_Barcode ON SampleMaterials (Barcode);",
         "CREATE INDEX IF NOT EXISTS IX_SampleMaterials_Status_UpdatedAtUtc ON SampleMaterials (Status, UpdatedAtUtc);",
         "CREATE INDEX IF NOT EXISTS IX_SampleMaterials_BoundExperimentJobId ON SampleMaterials (BoundExperimentJobId);",
+        "CREATE INDEX IF NOT EXISTS IX_SampleBatchDetectionMethods_MethodCode ON SampleBatchDetectionMethods (MethodCode);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_MaterialLots_MaterialCode_LotCode ON MaterialLots (MaterialCode, LotCode);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_MaterialLots_Barcode ON MaterialLots (Barcode);",
         "CREATE INDEX IF NOT EXISTS IX_MaterialLots_Quarantine_Expiry ON MaterialLots (IsQuarantined, ExpiryDateUtc);",

@@ -39,6 +39,26 @@ public partial class MaterialManagementView : UserControl
         dialog.ShowDialog();
     }
 
+    private async void CreateSample_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MaterialManagementViewModel viewModel) return;
+        var model = viewModel.CreateSampleEditor();
+        var dialog = new CreateSampleDialog { Owner = Window.GetWindow(this), DataContext = model };
+        await model.LoadAsync();
+        dialog.ShowDialog();
+    }
+
+    private void CreateConsumable_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MaterialManagementViewModel viewModel) return;
+        var dialog = new CreateConsumableDialog
+        {
+            Owner = Window.GetWindow(this),
+            DataContext = viewModel.CreateConsumableEditor()
+        };
+        dialog.ShowDialog();
+    }
+
     private void FindMainViewModel(out MainViewModel? mainViewModel)
     {
         mainViewModel = null;

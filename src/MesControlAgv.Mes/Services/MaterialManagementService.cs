@@ -270,6 +270,16 @@ public sealed class MaterialManagementService : IMaterialManagementService
         var existingCount = 0;
         var acceptedCount = 0;
 
+        var batchIds = request.Samples.Select(row => NormalizeOptional(row.SampleBatchId))
+            .Where(value => value is not null).Select(value => value!).Distinct().ToList();
+        var batchMethods = await _database.SampleBatchDetectionMethods.AsNoTracking()
+            .Where(item => batchIds.Contains(item.SampleBatchId))
+            .ToDictionaryAsync(item => item.SampleBatchId, item => item.MethodCode, cancellationToken);
+        var activeMethods = (await _database.DetectionStandardRevisions.AsNoTracking()
+            .Where(item => item.IsActive).Select(item => item.MethodCode).ToListAsync(cancellationToken))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var requestedBatchMethods = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
         var sampleBarcodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var importBarcodes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (var index = 0; index < request.Samples.Count; index++)
@@ -288,6 +298,25 @@ public sealed class MaterialManagementService : IMaterialManagementService
             {
                 issues.Add(ImportIssue(rowNumber, MaterialIssueCodes.ImportRowInvalid, "样品批次不能为空。", nameof(row.SampleBatchId)));
                 continue;
+            }
+
+            var methodCode = NormalizeOptional(row.DetectionMethodCode);
+            if (methodCode is not null)
+            {
+                if (batchMethods.TryGetValue(batch, out var boundMethod) && boundMethod != methodCode ||
+                    requestedBatchMethods.TryGetValue(batch, out var requestedMethod) && requestedMethod != methodCode)
+                {
+                    issues.Add(ImportIssue(rowNumber, MaterialIssueCodes.ImportRowInvalid,
+                        "同一样品批次只能关联一个检测方法。", nameof(row.DetectionMethodCode)));
+                    continue;
+                }
+                if (!activeMethods.Contains(methodCode))
+                {
+                    issues.Add(ImportIssue(rowNumber, MaterialIssueCodes.ImportRowInvalid,
+                        "检测方法不存在或已停用。", nameof(row.DetectionMethodCode)));
+                    continue;
+                }
+                requestedBatchMethods[batch] = methodCode;
             }
 
             if (!sampleBarcodes.Add(barcode))
@@ -316,6 +345,11 @@ public sealed class MaterialManagementService : IMaterialManagementService
                     !string.Equals(existing.MaterialCode, NormalizeOptional(row.MaterialCode), StringComparison.OrdinalIgnoreCase))
                 {
                     issues.Add(ImportIssue(rowNumber, MaterialIssueCodes.SampleAlreadyExists, "样品条码已存在且资料不一致。", nameof(row.Barcode)));
+                }
+                else if (methodCode is not null && !batchMethods.ContainsKey(batch))
+                {
+                    issues.Add(ImportIssue(rowNumber, MaterialIssueCodes.ImportRowInvalid,
+                        "已有样品不能通过重复导入补绑方法；请为该批次新建样品。", nameof(row.DetectionMethodCode)));
                 }
                 else
                 {
@@ -440,16 +474,6 @@ public sealed class MaterialManagementService : IMaterialManagementService
         CancellationToken cancellationToken)
     {
         ValidateRequestMetadata(request.RequestId, request.Actor);
-        var preview = await PreviewImportAsync(request, cancellationToken);
-        if (!preview.CanCommit)
-        {
-            throw new MaterialManagementException(
-                MaterialIssueCodes.ImportRowInvalid,
-                "物料导入校验未通过。",
-                StatusCodes.Status422UnprocessableEntity,
-                preview.Issues);
-        }
-
         var fingerprint = CreateFingerprint("import", request);
         var execution = await _operations.ExecuteAsync(
             _database,
@@ -457,7 +481,17 @@ public sealed class MaterialManagementService : IMaterialManagementService
             "import",
             fingerprint,
             request.Actor,
-            async () => await ImportCoreAsync(request, cancellationToken),
+            async () =>
+            {
+                var preview = await PreviewImportAsync(request, cancellationToken);
+                if (!preview.CanCommit)
+                    throw new MaterialManagementException(
+                        MaterialIssueCodes.ImportRowInvalid,
+                        "物料导入校验未通过。",
+                        StatusCodes.Status422UnprocessableEntity,
+                        preview.Issues);
+                return await ImportCoreAsync(request, cancellationToken);
+            },
             Serialize,
             Deserialize<MaterialImportResult>,
             cancellationToken);
@@ -886,6 +920,7 @@ public sealed class MaterialManagementService : IMaterialManagementService
         var importedSamples = 0;
         var importedLots = 0;
         var existingCount = 0;
+        var writtenBatchMethods = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var row in request.Samples)
         {
@@ -901,12 +936,40 @@ public sealed class MaterialManagementService : IMaterialManagementService
             if (await _database.MaterialLots.AnyAsync(lot => lot.Barcode == barcode, cancellationToken))
                 throw Issue(MaterialIssueCodes.BarcodeAlreadyExists, "條碼已被耗材批次使用。", StatusCodes.Status409Conflict);
 
+            var batch = Normalize(row.SampleBatchId);
+            var methodCode = NormalizeOptional(row.DetectionMethodCode);
+            if (methodCode is not null)
+            {
+                if (writtenBatchMethods.TryGetValue(batch, out var writtenMethod) && writtenMethod != methodCode)
+                    throw Issue(MaterialIssueCodes.ImportRowInvalid, "同一样品批次只能关联一个检测方法。", StatusCodes.Status409Conflict);
+                if (!writtenBatchMethods.ContainsKey(batch))
+                {
+                    var current = await _database.SampleBatchDetectionMethods
+                        .SingleOrDefaultAsync(item => item.SampleBatchId == batch, cancellationToken);
+                    if (current is not null && current.MethodCode != methodCode)
+                        throw Issue(MaterialIssueCodes.ImportRowInvalid, "样品批次已关联其他检测方法。", StatusCodes.Status409Conflict);
+                    if (!await _database.DetectionStandardRevisions.AsNoTracking()
+                        .AnyAsync(item => item.MethodCode == methodCode && item.IsActive, cancellationToken))
+                        throw Issue(MaterialIssueCodes.ImportRowInvalid, "检测方法不存在或已停用。", StatusCodes.Status409Conflict);
+                    if (current is null)
+                        _database.SampleBatchDetectionMethods.Add(new SampleBatchDetectionMethodRecord
+                        {
+                            SampleBatchId = batch,
+                            MethodCode = methodCode,
+                            RequestId = request.RequestId,
+                            CreatedBy = request.Actor.Trim(),
+                            CreatedAtUtc = now
+                        });
+                    writtenBatchMethods[batch] = methodCode;
+                }
+            }
+
             var location = await RequireLocationAsync(row.LocationCode, cancellationToken);
             var sample = new SampleMaterialRecord
             {
                 SampleId = Guid.NewGuid(),
                 Barcode = barcode,
-                SampleBatchId = Normalize(row.SampleBatchId),
+                SampleBatchId = batch,
                 MaterialCode = NormalizeOptional(row.MaterialCode),
                 SampleType = NormalizeOptional(row.SampleType),
                 Status = SampleLifecycleStatus.Available.ToString(),
@@ -928,7 +991,7 @@ public sealed class MaterialManagementService : IMaterialManagementService
                 Unit = "EA",
                 Actor = request.Actor.Trim(),
                 Reason = "sample-import",
-                DetailsJson = Serialize(new { source = request.Source }),
+                DetailsJson = Serialize(new { source = request.Source, detectionMethodCode = methodCode }),
                 OccurredAtUtc = now
             });
             importedSamples++;
@@ -1095,7 +1158,11 @@ public sealed class MaterialManagementService : IMaterialManagementService
             issueCode = MaterialIssueCodes.MaterialDisabled;
             message = "物料已停用。";
         }
-        var mappedSample = sample is null ? null : ToSample(sample, locationById);
+        var scanMethod = sample is null ? null : await _database.SampleBatchDetectionMethods.AsNoTracking()
+            .Where(item => item.SampleBatchId == sample.SampleBatchId)
+            .Select(item => item.MethodCode)
+            .SingleOrDefaultAsync(cancellationToken);
+        var mappedSample = sample is null ? null : ToSample(sample, locationById, scanMethod);
         var mappedLot = lot is null
             ? null
             : ToInventory(
@@ -1885,16 +1952,22 @@ public sealed class MaterialManagementService : IMaterialManagementService
             .AsNoTracking()
             .Where(location => locationIds.Contains(location.LocationId))
             .ToDictionaryAsync(item => item.LocationId, cancellationToken);
-        return rows.Select(row => ToSample(row, locations)).ToList();
+        var batches = rows.Select(row => row.SampleBatchId).Distinct().ToList();
+        var methods = await _database.SampleBatchDetectionMethods.AsNoTracking()
+            .Where(item => batches.Contains(item.SampleBatchId))
+            .ToDictionaryAsync(item => item.SampleBatchId, item => item.MethodCode, cancellationToken);
+        return rows.Select(row => ToSample(row, locations, methods.GetValueOrDefault(row.SampleBatchId))).ToList();
     }
 
     private static SampleMaterial ToSample(
         SampleMaterialRecord sample,
-        IReadOnlyDictionary<Guid, WarehouseLocationRecord> locations) => new()
+        IReadOnlyDictionary<Guid, WarehouseLocationRecord> locations,
+        string? detectionMethodCode) => new()
         {
             SampleId = sample.SampleId,
             Barcode = sample.Barcode,
             SampleBatchId = sample.SampleBatchId,
+            DetectionMethodCode = detectionMethodCode,
             MaterialCode = sample.MaterialCode,
             SampleType = sample.SampleType,
             Status = ParseEnum(sample.Status, SampleLifecycleStatus.Unknown),

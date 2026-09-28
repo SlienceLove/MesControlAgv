@@ -140,6 +140,7 @@ public sealed class DetectionStandardApiTests : IClassFixture<MesWebApplicationF
                 await database.Database.ExecuteSqlRawAsync("DROP TABLE DetectionAssessments;");
                 await database.Database.ExecuteSqlRawAsync("DROP TABLE DetectionIndicatorRules;");
                 await database.Database.ExecuteSqlRawAsync("DROP TABLE DetectionStandardRevisions;");
+                await database.Database.ExecuteSqlRawAsync("DROP TABLE SampleBatchDetectionMethods;");
             }
 
             using var factory = new MesWebApplicationFactory(path);
@@ -150,6 +151,7 @@ public sealed class DetectionStandardApiTests : IClassFixture<MesWebApplicationF
             using var scope = factory.Services.CreateScope();
             var databaseAfterUpgrade = scope.ServiceProvider.GetRequiredService<MesDbContext>();
             Assert.Empty(await databaseAfterUpgrade.DetectionAssessments.ToListAsync());
+            Assert.Empty(await databaseAfterUpgrade.SampleBatchDetectionMethods.ToListAsync());
         }
         finally
         {

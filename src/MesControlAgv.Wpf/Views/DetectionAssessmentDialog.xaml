@@ -21,7 +21,8 @@
         </DockPanel>
         <DockPanel Grid.Row="1" Margin="0,0,0,10">
             <TextBlock DockPanel.Dock="Left" Margin="0,0,10,0" VerticalAlignment="Center" Text="检测方法" />
-            <ComboBox MinWidth="320" ItemsSource="{Binding Standards}" SelectedItem="{Binding SelectedStandard, Mode=TwoWay}">
+            <ComboBox MinWidth="320" ItemsSource="{Binding Standards}" SelectedItem="{Binding SelectedStandard, Mode=TwoWay}"
+                      IsEnabled="{Binding IsMethodSelectionEnabled}">
                 <ComboBox.ItemTemplate>
                     <DataTemplate>
                         <StackPanel Orientation="Horizontal">
