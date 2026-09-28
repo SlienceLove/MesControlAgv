@@ -84,6 +84,14 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
 
     public DbSet<SampleMaterialRecord> SampleMaterials => Set<SampleMaterialRecord>();
 
+    public DbSet<DetectionStandardRevisionRecord> DetectionStandardRevisions => Set<DetectionStandardRevisionRecord>();
+
+    public DbSet<DetectionIndicatorRuleRecord> DetectionIndicatorRules => Set<DetectionIndicatorRuleRecord>();
+
+    public DbSet<DetectionAssessmentRecord> DetectionAssessments => Set<DetectionAssessmentRecord>();
+
+    public DbSet<DetectionAssessmentItemRecord> DetectionAssessmentItems => Set<DetectionAssessmentItemRecord>();
+
     public DbSet<MaterialLotRecord> MaterialLots => Set<MaterialLotRecord>();
 
     public DbSet<InventoryBalanceRecord> InventoryBalances => Set<InventoryBalanceRecord>();
@@ -532,6 +540,65 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
                 .WithMany()
                 .HasForeignKey(sample => sample.BoundExperimentJobId)
                 .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<DetectionStandardRevisionRecord>(entity =>
+        {
+            entity.ToTable("DetectionStandardRevisions");
+            entity.HasKey(item => item.RevisionId);
+            entity.Property(item => item.MethodCode).HasMaxLength(128).IsRequired();
+            entity.Property(item => item.Name).HasMaxLength(256).IsRequired();
+            entity.Property(item => item.Category).HasMaxLength(128);
+            entity.Property(item => item.CreatedBy).HasMaxLength(256).IsRequired();
+            entity.HasIndex(item => new { item.MethodCode, item.Revision }).IsUnique();
+            entity.HasIndex(item => new { item.MethodCode, item.IsActive });
+            entity.HasMany(item => item.Indicators).WithOne()
+                .HasForeignKey(item => item.RevisionId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<DetectionIndicatorRuleRecord>(entity =>
+        {
+            entity.ToTable("DetectionIndicatorRules");
+            entity.HasKey(item => item.IndicatorId);
+            entity.Property(item => item.Name).HasMaxLength(128).IsRequired();
+            entity.Property(item => item.Unit).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.DetectionLimit).HasPrecision(18, 8);
+            entity.Property(item => item.LowerLimit).HasPrecision(18, 8);
+            entity.Property(item => item.UpperLimit).HasPrecision(18, 8);
+            entity.HasIndex(item => item.RevisionId);
+        });
+
+        modelBuilder.Entity<DetectionAssessmentRecord>(entity =>
+        {
+            entity.ToTable("DetectionAssessments");
+            entity.HasKey(item => item.RequestId);
+            entity.Property(item => item.Fingerprint).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.SampleBarcode).HasMaxLength(256).IsRequired();
+            entity.Property(item => item.MethodCode).HasMaxLength(128).IsRequired();
+            entity.Property(item => item.Actor).HasMaxLength(256).IsRequired();
+            entity.Property(item => item.Verdict).HasMaxLength(32).IsRequired();
+            entity.HasIndex(item => new { item.SampleId, item.AssessedAtUtc });
+            entity.HasOne<SampleMaterialRecord>().WithMany()
+                .HasForeignKey(item => item.SampleId).OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne<DetectionStandardRevisionRecord>().WithMany()
+                .HasForeignKey(item => item.RevisionId).OnDelete(DeleteBehavior.NoAction);
+            entity.HasMany(item => item.Items).WithOne()
+                .HasForeignKey(item => item.RequestId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<DetectionAssessmentItemRecord>(entity =>
+        {
+            entity.ToTable("DetectionAssessmentItems");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Name).HasMaxLength(128).IsRequired();
+            entity.Property(item => item.Unit).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.Value).HasPrecision(18, 8);
+            entity.Property(item => item.DetectionLimit).HasPrecision(18, 8);
+            entity.Property(item => item.LowerLimit).HasPrecision(18, 8);
+            entity.Property(item => item.UpperLimit).HasPrecision(18, 8);
+            entity.Property(item => item.Verdict).HasMaxLength(32).IsRequired();
+            entity.Property(item => item.Reason).HasMaxLength(256).IsRequired();
+            entity.HasIndex(item => item.RequestId);
         });
 
         modelBuilder.Entity<MaterialLotRecord>(entity =>

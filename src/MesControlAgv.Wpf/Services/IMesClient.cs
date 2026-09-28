@@ -718,6 +718,30 @@ public interface IMesClient
         CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<SampleMaterial>>([]);
 
+    Task<IReadOnlyList<DetectionStandardRevision>> GetDetectionStandardsAsync(
+        string? search, bool includeHistory, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<DetectionStandardRevision>>([]);
+
+    Task<DetectionStandardRevision> SaveDetectionStandardAsync(
+        SaveDetectionStandardRequest request, CancellationToken cancellationToken) =>
+        Task.FromException<DetectionStandardRevision>(new NotSupportedException("Detection standards are not supported by this MES client."));
+
+    Task<DetectionStandardRevision> DeactivateDetectionStandardAsync(
+        string methodCode, Guid revisionId, CancellationToken cancellationToken) =>
+        Task.FromException<DetectionStandardRevision>(new NotSupportedException("Detection standards are not supported by this MES client."));
+
+    Task<DetectionAssessment> PreviewDetectionAssessmentAsync(
+        DetectionAssessmentRequest request, CancellationToken cancellationToken) =>
+        Task.FromException<DetectionAssessment>(new NotSupportedException("Detection assessments are not supported by this MES client."));
+
+    Task<DetectionAssessment> SaveDetectionAssessmentAsync(
+        DetectionAssessmentRequest request, CancellationToken cancellationToken) =>
+        Task.FromException<DetectionAssessment>(new NotSupportedException("Detection assessments are not supported by this MES client."));
+
+    Task<IReadOnlyList<DetectionAssessment>> GetDetectionAssessmentHistoryAsync(
+        Guid sampleId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<DetectionAssessment>>([]);
+
     Task<IReadOnlyList<MaterialLotInventory>> GetMaterialInventoryAsync(
         string? materialCode,
         string? lotCode,

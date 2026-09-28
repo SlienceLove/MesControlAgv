@@ -152,6 +152,7 @@ builder.Services.AddScoped<MaterialOperationCoordinator>();
 builder.Services.AddScoped<MaterialManagementService>();
 builder.Services.AddScoped<IMaterialManagementService>(services =>
     services.GetRequiredService<MaterialManagementService>());
+builder.Services.AddScoped<DetectionStandardService>();
 builder.Services.AddScoped<ExperimentRuntimeLeaseLifecycle>();
 builder.Services.AddScoped<ExperimentRuntimeAdmissionService>();
 builder.Services.AddScoped<IExperimentRuntimeAdmissionService>(services =>
@@ -205,6 +206,7 @@ using (var scope = app.Services.CreateScope())
     await EnsureSampleManagementTablesAsync(database);
     await PhysicalSafetyActionService.ReconcilePreparedRecordsAsync(database, CancellationToken.None);
     await EnsureMaterialManagementTablesAsync(database);
+    await EnsureDetectionStandardTablesAsync(database);
 }
 
 app.MapGet("/health", () => Results.Ok(new { service = "mes", status = "ok" }));
@@ -221,6 +223,7 @@ app.MapMesExperimentSchedulingEndpoints();
 app.MapMesExperimentSampleVerificationEndpoints();
 app.MapMesExperimentWorkstationPreparationEndpoints();
 app.MapMaterialManagementEndpoints();
+app.MapDetectionStandardEndpoints();
 
 app.MapPost("/api/field-navigation-acceptances", async (
     CreateFieldNavigationAcceptanceRequest request,
@@ -995,6 +998,85 @@ static async Task EnsureColumnsAsync(
         await using var alter = connection.CreateCommand();
         alter.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {definition.Name} {definition.Sql};";
         await alter.ExecuteNonQueryAsync();
+    }
+}
+
+static async Task EnsureDetectionStandardTablesAsync(MesDbContext database)
+{
+    var connection = database.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) await connection.OpenAsync();
+
+    var statements = new[]
+    {
+        """
+        CREATE TABLE IF NOT EXISTS DetectionStandardRevisions (
+            RevisionId TEXT NOT NULL PRIMARY KEY,
+            MethodCode TEXT NOT NULL,
+            Name TEXT NOT NULL,
+            Category TEXT NULL,
+            Revision INTEGER NOT NULL,
+            IsActive INTEGER NOT NULL,
+            CreatedBy TEXT NOT NULL,
+            CreatedAtUtc TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS DetectionIndicatorRules (
+            IndicatorId TEXT NOT NULL PRIMARY KEY,
+            RevisionId TEXT NOT NULL,
+            Name TEXT NOT NULL,
+            Unit TEXT NOT NULL,
+            DetectionLimit NUMERIC NULL,
+            LowerLimit NUMERIC NULL,
+            UpperLimit NUMERIC NULL,
+            FOREIGN KEY (RevisionId) REFERENCES DetectionStandardRevisions(RevisionId) ON DELETE NO ACTION
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS DetectionAssessments (
+            RequestId TEXT NOT NULL PRIMARY KEY,
+            Fingerprint TEXT NOT NULL,
+            SampleId TEXT NOT NULL,
+            SampleBarcode TEXT NOT NULL,
+            ExperimentJobId TEXT NULL,
+            RevisionId TEXT NOT NULL,
+            MethodCode TEXT NOT NULL,
+            Revision INTEGER NOT NULL,
+            Actor TEXT NOT NULL,
+            AssessedAtUtc TEXT NOT NULL,
+            Verdict TEXT NOT NULL,
+            FOREIGN KEY (SampleId) REFERENCES SampleMaterials(SampleId) ON DELETE NO ACTION,
+            FOREIGN KEY (RevisionId) REFERENCES DetectionStandardRevisions(RevisionId) ON DELETE NO ACTION
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS DetectionAssessmentItems (
+            Id TEXT NOT NULL PRIMARY KEY,
+            RequestId TEXT NOT NULL,
+            IndicatorId TEXT NOT NULL,
+            Name TEXT NOT NULL,
+            Value NUMERIC NOT NULL,
+            Unit TEXT NOT NULL,
+            DetectionLimit NUMERIC NULL,
+            LowerLimit NUMERIC NULL,
+            UpperLimit NUMERIC NULL,
+            Verdict TEXT NOT NULL,
+            Reason TEXT NOT NULL,
+            FOREIGN KEY (RequestId) REFERENCES DetectionAssessments(RequestId) ON DELETE NO ACTION
+        );
+        """,
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_DetectionStandardRevisions_Code_Revision ON DetectionStandardRevisions(MethodCode, Revision);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_DetectionStandardRevisions_Active ON DetectionStandardRevisions(MethodCode) WHERE IsActive = 1;",
+        "CREATE INDEX IF NOT EXISTS IX_DetectionIndicatorRules_RevisionId ON DetectionIndicatorRules(RevisionId);",
+        "CREATE INDEX IF NOT EXISTS IX_DetectionAssessments_Sample_Time ON DetectionAssessments(SampleId, AssessedAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_DetectionAssessmentItems_RequestId ON DetectionAssessmentItems(RequestId);"
+    };
+
+    foreach (var statement in statements)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = statement;
+        await command.ExecuteNonQueryAsync();
     }
 }
 

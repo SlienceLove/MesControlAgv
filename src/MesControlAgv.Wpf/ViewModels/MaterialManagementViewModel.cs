@@ -40,10 +40,12 @@ public sealed class MaterialManagementViewModel : INotifyPropertyChanged, IDispo
     private string _receiveLocationCode = "DEFAULT";
     private string _actionStatus = string.Empty;
     private bool _includeQuarantined;
+    private SampleMaterial? _selectedSample;
 
     public MaterialManagementViewModel(IMesClient mes)
     {
         _mes = mes ?? throw new ArgumentNullException(nameof(mes));
+        DetectionStandards = new DetectionStandardsViewModel(mes);
         RefreshCommand = new AsyncCommand(() => RefreshAsync());
         PreviewImportCommand = new AsyncCommand(PreviewImportAsync, () => _pendingImport is not null);
         CommitImportCommand = new AsyncCommand(CommitImportAsync, () => _pendingImport is not null && Preview?.CanCommit == true);
@@ -60,6 +62,12 @@ public sealed class MaterialManagementViewModel : INotifyPropertyChanged, IDispo
     public ObservableCollection<MaterialLotInventory> Inventory { get; } = [];
     public ObservableCollection<MaterialTraceEvent> TraceEvents { get; } = [];
     public ObservableCollection<MaterialImportIssue> ImportIssues { get; } = [];
+    public DetectionStandardsViewModel DetectionStandards { get; }
+    public SampleMaterial? SelectedSample
+    {
+        get => _selectedSample;
+        set => SetField(ref _selectedSample, value);
+    }
     public OfflineDataStateViewModel OfflineState { get; } = new();
 
     public AsyncCommand RefreshCommand { get; }

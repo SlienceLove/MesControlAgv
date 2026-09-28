@@ -115,6 +115,37 @@ public sealed class MesClient(HttpClient client) : IMesClient
             $"api/materials/samples{query}", cancellationToken) ?? [];
     }
 
+    public async Task<IReadOnlyList<DetectionStandardRevision>> GetDetectionStandardsAsync(
+        string? search, bool includeHistory, CancellationToken cancellationToken)
+    {
+        var query = BuildMaterialQuery(("search", search), ("includeHistory", includeHistory ? "true" : null));
+        return await client.GetFromJsonAsync<List<DetectionStandardRevision>>(
+            $"api/materials/detection-standards{query}", cancellationToken) ?? [];
+    }
+
+    public Task<DetectionStandardRevision> SaveDetectionStandardAsync(
+        SaveDetectionStandardRequest request, CancellationToken cancellationToken) =>
+        PostMaterialAsync<DetectionStandardRevision>("api/materials/detection-standards", request, cancellationToken);
+
+    public Task<DetectionStandardRevision> DeactivateDetectionStandardAsync(
+        string methodCode, Guid revisionId, CancellationToken cancellationToken) =>
+        PostMaterialAsync<DetectionStandardRevision>(
+            "api/materials/detection-standards/deactivate",
+            new DeactivateDetectionStandardRequest(methodCode, revisionId), cancellationToken);
+
+    public Task<DetectionAssessment> PreviewDetectionAssessmentAsync(
+        DetectionAssessmentRequest request, CancellationToken cancellationToken) =>
+        PostMaterialAsync<DetectionAssessment>("api/materials/detection-assessments/preview", request, cancellationToken);
+
+    public Task<DetectionAssessment> SaveDetectionAssessmentAsync(
+        DetectionAssessmentRequest request, CancellationToken cancellationToken) =>
+        PostMaterialAsync<DetectionAssessment>("api/materials/detection-assessments", request, cancellationToken);
+
+    public async Task<IReadOnlyList<DetectionAssessment>> GetDetectionAssessmentHistoryAsync(
+        Guid sampleId, CancellationToken cancellationToken) =>
+        await client.GetFromJsonAsync<List<DetectionAssessment>>(
+            $"api/materials/samples/{sampleId}/detection-assessments", cancellationToken) ?? [];
+
     public async Task<IReadOnlyList<MaterialLotInventory>> GetMaterialInventoryAsync(
         string? materialCode,
         string? lotCode,
