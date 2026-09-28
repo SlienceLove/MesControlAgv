@@ -21,6 +21,7 @@
 | feature/digital-twin-single-agv | 用户于2026-09-24授权接管并补提交模型清理成果；8d6c54f删除冗余静态机器人/盒体，配套指纹与测试一并提交 | 已合入develop 9da0526；原证据与规划草稿保留，后续任务从最新develop开始 |
 | fix/workstation-empty-task-page | 从 develop e547c94 建立；仅修复任务列表末页201“无数据”的兼容，独立目录 .worktrees/workstation-empty-page；0e70445 已集成 | develop efea896，网关现场切换另行确认 |
 | feature/device-current-task-display | 从 develop 4855e14 建立；两设备当前任务显示与 MES 只读设备状态时间字段，c4a6098 已集成 | develop dca6a2c 已通过 WPF 730 / MES 731，后续现场部署另行确认 |
+| fix/workstation-current-task-identity | 从 develop f08dd2d 建立；d84ff15 移除开盖分液从历史 Running 行推断当前任务身份，保留运行态待确认提示 | 已快进合入 develop d84ff15；WPF 762 项与解决方案构建通过，未部署或操作设备 |
 | feature/workstation-ml-template-validation | 开盖分液 mL、条码 POST、手动结束后续跑；9b639cb 已于 2026-09-24 合入本地 develop | 后续任务以更新后的 develop 为起点 |
 | feature/workstation-template-batch | 单任务模板与批量导入；3d80c37 已于 2026-09-24 合入本地 develop | 本轮单位集成修复在 develop，原工作区未被修改 |
 | feature/shinelab-dcseq-protocol | 离子色谱通讯、样品关联、托盘与操作员页面；43fb941 已于 2026-09-24 合入本地 develop | 后续任务以更新后的 develop 为起点 |
