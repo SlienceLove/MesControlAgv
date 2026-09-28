@@ -98,7 +98,7 @@ public sealed class InstrumentCurrentTaskTests
          new(1, "RUN-01", "分液当前任务", SampleWorkstationTaskState.Running, "1", "", null)]);
 
     [Theory]
-    [InlineData("running", "运行中 · 分液当前任务 · RUN-01")]
+    [InlineData("running", InstrumentCurrentTaskPresenter.RunningUnidentified)]
     [InlineData("idle", "当前无运行任务")]
     [InlineData("offline", "设备离线，当前任务无法确认")]
     [InlineData("paused", InstrumentCurrentTaskPresenter.Unconfirmed)]
@@ -107,7 +107,8 @@ public sealed class InstrumentCurrentTaskTests
     [InlineData("multiple", InstrumentCurrentTaskPresenter.RunningUnidentified)]
     [InlineData("missing", InstrumentCurrentTaskPresenter.RunningUnidentified)]
     [InlineData("stale", InstrumentCurrentTaskPresenter.Unconfirmed)]
-    public void Workstation_requires_live_state_and_one_running_task(string mode, string expected)
+    [InlineData("future", InstrumentCurrentTaskPresenter.Unconfirmed)]
+    public void Workstation_reports_live_state_without_guessing_task_identity(string mode, string expected)
     {
         var snapshot = Snapshot();
         snapshot = mode switch
@@ -120,9 +121,19 @@ public sealed class InstrumentCurrentTaskTests
             "multiple" => snapshot with { Tasks = [snapshot.Tasks[1], snapshot.Tasks[1]] },
             "missing" => snapshot with { Tasks = [] },
             "stale" => snapshot with { Status = snapshot.Status! with { ObservedAtUtc = Now.AddSeconds(-61) } },
+            "future" => snapshot with { Status = snapshot.Status! with { ObservedAtUtc = Now.AddSeconds(1) } },
             _ => snapshot
         };
         Assert.Equal(expected, InstrumentCurrentTaskPresenter.Workstation(snapshot, Now, Now));
+    }
+
+    [Fact]
+    public void Workstation_historical_running_row_does_not_supply_a_current_task_identity()
+    {
+        var snapshot = Snapshot() with { Tasks = [Snapshot().Tasks[1]] };
+        Assert.Equal(InstrumentCurrentTaskPresenter.RunningUnidentified,
+            InstrumentCurrentTaskPresenter.Workstation(snapshot, Now, Now));
+        Assert.DoesNotContain("RUN-01", InstrumentCurrentTaskPresenter.Workstation(snapshot, Now, Now));
     }
 
     [Fact]
@@ -156,9 +167,9 @@ public sealed class InstrumentCurrentTaskTests
         { Status = Snapshot().Status! with { ObservedAtUtc = DateTimeOffset.UtcNow } } };
         using var model = new ShineLabDeviceStatusViewModel(mes) { SelectedInstrument = ShineLabDeviceStatusViewModel.SampleWorkstationInstrument };
         await model.RefreshAsync();
-        Assert.Contains("RUN-01", model.WorkstationCurrentTaskSummary);
+        Assert.Equal(InstrumentCurrentTaskPresenter.RunningUnidentified, model.WorkstationCurrentTaskSummary);
         model.SelectedWorkstationTask = model.WorkstationTasks.First(t => t.TaskNo == "WAIT");
-        Assert.Contains("RUN-01", model.WorkstationCurrentTaskSummary);
+        Assert.Equal(InstrumentCurrentTaskPresenter.RunningUnidentified, model.WorkstationCurrentTaskSummary);
         mes.SampleWorkstationSnapshot = new(null, null, [], "failed", "failed", "failed");
         await model.RefreshAsync();
         Assert.Equal(2, model.WorkstationTasks.Count);

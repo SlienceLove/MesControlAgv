@@ -114,7 +114,8 @@ public sealed class WorkstationCompactLayoutTests
                 var currentTask = Assert.IsType<TextBlock>(view.FindName("WorkstationCurrentTaskText"));
                 Assert.True(currentTask.IsVisible);
                 AssertInBounds(currentTask, window);
-                Assert.Contains(stale ? "无法确认" : "TASK-005", currentTask.Text);
+                Assert.Contains(stale ? "无法确认" : InstrumentCurrentTaskPresenter.RunningUnidentified, currentTask.Text);
+                Assert.DoesNotContain("TASK-005", currentTask.Text);
                 Assert.True(table.IsReadOnly);
                 Assert.Empty(table.Columns.OfType<DataGridCheckBoxColumn>());
                 var notice = Assert.IsType<TextBlock>(view.FindName("WorkstationNotice"));

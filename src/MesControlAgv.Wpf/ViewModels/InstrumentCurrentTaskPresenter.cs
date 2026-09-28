@@ -19,10 +19,8 @@ public static class InstrumentCurrentTaskPresenter
         if (!Fresh(status.ObservedAtUtc, now)) return Unconfirmed;
         if (status.State == SampleWorkstationDeviceState.Idle) return "当前无运行任务";
         if (status.State != SampleWorkstationDeviceState.Running) return Unconfirmed;
-        if (!string.IsNullOrWhiteSpace(snapshot.TasksReadError)) return RunningUnidentified;
-        var running = snapshot.Tasks.Where(t => t.State == SampleWorkstationTaskState.Running).ToArray();
-        return running.Length == 1 && !string.IsNullOrWhiteSpace(running[0].TaskNo)
-            ? $"运行中 · {Name(running[0].TaskName)} · {running[0].TaskNo}" : RunningUnidentified;
+        // Device status has no current task ID; task rows cannot establish live identity.
+        return RunningUnidentified;
     }
 
     public static string Ion(ShineLabDeviceStatusResponse? status, bool readSucceeded, DateTimeOffset? readAt,
