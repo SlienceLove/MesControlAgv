@@ -20,6 +20,9 @@ public sealed class ShineLabTcpOptions
     public bool CaptureProtocolSamples { get; set; }
     // Explicit capability gate: enable only after the vendor module is updated.
     public bool EnableTrayCommands { get; set; }
+    // Vendor capability probes remain opt-in until the installed module is confirmed.
+    public bool EnableStandardSelection { get; set; }
+    public bool EnableAutoCurve { get; set; }
     public MesControlAgv.Contracts.ShineLabPayloadProfile PayloadProfile { get; set; }
         = MesControlAgv.Contracts.ShineLabPayloadProfile.Rike;
     /// <summary>

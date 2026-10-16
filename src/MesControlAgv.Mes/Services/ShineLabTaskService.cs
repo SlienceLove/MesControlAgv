@@ -42,6 +42,7 @@ public sealed class ShineLabTaskService(
 
         var request = JsonSerializer.Deserialize<ShineLabConfigRequest>(task.ConfigJson)
             ?? throw new InvalidOperationException("Stored ShineLab Config payload is invalid.");
+        commands.ValidateConfigForSend(request);
         await repository.MarkOperationStartedAsync(
             taskUuid,
             "Configuring",

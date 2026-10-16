@@ -296,7 +296,7 @@ public sealed class ShineLabTcpServer(
 
                     equipmentCode = effectiveCode;
                     connectionManager.Register(equipmentCode, connectionId, wireFrame.Format, stream);
-                    if (message.StrMethod is "Config" or "Command")
+                    if (message.StrMethod is "Config" or "Command" or "AutoCurve")
                         await connectionManager.RecordReplyAsync(message.StrId, message.StrMethod, equipmentCode,
                             message.Body, new ShineLabPushContext(json, connectionId, wireFrame.Format.ToString(), receivedAtUtc),
                             stoppingToken);

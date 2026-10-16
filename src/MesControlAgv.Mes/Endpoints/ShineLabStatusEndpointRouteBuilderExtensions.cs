@@ -27,6 +27,8 @@ public static class ShineLabStatusEndpointRouteBuilderExtensions
                 options.StaleAfterSeconds,
                 options.CommandTimeoutMs,
                 options.EnableTrayCommands,
+                options.EnableStandardSelection,
+                options.EnableAutoCurve,
                 payloadProfile = options.PayloadProfile.ToString(),
                 knownDeviceCount = devices.Count,
                 onlineDeviceCount = devices.Count(item => item.Online)
@@ -113,6 +115,31 @@ public static class ShineLabStatusEndpointRouteBuilderExtensions
             {
                 return Results.BadRequest(new { detail = exception.Message });
             }
+        });
+
+        endpoints.MapPost("/api/shinelab/preview/auto-curve", (
+            ShineLabAutoCurveRequest request, IOptions<ShineLabTcpOptions> options) =>
+        {
+            try
+            {
+                return Results.Ok(new
+                {
+                    payloadProfile = options.Value.PayloadProfile.ToString(),
+                    strMethod = "AutoCurve",
+                    body = ShineLabAutoCurvePayloadBuilder.Build(request, options.Value.PayloadProfile)
+                });
+            }
+            catch (ArgumentException exception) { return Results.BadRequest(new { detail = exception.Message }); }
+        });
+
+        endpoints.MapPost("/api/shinelab/devices/{equipmentCode}/auto-curve", async (
+            string equipmentCode, ShineLabAutoCurveRequest request,
+            ShineLabCommandService commands, CancellationToken cancellationToken) =>
+        {
+            try { return Results.Ok(await commands.SendAutoCurveAsync(equipmentCode, request, cancellationToken)); }
+            catch (ArgumentException exception) { return Results.BadRequest(new { detail = exception.Message }); }
+            catch (Exception exception) when (exception is InvalidOperationException or IOException or TimeoutException)
+            { return Results.Problem(exception.Message, statusCode: StatusCodes.Status503ServiceUnavailable); }
         });
 
         endpoints.MapPost("/api/shinelab/devices/{equipmentCode}/config", async (
