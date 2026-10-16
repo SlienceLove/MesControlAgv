@@ -52,7 +52,22 @@ internal static class PlanningBenchmark
         var output = Path.GetFullPath(directory);
         if (Directory.Exists(output)) { Console.Error.WriteLine("Use a new evidence directory."); return 2; }
         Directory.CreateDirectory(output);
-        var catalog = Catalog(); var cases = Cases();
+        var light = mode is "--light" or "--light-self-test";
+        var catalog = light ? new AiPlanningCatalog
+        {
+            Revision = "synthetic-light-v1", Templates =
+            [
+                Template("T1", "送到分液位", "待检区取盘，AGV运到分液位并放盘，不含分液。"),
+                Template("T2", "固定分液", "在分液位开盖，每孔50微升，不含运输。"),
+                Template("T3", "送到检测位", "分液位取盘，AGV运到检测位并放盘。")
+            ]
+        } : Catalog();
+        var cases = light ? new Case[]
+        {
+            new("L1", new() { Message = "将待检区样品运到分液位，不做分液。" }, ["T1"], false),
+            new("L2", new() { Message = "帮我把样品运过去。" }, [], true),
+            new("L3", new() { Message = "样品已在分液位，请每孔分液100微升。" }, [], true)
+        } : Cases();
         File.WriteAllText(Path.Combine(output, "inputs-and-expectations.json"), JsonSerializer.Serialize(new
         {
             note = "Synthetic descriptive templates; NOT validated executable site workflows. No MES/device connection.",
@@ -61,7 +76,10 @@ internal static class PlanningBenchmark
         if (mode == "--planning-prepare")
         { Console.WriteLine("Prepared synthetic cases; no model call: " + output); return 0; }
         if (!OperatingSystem.IsWindows()) { Console.Error.WriteLine("Windows benchmark only."); return 2; }
-        var selfTest = mode == "--self-test";
+        var selfTest = mode is "--self-test" or "--light-self-test";
+        if (mode == "--light-self-test") await LightweightClientChecks.RunAsync();
+        var minimumStartMiB = light ? 1536UL : 3072UL;
+        var minimumRunningMiB = light ? 512UL : 768UL;
         var results = new List<Result>();
         var baseline = NativeMemory.Read();
         var hardware = new
@@ -69,9 +87,11 @@ internal static class PlanningBenchmark
             capturedAt = DateTimeOffset.Now, os = Environment.OSVersion.ToString(),
             processor = Environment.GetEnvironmentVariable("PROCESSOR_IDENTIFIER"),
             logicalProcessors = Environment.ProcessorCount, baseline.TotalPhysical, baseline.AvailablePhysical,
-            selfTest, model = "qwen3:1.7b",
-            reportConfiguration = "CPU,4 threads,2K context,384 output",
-            plannerConfiguration = "4 threads,8K context,2048 output; same production planner source",
+            selfTest, light, model = light ? "qwen3:0.6b" : "qwen3:1.7b",
+            reportConfiguration = light ? "CPU,2 threads,2K context,384 output; separate short-summary demo" : "CPU,4 threads,2K context,384 output",
+            plannerConfiguration = light ? "CPU,2 threads,2K context,384 output; separate template-selection demo, NOT production planner" :
+                "4 threads,8K context,2048 output; same production planner source",
+            minimumStartMiB, minimumRunningMiB,
             syntheticTemplates = true, actualDeviceActions = 0
         };
         File.WriteAllText(Path.Combine(output, "host.json"), JsonSerializer.Serialize(hardware, Json));
@@ -82,15 +102,15 @@ internal static class PlanningBenchmark
                 state, hardware, results,
                 notes = "Memory sampled every 250ms; working set includes all Ollama processes, not VRAM. CPU percent normalized across logical CPUs; cumulative sampled per-case, may undercount short-lived runners. Includes model loading; not a flushed OS-cache cold start. Structure match is NOT semantic accuracy. Human review required."
             }, Json));
-            WriteHtml(output, results, state, selfTest, baseline.TotalPhysical);
+            WriteHtml(output, results, state, selfTest, baseline.TotalPhysical, light);
         }
         Save("尚未运行");
-        if (!selfTest && baseline.AvailablePhysical < 3UL * 1024 * 1024 * 1024)
-        { Save("空闲内存不足3GB；未调用模型。请仅关闭不必要应用，不关闭仪器服务。"); return 5; }
+        if (!selfTest && baseline.AvailablePhysical < minimumStartMiB * 1024 * 1024)
+        { Save($"空闲内存不足{minimumStartMiB}MB；未调用模型，不关闭仪器服务。"); return 5; }
 
         using var cancel = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancel.Cancel(); };
-        using var http = new HttpClient(selfTest ? new SelfTestHandler(cases) :
+        using var http = new HttpClient(selfTest ? new SelfTestHandler(cases, light) :
             new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false })
         { BaseAddress = new("http://127.0.0.1:11434/"), Timeout = Timeout.InfiniteTimeSpan };
         if (!selfTest)
@@ -106,6 +126,7 @@ internal static class PlanningBenchmark
             { Save("模型服务尚未就绪：" + ex.Message); return 3; }
         }
         var model = new OllamaPlanningModel(http, new ConfigurationBuilder().Build());
+        var lightweightModel = new LightweightModelClient(http);
         // A single report + five planning cases keep the first 8GB run bounded.
         var now = DateTimeOffset.Now;
         var report = new ReportSnapshot("demo-report", now, new(now.AddDays(-1), now),
@@ -147,7 +168,7 @@ internal static class PlanningBenchmark
                             catch (System.ComponentModel.Win32Exception) { }
                         }
                     peak = Math.Max(peak, working);
-                    if (!selfTest && minFree < 768UL * 1024 * 1024)
+                    if (!selfTest && minFree < minimumRunningMiB * 1024 * 1024)
                     { lowMemory = true; requestCancel.Cancel(); break; }
                     try { await Task.Delay(250, monitorStop.Token); } catch (OperationCanceledException) { break; }
                 }
@@ -168,7 +189,14 @@ internal static class PlanningBenchmark
 
         results.Add(await Measure("R1", "读取合成测量数据和任务状态，给出简短摘要及待核查建议。", async token =>
         {
-            var summary = selfTest ? new AiSummary(true, "自检假输出", "FAKE", "请核对未返回结果的记录。", ["S1"], now)
+            AiSummary summary;
+            if (light)
+            {
+                var answer = await lightweightModel.SummarizeAsync(token);
+                summary = new AiSummary(true, "轻量合成演示，文字事实和因果未验证", selfTest ? "FAKE" : "qwen3:0.6b",
+                    answer.Summary + "\n待补信息：" + answer.Question, ["R1", "J2"], now);
+            }
+            else summary = selfTest ? new AiSummary(true, "自检假输出", "FAKE", "请核对未返回结果的记录。", ["S1"], now)
                 : await reports.SummarizeAsync(report, token);
             ReportFiles.WriteExcel(Path.Combine(output, "数据分析示例-AI.xlsx"), report, summary);
             if (!summary.Available) throw new InvalidOperationException(summary.Message);
@@ -181,6 +209,13 @@ internal static class PlanningBenchmark
             Console.WriteLine("Running " + sample.Id + ": " + sample.Request.Message);
             var result = await Measure(sample.Id, sample.Request.Message, async token =>
             {
+                if (light)
+                {
+                    var answer = await lightweightModel.SelectAsync(sample.Request, catalog, token);
+                    var match = sample.MustAsk ? !string.IsNullOrWhiteSpace(answer.Question) :
+                        string.IsNullOrWhiteSpace(answer.Question) && answer.Steps.SequenceEqual(sample.ExpectedKeys);
+                    return (JsonSerializer.Serialize(answer, Json), (bool?)match);
+                }
                 var proposal = await model.ProposeAsync(sample.Request, catalog, token);
                 var issues = AiPlanDraftBuilder.Validate(proposal, catalog);
                 var knownReferences = proposal.Steps is not null && proposal.Steps.All(s => s is not null &&
@@ -202,11 +237,13 @@ internal static class PlanningBenchmark
         return results.Count == cases.Length + 1 && results.All(r => r.Error is null && r.MatchesExpectedStructure != false) ? 0 : 4;
     }
 
-    private static void WriteHtml(string output, IReadOnlyList<Result> results, string state, bool selfTest, ulong totalMemory)
+    private static void WriteHtml(string output, IReadOnlyList<Result> results, string state, bool selfTest, ulong totalMemory, bool light)
     {
         static string E(string? s) => WebUtility.HtmlEncode(s ?? "");
         var html = new StringBuilder("<!doctype html><html lang='zh-CN'><meta charset='utf-8'><title>AI轻量试用评估</title><style>body{font-family:Segoe UI,Microsoft YaHei,sans-serif;max-width:1100px;margin:32px auto;padding:0 20px;color:#243247}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccd5df;padding:10px;text-align:left}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f6fa;padding:16px}.note{padding:15px;background:#fff4d6}h2{margin-top:30px}</style>");
-        html.Append("<h1>AI轻量试用评估</h1><p class='note'>")
+        html.Append("<h1>AI轻量试用评估</h1><p>")
+            .Append(light ? "0.6B低内存简化版：短摘要、模板选择、缺项询问；不是完整中控规划能力验收。" : "1.7B标准试用版。")
+            .Append("</p><p class='note'>")
             .Append(selfTest ? "工具自检假输出，不是目标电脑性能或真实模型效果。" : "真实模型试用，输入为合成样例。不是仪器检测结果或完整中控执行验收。")
             .Append("</p><p>").Append(E(state)).Append("</p><p>本机物理内存：")
             .Append((totalMemory / 1073741824d).ToString("F1")).Append(" GiB；记录用例：").Append(results.Count)
@@ -223,7 +260,7 @@ internal static class PlanningBenchmark
         File.WriteAllText(Path.Combine(output, "report.html"), html.ToString(), Encoding.UTF8);
     }
 
-    private sealed class SelfTestHandler(Case[] cases) : HttpMessageHandler
+    private sealed class SelfTestHandler(Case[] cases, bool light) : HttpMessageHandler
     {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
@@ -231,6 +268,24 @@ internal static class PlanningBenchmark
                 throw new InvalidOperationException("Self-test received an unexpected endpoint.");
             using var envelope = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(token));
             using var evidence = JsonDocument.Parse(envelope.RootElement.GetProperty("messages")[1].GetProperty("content").GetString()!);
+            if (light)
+            {
+                var options = envelope.RootElement.GetProperty("options");
+                if (envelope.RootElement.GetProperty("model").GetString() != "qwen3:0.6b" ||
+                    options.GetProperty("num_ctx").GetInt32() != 2048 || options.GetProperty("num_thread").GetInt32() != 2 ||
+                    options.GetProperty("num_predict").GetInt32() != 384 || options.GetProperty("num_gpu").GetInt32() != 0)
+                    throw new InvalidOperationException("Lightweight options changed unexpectedly.");
+                var selected = evidence.RootElement.TryGetProperty("kind", out _) ? null :
+                    cases.Single(c => c.Request.Message == evidence.RootElement.GetProperty("message").GetString());
+                var answer = new LightweightAnswer
+                {
+                    Summary = "自检假输出，请核对缺少的资料。",
+                    Steps = selected?.ExpectedKeys ?? [],
+                    Question = selected is null || selected.MustAsk ? "请补充信息" : ""
+                };
+                return new(HttpStatusCode.OK)
+                { Content = JsonContent.Create(new { done = true, done_reason = "stop", message = new { content = JsonSerializer.Serialize(answer, Json) } }) };
+            }
             var sample = cases.Single(c => c.Request.Message == evidence.RootElement.GetProperty("message").GetString());
             var proposal = new AiPlanProposal
             {

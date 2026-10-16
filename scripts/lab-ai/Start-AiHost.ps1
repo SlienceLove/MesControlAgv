@@ -2,7 +2,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$OllamaExe,
     [string]$ModelDirectory = (Join-Path $PSScriptRoot 'models'),
-    [switch]$PullModel
+    [switch]$PullModel,
+    [switch]$Light
 )
 $ErrorActionPreference = 'Stop'
 $exe = (Resolve-Path -LiteralPath $OllamaExe).Path
@@ -14,8 +15,9 @@ $memory = Get-CimInstance Win32_OperatingSystem
 $cpu = Get-CimInstance Win32_Processor
 Write-Output ($cpu.Name -join ', ')
 Write-Output ('Available RAM: {0:N0} MB of {1:N0} MB' -f ($memory.FreePhysicalMemory / 1024), ($memory.TotalVisibleMemorySize / 1024))
-if ($memory.FreePhysicalMemory -lt 3 * 1024 * 1024) {
-    throw 'Less than 3GB free RAM. Close unused applications before trying the 8GB pilot; this script closes nothing.'
+$minimumFreeMB = if ($Light) { 1536 } else { 3072 }
+if ($memory.FreePhysicalMemory -lt $minimumFreeMB * 1024) {
+    throw ("Less than " + $minimumFreeMB + "MB free RAM. This script closes nothing; do not stop instrument services.")
 }
 $modelPath = [IO.Path]::GetFullPath($ModelDirectory)
 New-Item -ItemType Directory -Path $modelPath -Force | Out-Null
@@ -40,10 +42,11 @@ for ($attempt = 0; $attempt -lt 30; $attempt++) {
 }
 if (-not $ready) { throw 'Host did not become ready. The launched process was not force-killed; inspect it manually.' }
 if ($PullModel) {
-    Write-Output 'Downloading qwen3:1.7b from the configured official Ollama registry (about 1.4GB). No experimental data is sent.'
-    $body = @{ model = 'qwen3:1.7b'; stream = $false } | ConvertTo-Json
+    $modelTag = if ($Light) { 'qwen3:0.6b' } else { 'qwen3:1.7b' }
+    Write-Output ("Downloading " + $modelTag + " from the configured Ollama registry. No experimental data is sent.")
+    $body = @{ model = $modelTag; stream = $false } | ConvertTo-Json
     $result = Invoke-RestMethod 'http://127.0.0.1:11434/api/pull' -Method Post -ContentType 'application/json' -Body $body -TimeoutSec 1800
     $result | ConvertTo-Json
 }
-Write-Output 'Next: run Pilot.exe --benchmark .\benchmark-first on this independent computer.'
+Write-Output 'Next: run the appropriate Test launcher in this package.'
 Write-Output ('To stop only this host after testing: Stop-Process -Id {0} (verify the PID first).' -f $process.Id)
