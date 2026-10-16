@@ -1,5 +1,6 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <ProjectReference Include="..\MesControlAgv.Reporting\MesControlAgv.Reporting.csproj" />
     <ProjectReference Include="..\MesControlAgv.Contracts\MesControlAgv.Contracts.csproj" />
     <ProjectReference Include="..\MesControlAgv.Domain\MesControlAgv.Domain.csproj" />
   </ItemGroup>

@@ -1,0 +1,58 @@
+<UserControl x:Class="MesControlAgv.Wpf.Views.LabReportView"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+ <Grid Margin="16">
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+  <StackPanel>
+   <TextBlock Text="实验报表助手" FontSize="24" FontWeight="SemiBold"/>
+   <TextBlock Margin="0,6,0,12" TextWrapping="Wrap" Foreground="#475569" Text="Excel 优先 · 程序统计 · 本地 AI 草稿 · 不控制设备。AI 离线也可导出报表；所有建议需人工核查。"/>
+  </StackPanel>
+  <WrapPanel Grid.Row="1" IsEnabled="{Binding IsIdle}" Margin="0,0,0,8">
+   <TextBlock Text="任务创建日期：" VerticalAlignment="Center"/>
+   <DatePicker SelectedDate="{Binding From}" Width="135"/><TextBlock Text=" 至 " VerticalAlignment="Center"/>
+   <DatePicker SelectedDate="{Binding To}" Width="135"/>
+   <TextBlock Text="  批次：" VerticalAlignment="Center"/><TextBox Text="{Binding Batch, UpdateSourceTrigger=PropertyChanged}" Width="140"/>
+   <Button Content="读取 MES" Command="{Binding RefreshCommand}" Margin="8,0" Padding="10,5"/>
+   <Button Content="Excel 模板" Click="Template_Click" Margin="4,0" Padding="10,5"/>
+   <Button Content="导入 Excel / CSV" Click="Import_Click" Margin="4,0" Padding="10,5"/>
+   <Button Content="确认导入" Command="{Binding AcceptImportCommand}" Margin="4,0" Padding="10,5"/>
+   <Button Content="清除导入" Command="{Binding ClearImportCommand}" Margin="4,0" Padding="10,5"/>
+   <Button Content="生成 AI 摘要" Command="{Binding GenerateCommand}" Margin="4,0" Padding="10,5"/>
+   <Button Content="导出报表" Click="Export_Click" Margin="4,0" Padding="10,5"/>
+  </WrapPanel>
+  <DockPanel Grid.Row="2" Margin="0,0,0,10">
+   <Button DockPanel.Dock="Right" Content="取消" Click="Cancel_Click" Padding="10,4"/>
+   <TextBlock Text="{Binding Status}" TextWrapping="Wrap" VerticalAlignment="Center" Foreground="#1D4ED8"/>
+  </DockPanel>
+  <TabControl Grid.Row="3">
+   <TabItem Header="统计汇总">
+    <DataGrid ItemsSource="{Binding Statistics}" IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False">
+     <DataGrid.Columns><DataGridTextColumn Header="项目" Binding="{Binding Key}" Width="220"/>
+      <DataGridTextColumn Header="内容" Binding="{Binding Value}" Width="*">
+       <DataGridTextColumn.ElementStyle><Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/></Style></DataGridTextColumn.ElementStyle>
+      </DataGridTextColumn>
+     </DataGrid.Columns>
+    </DataGrid>
+   </TabItem>
+   <TabItem Header="原始测量记录">
+    <DataGrid ItemsSource="{Binding Measurements}" IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False">
+     <DataGrid.Columns>
+      <DataGridTextColumn Header="记录编号" Binding="{Binding RecordId}"/><DataGridTextColumn Header="样品编号" Binding="{Binding SampleId}"/>
+      <DataGridTextColumn Header="批次" Binding="{Binding Batch}"/><DataGridTextColumn Header="检测项目" Binding="{Binding Metric}"/>
+      <DataGridTextColumn Header="结果" Binding="{Binding Value}"/><DataGridTextColumn Header="单位" Binding="{Binding Unit}"/>
+      <DataGridTextColumn Header="测量时间" Binding="{Binding MeasuredAt}"/><DataGridTextColumn Header="来源" Binding="{Binding Source}"/>
+      <DataGridTextColumn Header="文件SHA256" Binding="{Binding FileSha256}"/><DataGridTextColumn Header="来源行" Binding="{Binding SourceRow}"/>
+     </DataGrid.Columns>
+    </DataGrid>
+   </TabItem>
+   <TabItem Header="MES任务明细"><DataGrid ItemsSource="{Binding Jobs}" IsReadOnly="True" AutoGenerateColumns="True" CanUserAddRows="False"/></TabItem>
+   <TabItem Header="导入预览与问题">
+    <Grid><Grid.RowDefinitions><RowDefinition Height="2*"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+     <DataGrid ItemsSource="{Binding Preview.Records}" IsReadOnly="True" AutoGenerateColumns="True" CanUserAddRows="False"/>
+     <DataGrid Grid.Row="1" ItemsSource="{Binding Preview.Issues}" IsReadOnly="True" AutoGenerateColumns="True" CanUserAddRows="False"/>
+    </Grid>
+   </TabItem>
+   <TabItem Header="AI摘要与建议"><TextBox Text="{Binding SummaryText, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Padding="16" FontSize="15"/></TabItem>
+  </TabControl>
+ </Grid>
+</UserControl>

@@ -15,6 +15,7 @@
 | master | 已通过本轮离线回归的统一基线；现场部署仍需现场验收 | 接收 develop |
 | develop | 唯一集成入口 | 功能、UI 分支先汇入这里 |
 | feature/wpf-ui-layout-optimization | 后续界面优化 | develop |
+| feature/lab-ai-assistant | 独立 worktree：Excel 实验报表与私有小模型试用；目标为独立 i5／8 GB Windows 主机 | 离线与现场试用验收后由集成会话汇入 develop |
 | feature/sample-workstation-http-readonly | 已暂停，最终归档源 4fbddc4 | 已集成，后续任务重新从统一基线开始 |
 | feature/material-management | 已集成的物料功能历史 | 保留追溯，不继续分叉 |
 | feature/physical-admission-v2 | 已集成的准入与物料历史 74cfb88 | 保留追溯，不继续分叉 |

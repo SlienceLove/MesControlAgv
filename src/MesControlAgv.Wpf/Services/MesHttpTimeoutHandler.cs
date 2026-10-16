@@ -48,6 +48,8 @@ internal sealed class MesHttpTimeoutHandler : DelegatingHandler
 
     private TimeSpan SelectTimeout(HttpRequestMessage request)
     {
+        if (request.Method == HttpMethod.Post && request.RequestUri?.AbsolutePath == "/api/lab-reports/summary")
+            return TimeSpan.FromSeconds(130);
         if (request.Method != HttpMethod.Get && request.Method != HttpMethod.Head)
             return _writeTimeout;
 

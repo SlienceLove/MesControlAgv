@@ -146,6 +146,10 @@
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="任务排程" />
                                 </RadioButton>
+                                <RadioButton Tag="LabReportTab" AutomationProperties.AutomationId="LabReportNavigation"
+                                             Style="{StaticResource NavigationRadioButtonStyle}" Click="NavigationButton_Click">
+                                    <TextBlock Text="实验报表助手" />
+                                </RadioButton>
                                 <RadioButton Tag="InstrumentTaskImportTab" Style="{StaticResource NavigationRadioButtonStyle}" Click="NavigationButton_Click"><TextBlock Text="仪器任务导入" /></RadioButton>
                                 <RadioButton Tag="MapDashboardTab"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
@@ -661,6 +665,9 @@
         </TabItem>
     <TabItem x:Name="MaterialManagementTab" Header="物料管理" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:MaterialManagementView DataContext="{Binding Materials}" x:Name="MaterialManagementView" />
+    </TabItem>
+    <TabItem x:Name="LabReportTab" Header="实验报表助手" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <views:LabReportView DataContext="{Binding LabReports}" />
     </TabItem>
                 </TabControl>
             </Border>

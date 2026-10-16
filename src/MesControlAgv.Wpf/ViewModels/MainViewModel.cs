@@ -86,6 +86,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         ShineLabSequenceImport = new ShineLabSequenceImportViewModel(mes: _mes);
         _modules = new ControlCenterViewModel(WorkflowEditor, _mes, ModuleRegistry);
         Materials = new MaterialManagementViewModel(_mes);
+        LabReports = new LabReportViewModel(_mes);
         _modules.AgvCommunication.ConfigureRuntimeMode(effectiveRuntimeMode);
         DiagnosticAudit = diagnosticAudit ?? new OfflineDiagnosticAuditTrail();
         Diagnostics = new DiagnosticsCenterViewModel(StartupDiagnostics, DiagnosticAudit);
@@ -157,6 +158,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public ShineLabTaskDispatchViewModel ShineLabTaskDispatch { get; }
     public ShineLabSequenceImportViewModel ShineLabSequenceImport { get; }
     public MaterialManagementViewModel Materials { get; }
+    public LabReportViewModel LabReports { get; }
     public StartupConfigurationReport StartupDiagnostics { get; }
     public OfflineDiagnosticAuditTrail DiagnosticAudit { get; }
     public DiagnosticsCenterViewModel Diagnostics { get; }
@@ -1133,6 +1135,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         Samples.Dispose();
         ShineLabDeviceStatus.Dispose();
         Materials.Dispose();
+        LabReports.Dispose();
         _refreshGate.Dispose();
         _actionGate.Dispose();
         _shutdown.Dispose();

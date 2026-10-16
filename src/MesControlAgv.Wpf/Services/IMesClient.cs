@@ -117,6 +117,10 @@ public sealed record DashboardWorkflowExecution(
 
 public interface IMesClient
 {
+    Task<MesControlAgv.Reporting.ReportSnapshot> GetLabReportAsync(MesControlAgv.Reporting.ReportQuery query, CancellationToken token) =>
+        throw new NotSupportedException("当前 MES 客户端不支持实验报表。");
+    Task<MesControlAgv.Reporting.AiSummary> SummarizeLabReportAsync(MesControlAgv.Reporting.ReportSnapshot snapshot, CancellationToken token) =>
+        throw new NotSupportedException("当前 MES 客户端不支持实验报表 AI 摘要。");
     Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<DashboardTask>> GetTasksAsync(DateOnly date, CancellationToken cancellationToken) => GetTasksAsync(cancellationToken);
     Task<KpiDashboard> GetKpiDashboardAsync(DateOnly date, CancellationToken cancellationToken);

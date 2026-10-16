@@ -186,6 +186,7 @@ builder.Services.AddHostedService<WorkflowFieldNavigationWorker>();
 builder.Services.AddHostedService<WorkflowSampleWorkstationWorker>();
 builder.Services.AddHostedService<WorkflowLegacySampleWorkstationWorker>();
 
+builder.Services.AddLabReports(builder.Configuration);
 var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
@@ -205,6 +206,7 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.MapGet("/health", () => Results.Ok(new { service = "mes", status = "ok" }));
+app.MapLabReports();
 
 app.MapMesDeviceGatewayEndpoints();
 app.MapPhysicalReadinessEndpoints();
