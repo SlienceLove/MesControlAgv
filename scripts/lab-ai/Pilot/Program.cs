@@ -4,9 +4,12 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using MesControlAgv.Reporting;
 
+if (args.Length == 2 && args[0] is "--planning" or "--planning-prepare" or "--self-test")
+    return await PlanningBenchmark.RunAsync(args[0], args[1]);
+
 if (args.Length != 2 || args[0] is not ("--prepare" or "--benchmark"))
 {
-    Console.WriteLine("Usage: Pilot --prepare <new-output-directory> | --benchmark <new-output-directory>");
+    Console.WriteLine("Usage: Pilot --planning|--planning-prepare|--self-test|--prepare|--benchmark <new-output-directory>");
     return 2;
 }
 var output = Path.GetFullPath(args[1]);
