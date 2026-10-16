@@ -1,5 +1,7 @@
 # 实验报表 AI 试用交接
 
+> 2026-10-16：旧功能已保存为2bc203f，AI分支已同步develop 95c6cf1并新增流程助手；见[最新AI流程交接](LAB-AI-PLANNING-HANDOFF-2026-10-16.md)。下文未提交状态为9月21日历史，旧试用包不作为最新版中控部署包。
+
 ## 已实现
 
 分支 `feature/lab-ai-assistant`，工作区 `.worktrees/lab-ai-assistant`，起点 `ad2d958`。只有先前设计文档已在 `af141ad` 本地提交；本轮功能代码尚未提交／合并／推送，未替换现场窗口及服务。

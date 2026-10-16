@@ -117,6 +117,12 @@ public sealed record DashboardWorkflowExecution(
 
 public interface IMesClient
 {
+    Task<AiPlanningCatalog> GetAiPlanningCatalogAsync(CancellationToken token) =>
+        throw new NotSupportedException("MES尚未提供AI流程助手。");
+    Task<AiPlanningResult> ProposeAiPlanAsync(AiPlanningRequest request, CancellationToken token) =>
+        throw new NotSupportedException("MES尚未提供AI流程助手。");
+    Task<ExperimentPlan> CreateAiPlanDraftAsync(CreateAiPlanDraftRequest request, CancellationToken token) =>
+        throw new NotSupportedException("MES尚未提供AI流程助手。");
     Task<MesControlAgv.Reporting.ReportSnapshot> GetLabReportAsync(MesControlAgv.Reporting.ReportQuery query, CancellationToken token) =>
         throw new NotSupportedException("当前 MES 客户端不支持实验报表。");
     Task<MesControlAgv.Reporting.AiSummary> SummarizeLabReportAsync(MesControlAgv.Reporting.ReportSnapshot snapshot, CancellationToken token) =>

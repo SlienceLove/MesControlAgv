@@ -150,6 +150,10 @@
                                              Style="{StaticResource NavigationRadioButtonStyle}" Click="NavigationButton_Click">
                                     <TextBlock Text="实验报表助手" />
                                 </RadioButton>
+                                <RadioButton Tag="AiPlanningTab" AutomationProperties.AutomationId="AiPlanningNavigation"
+                                             Style="{StaticResource NavigationRadioButtonStyle}" Click="NavigationButton_Click">
+                                    <TextBlock Text="AI 流程助手" />
+                                </RadioButton>
                                 <RadioButton Tag="MapDashboardTab" Visibility="Collapsed"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
@@ -678,6 +682,9 @@
     </TabItem>
     <TabItem x:Name="LabReportTab" Header="实验报表助手" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:LabReportView DataContext="{Binding LabReports}" />
+    </TabItem>
+    <TabItem x:Name="AiPlanningTab" Header="AI 流程助手" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <views:AiPlanningView DataContext="{Binding AiPlanning}" />
     </TabItem>
     <TabItem x:Name="DetectionStandardsTab" Header="检测标准" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:DetectionStandardsView DataContext="{Binding Materials.DetectionStandards}" x:Name="DetectionStandardsView" />

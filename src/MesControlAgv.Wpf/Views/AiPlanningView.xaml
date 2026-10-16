@@ -1,0 +1,83 @@
+<UserControl x:Class="MesControlAgv.Wpf.Views.AiPlanningView"
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+ xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+ <Grid Margin="20">
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+  <StackPanel>
+   <TextBlock Text="AI 实验流程助手" FontSize="24" FontWeight="SemiBold"/>
+   <TextBlock Text="描述目标 → 补齐信息 → 复核模板步骤 → 创建实验方案草稿。不会自动发布或运行设备。" TextWrapping="Wrap" Margin="0,8"/>
+   <TextBlock Text="{Binding CatalogSummary}" TextWrapping="Wrap"/>
+  </StackPanel>
+  <Grid Grid.Row="1" Margin="0,12">
+   <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
+   <DockPanel Margin="0,0,16,0">
+    <StackPanel DockPanel.Dock="Bottom">
+     <TextBlock Text="输入需求或补充信息" Margin="0,10,0,4"/>
+     <TextBox Text="{Binding Input, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True"
+              TextWrapping="Wrap" Height="110" VerticalScrollBarVisibility="Auto" IsEnabled="{Binding IsIdle}"
+              AutomationProperties.AutomationId="AiPlanningInput"/>
+     <WrapPanel Margin="0,8">
+      <Button Content="生成 / 补充后重新生成" Command="{Binding GenerateCommand}" Margin="0,0,8,0"/>
+      <Button Content="取消等待" Command="{Binding CancelCommand}" Margin="0,0,8,0"/>
+      <Button Content="新对话" Command="{Binding ResetCommand}"/>
+     </WrapPanel>
+    </StackPanel>
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+     <StackPanel>
+      <Expander Header="可选：限定本轮模板范围" Margin="0,0,0,10">
+       <StackPanel>
+        <Button Content="读取可用模板" Command="{Binding RefreshCatalogCommand}" HorizontalAlignment="Left"/>
+        <TextBlock Text="不勾选时使用全部模板。目录过长时仅勾选本次相关模板。" TextWrapping="Wrap" Margin="0,4"/>
+        <ItemsControl ItemsSource="{Binding Templates}" IsEnabled="{Binding IsIdle}">
+         <ItemsControl.ItemTemplate><DataTemplate>
+          <CheckBox IsChecked="{Binding Selected}" Margin="0,3"><TextBlock Text="{Binding Name}" TextWrapping="Wrap"/></CheckBox>
+         </DataTemplate></ItemsControl.ItemTemplate>
+        </ItemsControl>
+       </StackPanel>
+      </Expander>
+      <TextBlock Text="示例：从待检区取样品，送往开盖分液工作站，完成后送到检测位。" TextWrapping="Wrap" Margin="0,0,0,12"/>
+      <TextBlock Text="{Binding Conversation}" TextWrapping="Wrap"/>
+      <TextBlock Text="{Binding Explanation}" TextWrapping="Wrap" Margin="0,16,0,0"/>
+      <TextBlock Text="{Binding Questions}" TextWrapping="Wrap" Foreground="DarkOrange" Margin="0,12,0,0"/>
+      <TextBlock Text="{Binding IssuesText}" TextWrapping="Wrap" Foreground="Firebrick" Margin="0,12,0,0"/>
+     </StackPanel>
+    </ScrollViewer>
+   </DockPanel>
+   <DockPanel Grid.Column="1">
+    <StackPanel DockPanel.Dock="Top" IsEnabled="{Binding CanEdit}">
+     <TextBlock Text="方案名称"/><TextBox Text="{Binding PlanName, UpdateSourceTrigger=PropertyChanged}" Margin="0,4,0,8"/>
+     <TextBlock Text="样品批次（尚未绑定实际样品与物料）"/>
+     <TextBox Text="{Binding Batch, UpdateSourceTrigger=PropertyChanged}" Margin="0,4,0,8"/>
+     <TextBlock Text="下列步骤引用已发布模板；展开核对路径与固定参数，耗时为调度估计。" TextWrapping="Wrap"/>
+    </StackPanel>
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+     <ItemsControl ItemsSource="{Binding Steps}">
+      <ItemsControl.ItemTemplate><DataTemplate>
+       <Border BorderBrush="#D6DFE8" BorderThickness="1" Padding="12" Margin="0,8,0,0">
+        <StackPanel>
+         <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextWrapping="Wrap"/>
+         <StackPanel Orientation="Horizontal" Margin="0,6">
+          <TextBlock Text="预计分钟：" VerticalAlignment="Center"/>
+          <TextBox Text="{Binding DurationText, UpdateSourceTrigger=PropertyChanged}" Width="65"
+                   IsEnabled="{Binding DataContext.CanEdit, RelativeSource={RelativeSource AncestorType=UserControl}}"/>
+         </StackPanel>
+         <Expander Header="查看模板节点与固定参数"><TextBlock Text="{Binding Details}" TextWrapping="Wrap"/></Expander>
+        </StackPanel>
+       </Border>
+      </DataTemplate></ItemsControl.ItemTemplate>
+     </ItemsControl>
+    </ScrollViewer>
+   </DockPanel>
+  </Grid>
+  <StackPanel Grid.Row="2">
+   <CheckBox Content="已复核模板路径、取放动作、固定实验参数及预计耗时，仅创建草稿"
+             IsChecked="{Binding Reviewed}" IsEnabled="{Binding CanEdit}"/>
+   <WrapPanel Margin="0,8">
+    <Button Content="确认创建草稿" Command="{Binding SaveCommand}" Margin="0,0,8,0"
+            AutomationProperties.AutomationId="AiPlanningSave"/>
+    <Button Content="在实验方案中打开" Click="OpenPlan_Click"/>
+   </WrapPanel>
+   <TextBlock Text="{Binding Status}" TextWrapping="Wrap"/>
+  </StackPanel>
+ </Grid>
+</UserControl>
