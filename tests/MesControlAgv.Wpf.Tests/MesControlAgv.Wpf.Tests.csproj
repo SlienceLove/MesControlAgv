@@ -29,6 +29,8 @@
     <None Include="..\fixtures\shinelab-direct-injection-standard.csv"
           Link="fixtures\shinelab-direct-injection-standard.csv"
           CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\res\DCSeq-SingleChannel-Wpf-Test.csv"
+          Link="fixtures\DCSeq-SingleChannel-Wpf-Test.csv" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -212,6 +212,8 @@ public sealed record SampleWorkstationCapabilitiesResponse(
 {
     // This endpoint describes configuration, not live readiness or execution proof.
     public string Source => "AdapterConfiguration";
+    // Null identifies an older Adapter that does not advertise its vendor XLSX unit.
+    public SampleWorkstationTemplateVolumeUnit? TemplateVolumeUnit { get; init; }
 }
 
 public sealed record SampleWorkstationTaskImportResponse(
@@ -219,6 +221,7 @@ public sealed record SampleWorkstationTaskImportResponse(
     IReadOnlyList<string> TaskNos,
     DateTimeOffset ObservedAtUtc)
 {
+    public SampleWorkstationTemplateVolumeUnit FileVolumeUnit { get; init; }
     public bool ReadbackVerified { get; init; }
     public string? FileSha256 { get; init; }
     public SampleWorkstationTaskTemplate? Template { get; init; }

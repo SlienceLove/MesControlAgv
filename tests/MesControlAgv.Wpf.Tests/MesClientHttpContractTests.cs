@@ -698,6 +698,7 @@ public sealed class MesClientHttpContractTests
         var actual = await client.StartSampleWorkstationTestTaskAsync(
             "WS 01",
             "TASK 001",
+                new SampleWorkstationTaskBarcodes { SampleBarcode1 = " TEST-1 ", SampleBarcode2 = " TEST-2 " },
             CancellationToken.None);
 
         Assert.True(actual.Acknowledged);
@@ -707,7 +708,42 @@ public sealed class MesClientHttpContractTests
         Assert.Equal(
             "/api/workstations/WS%2001/tasks/TASK%20001/start",
             request.Uri.AbsolutePath);
-        Assert.Null(request.Body);
+        var body = JsonSerializer.Deserialize<SampleWorkstationTaskBarcodes>(request.Body!, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal("TEST-1", body!.SampleBarcode1);
+        Assert.Equal("TEST-2", body.SampleBarcode2);
+    }
+
+    [Theory]
+    [InlineData(null, "B", "1号")]
+    [InlineData("A", " ", "2号")]
+    [InlineData("", "", "1号、2号")]
+    public async Task Invalid_workstation_barcodes_are_known_rejection_without_http(string? first, string second, string bottle)
+    {
+        var handler = new RecordingHandler(_ => throw new InvalidOperationException("Must not send"));
+        using var http = CreateClient(handler);
+        var client = new MesClient(http);
+        var error = await Assert.ThrowsAsync<SampleWorkstationTestStartException>(() => client.StartSampleWorkstationTestTaskAsync(
+            "WS", "T", new() { SampleBarcode1 = first!, SampleBarcode2 = second }, CancellationToken.None));
+        Assert.False(error.OutcomeUnknown);
+        Assert.Contains($"缺少{bottle}样品瓶条码", error.Message);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task Missing_workstation_barcode_object_and_old_overload_do_not_send_http()
+    {
+        var handler = new RecordingHandler(_ => throw new InvalidOperationException("Must not send"));
+        using var http = CreateClient(handler);
+        var client = new MesClient(http);
+        foreach (var request in new Func<Task>[] {
+            () => client.StartSampleWorkstationTestTaskAsync("WS", "T", CancellationToken.None),
+            () => client.StartSampleWorkstationTestTaskAsync("WS", "T", null!, CancellationToken.None) })
+        {
+            var error = await Assert.ThrowsAsync<SampleWorkstationTestStartException>(request);
+            Assert.False(error.OutcomeUnknown);
+            Assert.Contains("1号、2号", error.Message);
+        }
+        Assert.Empty(handler.Requests);
     }
 
     [Fact]
@@ -723,6 +759,7 @@ public sealed class MesClientHttpContractTests
             client.StartSampleWorkstationTestTaskAsync(
                 "SAMPLE-WORKSTATION-01",
                 "TEST-001",
+                new SampleWorkstationTaskBarcodes { SampleBarcode1 = " TEST-1 ", SampleBarcode2 = " TEST-2 " },
                 CancellationToken.None));
 
         Assert.Contains("工作站未确认任务启动", exception.Message, StringComparison.Ordinal);
@@ -743,6 +780,7 @@ public sealed class MesClientHttpContractTests
             client.StartSampleWorkstationTestTaskAsync(
                 "SAMPLE-WORKSTATION-01",
                 "TEST-001",
+                new SampleWorkstationTaskBarcodes { SampleBarcode1 = " TEST-1 ", SampleBarcode2 = " TEST-2 " },
                 CancellationToken.None));
 
         Assert.False(exception.OutcomeUnknown);
@@ -763,6 +801,7 @@ public sealed class MesClientHttpContractTests
             client.StartSampleWorkstationTestTaskAsync(
                 "SAMPLE-WORKSTATION-01",
                 "TEST-001",
+                new SampleWorkstationTaskBarcodes { SampleBarcode1 = " TEST-1 ", SampleBarcode2 = " TEST-2 " },
                 CancellationToken.None));
 
         Assert.True(exception.OutcomeUnknown);
@@ -784,6 +823,7 @@ public sealed class MesClientHttpContractTests
             client.StartSampleWorkstationTestTaskAsync(
                 "SAMPLE-WORKSTATION-01",
                 "TEST-001",
+                new SampleWorkstationTaskBarcodes { SampleBarcode1 = " TEST-1 ", SampleBarcode2 = " TEST-2 " },
                 CancellationToken.None));
 
         Assert.True(exception.OutcomeUnknown);

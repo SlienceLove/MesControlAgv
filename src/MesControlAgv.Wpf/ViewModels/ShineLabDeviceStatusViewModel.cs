@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using System.Windows.Input;
@@ -33,8 +34,15 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
     public const string IonChromatographyInstrument = "离子色谱";
     public const string SampleWorkstationInstrument = "开盖分液";
     public const string DefaultSampleWorkstationDeviceId = "SAMPLE-WORKSTATION-01";
+    internal IMesClient TaskTemplateClient => _mes;
+    internal string TaskTemplateDeviceId => _sampleWorkstationDeviceId;
 
     private readonly IMesClient _mes;
+    private readonly IReadOnlyCollection<ShineLabOperatorTaskRow> _ionTaskRecords;
+    private readonly string _ionEquipmentCode;
+    private bool _ionRunReadSucceeded;
+    private DateTimeOffset? _ionRunReadAt;
+    private DateTimeOffset? _workstationRunReadAt;
     private readonly string _sampleWorkstationDeviceId;
     private readonly bool _sampleWorkstationTestControlEnabled;
     private readonly ISampleWorkstationTestConfirmation _sampleWorkstationTestConfirmation;
@@ -49,8 +57,11 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
     private string _connectionStatus = "尚未读取";
     private string _message = "等待 ShineLab TCP Client 推送状态...";
     private string _workstationTestControlMessage = "请选择已有任务进行联调测试。";
+    private string _workstationSampleBarcode1 = string.Empty;
+    private string _workstationSampleBarcode2 = string.Empty;
     private bool _isRefreshing;
     private bool _isWorkstationTestBusy;
+    private bool _refreshingWorkstationTaskRows;
     private bool _disposed;
     private string _selectedInstrument = IonChromatographyInstrument;
     private long _refreshVersion;
@@ -62,11 +73,16 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
         ISampleWorkstationTestConfirmation? sampleWorkstationTestConfirmation = null,
         TimeSpan? workstationObservationInterval = null,
         TimeSpan? workstationObservationTimeout = null,
-        int maximumObservationPolls = 300)
+        int maximumObservationPolls = 300,
+        IReadOnlyCollection<ShineLabOperatorTaskRow>? ionTaskRecords = null,
+        string ionEquipmentCode = "STN61_01")
     {
         if (maximumObservationPolls <= 0)
             throw new ArgumentOutOfRangeException(nameof(maximumObservationPolls));
         _mes = mes;
+        _ionEquipmentCode = ionEquipmentCode;
+        _ionTaskRecords = ionTaskRecords ?? Array.Empty<ShineLabOperatorTaskRow>();
+        if (_ionTaskRecords is INotifyCollectionChanged observable) observable.CollectionChanged += IonTaskRecordsChanged;
         _sampleWorkstationDeviceId = string.IsNullOrWhiteSpace(sampleWorkstationDeviceId)
             ? DefaultSampleWorkstationDeviceId
             : sampleWorkstationDeviceId.Trim();
@@ -151,7 +167,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
 
     public string InstrumentDescription => IsIonChromatographySelected
         ? "显示离子色谱及其子设备（如 D160+、自动进样器 18i）的在线与运行状态"
-        : "显示开盖分液工作站的只读状态、错误信息与最近任务";
+        : "查看当前库任务；支持单任务模板和 Excel 批量导入";
 
     /// <summary>
     /// Only ion-chromatography responses are exposed through this collection.
@@ -280,13 +296,29 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
         get => _selectedWorkstationTask;
         set
         {
+            var previousTaskNo = _selectedWorkstationTask?.TaskNo;
             if (!SetField(ref _selectedWorkstationTask, value)) return;
+            if (!_refreshingWorkstationTaskRows && !string.Equals(previousTaskNo, value?.TaskNo, StringComparison.Ordinal))
+            {
+                WorkstationSampleBarcode1 = string.Empty;
+                WorkstationSampleBarcode2 = string.Empty;
+            }
             OnPropertyChanged(nameof(SelectedWorkstationTaskNo));
             OnPropertyChanged(nameof(SelectedWorkstationTaskState));
             RaiseWorkstationTestCommandCanExecuteChanged();
         }
     }
     public string SelectedWorkstationTaskNo => SelectedWorkstationTask?.TaskNo ?? "未选择";
+    public string WorkstationSampleBarcode1
+    {
+        get => _workstationSampleBarcode1;
+        set => SetField(ref _workstationSampleBarcode1, value);
+    }
+    public string WorkstationSampleBarcode2
+    {
+        get => _workstationSampleBarcode2;
+        set => SetField(ref _workstationSampleBarcode2, value);
+    }
     public string SelectedWorkstationTaskState => SelectedWorkstationTask is { } task
         ? FormatWorkstationTaskState(task.State, task.RawState)
         : "-";
@@ -312,6 +344,60 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
             ? "未知"
             : status.Online && status.State != SampleWorkstationDeviceState.Offline ? "在线" : "离线";
     public string WorkstationState => FormatWorkstationState(_sampleWorkstationSnapshot?.Status);
+    public string WorkstationCurrentTaskSummary => InstrumentCurrentTaskPresenter.Workstation(
+        _sampleWorkstationSnapshot, _workstationRunReadAt, DateTimeOffset.UtcNow);
+    public string IonCurrentTaskSummary
+    {
+        get
+        {
+            var matches = Devices.Where(d => d.EquipmentCode.Equals(_ionEquipmentCode, StringComparison.OrdinalIgnoreCase)).ToArray();
+            return InstrumentCurrentTaskPresenter.Ion(matches.Length == 1 ? matches[0] : null,
+                _ionRunReadSucceeded, _ionRunReadAt, _ionTaskRecords, DateTimeOffset.UtcNow);
+        }
+    }
+    public string IonOperatorOnline
+    {
+        get
+        {
+            if (!_ionRunReadSucceeded || _ionRunReadAt is not { } readAt || DateTimeOffset.UtcNow - readAt > TimeSpan.FromSeconds(60))
+                return "在线状态未确认";
+            var devices = Devices.Where(d => d.EquipmentCode.Equals(_ionEquipmentCode, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (devices.Length != 1) return "在线状态未确认";
+            var device = devices[0];
+            return device.Online && device.Status != 99 && DateTimeOffset.UtcNow - device.LastSeenAtUtc <= TimeSpan.FromSeconds(60)
+                ? "在线" : "离线";
+        }
+    }
+    public void InvalidateCurrentTaskDisplay()
+    {
+        OnPropertyChanged(nameof(IonCurrentTaskSummary));
+        OnPropertyChanged(nameof(IonOperatorOnline));
+        OnPropertyChanged(nameof(WorkstationCurrentTaskSummary));
+    }
+    private void IonTaskRecordsChanged(object? sender, NotifyCollectionChangedEventArgs e) =>
+        OnPropertyChanged(nameof(IonCurrentTaskSummary));
+    public string WorkstationOperatorOnline => !string.IsNullOrWhiteSpace(_sampleWorkstationSnapshot?.StatusReadError)
+        ? "状态未更新" : WorkstationOnline;
+    public string WorkstationOperatorNotice
+    {
+        get
+        {
+            var snapshot = _sampleWorkstationSnapshot;
+            if (snapshot is null) return "尚未获取设备信息，请刷新。";
+            var notices = new List<string>();
+            // Vendor codes 0/1/3 are completed/manually ended/started events, not alarms.
+            if (snapshot.Status?.State == SampleWorkstationDeviceState.Faulted || snapshot.Error?.ErrorCode is < 0 or 2)
+                notices.Add("设备有报警记录，请到设备端确认处理。");
+            else if (snapshot.Error is { Recognized: false } || snapshot.Error?.ErrorCode is > 3)
+                notices.Add("设备返回待确认信息，请到设备端核对。");
+            if (!string.IsNullOrWhiteSpace(snapshot.TasksReadError))
+                notices.Add("任务列表未更新；已有记录为上次读取结果，请刷新重试。");
+            if (!string.IsNullOrWhiteSpace(snapshot.StatusReadError) || !string.IsNullOrWhiteSpace(snapshot.ErrorReadError))
+                notices.Add("设备状态信息未完整更新，请刷新重试。");
+            return string.Join(" ", notices);
+        }
+    }
+    public bool HasWorkstationOperatorNotice => WorkstationOperatorNotice.Length > 0;
     public string WorkstationRawState => _sampleWorkstationSnapshot?.Status is { } status
         ? status.RawState.ToString(System.Globalization.CultureInfo.InvariantCulture)
         : "-";
@@ -326,7 +412,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
         : string.IsNullOrWhiteSpace(WorkstationReadErrors)
             ? IsWorkstationTestControlVisible
                 ? "联调测试入口已启用；仅可二次确认后启动已有任务。"
-                : "仅展示只读状态，不提供初始化、启动、任务导入或删除操作。"
+                : "状态区为只读；任务模板与导入请使用顶部入口，导入不会自动启动。"
             : $"只读接口部分不可用：{WorkstationReadErrors}";
     public string WorkstationReadErrors => _sampleWorkstationSnapshot is null
         ? string.Empty
@@ -359,9 +445,20 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
             return;
         }
 
+        var barcodes = new SampleWorkstationTaskBarcodes
+        {
+            SampleBarcode1 = WorkstationSampleBarcode1,
+            SampleBarcode2 = WorkstationSampleBarcode2
+        };
+        if (SampleWorkstationBarcodeValidation.MissingMessage(barcodes) is { } missingMessage)
+        {
+            WorkstationTestControlMessage = missingMessage;
+            return;
+        }
+        barcodes = SampleWorkstationBarcodeValidation.Normalize(barcodes);
         if (!_sampleWorkstationTestConfirmation.Confirm(
                 "确认启动开盖分液测试任务",
-                $"设备：{_sampleWorkstationDeviceId}\n任务：{selected.TaskNo}\n当前状态：{SelectedWorkstationTaskState}\n\n确认后只发送一次启动请求，是否继续？"))
+                $"设备：{_sampleWorkstationDeviceId}\n任务：{selected.TaskNo}\n当前状态：{SelectedWorkstationTaskState}\n1号样品瓶条码：{barcodes.SampleBarcode1}\n2号样品瓶条码：{barcodes.SampleBarcode2}\n\n确认后只发送一次启动请求，是否继续？"))
         {
             WorkstationTestControlMessage = "已取消，未发送请求。";
             return;
@@ -374,6 +471,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
             response = await _mes.StartSampleWorkstationTestTaskAsync(
                 _sampleWorkstationDeviceId,
                 selected.TaskNo,
+                barcodes,
                 cancellationToken);
         }
         catch (SampleWorkstationTestStartException exception) when (!exception.OutcomeUnknown)
@@ -488,6 +586,8 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
         {
             if (!IsRefreshCurrent(instrument, refreshVersion)) return;
             ConnectionStatus = "已取消";
+            if (instrument == IonChromatographyInstrument) _ionRunReadSucceeded = false;
+            else _workstationRunReadAt = null;
             Message = "状态查询已取消。";
         }
         catch (Exception exception)
@@ -501,6 +601,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
             }
             else
             {
+                _ionRunReadSucceeded = false;
                 ConnectionStatus = "MES 不可用";
                 Message = exception.Message;
             }
@@ -508,6 +609,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
         finally
         {
             IsRefreshing = false;
+            InvalidateCurrentTaskDisplay();
         }
     }
 
@@ -518,6 +620,8 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
     {
         var statuses = await _mes.GetShineLabDeviceStatusesAsync(cancellationToken);
         if (!IsRefreshCurrent(IonChromatographyInstrument, refreshVersion)) return;
+        _ionRunReadSucceeded = true;
+        _ionRunReadAt = DateTimeOffset.UtcNow;
         Devices.Clear();
         IonSubdevices.Clear();
         foreach (var status in statuses)
@@ -569,7 +673,8 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
         SampleWorkstationDashboardSnapshot? snapshot,
         string? preferredTaskNo = null)
     {
-        var selectedTaskNo = preferredTaskNo ?? SelectedWorkstationTask?.TaskNo;
+        var previousTaskNo = SelectedWorkstationTask?.TaskNo;
+        var selectedTaskNo = preferredTaskNo ?? previousTaskNo;
         var previous = _sampleWorkstationSnapshot;
         var effective = snapshot;
         if (snapshot is null && previous is not null)
@@ -598,21 +703,28 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
         }
 
         _sampleWorkstationSnapshot = effective;
-        WorkstationTasks.Clear();
-        if (effective?.Tasks is { } tasks)
+        _workstationRunReadAt = DateTimeOffset.UtcNow;
+        // DataGrid may push a transient null selection while ItemsSource is rebuilt.
+        // Preserve operator input for the same task, but never carry it to a different task.
+        _refreshingWorkstationTaskRows = true;
+        try
         {
-            foreach (var task in tasks.OrderByDescending(item => item.RecordNumber))
+            WorkstationTasks.Clear();
+            if (effective?.Tasks is { } tasks)
             {
-                WorkstationTasks.Add(task);
+                foreach (var task in tasks.OrderByDescending(item => item.RecordNumber))
+                    WorkstationTasks.Add(task);
             }
+            SelectedWorkstationTask = selectedTaskNo is null
+                ? null
+                : WorkstationTasks.FirstOrDefault(task => string.Equals(task.TaskNo, selectedTaskNo, StringComparison.Ordinal));
         }
-
-        SelectedWorkstationTask = selectedTaskNo is null
-            ? null
-            : WorkstationTasks.FirstOrDefault(task => string.Equals(
-                task.TaskNo,
-                selectedTaskNo,
-                StringComparison.Ordinal));
+        finally { _refreshingWorkstationTaskRows = false; }
+        if (!string.Equals(previousTaskNo, SelectedWorkstationTask?.TaskNo, StringComparison.Ordinal))
+        {
+            WorkstationSampleBarcode1 = string.Empty;
+            WorkstationSampleBarcode2 = string.Empty;
+        }
         RaiseWorkstationProperties();
         RaiseWorkstationTestCommandCanExecuteChanged();
         return effective;
@@ -712,6 +824,8 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
         {
             nameof(SampleWorkstationSnapshot), nameof(WorkstationStatus), nameof(WorkstationErrorResponse),
             nameof(HasWorkstationData), nameof(WorkstationConnectionStatus), nameof(WorkstationOnline),
+            nameof(WorkstationCurrentTaskSummary),
+            nameof(WorkstationOperatorOnline), nameof(WorkstationOperatorNotice), nameof(HasWorkstationOperatorNotice),
             nameof(WorkstationState), nameof(WorkstationRawState), nameof(WorkstationError),
             nameof(WorkstationObservedAt), nameof(WorkstationAvailabilityMessage), nameof(WorkstationReadErrors),
             nameof(WorkstationTaskCount),
@@ -777,6 +891,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
             "idle" or "ready" or "standby" or "空闲" or "就绪" => "空闲",
             "paused" or "pause" or "暂停" => "暂停",
             "fault" or "faulted" or "error" or "故障" => "故障",
+            "instrumentoffline" => "仪器离线（通讯模块在线）",
             null or "" => "未知",
             _ => state ?? "未知"
         };
@@ -798,6 +913,7 @@ public sealed class ShineLabDeviceStatusViewModel : INotifyPropertyChanged, IDis
 
     public void Dispose()
     {
+        if (_ionTaskRecords is INotifyCollectionChanged observable) observable.CollectionChanged -= IonTaskRecordsChanged;
         _disposed = true;
         _workstationObservationCancellation?.Cancel();
         _isWorkstationTestBusy = false;

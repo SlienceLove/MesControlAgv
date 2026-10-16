@@ -25,6 +25,40 @@ public partial class MaterialManagementView : UserControl
         }
     }
 
+    private async void OpenDetectionAssessment_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MaterialManagementViewModel { SelectedSample: { } sample } viewModel)
+        {
+            MessageBox.Show(Window.GetWindow(this), "请先在样品列表中选中一条样品。", "检测判定",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        var model = viewModel.DetectionStandards.CreateAssessment(sample);
+        var dialog = new DetectionAssessmentDialog { Owner = Window.GetWindow(this), DataContext = model };
+        await model.LoadAsync();
+        dialog.ShowDialog();
+    }
+
+    private async void CreateSample_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MaterialManagementViewModel viewModel) return;
+        var model = viewModel.CreateSampleEditor();
+        var dialog = new CreateSampleDialog { Owner = Window.GetWindow(this), DataContext = model };
+        await model.LoadAsync();
+        dialog.ShowDialog();
+    }
+
+    private void CreateConsumable_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not MaterialManagementViewModel viewModel) return;
+        var dialog = new CreateConsumableDialog
+        {
+            Owner = Window.GetWindow(this),
+            DataContext = viewModel.CreateConsumableEditor()
+        };
+        dialog.ShowDialog();
+    }
+
     private void FindMainViewModel(out MainViewModel? mainViewModel)
     {
         mainViewModel = null;

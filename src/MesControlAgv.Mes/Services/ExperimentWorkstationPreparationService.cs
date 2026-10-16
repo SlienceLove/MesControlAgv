@@ -79,7 +79,7 @@ internal sealed class ExperimentWorkstationPreparationService(
             TaskNo = vendorTaskNo,
             Transfers = normalized.Transfers ?? captured.Template.Transfers
         };
-        var generatedBytes = SampleWorkstationTemplateFile.Write(generatedTemplate);
+        var generatedBytes = SampleWorkstationTemplateFile.Write(generatedTemplate, captured.FileVolumeUnit);
         var generatedHash = Hash(generatedBytes);
         var payload = CreatePayload(captured, generatedTemplate, generatedHash, normalized.BottleBindings, verification);
         var payloadJson = ExperimentSchedulingPersistence.Serialize(payload);
@@ -167,7 +167,7 @@ internal sealed class ExperimentWorkstationPreparationService(
 
         try
         {
-            var bytes = SampleWorkstationTemplateFile.Write(payload.GeneratedTemplate);
+            var bytes = SampleWorkstationTemplateFile.Write(payload.GeneratedTemplate, payload.FileVolumeUnit);
             if (!string.Equals(Hash(bytes), payload.GeneratedTemplateFileSha256, StringComparison.Ordinal))
                 throw new InvalidOperationException("The persisted generated template hash no longer matches its payload.");
             await using var stream = new MemoryStream(bytes, writable: false);
@@ -175,7 +175,8 @@ internal sealed class ExperimentWorkstationPreparationService(
                 current.DeviceId,
                 payload.GeneratedTemplateFileName,
                 stream,
-                cancellationToken);
+                cancellationToken,
+                payload.FileVolumeUnit);
             ValidateImportAcknowledgement(current, payload, imported);
 
             var barcodes = ToBarcodes(payload.BottleBindings);
@@ -401,6 +402,7 @@ internal sealed class ExperimentWorkstationPreparationService(
 
         return new ExperimentWorkstationPreparationPayload
         {
+            FileVolumeUnit = captured.FileVolumeUnit,
             SourceTemplateFileName = captured.FileName,
             SourceTemplateFileSha256 = captured.FileSha256,
             SourceTemplate = captured.Template,
@@ -428,7 +430,7 @@ internal sealed class ExperimentWorkstationPreparationService(
             !string.Equals(response.Template.TaskNo, sourceTaskNo, StringComparison.Ordinal) ||
             response.FileContent is null ||
             !string.Equals(Hash(response.FileContent), response.FileSha256, StringComparison.Ordinal) ||
-            !SampleWorkstationTemplateFile.SameContent(response.Template, SampleWorkstationTemplateFile.Read(response.FileContent)))
+            !SampleWorkstationTemplateFile.SameContent(response.Template, SampleWorkstationTemplateFile.Read(response.FileContent, response.FileVolumeUnit)))
             throw Conflict("The captured workstation template identity or content hash did not match the request.",
                 ExperimentWorkstationPreparationIssueCodes.InvalidTemplateBinding);
     }
@@ -438,7 +440,7 @@ internal sealed class ExperimentWorkstationPreparationService(
         ExperimentWorkstationPreparationPayload payload,
         SampleWorkstationTaskImportResponse response)
     {
-        if (!response.ReadbackVerified || response.Template is null ||
+        if (response.FileVolumeUnit != payload.FileVolumeUnit || !response.ReadbackVerified || response.Template is null ||
             !string.Equals(response.DeviceId, record.DeviceId, StringComparison.OrdinalIgnoreCase) ||
             response.TaskNos is null || !response.TaskNos.SequenceEqual(new[] { record.VendorTaskNo }) ||
             !string.Equals(response.FileSha256, payload.GeneratedTemplateFileSha256, StringComparison.Ordinal) ||

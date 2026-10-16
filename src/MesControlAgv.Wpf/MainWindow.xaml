@@ -150,8 +150,7 @@
                                              Style="{StaticResource NavigationRadioButtonStyle}" Click="NavigationButton_Click">
                                     <TextBlock Text="实验报表助手" />
                                 </RadioButton>
-                                <RadioButton Tag="InstrumentTaskImportTab" Style="{StaticResource NavigationRadioButtonStyle}" Click="NavigationButton_Click"><TextBlock Text="仪器任务导入" /></RadioButton>
-                                <RadioButton Tag="MapDashboardTab"
+                                <RadioButton Tag="MapDashboardTab" Visibility="Collapsed"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="地图视图" />
@@ -176,7 +175,13 @@
                                 <RadioButton Tag="SampleManagementTab"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
-                                    <TextBlock Text="样品流转" />
+                                    <TextBlock Text="样品管理" />
+                                </RadioButton>
+                                <RadioButton Tag="DetectionStandardsTab"
+                                             AutomationProperties.AutomationId="DetectionStandardsNavigation"
+                                             Style="{StaticResource NavigationRadioButtonStyle}"
+                                             Click="NavigationButton_Click">
+                                    <TextBlock Text="检测标准" />
                                 </RadioButton>
                             </StackPanel>
                         </Expander>
@@ -248,7 +253,7 @@
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="启动诊断" />
                                 </RadioButton>
-                                <RadioButton Tag="ReadinessTab"
+                                <RadioButton Tag="ReadinessTab" Visibility="Collapsed"
                                              Style="{StaticResource NavigationRadioButtonStyle}"
                                              Click="NavigationButton_Click">
                                     <TextBlock Text="就绪 / 地图 / 审计" TextWrapping="Wrap" />
@@ -279,6 +284,13 @@
                                    Text="智能制造运营与任务协同" />
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding SelectedItem.Name, ElementName=MainTabs}" Value="ShineLabDeviceStatusTab"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
                         <Border Padding="10,5" Background="#ECFDF3" CornerRadius="12">
                             <StackPanel Orientation="Horizontal">
                                 <Ellipse Width="7" Height="7" Margin="0,0,6,0" VerticalAlignment="Center"
@@ -421,7 +433,8 @@
         </Grid>
     </TabItem>
     <TabItem x:Name="ShineLabDeviceStatusTab" Header="设备状态查询" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
-        <views:ShineLabDeviceStatusView DataContext="{Binding ShineLabDeviceStatus}" />
+        <views:ShineLabDeviceStatusView DataContext="{Binding ShineLabDeviceStatus}"
+            ControlModel="{Binding DataContext.ShineLabControl, RelativeSource={RelativeSource AncestorType=Window}}" />
     </TabItem>
     <TabItem x:Name="ShineLabTaskDispatchTab" Visibility="Collapsed" Header="ShineLab 任务下发（实验）" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:ShineLabTaskDispatchView DataContext="{Binding ShineLabTaskDispatch}" />
@@ -434,9 +447,6 @@
     </TabItem>
     <TabItem x:Name="AuboArmTab" Header="AUBO 机械臂" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:AuboArmControlView DataContext="{Binding AuboArm}" />
-    </TabItem>
-    <TabItem x:Name="InstrumentTaskImportTab" Header="仪器任务导入" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
-        <views:InstrumentTaskImportView />
     </TabItem>
     <TabItem x:Name="SampleManagementTab" Header="样品管理" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:SampleManagementView DataContext="{Binding Samples}" />
@@ -657,7 +667,7 @@
                 </Grid>
             </Grid>
         </TabItem>
-    <TabItem x:Name="MapDashboardTab" Header="地图视图" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+    <TabItem x:Name="MapDashboardTab" Visibility="Collapsed" Header="地图视图" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
             <views:MapDashboardView x:Name="MapDashboardView" />
         </TabItem>
     <TabItem x:Name="DigitalTwinTab" Header="数字孪生" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
@@ -668,6 +678,9 @@
     </TabItem>
     <TabItem x:Name="LabReportTab" Header="实验报表助手" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
         <views:LabReportView DataContext="{Binding LabReports}" />
+    </TabItem>
+    <TabItem x:Name="DetectionStandardsTab" Header="检测标准" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+        <views:DetectionStandardsView DataContext="{Binding Materials.DetectionStandards}" x:Name="DetectionStandardsView" />
     </TabItem>
                 </TabControl>
             </Border>

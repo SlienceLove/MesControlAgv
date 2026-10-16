@@ -461,7 +461,7 @@ public sealed class AuboArmControlViewModel : INotifyPropertyChanged, IDisposabl
         // Do not capture another thread's application dispatcher. Unit hosts and
         // automation runners may leave an Application instance alive without
         // pumping its queue; synchronously invoking it would stall commands.
-        var applicationDispatcher = Application.Current?.Dispatcher;
+        var applicationDispatcher = System.Windows.Application.Current?.Dispatcher;
         return applicationDispatcher is not null &&
                applicationDispatcher.CheckAccess() &&
                !applicationDispatcher.HasShutdownStarted &&

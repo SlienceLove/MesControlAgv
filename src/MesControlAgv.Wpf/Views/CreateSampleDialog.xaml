@@ -1,0 +1,92 @@
+<Window x:Class="MesControlAgv.Wpf.Views.CreateSampleDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="新建样品" Width="620" Height="490" MinWidth="520" MinHeight="440"
+        WindowStartupLocation="CenterOwner" Background="White">
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <TextBlock FontSize="18" FontWeight="SemiBold" Text="新建样品" />
+        <Grid Grid.Row="1" Margin="0,18,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <StackPanel Grid.Row="0" Grid.Column="0" Margin="0,0,0,16">
+                <TextBlock Margin="0,0,0,5" Text="样品条码 *" />
+                <TextBox MinHeight="32" Text="{Binding Barcode, UpdateSourceTrigger=PropertyChanged}" />
+            </StackPanel>
+            <StackPanel Grid.Row="0" Grid.Column="2" Margin="0,0,0,16">
+                <TextBlock Margin="0,0,0,5" Text="样品批次 *" />
+                <ComboBox MinHeight="32" IsEditable="True" ItemsSource="{Binding BatchSuggestions}"
+                          Text="{Binding BatchId, UpdateSourceTrigger=PropertyChanged}" />
+            </StackPanel>
+            <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,0,16">
+                <TextBlock Margin="0,0,0,5" Text="样品类型" />
+                <TextBox MinHeight="32" Text="{Binding SampleType, UpdateSourceTrigger=PropertyChanged}" />
+            </StackPanel>
+            <StackPanel Grid.Row="1" Grid.Column="2" Margin="0,0,0,16">
+                <TextBlock Margin="0,0,0,5" Text="物料编码" />
+                <TextBox MinHeight="32" Text="{Binding MaterialCode, UpdateSourceTrigger=PropertyChanged}" />
+            </StackPanel>
+            <StackPanel Grid.Row="2" Grid.Column="0">
+                <TextBlock Margin="0,0,0,5" Text="库位 *" />
+                <TextBox MinHeight="32" Text="{Binding LocationCode, UpdateSourceTrigger=PropertyChanged}" />
+            </StackPanel>
+            <StackPanel Grid.Row="2" Grid.Column="2">
+                <TextBlock Margin="0,0,0,5" Text="检测方法 *" />
+                <ComboBox MinHeight="32" ItemsSource="{Binding Standards}"
+                          SelectedItem="{Binding SelectedStandard, Mode=TwoWay}">
+                    <ComboBox.Style>
+                        <Style TargetType="ComboBox">
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsMethodLocked}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ComboBox.Style>
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock FontWeight="SemiBold" Text="{Binding MethodCode}" />
+                                <TextBlock Margin="8,0,0,0" Text="{Binding Name}" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+                <TextBlock MinHeight="32" VerticalAlignment="Center" FontWeight="SemiBold"
+                           Text="{Binding BoundMethodCode}">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsMethodLocked}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </StackPanel>
+        </Grid>
+        <DockPanel Grid.Row="2">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                <Button Padding="12,6" Margin="0,0,8,0" Click="Close_Click" Content="关闭" />
+                <Button Padding="14,6" Background="#1769AA" Foreground="White"
+                        Command="{Binding SaveCommand}" Content="创建样品" />
+            </StackPanel>
+            <TextBlock VerticalAlignment="Center" Foreground="Gray" TextWrapping="Wrap"
+                       Text="{Binding Status}" />
+        </DockPanel>
+    </Grid>
+</Window>

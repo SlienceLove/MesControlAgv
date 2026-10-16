@@ -63,14 +63,15 @@ public sealed class WorkflowSampleWorkstationDispatcher(
             }
 
             var readiness = await TryReadObservationAsync(deviceId, taskNo, cancellationToken);
-            if (readiness is null || !IsReady(readiness))
+            if (readiness is null || !HasMatchingIdentity(readiness, deviceId, taskNo) || !IsReady(readiness))
                 continue;
 
             var claimed = await workflows.TryClaimSampleWorkstationNodeExecutionAsync(
                 workItem.NodeExecution.Id,
                 cancellationToken);
             if (claimed is null) continue;
-            await ExecuteClaimedAsync(claimed, deviceId, taskNo, prepared, cancellationToken);
+            await ExecuteClaimedAsync(claimed, deviceId, taskNo, prepared,
+                readiness.Error.ErrorCode == 1, cancellationToken);
         }
     }
 
@@ -144,6 +145,7 @@ public sealed class WorkflowSampleWorkstationDispatcher(
         string deviceId,
         string taskNo,
         PreparedStartBinding? prepared,
+        bool inheritedManualEnd,
         CancellationToken cancellationToken)
     {
         if (workItem.DeviceOperation is not { } operation)
@@ -210,7 +212,7 @@ public sealed class WorkflowSampleWorkstationDispatcher(
                 WorkflowDeviceOperationStatus.Accepted,
                 null,
                 cancellationToken);
-            await ObserveStartAndCompletionAsync(workItem, deviceId, taskNo, cancellationToken);
+            await ObserveStartAndCompletionAsync(workItem, deviceId, taskNo, inheritedManualEnd, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -248,6 +250,7 @@ public sealed class WorkflowSampleWorkstationDispatcher(
         WorkflowNodeExecutionWorkItem workItem,
         string deviceId,
         string taskNo,
+        bool inheritedManualEnd,
         CancellationToken cancellationToken)
     {
         var deadline = _timeProvider.GetUtcNow().AddMilliseconds(
@@ -289,7 +292,13 @@ public sealed class WorkflowSampleWorkstationDispatcher(
                     UnknownReason.IdentityMismatch);
                 return;
             }
-            if (HasUnknownOrAbnormalTerminal(observation, out var abnormalReason))
+            // Event 1 may be the previous manually ended task's retained result.
+            // This baseline belongs only to this start attempt and expires as soon
+            // as the vendor reports a normal/new event. Never re-arm it afterward.
+            if (observation.Error.ErrorCode is 0 or 3) inheritedManualEnd = false;
+            var waitingForNewEvent = inheritedManualEnd && observation.Error.Recognized &&
+                observation.Error.ErrorCode == 1;
+            if (HasUnknownOrAbnormalTerminal(observation, out var abnormalReason, waitingForNewEvent))
             {
                 await CompleteAsync(
                     workItem,
@@ -300,7 +309,7 @@ public sealed class WorkflowSampleWorkstationDispatcher(
                     UnknownReason.ManualReconciliationRequired);
                 return;
             }
-            if (HasRunningEvidence(observation))
+            if (!waitingForNewEvent && HasRunningEvidence(observation))
             {
                 var runningObservedAt = _timeProvider.GetUtcNow();
                 await workflows.RecordDeviceOperationProgressAsync(
@@ -568,7 +577,8 @@ public sealed class WorkflowSampleWorkstationDispatcher(
         observation.Status.Online &&
         observation.Status.State == SampleWorkstationDeviceState.Idle &&
         observation.Status.RawState == 0 &&
-        observation.Error.ErrorCode == 0 &&
+        (observation.Error.ErrorCode == 0 ||
+            observation.Error.ErrorCode == 1 && observation.Task.State == SampleWorkstationTaskState.Waiting) &&
         observation.Error.Recognized &&
         observation.Task.State is not (SampleWorkstationTaskState.Running or SampleWorkstationTaskState.Unknown);
 
@@ -587,14 +597,16 @@ public sealed class WorkflowSampleWorkstationDispatcher(
 
     private static bool HasUnknownOrAbnormalTerminal(
         WorkstationObservation observation,
-        out string reason)
+        out string reason,
+        bool inheritedManualEnd = false)
     {
         if (observation.Task.State == SampleWorkstationTaskState.Unknown)
         {
             reason = "The workstation reported an unknown task state.";
             return true;
         }
-        if (observation.Error.ErrorCode is not (0 or 3))
+        if (observation.Error.ErrorCode is not (0 or 3) &&
+            !(inheritedManualEnd && observation.Error.ErrorCode == 1))
         {
             reason = $"The workstation reported error/result code {observation.Error.ErrorCode?.ToString() ?? "null"}.";
             return true;

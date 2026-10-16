@@ -1,0 +1,105 @@
+<UserControl x:Class="MesControlAgv.Wpf.Views.DetectionStandardsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Loaded="DetectionStandardsView_Loaded">
+    <Grid Margin="0,8,0,0">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="2.3*" MinWidth="340" />
+            <ColumnDefinition Width="3*" MinWidth="390" />
+        </Grid.ColumnDefinitions>
+        <Grid Grid.Column="0" Margin="0,0,12,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <DockPanel Margin="0,0,0,8">
+                <Button DockPanel.Dock="Right" Padding="12,6" Command="{Binding RefreshCommand}" Content="查询" />
+                <CheckBox DockPanel.Dock="Right" Margin="10,0,12,0" VerticalAlignment="Center"
+                          IsChecked="{Binding IncludeHistory}" Content="含历史" />
+                <TextBox Margin="0,0,8,0" MinWidth="110" Text="{Binding Search, UpdateSourceTrigger=PropertyChanged}"
+                         ToolTip="按方法编号或名称查询" />
+            </DockPanel>
+            <DataGrid Grid.Row="1" ItemsSource="{Binding Standards}" SelectedItem="{Binding SelectedStandard, Mode=TwoWay}"
+                      AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="方法编号" Binding="{Binding MethodCode}" Width="1.4*" />
+                    <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="2*" />
+                    <DataGridTextColumn Header="分类" Binding="{Binding Category}" Width="0.8*" />
+                    <DataGridTextColumn Header="指标" Binding="{Binding Indicators.Count}" Width="55" />
+                    <DataGridTextColumn Header="版本" Binding="{Binding Revision}" Width="55" />
+                    <DataGridCheckBoxColumn Header="启用" Binding="{Binding IsActive}" Width="55" />
+                </DataGrid.Columns>
+            </DataGrid>
+        </Grid>
+        <Grid Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <DockPanel Margin="0,0,0,10">
+                <Button DockPanel.Dock="Right" Padding="12,6" Command="{Binding NewCommand}" Content="新建方法" />
+                <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding RevisionText}" VerticalAlignment="Center" />
+            </DockPanel>
+            <Grid Grid.Row="1" Margin="0,0,0,10">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="1.4*" />
+                    <ColumnDefinition Width="2*" />
+                    <ColumnDefinition Width="1*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                    <TextBlock Text="方法编号" Margin="0,0,0,4" />
+                    <TextBox Text="{Binding MethodCode, UpdateSourceTrigger=PropertyChanged}"
+                             IsReadOnly="{Binding IsMethodCodeLocked}" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Margin="0,0,8,0">
+                    <TextBlock Text="标准名称" Margin="0,0,0,4" />
+                    <TextBox Text="{Binding Name, UpdateSourceTrigger=PropertyChanged}" />
+                </StackPanel>
+                <StackPanel Grid.Column="2">
+                    <TextBlock Text="分类" Margin="0,0,0,4" />
+                    <TextBox Text="{Binding Category, UpdateSourceTrigger=PropertyChanged}" />
+                </StackPanel>
+            </Grid>
+            <Grid Grid.Row="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <DockPanel Margin="0,0,0,6">
+                    <Button DockPanel.Dock="Right" Padding="10,4" Command="{Binding AddIndicatorCommand}" Content="添加指标" />
+                    <TextBlock Text="检测指标与判定参数" FontWeight="SemiBold" VerticalAlignment="Center" />
+                </DockPanel>
+                <DataGrid Grid.Row="1" ItemsSource="{Binding Indicators}" AutoGenerateColumns="False"
+                          CanUserAddRows="False" SelectionUnit="FullRow">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="指标" Binding="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Width="1.5*" />
+                        <DataGridTextColumn Header="单位" Binding="{Binding Unit, UpdateSourceTrigger=PropertyChanged}" Width="0.8*" />
+                        <DataGridTextColumn Header="检出限" Binding="{Binding DetectionLimit, UpdateSourceTrigger=PropertyChanged}" Width="0.9*" />
+                        <DataGridTextColumn Header="合格下限" Binding="{Binding LowerLimit, UpdateSourceTrigger=PropertyChanged}" Width="0.9*" />
+                        <DataGridTextColumn Header="合格上限" Binding="{Binding UpperLimit, UpdateSourceTrigger=PropertyChanged}" Width="0.9*" />
+                        <DataGridTemplateColumn Width="46">
+                            <DataGridTemplateColumn.CellTemplate>
+                                <DataTemplate>
+                                    <Button Content="×" ToolTip="移除指标" Padding="6,0"
+                                            Command="{Binding DataContext.RemoveIndicatorCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                            CommandParameter="{Binding}" />
+                                </DataTemplate>
+                            </DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+            </Grid>
+            <DockPanel Grid.Row="3" Margin="0,10,0,0">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Margin="0,0,8,0" Padding="12,6" Command="{Binding DeactivateCommand}" Content="停用当前版" />
+                    <Button Padding="14,6" Background="#1769AA" Foreground="White"
+                            Command="{Binding SaveCommand}" Content="保存为新修订" />
+                </StackPanel>
+                <TextBlock VerticalAlignment="Center" Foreground="Gray" TextWrapping="Wrap"
+                           Text="{Binding Status}" />
+            </DockPanel>
+        </Grid>
+    </Grid>
+</UserControl>

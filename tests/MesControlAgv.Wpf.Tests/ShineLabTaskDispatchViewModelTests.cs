@@ -35,6 +35,8 @@ public sealed class ShineLabTaskDispatchViewModelTests
         Assert.Equal(25, sample.InjectionVolume);
         Assert.Equal("Configured", viewModel.LastTask?.Status);
         Assert.Contains("任务已持久化", viewModel.Message);
+        Assert.Contains("仍需核对", viewModel.Message);
+        Assert.Contains("可能自动执行", viewModel.Message);
     }
 
     [Fact]

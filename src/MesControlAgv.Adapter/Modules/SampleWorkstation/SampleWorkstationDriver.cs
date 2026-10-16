@@ -57,7 +57,6 @@ public sealed partial class SampleWorkstationDriver(
         string deviceId, string taskNo, SampleWorkstationTaskBarcodes barcodes,
         CancellationToken cancellationToken)
     {
-        ArgumentNullException.ThrowIfNull(barcodes);
         return StartTaskCoreAsync(deviceId, taskNo, barcodes, cancellationToken);
     }
 
@@ -67,6 +66,7 @@ public sealed partial class SampleWorkstationDriver(
     {
         EnsureControlEnabled(deviceId);
         taskNo = RequireTaskNo(taskNo);
+        barcodes = SampleWorkstationBarcodeValidation.Normalize(barcodes);
         var response = await vendor.ExecuteCommandAsync(
             "StartExperiment",
             CreateTaskQuery(taskNo, barcodes),
@@ -92,7 +92,7 @@ public sealed partial class SampleWorkstationDriver(
         VendorSampleWorkstationResponse response;
         try
         {
-            response = await vendor.ExecuteCommandAsync(
+            response = await vendor.PostCommandAsync(
                 "UpdateTaskBarcode", CreateTaskQuery(taskNo, barcodes), cancellationToken);
         }
         catch (SampleWorkstationProtocolException exception) when (
@@ -106,7 +106,7 @@ public sealed partial class SampleWorkstationDriver(
         if (response.Data.ValueKind == JsonValueKind.String && response.Data.GetString()?.Trim() == "更新失败")
             throw new SampleWorkstationProtocolException("The workstation rejected the barcode update.",
                 SampleWorkstationErrorCodes.CommandRejected, response.Code, response.Data);
-        return ToCommandResponse(SampleWorkstationCommandOperation.UpdateTaskBarcodes, response, taskNo);
+        return ToCommandResponse(SampleWorkstationCommandOperation.UpdateTaskBarcodes, response, taskNo, barcodes);
     }
 
     private static Dictionary<string, string?> CreateTaskQuery(
@@ -131,7 +131,8 @@ public sealed partial class SampleWorkstationDriver(
             options.Enabled && options.ControlEnabled
                 ? Enum.GetValues<SampleWorkstationCommandOperation>() : [],
             options.Enabled
-                ? ProtocolOperations.Keys.Except(options.UnsupportedProtocolOperations).ToArray() : []));
+                ? ProtocolOperations.Keys.Except(options.UnsupportedProtocolOperations).ToArray() : [])
+        { TemplateVolumeUnit = options.TemplateVolumeUnit });
     }
 
     public async Task<SampleWorkstationStatusResponse> GetStatusAsync(
@@ -203,17 +204,30 @@ public sealed partial class SampleWorkstationDriver(
         EnsureDeviceId(deviceId);
         ArgumentNullException.ThrowIfNull(query);
         ValidateQuery(query);
-        var response = await vendor.GetAsync(
-            "GetTaskInformationList",
-            new Dictionary<string, string?>
-            {
-                ["State"] = ToVendorTaskFilter(query.State),
-                ["StartTime"] = query.StartDate ?? string.Empty,
-                ["EndTime"] = query.EndDate ?? string.Empty,
-                ["StartNo"] = query.StartNo.ToString(CultureInfo.InvariantCulture),
-                ["RecordNum"] = query.RecordNum.ToString(CultureInfo.InvariantCulture)
-            },
-            cancellationToken);
+        VendorSampleWorkstationResponse response;
+        try
+        {
+            response = await vendor.GetAsync(
+                "GetTaskInformationList",
+                new Dictionary<string, string?>
+                {
+                    ["State"] = ToVendorTaskFilter(query.State),
+                    ["StartTime"] = query.StartDate ?? string.Empty,
+                    ["EndTime"] = query.EndDate ?? string.Empty,
+                    ["StartNo"] = query.StartNo.ToString(CultureInfo.InvariantCulture),
+                    ["RecordNum"] = query.RecordNum.ToString(CultureInfo.InvariantCulture)
+                },
+                cancellationToken);
+        }
+        catch (SampleWorkstationProtocolException exception) when (
+            exception.VendorCode == 201 &&
+            exception.VendorData is { ValueKind: JsonValueKind.String } data &&
+            string.Equals(data.GetString()?.Trim(), "无数据", StringComparison.Ordinal))
+        {
+            // Field-verified empty task page. Keep this exception local to the list
+            // read: code 201 must still fail for commands, templates and other reads.
+            return [];
+        }
         if (response.Data.ValueKind != JsonValueKind.Array)
             throw new SampleWorkstationProtocolException("Task list Data must be an array.");
 
@@ -410,13 +424,16 @@ public sealed partial class SampleWorkstationDriver(
     private SampleWorkstationCommandResponse ToCommandResponse(
         SampleWorkstationCommandOperation operation,
         VendorSampleWorkstationResponse response,
-        string? taskNo = null)
+        string? taskNo = null,
+        SampleWorkstationTaskBarcodes? barcodes = null)
     {
         var text = response.Data.ValueKind == JsonValueKind.String ? response.Data.GetString()?.Trim() : null;
         var acknowledged = operation switch
         {
             SampleWorkstationCommandOperation.StartTask => text == "启动成功",
-            SampleWorkstationCommandOperation.UpdateTaskBarcodes => text == "更新成功",
+            SampleWorkstationCommandOperation.UpdateTaskBarcodes => text == "更新成功" ||
+                barcodes is not null && text ==
+                $"更新任务信息完成!任务编号:'{taskNo}',1号样品瓶条码:'{barcodes.SampleBarcode1.Trim()}',2号样品瓶条码:'{barcodes.SampleBarcode2.Trim()}')",
             SampleWorkstationCommandOperation.Initialize => text is "正在进行初始化" or "初始化成功",
             _ => false
         };

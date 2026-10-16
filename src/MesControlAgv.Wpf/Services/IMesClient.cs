@@ -121,6 +121,12 @@ public interface IMesClient
         throw new NotSupportedException("当前 MES 客户端不支持实验报表。");
     Task<MesControlAgv.Reporting.AiSummary> SummarizeLabReportAsync(MesControlAgv.Reporting.ReportSnapshot snapshot, CancellationToken token) =>
         throw new NotSupportedException("当前 MES 客户端不支持实验报表 AI 摘要。");
+    Task<IReadOnlyList<WorkstationBatchReviewItem>> GetWorkstationBatchReviewsAsync(string deviceId, CancellationToken token) =>
+        Task.FromException<IReadOnlyList<WorkstationBatchReviewItem>>(new NotSupportedException("MES 尚未提供异常批次核对接口。"));
+    Task<WorkstationBatchReconciliation> ReconcileWorkstationBatchAsync(string deviceId, Guid requestId, WorkstationBatchReconcileRequest request, CancellationToken token) =>
+        Task.FromException<WorkstationBatchReconciliation>(new NotSupportedException("MES 尚未提供异常批次核对接口。"));
+    Task<WorkstationBatchResult> ImportWorkstationBatchAsync(string deviceId, WorkstationBatchRequest request, CancellationToken token) =>
+        Task.FromException<WorkstationBatchResult>(new NotSupportedException("MES 尚未提供批量任务导入接口。"));
     Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<DashboardTask>> GetTasksAsync(DateOnly date, CancellationToken cancellationToken) => GetTasksAsync(cancellationToken);
     Task<KpiDashboard> GetKpiDashboardAsync(DateOnly date, CancellationToken cancellationToken);
@@ -169,6 +175,11 @@ public interface IMesClient
         string deviceId,
         string taskNo,
         CancellationToken cancellationToken) =>
+        Task.FromException<SampleWorkstationCommandResponse>(new SampleWorkstationTestStartException(
+            SampleWorkstationBarcodeValidation.MissingMessage(null)!, outcomeUnknown: false));
+    Task<SampleWorkstationCommandResponse> StartSampleWorkstationTestTaskAsync(
+        string deviceId, string taskNo, SampleWorkstationTaskBarcodes barcodes,
+        CancellationToken cancellationToken) =>
         Task.FromException<SampleWorkstationCommandResponse>(
             new NotSupportedException("Sample workstation test control is not supported by this MES client."));
     Task<ShineLabCommandResponse> SendShineLabConfigAsync(
@@ -176,6 +187,13 @@ public interface IMesClient
         ShineLabConfigRequest request,
         CancellationToken cancellationToken) =>
         Task.FromException<ShineLabCommandResponse>(new NotSupportedException("ShineLab Config is not supported by this MES client."));
+    Task<ShineLabServerStatusResponse> GetShineLabServerStatusAsync(CancellationToken cancellationToken) =>
+        Task.FromException<ShineLabServerStatusResponse>(new NotSupportedException("ShineLab server status is unavailable."));
+    Task<ShineLabTaskDetailResponse?> GetShineLabTaskDetailAsync(string taskUuid, CancellationToken cancellationToken) =>
+        Task.FromException<ShineLabTaskDetailResponse?>(new NotSupportedException("ShineLab task detail is unavailable."));
+    Task<System.Text.Json.JsonElement> GetShineLabTaskConfigPreviewAsync(string taskUuid, CancellationToken cancellationToken) =>
+        Task.FromException<System.Text.Json.JsonElement>(new NotSupportedException("ShineLab task preview is unavailable."));
+    /* Existing device command API below intentionally stays separate from managed tasks. */
     Task<ShineLabCommandResponse> SendShineLabCommandAsync(
         string equipmentCode,
         ShineLabCommandRequest request,
@@ -660,6 +678,10 @@ public interface IMesClient
         CancellationToken cancellationToken) =>
         Task.FromException<ExperimentSampleVerification>(new NotSupportedException("Experiment sample verification APIs are not supported by this MES client."));
 
+    Task<IReadOnlyList<SampleWorkstationTaskSummaryResponse>> GetSampleWorkstationTasksAsync(
+        string deviceId, int startNo, int recordNum, CancellationToken cancellationToken) =>
+        Task.FromException<IReadOnlyList<SampleWorkstationTaskSummaryResponse>>(new NotSupportedException("当前客户端不支持工作站任务列表。"));
+
     Task<SampleWorkstationTemplateResponse> GetSampleWorkstationTemplateAsync(
         string deviceId,
         string taskNo,
@@ -699,6 +721,30 @@ public interface IMesClient
         string? search,
         CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<SampleMaterial>>([]);
+
+    Task<IReadOnlyList<DetectionStandardRevision>> GetDetectionStandardsAsync(
+        string? search, bool includeHistory, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<DetectionStandardRevision>>([]);
+
+    Task<DetectionStandardRevision> SaveDetectionStandardAsync(
+        SaveDetectionStandardRequest request, CancellationToken cancellationToken) =>
+        Task.FromException<DetectionStandardRevision>(new NotSupportedException("Detection standards are not supported by this MES client."));
+
+    Task<DetectionStandardRevision> DeactivateDetectionStandardAsync(
+        string methodCode, Guid revisionId, CancellationToken cancellationToken) =>
+        Task.FromException<DetectionStandardRevision>(new NotSupportedException("Detection standards are not supported by this MES client."));
+
+    Task<DetectionAssessment> PreviewDetectionAssessmentAsync(
+        DetectionAssessmentRequest request, CancellationToken cancellationToken) =>
+        Task.FromException<DetectionAssessment>(new NotSupportedException("Detection assessments are not supported by this MES client."));
+
+    Task<DetectionAssessment> SaveDetectionAssessmentAsync(
+        DetectionAssessmentRequest request, CancellationToken cancellationToken) =>
+        Task.FromException<DetectionAssessment>(new NotSupportedException("Detection assessments are not supported by this MES client."));
+
+    Task<IReadOnlyList<DetectionAssessment>> GetDetectionAssessmentHistoryAsync(
+        Guid sampleId, CancellationToken cancellationToken) =>
+        Task.FromResult<IReadOnlyList<DetectionAssessment>>([]);
 
     Task<IReadOnlyList<MaterialLotInventory>> GetMaterialInventoryAsync(
         string? materialCode,

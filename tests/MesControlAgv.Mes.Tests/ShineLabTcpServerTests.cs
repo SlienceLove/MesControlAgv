@@ -12,6 +12,43 @@ namespace MesControlAgv.Mes.Tests;
 public sealed class ShineLabTcpServerTests
 {
     [Fact]
+    public async Task Certification_mode_can_change_on_one_connection_without_unsolicited_frames()
+    {
+        var settings = new ShineLabTcpOptions { Enabled = true, ListenAddress = "127.0.0.1", Port = ReservePort(), StaleAfterSeconds = 30 };
+        var options = Options.Create(settings);
+        var monitor = new CertificationMonitor(settings);
+        using var manager = new ShineLabConnectionManager();
+        using var server = new ShineLabTcpServer(options, new ShineLabStatusHub(options), manager,
+            NullLogger<ShineLabTcpServer>.Instance, liveOptions: monitor);
+        await server.StartAsync(CancellationToken.None);
+        try
+        {
+            using var client = await ConnectWithRetryAsync(settings.Port);
+            await using var stream = client.GetStream();
+            var reader = new ShineLabWireReader();
+            foreach (var mode in Enum.GetValues<ShineLabCertificationReplyMode>())
+            {
+                monitor.CurrentValue = new ShineLabTcpOptions { CertificationReplyMode = mode };
+                var id = $"cert-{mode}";
+                var json = JsonSerializer.Serialize(new { strID = id, strMethod = "Certification", equipmentCode = "STN61_01", body = new { channel = "A" } });
+                await stream.WriteAsync(Encoding.UTF8.GetBytes(json + "\n"));
+                using var reply = await ReadWireJsonAsync(stream, reader, TimeSpan.FromSeconds(3));
+                Assert.Equal(ShineLabCertificationReply.Build(id, "Certification", "STN61_01", mode).GetRawText(), reply.RootElement.GetRawText());
+                Assert.Equal("STN61_01", reply.RootElement.GetProperty("equipmentCode").GetString());
+                await AssertNoDataAsync(stream, TimeSpan.FromMilliseconds(30));
+            }
+        }
+        finally { await server.StopAsync(CancellationToken.None); }
+    }
+
+    private sealed class CertificationMonitor(ShineLabTcpOptions value) : IOptionsMonitor<ShineLabTcpOptions>
+    {
+        public ShineLabTcpOptions CurrentValue { get; set; } = value;
+        public ShineLabTcpOptions Get(string? name) => CurrentValue;
+        public IDisposable? OnChange(Action<ShineLabTcpOptions, string?> listener) => null;
+    }
+
+    [Fact]
     public async Task Server_stays_passive_until_certification_and_does_not_emit_control_frames()
     {
         var port = ReservePort();

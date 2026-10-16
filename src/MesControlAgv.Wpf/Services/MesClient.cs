@@ -35,6 +35,54 @@ public sealed class MesClient(HttpClient client) : IMesClient
         return await response.Content.ReadFromJsonAsync<MesControlAgv.Reporting.AiSummary>(cancellationToken: token)
             ?? throw new InvalidOperationException("MES 没有返回 AI 摘要。");
     }
+
+    public async Task<IReadOnlyList<WorkstationBatchReviewItem>> GetWorkstationBatchReviewsAsync(string deviceId, CancellationToken token)
+    {
+        using var response = await client.GetAsync($"api/workstations/{Uri.EscapeDataString(deviceId)}/task-batches/reviews", token);
+        await EnsureReviewResponseAsync(response, token);
+        var rows = await response.Content.ReadFromJsonAsync<WorkstationBatchReviewItem[]>(token)
+            ?? throw new InvalidOperationException("未收到异常批次核对列表。");
+        if (rows.Any(row => row is null || row.DeviceId != deviceId || row.RequestId == Guid.Empty || string.IsNullOrWhiteSpace(row.TaskNo)))
+            throw new InvalidOperationException("核对列表身份不匹配，禁止确认。");
+        return rows;
+    }
+
+    public async Task<WorkstationBatchReconciliation> ReconcileWorkstationBatchAsync(string deviceId, Guid requestId,
+        WorkstationBatchReconcileRequest request, CancellationToken token)
+    {
+        request = request with { Actor = request.Actor.Trim(), Reason = request.Reason.Trim(),
+            ExpectedPayloadHash = request.ExpectedPayloadHash.ToUpperInvariant(), ExpectedJournalSha256 = request.ExpectedJournalSha256.ToUpperInvariant() };
+        using var response = await client.PostAsJsonAsync($"api/workstations/{Uri.EscapeDataString(deviceId)}/task-batches/{requestId:D}/reconcile-created", request, token);
+        await EnsureReviewResponseAsync(response, token);
+        var audit = await response.Content.ReadFromJsonAsync<WorkstationBatchReconciliation>(token)
+            ?? throw new InvalidOperationException("未收到人工确认记录，请刷新核对，不要重复提交。");
+        if (audit.DeviceId != deviceId || audit.RequestId != requestId || audit.TaskNo != request.TaskNo ||
+            audit.PayloadHash != request.ExpectedPayloadHash || audit.JournalSha256 != request.ExpectedJournalSha256 ||
+            audit.Confirmation != request || audit.Outcome != "CreatedWithReadbackException")
+            throw new InvalidOperationException("人工确认回执身份或内容不匹配，请刷新核对。");
+        return audit;
+    }
+
+    private static async Task EnsureReviewResponseAsync(HttpResponseMessage response, CancellationToken token)
+    {
+        if (response.IsSuccessStatusCode) return;
+        if (response.StatusCode == HttpStatusCode.NotFound)
+            throw new InvalidOperationException("现场 MES 尚未部署核对接口，或原批次不存在；未确认结案。");
+        throw new InvalidOperationException($"核对请求返回 {(int)response.StatusCode}：{await response.Content.ReadAsStringAsync(token)}");
+    }
+
+    public async Task<WorkstationBatchResult> ImportWorkstationBatchAsync(string deviceId, WorkstationBatchRequest request, CancellationToken token)
+    {
+        using var response = await client.PostAsJsonAsync($"api/workstations/{Uri.EscapeDataString(deviceId)}/task-batches/import", request, token);
+        if (!response.IsSuccessStatusCode)
+        {
+            if (response.StatusCode == HttpStatusCode.NotFound)
+                throw new InvalidOperationException("现场 MES 尚未部署批量导入接口；本地模板编辑和 Excel 预览仍可使用。");
+            throw new InvalidOperationException($"导入请求返回 {(int)response.StatusCode}：{await response.Content.ReadAsStringAsync(token)}");
+        }
+        return await response.Content.ReadFromJsonAsync<WorkstationBatchResult>(token)
+            ?? throw new InvalidOperationException("未收到可确认的导入结果，请按请求编号核对。");
+    }
     public Task<IReadOnlyList<DashboardTask>> GetTasksAsync(CancellationToken cancellationToken) =>
         GetTasksAsync(DateOnly.FromDateTime(DateTime.UtcNow), cancellationToken);
 
@@ -81,6 +129,37 @@ public sealed class MesClient(HttpClient client) : IMesClient
         return await client.GetFromJsonAsync<List<SampleMaterial>>(
             $"api/materials/samples{query}", cancellationToken) ?? [];
     }
+
+    public async Task<IReadOnlyList<DetectionStandardRevision>> GetDetectionStandardsAsync(
+        string? search, bool includeHistory, CancellationToken cancellationToken)
+    {
+        var query = BuildMaterialQuery(("search", search), ("includeHistory", includeHistory ? "true" : null));
+        return await client.GetFromJsonAsync<List<DetectionStandardRevision>>(
+            $"api/materials/detection-standards{query}", cancellationToken) ?? [];
+    }
+
+    public Task<DetectionStandardRevision> SaveDetectionStandardAsync(
+        SaveDetectionStandardRequest request, CancellationToken cancellationToken) =>
+        PostMaterialAsync<DetectionStandardRevision>("api/materials/detection-standards", request, cancellationToken);
+
+    public Task<DetectionStandardRevision> DeactivateDetectionStandardAsync(
+        string methodCode, Guid revisionId, CancellationToken cancellationToken) =>
+        PostMaterialAsync<DetectionStandardRevision>(
+            "api/materials/detection-standards/deactivate",
+            new DeactivateDetectionStandardRequest(methodCode, revisionId), cancellationToken);
+
+    public Task<DetectionAssessment> PreviewDetectionAssessmentAsync(
+        DetectionAssessmentRequest request, CancellationToken cancellationToken) =>
+        PostMaterialAsync<DetectionAssessment>("api/materials/detection-assessments/preview", request, cancellationToken);
+
+    public Task<DetectionAssessment> SaveDetectionAssessmentAsync(
+        DetectionAssessmentRequest request, CancellationToken cancellationToken) =>
+        PostMaterialAsync<DetectionAssessment>("api/materials/detection-assessments", request, cancellationToken);
+
+    public async Task<IReadOnlyList<DetectionAssessment>> GetDetectionAssessmentHistoryAsync(
+        Guid sampleId, CancellationToken cancellationToken) =>
+        await client.GetFromJsonAsync<List<DetectionAssessment>>(
+            $"api/materials/samples/{sampleId}/detection-assessments", cancellationToken) ?? [];
 
     public async Task<IReadOnlyList<MaterialLotInventory>> GetMaterialInventoryAsync(
         string? materialCode,
@@ -356,17 +435,26 @@ public sealed class MesClient(HttpClient client) : IMesClient
                 : detail);
     }
 
-    public async Task<SampleWorkstationCommandResponse> StartSampleWorkstationTestTaskAsync(
+    public Task<SampleWorkstationCommandResponse> StartSampleWorkstationTestTaskAsync(
         string deviceId,
         string taskNo,
+        CancellationToken cancellationToken) =>
+        Task.FromException<SampleWorkstationCommandResponse>(new SampleWorkstationTestStartException(
+            SampleWorkstationBarcodeValidation.MissingMessage(null)!, outcomeUnknown: false));
+
+    public async Task<SampleWorkstationCommandResponse> StartSampleWorkstationTestTaskAsync(
+        string deviceId, string taskNo, SampleWorkstationTaskBarcodes barcodes,
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
         ArgumentException.ThrowIfNullOrWhiteSpace(taskNo);
+        if (SampleWorkstationBarcodeValidation.MissingMessage(barcodes) is { } message)
+            throw new SampleWorkstationTestStartException(message, outcomeUnknown: false);
+        barcodes = SampleWorkstationBarcodeValidation.Normalize(barcodes);
         var path =
             $"api/workstations/{Uri.EscapeDataString(deviceId)}/tasks/{Uri.EscapeDataString(taskNo)}/start";
 
-        using var response = await client.PostAsync(path, content: null, cancellationToken);
+        using var response = await client.PostAsJsonAsync(path, barcodes, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
             var problem = await TryReadProblemDetailAsync(response.Content, cancellationToken);
@@ -442,6 +530,22 @@ public sealed class MesClient(HttpClient client) : IMesClient
     }
 
     private sealed record WorkstationProblemDetail(string? Detail, bool? OutcomeUnknown);
+
+    public async Task<ShineLabServerStatusResponse> GetShineLabServerStatusAsync(CancellationToken cancellationToken) =>
+        await client.GetFromJsonAsync<ShineLabServerStatusResponse>("api/shinelab/server/status", cancellationToken)
+        ?? throw new InvalidOperationException("MES returned no ShineLab server status.");
+
+    public async Task<ShineLabTaskDetailResponse?> GetShineLabTaskDetailAsync(string taskUuid, CancellationToken cancellationToken)
+    {
+        using var response = await client.GetAsync($"api/shinelab/tasks/{Uri.EscapeDataString(taskUuid)}", cancellationToken);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<ShineLabTaskDetailResponse>(cancellationToken);
+    }
+
+    public async Task<System.Text.Json.JsonElement> GetShineLabTaskConfigPreviewAsync(string taskUuid, CancellationToken cancellationToken) =>
+        await client.GetFromJsonAsync<System.Text.Json.JsonElement>(
+            $"api/shinelab/tasks/{Uri.EscapeDataString(taskUuid)}/config-preview", cancellationToken);
 
     public async Task<ShineLabCommandResponse> SendShineLabConfigAsync(
         string equipmentCode,
@@ -1385,6 +1489,19 @@ public sealed class MesClient(HttpClient client) : IMesClient
             $"api/experiment-jobs/{jobId}/sample-verifications/{revision}/verify",
             request,
             cancellationToken);
+
+    public async Task<IReadOnlyList<SampleWorkstationTaskSummaryResponse>> GetSampleWorkstationTasksAsync(
+        string deviceId, int startNo, int recordNum, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
+        if (startNo < 1 || recordNum is < 1 or > 100) throw new ArgumentOutOfRangeException(nameof(startNo));
+        using var response = await client.GetAsync(
+            $"api/workstations/{Uri.EscapeDataString(deviceId)}/tasks?startNo={startNo}&recordNum={recordNum}", cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            throw await CreateExperimentApiExceptionAsync(response, cancellationToken);
+        return await response.Content.ReadFromJsonAsync<List<SampleWorkstationTaskSummaryResponse>>(cancellationToken)
+            ?? throw new InvalidOperationException("MES 未返回工作站任务列表。");
+    }
 
     public async Task<SampleWorkstationTemplateResponse> GetSampleWorkstationTemplateAsync(
         string deviceId,

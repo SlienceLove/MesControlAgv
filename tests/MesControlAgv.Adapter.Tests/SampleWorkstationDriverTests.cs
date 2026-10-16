@@ -9,6 +9,34 @@ namespace MesControlAgv.Adapter.Tests;
 
 public sealed class SampleWorkstationDriverTests
 {
+    [Fact]
+    public async Task Missing_barcode_object_and_old_overload_never_contact_vendor()
+    {
+        var handler = new StubHttpHandler();
+        var driver = CreateDriver(handler, controlEnabled: true);
+        var old = await Assert.ThrowsAsync<ArgumentException>(() => driver.StartTaskAsync("SAMPLE-WORKSTATION-01", "TASK-01", CancellationToken.None));
+        var missing = await Assert.ThrowsAsync<ArgumentException>(() => driver.StartTaskAsync("SAMPLE-WORKSTATION-01", "TASK-01", null!, CancellationToken.None));
+        Assert.Contains("1号、2号", old.Message);
+        Assert.Contains("1号、2号", missing.Message);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData("", "", "1号、2号")]
+    [InlineData(" ", "B", "1号")]
+    [InlineData("A", "\t", "2号")]
+    [InlineData(null, null, "1号、2号")]
+    [InlineData("A", null, "2号")]
+    public async Task Missing_barcode_message_identifies_bottle_and_sends_nothing(string? first, string? second, string bottle)
+    {
+        var handler = new StubHttpHandler();
+        var driver = CreateDriver(handler, controlEnabled: true);
+        var error = await Assert.ThrowsAsync<ArgumentException>(() => driver.StartTaskAsync("SAMPLE-WORKSTATION-01", "TASK-01",
+            new() { SampleBarcode1 = first!, SampleBarcode2 = second! }, CancellationToken.None));
+        Assert.Contains($"缺少{bottle}样品瓶条码", error.Message);
+        Assert.Empty(handler.Requests);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -31,7 +59,7 @@ public sealed class SampleWorkstationDriverTests
             result.Operation);
         Assert.Equal("TASK&01", result.TaskNo);
         var sent = Assert.Single(handler.Requests);
-        Assert.Equal(HttpMethod.Get, sent.Method);
+        Assert.Equal(start ? HttpMethod.Get : HttpMethod.Post, sent.Method);
         Assert.Equal(start ? "/Service/StartExperiment" : "/Service/UpdateTaskBarcode", sent.Uri.AbsolutePath);
         var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(sent.Uri.Query);
         Assert.Equal(3, query.Count);
@@ -213,6 +241,7 @@ public sealed class SampleWorkstationDriverTests
         var started = await driver.StartTaskAsync(
             "SAMPLE-WORKSTATION-01",
             "TASK-01",
+            new SampleWorkstationTaskBarcodes { SampleBarcode1 = "A", SampleBarcode2 = "B" },
             CancellationToken.None);
 
         Assert.Equal(SampleWorkstationCommandOperation.Initialize, initialized.Operation);
@@ -233,7 +262,7 @@ public sealed class SampleWorkstationDriverTests
             """{"Code":200,"Data":"启动失败"}"""), controlEnabled: true);
 
         var exception = await Assert.ThrowsAsync<SampleWorkstationProtocolException>(() =>
-            driver.StartTaskAsync("SAMPLE-WORKSTATION-01", "TASK-01", CancellationToken.None));
+            driver.StartTaskAsync("SAMPLE-WORKSTATION-01", "TASK-01", new SampleWorkstationTaskBarcodes { SampleBarcode1 = "A", SampleBarcode2 = "B" }, CancellationToken.None));
 
         Assert.Contains("启动失败", exception.Message, StringComparison.Ordinal);
         Assert.Equal(SampleWorkstationErrorCodes.CommandUnconfirmed, exception.ErrorCode);
@@ -250,7 +279,7 @@ public sealed class SampleWorkstationDriverTests
         var handler = new StubHttpHandler($$"""{"Code":200,"Data":{{data}}}""");
         var driver = CreateDriver(handler, controlEnabled: true);
         var exception = await Assert.ThrowsAsync<SampleWorkstationProtocolException>(() =>
-            driver.StartTaskAsync("SAMPLE-WORKSTATION-01", "TASK-01", CancellationToken.None));
+            driver.StartTaskAsync("SAMPLE-WORKSTATION-01", "TASK-01", new SampleWorkstationTaskBarcodes { SampleBarcode1 = "A", SampleBarcode2 = "B" }, CancellationToken.None));
         Assert.Equal(SampleWorkstationErrorCodes.CommandUnconfirmed, exception.ErrorCode);
         Assert.Single(handler.Requests);
     }
@@ -263,7 +292,7 @@ public sealed class SampleWorkstationDriverTests
         await Assert.ThrowsAsync<DeviceControlDisabledException>(() =>
             driver.InitializeAsync("SAMPLE-WORKSTATION-01", CancellationToken.None));
         await Assert.ThrowsAsync<DeviceControlDisabledException>(() =>
-            driver.StartTaskAsync("SAMPLE-WORKSTATION-01", "TASK-01", CancellationToken.None));
+            driver.StartTaskAsync("SAMPLE-WORKSTATION-01", "TASK-01", new SampleWorkstationTaskBarcodes { SampleBarcode1 = "A", SampleBarcode2 = "B" }, CancellationToken.None));
         var barcodes = new SampleWorkstationTaskBarcodes { SampleBarcode1 = "A", SampleBarcode2 = "B" };
         await Assert.ThrowsAsync<DeviceControlDisabledException>(() =>
             driver.StartTaskAsync("SAMPLE-WORKSTATION-01", "TASK-01", barcodes, CancellationToken.None));

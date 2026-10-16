@@ -40,10 +40,12 @@ public sealed class MaterialManagementViewModel : INotifyPropertyChanged, IDispo
     private string _receiveLocationCode = "DEFAULT";
     private string _actionStatus = string.Empty;
     private bool _includeQuarantined;
+    private SampleMaterial? _selectedSample;
 
     public MaterialManagementViewModel(IMesClient mes)
     {
         _mes = mes ?? throw new ArgumentNullException(nameof(mes));
+        DetectionStandards = new DetectionStandardsViewModel(mes);
         RefreshCommand = new AsyncCommand(() => RefreshAsync());
         PreviewImportCommand = new AsyncCommand(PreviewImportAsync, () => _pendingImport is not null);
         CommitImportCommand = new AsyncCommand(CommitImportAsync, () => _pendingImport is not null && Preview?.CanCommit == true);
@@ -60,6 +62,17 @@ public sealed class MaterialManagementViewModel : INotifyPropertyChanged, IDispo
     public ObservableCollection<MaterialLotInventory> Inventory { get; } = [];
     public ObservableCollection<MaterialTraceEvent> TraceEvents { get; } = [];
     public ObservableCollection<MaterialImportIssue> ImportIssues { get; } = [];
+    public DetectionStandardsViewModel DetectionStandards { get; }
+    public CreateSampleViewModel CreateSampleEditor() =>
+        new(_mes, Samples.ToList(), _actor, () => RefreshAsync());
+
+    public CreateConsumableViewModel CreateConsumableEditor() =>
+        new(_mes, Inventory.ToList(), _actor, () => RefreshAsync());
+    public SampleMaterial? SelectedSample
+    {
+        get => _selectedSample;
+        set => SetField(ref _selectedSample, value);
+    }
     public OfflineDataStateViewModel OfflineState { get; } = new();
 
     public AsyncCommand RefreshCommand { get; }
@@ -430,6 +443,7 @@ public sealed class MaterialManagementViewModel : INotifyPropertyChanged, IDispo
                     RowNumber = index + 1,
                     Barcode = Get(row, "barcode", "条码", "samplebarcode", "样品条码"),
                     SampleBatchId = Get(row, "samplebatchid", "batchid", "样品批次", "批次"),
+                    DetectionMethodCode = Get(row, "detectionmethodcode", "methodcode", "检测方法", "方法编号", "标准编号"),
                     MaterialCode = Get(row, "materialcode", "物料编码"),
                     SampleType = Get(row, "sampletype", "样品类型"),
                     LocationCode = Get(row, "locationcode", "库位")

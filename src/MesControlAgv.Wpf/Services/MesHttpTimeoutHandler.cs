@@ -12,17 +12,20 @@ internal sealed class MesHttpTimeoutHandler : DelegatingHandler
     private readonly TimeSpan _readTimeout;
     private readonly TimeSpan _catalogTimeout;
     private readonly TimeSpan _writeTimeout;
+    private readonly TimeSpan _batchImportTimeout;
 
     public MesHttpTimeoutHandler(
         TimeSpan? readTimeout = null,
         TimeSpan? catalogTimeout = null,
         TimeSpan? writeTimeout = null,
-        HttpMessageHandler? innerHandler = null)
+        HttpMessageHandler? innerHandler = null,
+        TimeSpan? batchImportTimeout = null)
         : base(innerHandler ?? new HttpClientHandler())
     {
         _readTimeout = Validate(readTimeout ?? TimeSpan.FromSeconds(5), nameof(readTimeout));
         _catalogTimeout = Validate(catalogTimeout ?? TimeSpan.FromSeconds(30), nameof(catalogTimeout));
         _writeTimeout = Validate(writeTimeout ?? TimeSpan.FromSeconds(90), nameof(writeTimeout));
+        _batchImportTimeout = Validate(batchImportTimeout ?? TimeSpan.FromMinutes(30), nameof(batchImportTimeout));
     }
 
     protected override async Task<HttpResponseMessage> SendAsync(
@@ -50,6 +53,9 @@ internal sealed class MesHttpTimeoutHandler : DelegatingHandler
     {
         if (request.Method == HttpMethod.Post && request.RequestUri?.AbsolutePath == "/api/lab-reports/summary")
             return TimeSpan.FromSeconds(130);
+        if (request.Method == HttpMethod.Post &&
+            request.RequestUri?.AbsolutePath.EndsWith("/task-batches/import", StringComparison.OrdinalIgnoreCase) == true)
+            return _batchImportTimeout;
         if (request.Method != HttpMethod.Get && request.Method != HttpMethod.Head)
             return _writeTimeout;
 

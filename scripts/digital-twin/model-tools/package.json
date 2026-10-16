@@ -1,0 +1,6 @@
+{
+  "name": "mes-twin-model-tools",
+  "private": true,
+  "type": "module",
+  "dependencies": { "draco3d": "1.5.7" }
+}

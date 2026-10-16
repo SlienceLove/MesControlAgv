@@ -68,14 +68,15 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
             }));
 
         endpoints.MapPost("/api/workstations/{deviceId}/tasks/import", async (
-            string deviceId, string fileName, HttpRequest request, ISampleWorkstationDriver driver,
+            string deviceId, string fileName, SampleWorkstationTemplateVolumeUnit? fileVolumeUnit, HttpRequest request, ISampleWorkstationDriver driver,
             DeviceOperationPolicy policy, CancellationToken cancellationToken) =>
             await ExecuteAsync(async () =>
             {
                 EnsureWorkstation(policy.EnsureControlEnabled(deviceId));
                 if (!string.Equals(request.ContentType?.Split(';')[0].Trim(), "application/octet-stream", StringComparison.OrdinalIgnoreCase))
                     throw new ArgumentException("Template import requires application/octet-stream XLSX content.");
-                return await driver.ImportTasksAsync(deviceId, fileName, request.Body, cancellationToken);
+                return await driver.ImportTasksAsync(deviceId, fileName, request.Body, cancellationToken,
+                    fileVolumeUnit ?? SampleWorkstationTemplateVolumeUnit.Microliters);
             }, isCommand: true));
 
         endpoints.MapGet("/api/workstations/{deviceId}/capabilities", async (
@@ -127,9 +128,8 @@ public sealed class SampleWorkstationAdapterModule : IDeviceAdapterModule
             {
                 EnsureWorkstation(policy.EnsureControlEnabled(deviceId));
                 taskNo = SampleWorkstationTaskRoute.ReadCommandTaskNo(request.HttpContext.Features.Get<IHttpRequestFeature>()?.RawTarget, taskNo);
-                return barcodes is null
-                    ? await driver.StartTaskAsync(deviceId, taskNo, cancellationToken)
-                    : await driver.StartTaskAsync(deviceId, taskNo, barcodes, cancellationToken);
+                return await driver.StartTaskAsync(deviceId, taskNo,
+                    SampleWorkstationBarcodeValidation.Normalize(barcodes), cancellationToken);
             }, isCommand: true));
 
         endpoints.MapPost("/api/workstations/{deviceId}/tasks/{taskNo}/barcodes", async (

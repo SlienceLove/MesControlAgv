@@ -1,16 +1,20 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using MesControlAgv.Application;
+using MesControlAgv.Contracts;
 
 // Offline file transform only: deliberately no HTTP client, MES admission, or device calls.
-if (args.Length != 2)
+if (args.Length is < 2 or > 3)
 {
-    Console.Error.WriteLine("Usage: WorkstationTemplatePreview <captured-template-response.json> <new-preview.xlsx>");
+    Console.Error.WriteLine("Usage: WorkstationTemplatePreview <captured-template-response.json> <new-preview.xlsx> [Microliters|Milliliters]");
     return 2;
 }
 
 try
 {
+    var unit = SampleWorkstationTemplateVolumeUnit.Microliters;
+    if (args.Length == 3 && (!Enum.TryParse(args[2], out unit) || !Enum.IsDefined(unit)))
+        throw new ArgumentException("Specify Microliters or Milliliters for the captured Excel format.");
     var inputPath = Path.GetFullPath(args[0]);
     var outputPath = Path.GetFullPath(args[1]);
     if (!string.Equals(Path.GetExtension(outputPath), ".xlsx", StringComparison.OrdinalIgnoreCase))
@@ -19,7 +23,7 @@ try
     if (response.RootElement.GetProperty("code").GetInt32() != 200)
         throw new ArgumentException("Only a captured successful template response can be previewed.");
     var bytes = Convert.FromBase64String(response.RootElement.GetProperty("data").GetProperty("FileData").GetString()!);
-    var original = SampleWorkstationTemplateFile.Read(bytes);
+    var original = SampleWorkstationTemplateFile.Read(bytes, unit);
     var sources = original.Transfers.GroupBy(row => (row.SourceModule, row.SourceX, row.SourceY)).ToArray();
     if (original.TaskNo != "test" || original.Transfers.Count != 16 || sources.Length != 2 || sources.Any(group => group.Count() != 8) ||
         original.Transfers.Select(row => (row.TargetModule, row.TargetX, row.TargetY)).Distinct().Count() != 16)
@@ -31,8 +35,8 @@ try
         TaskName = "LOCAL-PREVIEW-50uL",
         Transfers = original.Transfers.Select(row => row with { VolumeMicroliters = 50 }).ToArray()
     };
-    var output = SampleWorkstationTemplateFile.Write(preview);
-    if (!SampleWorkstationTemplateFile.SameContent(preview, SampleWorkstationTemplateFile.Read(output)))
+    var output = SampleWorkstationTemplateFile.Write(preview, unit);
+    if (!SampleWorkstationTemplateFile.SameContent(preview, SampleWorkstationTemplateFile.Read(output, unit)))
         throw new InvalidOperationException("The local preview failed its file roundtrip check.");
     Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
     // Never overwrite the original capture or a previously generated preview.
@@ -40,6 +44,7 @@ try
     Console.WriteLine(JsonSerializer.Serialize(new
     {
         previewOnly = true,
+        fileVolumeUnit = unit.ToString(),
         sourceTaskNo = original.TaskNo,
         taskNo = preview.TaskNo,
         outputPath,

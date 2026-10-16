@@ -9,6 +9,35 @@ namespace MesControlAgv.Mes.Tests;
 
 public sealed class SampleWorkstationAdapterClientTests
 {
+    [Fact]
+    public async Task Old_start_overload_is_a_known_pre_send_rejection()
+    {
+        var handler = new RecordingHandler();
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://adapter.local/") };
+        var client = new SampleWorkstationAdapterClient(http);
+        var error = await Assert.ThrowsAsync<SampleWorkstationGatewayException>(() => client.StartTaskAsync("WS", "T", CancellationToken.None));
+        Assert.Equal(400, error.StatusCode);
+        Assert.False(error.OutcomeUnknown);
+        Assert.Contains("1号、2号", error.Message);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(null, "B", "1号")]
+    [InlineData("A", " ", "2号")]
+    [InlineData("", "", "1号、2号")]
+    public async Task Invalid_start_barcodes_never_send_http(string? first, string second, string bottle)
+    {
+        var handler = new RecordingHandler();
+        using var http = new HttpClient(handler) { BaseAddress = new Uri("http://adapter.local/") };
+        var client = new SampleWorkstationAdapterClient(http);
+        var error = await Assert.ThrowsAsync<SampleWorkstationGatewayException>(() => client.StartTaskAsync("WS", "T",
+            new() { SampleBarcode1 = first!, SampleBarcode2 = second }, CancellationToken.None));
+        Assert.False(error.OutcomeUnknown);
+        Assert.Contains($"缺少{bottle}样品瓶条码", error.Message);
+        Assert.Empty(handler.Requests);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -131,13 +160,15 @@ public sealed class SampleWorkstationAdapterClientTests
         var client = new SampleWorkstationAdapterClient(httpClient);
 
         _ = await client.InitializeAsync("SAMPLE-WORKSTATION-01", CancellationToken.None);
-        _ = await client.StartTaskAsync("SAMPLE-WORKSTATION-01", "TASK-01", CancellationToken.None);
+        _ = await client.StartTaskAsync("SAMPLE-WORKSTATION-01", "TASK-01", new SampleWorkstationTaskBarcodes { SampleBarcode1 = "A", SampleBarcode2 = "B" }, CancellationToken.None);
 
         Assert.Equal(HttpMethod.Post, handler.Requests[0].Method);
         Assert.Equal("/api/workstations/SAMPLE-WORKSTATION-01/initialize", handler.Requests[0].RequestUri!.AbsolutePath);
         Assert.Equal(HttpMethod.Post, handler.Requests[1].Method);
         Assert.Equal("/api/workstations/SAMPLE-WORKSTATION-01/tasks/TASK-01/start", handler.Requests[1].RequestUri!.AbsolutePath);
-        Assert.All(handler.Requests, request => Assert.Null(request.Content));
+        Assert.Null(handler.Bodies[0]);
+        Assert.Contains("sampleBarcode1", handler.Bodies[1]);
+        Assert.Contains("sampleBarcode2", handler.Bodies[1]);
     }
 
     private sealed class RecordingHandler : HttpMessageHandler

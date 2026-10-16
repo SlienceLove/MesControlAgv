@@ -1,253 +1,197 @@
 <UserControl x:Class="MesControlAgv.Wpf.Views.ShineLabDeviceStatusView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:converters="clr-namespace:MesControlAgv.Wpf.Converters">
+             xmlns:converters="clr-namespace:MesControlAgv.Wpf.Converters"
+             xmlns:views="clr-namespace:MesControlAgv.Wpf.Views">
     <UserControl.Resources>
         <converters:InstrumentVisibilityConverter x:Key="InstrumentVisibilityConverter" />
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
     </UserControl.Resources>
 
-    <Grid Margin="0,12,0,0">
+    <Grid Margin="0,6,0,0">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <DockPanel Margin="0,0,0,14">
+        <DockPanel Margin="0,0,0,6">
             <StackPanel DockPanel.Dock="Left">
-                <TextBlock FontSize="22" FontWeight="SemiBold" Text="{Binding InstrumentTitle}" />
-                <TextBlock Margin="0,4,0,0" Foreground="Gray"
-                           Text="{Binding InstrumentDescription}" />
+                <TextBlock FontSize="20" FontWeight="SemiBold" Text="{Binding InstrumentTitle}" />
             </StackPanel>
-            <Button DockPanel.Dock="Right" Width="100" Height="34"
-                    Command="{Binding RefreshCommand}" Content="刷新状态" />
+            <WrapPanel DockPanel.Dock="Right" HorizontalAlignment="Right">
+                <Button Margin="0,0,8,0" Padding="12,6" Content="单任务模板" Click="SingleTaskTemplate_Click"
+                        Visibility="{Binding IsSampleWorkstationSelected, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                <Button Margin="0,0,8,0" Padding="12,6" Content="批量导入任务" Click="BatchTaskImport_Click"
+                        Visibility="{Binding IsSampleWorkstationSelected, Converter={StaticResource BooleanToVisibilityConverter}}" />
+                <Button Width="100" Height="34" Command="{Binding RefreshCommand}" Content="刷新状态"
+                        Visibility="{Binding IsSampleWorkstationSelected, Converter={StaticResource BooleanToVisibilityConverter}}" />
+            </WrapPanel>
         </DockPanel>
 
         <!-- The two items are peer instruments.  The opening/dispensing page
              is not derived from or filtered out of the ShineLab list. -->
-        <TabControl Grid.Row="1" Margin="0,0,0,14"
+        <TabControl Grid.Row="1" Margin="0,0,0,6"
                     ItemsSource="{Binding InstrumentOptions}"
                     SelectedItem="{Binding SelectedInstrument, Mode=TwoWay}">
             <TabControl.ItemTemplate>
                 <DataTemplate>
-                    <TextBlock Padding="18,8" FontSize="16" FontWeight="SemiBold" Text="{Binding}" />
+                    <TextBlock Padding="18,5" FontSize="16" FontWeight="SemiBold" Text="{Binding}" />
                 </DataTemplate>
             </TabControl.ItemTemplate>
             <TabControl.ContentTemplate>
                 <DataTemplate>
-                    <TextBlock Margin="12,4" Foreground="Gray"
-                               Text="选择上方大设备后查看对应的只读状态" />
+                    <Border Height="0"/>
                 </DataTemplate>
             </TabControl.ContentTemplate>
         </TabControl>
 
-        <!-- Ion chromatography: only the ShineLab sub-device status list is
-             shown here (for example D160+ and automatic sampler 18i). -->
-        <Grid x:Name="DeviceSummaryGrid" Grid.Row="2" Margin="0,0,0,14"
+        <!-- MES-owned sample records only; not an AQ sequence snapshot. -->
+        <Grid x:Name="DeviceSummaryGrid" Grid.Row="2" Margin="0,0,0,8"
               Visibility="{Binding SelectedInstrument, Converter={StaticResource InstrumentVisibilityConverter}, ConverterParameter=离子色谱}"
-              MinWidth="0" SizeChanged="DeviceSummaryGrid_SizeChanged">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="*" MinHeight="0" />
-                <RowDefinition Height="0" />
-            </Grid.RowDefinitions>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="2*" MinWidth="0" />
-                <ColumnDefinition Width="3*" MinWidth="0" />
-            </Grid.ColumnDefinitions>
-
-            <Border x:Name="DeviceListHost" Grid.Row="0" Grid.Column="0" Margin="0,0,12,0"
-                    Padding="12" Background="#F6F8FA" BorderBrush="#D0D7DE"
-                    BorderThickness="1" CornerRadius="6">
-                <StackPanel>
-                    <TextBlock FontSize="17" FontWeight="SemiBold" Text="离子色谱子设备" />
-                    <TextBlock Margin="0,5,0,0" FontSize="11" Foreground="Gray"
-                               Text="仅展示在线、运行等状态，不显示任务映射信息。" />
-                    <DataGrid Margin="0,10,0,0" ItemsSource="{Binding VisibleIonSubdevices}"
-                              SelectedItem="{Binding SelectedSubdevice, Mode=TwoWay}"
-                              AutoGenerateColumns="False" IsReadOnly="True"
-                              CanUserAddRows="False" HeadersVisibility="Column"
-                              MinWidth="0" ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                              ScrollViewer.VerticalScrollBarVisibility="Auto">
+              MinWidth="0">
+            <Grid DataContext="{Binding ControlModel, RelativeSource={RelativeSource AncestorType={x:Type views:ShineLabDeviceStatusView}}}">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <WrapPanel x:Name="IonOnlineToolbar" Margin="0,0,0,12">
+                    <Border Background="#F1F5F9" CornerRadius="5" Padding="12,7" Margin="0,0,10,0">
+                        <TextBlock Text="{Binding DataContext.IonOperatorOnline, RelativeSource={RelativeSource AncestorType={x:Type views:ShineLabDeviceStatusView}}}" FontWeight="SemiBold"/>
+                    </Border>
+                    <Button Content="刷新样品记录" Click="RefreshIonRecordsOnLoad" Padding="12,6" Margin="0,0,10,0"/>
+                    <Button x:Name="IonImportTasksButton" Content="导入样品任务" Click="ImportIonTasks_Click"
+                            IsEnabled="{Binding IsInteractive}" Padding="12,6" Margin="0,0,10,0"/>
+                    <Button Content="托盘弹出" Command="{Binding TrayPopupCommand}" Padding="12,6" Margin="0,0,8,0"/>
+                    <Button Content="托盘复位" Command="{Binding TrayResetCommand}" Padding="12,6"/>
+                </WrapPanel>
+                <StackPanel Grid.Row="1" Margin="0,0,0,10">
+                    <TextBlock x:Name="IonCurrentTaskText" Margin="0,0,0,4" Foreground="#175CD3"
+                               Text="{Binding DataContext.IonCurrentTaskSummary, RelativeSource={RelativeSource AncestorType={x:Type views:ShineLabDeviceStatusView}}, StringFormat=当前任务：{0}}"
+                               ToolTip="{Binding DataContext.IonCurrentTaskSummary, RelativeSource={RelativeSource AncestorType={x:Type views:ShineLabDeviceStatusView}}}"
+                               TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="中控样品记录" FontSize="18" FontWeight="SemiBold"/>
+                    <TextBlock Text="仅显示中控记录，不代表 AQ 的完整序列；AQ 中手动添加或修改的样品不在此同步。"
+                               Foreground="#64748B" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                </StackPanel>
+                <Grid Grid.Row="2">
+                    <DataGrid x:Name="IonTasksGrid" ItemsSource="{Binding TaskItems}"
+                              SelectedItem="{Binding SelectedTaskItem}" AutoGenerateColumns="False"
+                              IsReadOnly="True" CanUserAddRows="False" SelectionMode="Single"
+                              ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.HorizontalScrollBarVisibility="Auto">
                         <DataGrid.Columns>
-                            <DataGridTextColumn Width="1.5*" MinWidth="110" Header="子设备"
-                                                Binding="{Binding DeviceName}" />
-                            <DataGridTextColumn Width="1*" MinWidth="90" Header="设备编号"
-                                                Binding="{Binding EquipmentCode}" />
-                            <DataGridTextColumn Width="0.8*" MinWidth="60" Header="在线"
-                                                Binding="{Binding OnlineText}" />
-                            <DataGridTextColumn Width="0.9*" MinWidth="70" Header="状态"
-                                                Binding="{Binding StateText}" />
+                            <DataGridTextColumn Header="样品名称" Binding="{Binding SampleNames}" Width="2*" MinWidth="100"/>
+                            <DataGridTextColumn Header="样品编号" Binding="{Binding SourceNumbers}" Width="1.3*" MinWidth="90"/>
+                            <DataGridTextColumn Header="时间" Binding="{Binding CreatedTime}" Width="100"/>
+                            <DataGridTextColumn Header="状态" Binding="{Binding State}" Width="*" MinWidth="80"/>
+                            <DataGridTextColumn Header="检测结果" Binding="{Binding ResultState}" Width="*" MinWidth="80"/>
                         </DataGrid.Columns>
                     </DataGrid>
-                    <TextBlock Margin="0,10,0,0" FontSize="11" Foreground="Gray"
-                               TextWrapping="Wrap" Text="{Binding Message}" />
+                    <TextBlock Text="暂无中控样品记录" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#64748B" IsHitTestVisible="False">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers><DataTrigger Binding="{Binding TaskItems.Count}" Value="0"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Grid>
+                <StackPanel Grid.Row="3" Margin="0,8,0,0">
+                    <TextBlock Text="{Binding OperatorReply}" TextWrapping="Wrap"/>
+                    <TextBlock Text="点击“导入样品任务”进行导入、下发或查看检测结果。" Foreground="#64748B" Margin="0,4,0,0" TextWrapping="Wrap"/>
                 </StackPanel>
-            </Border>
-
-            <ScrollViewer x:Name="SelectedDeviceScrollViewer" Grid.Row="0" Grid.Column="1"
-                          Margin="0" MinWidth="0" VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled">
-                <Border Padding="16" Background="White" BorderBrush="#D0D7DE"
-                        BorderThickness="1" CornerRadius="6">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="120" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="120" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <TextBlock Grid.ColumnSpan="4" FontSize="18" FontWeight="SemiBold"
-                                   Text="子设备状态" />
-                        <TextBlock Grid.Row="1" Margin="0,14,8,0" Foreground="Gray" Text="设备" />
-                        <TextBlock Grid.Row="1" Grid.Column="1" Margin="0,14,8,0"
-                                   Text="{Binding SelectedDeviceName}" TextTrimming="CharacterEllipsis" />
-                        <TextBlock Grid.Row="1" Grid.Column="2" Margin="0,14,8,0" Foreground="Gray" Text="设备编号" />
-                        <TextBlock Grid.Row="1" Grid.Column="3" Margin="0,14,0,0"
-                                   Text="{Binding SelectedEquipmentCode}" />
-                        <TextBlock Grid.Row="2" Margin="0,8,8,0" Foreground="Gray" Text="在线状态" />
-                        <TextBlock Grid.Row="2" Grid.Column="1" Margin="0,8,8,0"
-                                   FontWeight="SemiBold" Text="{Binding SelectedOnline}" />
-                        <TextBlock Grid.Row="2" Grid.Column="2" Margin="0,8,8,0" Foreground="Gray" Text="运行状态" />
-                        <TextBlock Grid.Row="2" Grid.Column="3" Margin="0,8,0,0"
-                                   Text="{Binding SelectedStateDisplay}" />
-                        <TextBlock Grid.Row="3" Margin="0,8,8,0" Foreground="Gray" Text="最后观测" />
-                        <TextBlock Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Margin="0,8,0,0"
-                                   Text="{Binding SelectedLastSeen}" />
-                        <TextBlock Grid.Row="4" Grid.ColumnSpan="4" Margin="0,16,0,0"
-                                   FontSize="11" Foreground="Gray" TextWrapping="Wrap"
-                                   Text="离子色谱下的 D160+、自动进样器 18i 等子设备均通过 MES 只读状态接口展示。" />
-                    </Grid>
-                </Border>
-            </ScrollViewer>
+            </Grid>
         </Grid>
 
-        <!-- Opening/dispensing workstation: an independent layout and data
-             source.  No ion-chromatography card is rendered in this branch. -->
-        <ScrollViewer Grid.Row="2" Margin="0,0,0,14"
-                      Visibility="{Binding SelectedInstrument, Converter={StaticResource InstrumentVisibilityConverter}, ConverterParameter=开盖分液}"
-                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel>
-                <Border Padding="16" Background="#F6F8FA" BorderBrush="#D0D7DE"
-                        BorderThickness="1" CornerRadius="6">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="140" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="140" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <TextBlock Grid.ColumnSpan="4" FontSize="18" FontWeight="SemiBold"
-                                   Text="开盖分液工作站状态" />
-                        <TextBlock Grid.Row="1" Margin="0,14,8,0" Foreground="Gray" Text="工作站 ID" />
-                        <TextBlock Grid.Row="1" Grid.Column="1" Margin="0,14,8,0"
-                                   Text="{Binding SampleWorkstationDeviceId}" />
-                        <TextBlock Grid.Row="1" Grid.Column="2" Margin="0,14,8,0" Foreground="Gray" Text="接口" />
-                        <TextBlock Grid.Row="1" Grid.Column="3" Margin="0,14,0,0"
-                                   Text="{Binding WorkstationConnectionStatus}" />
-                        <TextBlock Grid.Row="2" Margin="0,8,8,0" Foreground="Gray" Text="在线状态" />
-                        <TextBlock Grid.Row="2" Grid.Column="1" Margin="0,8,8,0"
-                                   FontWeight="SemiBold" Text="{Binding WorkstationOnline}" />
-                        <TextBlock Grid.Row="2" Grid.Column="2" Margin="0,8,8,0" Foreground="Gray" Text="仪器状态" />
-                        <TextBlock Grid.Row="2" Grid.Column="3" Margin="0,8,0,0"
-                                   Text="{Binding WorkstationState}" />
-                        <TextBlock Grid.Row="3" Margin="0,8,8,0" Foreground="Gray" Text="原始状态码" />
-                        <TextBlock Grid.Row="3" Grid.Column="1" Margin="0,8,8,0"
-                                   Text="{Binding WorkstationRawState}" />
-                        <TextBlock Grid.Row="3" Grid.Column="2" Margin="0,8,8,0" Foreground="Gray" Text="观测时间" />
-                        <TextBlock Grid.Row="3" Grid.Column="3" Margin="0,8,0,0"
-                                   Text="{Binding WorkstationObservedAt}" />
-                        <TextBlock Grid.Row="4" Margin="0,8,8,0" Foreground="Gray" Text="错误信息" />
-                        <TextBlock Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3" Margin="0,8,0,0"
-                                   TextWrapping="Wrap" Text="{Binding WorkstationError}" />
-                        <TextBlock Grid.Row="5" Grid.ColumnSpan="4" Margin="0,16,0,0"
-                                   FontSize="11" Foreground="Gray" TextWrapping="Wrap"
-                                   Text="{Binding WorkstationAvailabilityMessage}" />
-                    </Grid>
+        <!-- The task grid owns the available height and scrolls independently. -->
+        <Grid x:Name="WorkstationWorkspace" Grid.Row="2" Margin="0,0,0,8"
+              Visibility="{Binding SelectedInstrument, Converter={StaticResource InstrumentVisibilityConverter}, ConverterParameter=开盖分液}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <WrapPanel x:Name="WorkstationOnlineToolbar" Margin="0,0,0,6">
+                <Border Background="#F1F5F9" CornerRadius="5" Padding="12,7" Margin="0,0,12,0">
+                    <TextBlock x:Name="WorkstationOnlineText" Text="{Binding WorkstationOperatorOnline}" FontWeight="SemiBold"/>
                 </Border>
-
-                <Border Margin="0,12,0,0" Padding="16" Background="White"
-                        BorderBrush="#D0D7DE" BorderThickness="1" CornerRadius="6">
-                    <StackPanel>
-                        <TextBlock FontSize="17" FontWeight="SemiBold" Text="最近任务" />
-                        <Grid Margin="0,12,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="120" /><ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="120" /><ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                            <TextBlock Foreground="Gray" Text="任务编号" />
-                            <TextBlock Grid.Column="1" Text="{Binding WorkstationLatestTaskNo}" />
-                            <TextBlock Grid.Column="2" Foreground="Gray" Text="任务状态" />
-                            <TextBlock Grid.Column="3" Text="{Binding WorkstationLatestTaskState}" />
-                            <TextBlock Grid.Row="1" Margin="0,8,8,0" Foreground="Gray" Text="任务名称" />
-                            <TextBlock Grid.Row="1" Grid.Column="1" Margin="0,8,8,0"
-                                       Text="{Binding WorkstationLatestTaskName}" TextTrimming="CharacterEllipsis" />
-                            <TextBlock Grid.Row="1" Grid.Column="2" Margin="0,8,8,0" Foreground="Gray" Text="生成时间" />
-                            <TextBlock Grid.Row="1" Grid.Column="3" Margin="0,8,0,0"
-                                       Text="{Binding WorkstationLatestTaskTime}" />
-                        </Grid>
-                        <DataGrid Margin="0,14,0,0" ItemsSource="{Binding WorkstationTasks}"
-                                  SelectedItem="{Binding SelectedWorkstationTask, Mode=TwoWay}"
-                                  AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
-                                  SelectionMode="Single" HeadersVisibility="Column" MinHeight="80"
-                                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
-                                  ScrollViewer.VerticalScrollBarVisibility="Auto">
-                            <DataGrid.Columns>
-                                <DataGridTextColumn Width="1.2*" MinWidth="100" Header="任务编号" Binding="{Binding TaskNo}" />
-                                <DataGridTextColumn Width="1.5*" MinWidth="120" Header="任务名称" Binding="{Binding TaskName}" />
-                                <DataGridTextColumn Width="0.8*" MinWidth="70" Header="状态" Binding="{Binding State}" />
-                                <DataGridTextColumn Width="1.2*" MinWidth="110" Header="生成时间" Binding="{Binding MakeTime}" />
-                                <DataGridTextColumn Width="1.5*" MinWidth="100" Header="备注" Binding="{Binding Remark}" />
-                            </DataGrid.Columns>
-                        </DataGrid>
-                        <Border Margin="0,14,0,0" Padding="14"
-                                Background="#FFF8E8" BorderBrush="#E2B04A" BorderThickness="1"
-                                CornerRadius="6"
-                                Visibility="{Binding IsWorkstationTestControlVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
-                            <StackPanel>
-                                <TextBlock FontSize="16" FontWeight="SemiBold" Text="联调测试" />
-                                <TextBlock Margin="0,4,0,0" Foreground="#7A3E00" TextWrapping="Wrap"
-                                           Text="此入口仅用于设备接入测试，正式运行由实验工作流统一调度。" />
-                                <Grid Margin="0,10,0,0">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="90" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="90" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock Foreground="Gray" Text="选中任务" />
-                                    <TextBlock Grid.Column="1" Text="{Binding SelectedWorkstationTaskNo}" />
-                                    <TextBlock Grid.Column="2" Foreground="Gray" Text="当前状态" />
-                                    <TextBlock Grid.Column="3" Text="{Binding SelectedWorkstationTaskState}" />
-                                </Grid>
-                                <StackPanel Margin="0,12,0,0" Orientation="Horizontal">
-                                    <Button Width="130" Height="34"
-                                            Command="{Binding StartWorkstationTestTaskCommand}"
-                                            Content="启动测试任务" />
-                                    <TextBlock Margin="14,7,0,0" TextWrapping="Wrap"
-                                               Text="{Binding WorkstationTestControlMessage}" />
-                                </StackPanel>
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
-                </Border>
+                <TextBlock Text="当前库任务" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <TextBlock Text="{Binding WorkstationTaskCount, StringFormat=已读取 {0} 条}" Foreground="#64748B"
+                           Margin="12,0,0,0" VerticalAlignment="Center"/>
+            </WrapPanel>
+            <StackPanel Grid.Row="1">
+                <TextBlock x:Name="WorkstationCurrentTaskText" Margin="0,0,0,4" Foreground="#175CD3"
+                           Text="{Binding WorkstationCurrentTaskSummary, StringFormat=当前任务：{0}}"
+                           ToolTip="{Binding WorkstationCurrentTaskSummary}" TextTrimming="CharacterEllipsis"/>
+                <TextBlock x:Name="WorkstationNotice" Text="{Binding WorkstationOperatorNotice}"
+                       TextTrimming="CharacterEllipsis" ToolTip="{Binding WorkstationOperatorNotice}"
+                       Foreground="#9A6700" Margin="0,0,0,8"
+                       Visibility="{Binding HasWorkstationOperatorNotice, Converter={StaticResource BooleanToVisibilityConverter}}"/>
             </StackPanel>
-        </ScrollViewer>
+            <Grid Grid.Row="2">
+                <DataGrid x:Name="WorkstationTasksGrid" ItemsSource="{Binding WorkstationTasks}"
+                          SelectedItem="{Binding SelectedWorkstationTask, Mode=TwoWay}"
+                          AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                          SelectionMode="Single" HeadersVisibility="Column" MinHeight="60"
+                          EnableRowVirtualization="True" EnableColumnVirtualization="True"
+                          ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                          ScrollViewer.VerticalScrollBarVisibility="Auto">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Width="1.2*" MinWidth="100" Header="任务编号" Binding="{Binding TaskNo}"/>
+                        <DataGridTextColumn Width="1.5*" MinWidth="120" Header="任务名称" Binding="{Binding TaskName}"/>
+                        <DataGridTextColumn Width="0.8*" MinWidth="70" Header="状态" Binding="{Binding State}"/>
+                        <DataGridTextColumn Width="1.2*" MinWidth="110" Header="生成时间" Binding="{Binding MakeTime}"/>
+                        <DataGridTextColumn Width="1.5*" MinWidth="100" Header="备注" Binding="{Binding Remark}"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+                <TextBlock x:Name="WorkstationEmptyText" Text="暂无可展示任务，请刷新或使用顶部模板入口。"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                           Foreground="#64748B" IsHitTestVisible="False" TextWrapping="Wrap" Margin="12">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding WorkstationTasks.Count}" Value="0">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+            </Grid>
+            <Border x:Name="WorkstationTestPanel" Grid.Row="3" Margin="0,8,0,0" Padding="10"
+                    Background="#FFF8E8" BorderBrush="#E2B04A" BorderThickness="1" CornerRadius="6"
+                    Visibility="{Binding IsWorkstationTestControlVisible, Converter={StaticResource BooleanToVisibilityConverter}}">
+                <ScrollViewer x:Name="WorkstationTestScroll" MaxHeight="54" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel>
+                        <TextBlock Text="联调测试 · 向下滚动填写双瓶条码" Foreground="#7A3E00" TextWrapping="Wrap"/>
+                        <WrapPanel Margin="0,6,0,0">
+                            <Button x:Name="WorkstationTestStartButton" Padding="12,6" Margin="0,0,12,0"
+                                    Command="{Binding StartWorkstationTestTaskCommand}" Content="启动测试任务"/>
+                            <TextBlock Text="选中任务：" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding SelectedWorkstationTaskNo}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                            <TextBlock Text="{Binding SelectedWorkstationTaskState}" VerticalAlignment="Center"/>
+                        </WrapPanel>
+                        <WrapPanel Margin="0,6,0,0">
+                            <StackPanel Orientation="Horizontal" Margin="0,0,12,0">
+                                <TextBlock Text="1号样品瓶条码" VerticalAlignment="Center"/>
+                                <TextBox x:Name="WorkstationBarcode1Input" Width="180" Margin="6,0,0,0"
+                                         Text="{Binding WorkstationSampleBarcode1, UpdateSourceTrigger=PropertyChanged}"/>
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="2号样品瓶条码" VerticalAlignment="Center"/>
+                                <TextBox x:Name="WorkstationBarcode2Input" Width="180" Margin="6,0,0,0"
+                                         Text="{Binding WorkstationSampleBarcode2, UpdateSourceTrigger=PropertyChanged}"/>
+                            </StackPanel>
+                        </WrapPanel>
+                        <TextBlock Text="两条均必填；联调时可手动填写测试编号，系统不会自动生成或代填。" Foreground="#7A3E00" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                        <TextBlock Text="{Binding WorkstationTestControlMessage}" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                    </StackPanel>
+                </ScrollViewer>
+            </Border>
+        </Grid>
     </Grid>
 </UserControl>

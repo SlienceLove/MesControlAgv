@@ -109,6 +109,7 @@ public sealed record SampleMaterial
     public Guid SampleId { get; init; }
     public string Barcode { get; init; } = string.Empty;
     public string SampleBatchId { get; init; } = string.Empty;
+    public string? DetectionMethodCode { get; init; }
     public string? MaterialCode { get; init; }
     public string? SampleType { get; init; }
     public SampleLifecycleStatus Status { get; init; }
@@ -180,6 +181,7 @@ public sealed record SampleImportRow
     public int RowNumber { get; init; }
     public string Barcode { get; init; } = string.Empty;
     public string SampleBatchId { get; init; } = string.Empty;
+    public string? DetectionMethodCode { get; init; }
     public string? MaterialCode { get; init; }
     public string? SampleType { get; init; }
     public string? LocationCode { get; init; }

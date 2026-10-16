@@ -26,6 +26,113 @@ namespace MesControlAgv.Mes.Tests;
 public sealed class ExperimentSampleWorkstationBusinessChainTests
 {
     [Fact]
+    public async Task Manual_resolution_releases_old_lease_and_same_database_runs_new_task_with_retained_end_event()
+    {
+        var gateway = new RecordingWorkstation();
+        using var factory = ConfigureGateway(new PhysicalMesWebApplicationFactory(PhysicalProfile()), gateway)
+            .WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+            {
+                services.RemoveAll<IWorkflowRunControlAuthorizer>();
+                services.AddSingleton<IWorkflowRunControlAuthorizer>(new ConfiguredWorkflowRunControlAuthorizer(
+                    Microsoft.Extensions.Options.Options.Create(new WorkflowRunControlAuthorizationOptions
+                    {
+                        Operators = [new WorkflowRunControlOperatorOptions
+                        { Name = "manual-operator", Permissions = [WorkflowRunControlPermissions.ResolveUnknown] }]
+                    })));
+            }));
+        using var client = factory.CreateClient();
+        var workflow = await PublishWorkflowAsync(client);
+        var plan = await CreatePublishedPlanAsync(client, workflow);
+
+        async Task<(Guid JobId, ExperimentWorkstationPreparation Prepared, Guid RunId)> CreateImportedAndAdmittedAsync()
+        {
+            var scheduled = await CreateScheduledJobAsync(client, plan);
+            var prepared = await PrepareTwoSourceTaskAsync(client, scheduled.JobId);
+            var import = await client.PostAsJsonAsync($"/api/experiment-jobs/{scheduled.JobId}/workstation-preparations/{prepared.PreparationId}/import",
+                new ImportExperimentWorkstationTaskRequest { RequestId = Guid.NewGuid(), Actor = "test", Reason = "Import" });
+            import.EnsureSuccessStatusCode();
+            Assert.Equal(ExperimentWorkstationPreparationStatus.Imported, (await import.Content.ReadFromJsonAsync<ExperimentWorkstationPreparation>())!.Status);
+            var admission = await client.PostAsJsonAsync($"/api/experiment-jobs/{scheduled.JobId}/admit", Action("Admit new task"));
+            admission.EnsureSuccessStatusCode();
+            var result = (await admission.Content.ReadFromJsonAsync<ExperimentJobAdmissionResult>())!;
+            Assert.True(result.IsAdmitted);
+            return (scheduled.JobId, prepared, result.WorkflowRunId!.Value);
+        }
+
+        async Task DispatchAsync()
+        {
+            using var scope = factory.Services.CreateScope();
+            var dispatcher = new WorkflowSampleWorkstationDispatcher(
+                scope.ServiceProvider.GetRequiredService<IWorkflowApplicationService>(), gateway, gateway,
+                PhysicalProfile(), new WorkflowSampleWorkstationWorkerOptions
+                { Enabled = true, PollIntervalMs = 1, StartObservationTimeoutMs = 1000, CompletionTimeoutMs = 1000 },
+                barcodeCommands: gateway,
+                runtimeBindingValidator: scope.ServiceProvider.GetRequiredService<IExperimentWorkstationRuntimeBindingValidator>());
+            await dispatcher.ProcessAsync(CancellationToken.None);
+        }
+
+        var old = await CreateImportedAndAdmittedAsync();
+        gateway.SetObservations(
+            (SampleWorkstationDeviceState.Idle, 0, 0, SampleWorkstationTaskState.Waiting),
+            (SampleWorkstationDeviceState.Running, 1, 3, SampleWorkstationTaskState.Running),
+            (SampleWorkstationDeviceState.Idle, 0, 1, SampleWorkstationTaskState.Waiting));
+        await DispatchAsync();
+        Guid nodeId;
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            var run = await db.WorkflowExecutions.SingleAsync(x => x.ExecutionId == old.RunId);
+            Assert.Equal(WorkflowRuntimeStatus.Unknown.ToString(), run.RuntimeStatus);
+            var lease = await db.WorkflowResourceLeases.SingleAsync(x => x.WorkflowRunId == old.RunId);
+            Assert.NotNull(lease.ActiveResourceKey);
+            var node = await db.WorkflowNodeExecutions.SingleAsync(x => x.WorkflowRunId == old.RunId && x.NodeTypeId == WorkflowGraphNodeTypeIds.SampleWorkstationExecuteExistingTask);
+            Assert.Equal(WorkflowNodeExecutionStatus.Unknown.ToString(), node.Status);
+            nodeId = node.Id;
+        }
+        var resolutionRequest = new WorkflowUnknownResolutionRequest
+        {
+            RequestId = Guid.NewGuid(), Actor = "manual-operator", Reason = "Operator confirmed manual end and stopped motion",
+            NodeExecutionId = nodeId, Outcome = WorkflowUnknownResolutionOutcome.ConfirmedFailed
+        };
+        var resolution = await client.PostAsJsonAsync($"/api/workflow-runs/{old.RunId}/unknown-resolution", resolutionRequest);
+        resolution.EnsureSuccessStatusCode();
+        Assert.Equal(WorkflowRuntimeStatus.Failed, (await resolution.Content.ReadFromJsonAsync<WorkflowRunControlResult>())!.Run.RuntimeStatus);
+        var replay = await client.PostAsJsonAsync($"/api/workflow-runs/{old.RunId}/unknown-resolution", resolutionRequest);
+        replay.EnsureSuccessStatusCode();
+        Assert.True((await replay.Content.ReadFromJsonAsync<WorkflowRunControlResult>())!.IsIdempotentReplay);
+        Assert.Equal(1, gateway.BarcodeStartCalls);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            var lease = await db.WorkflowResourceLeases.SingleAsync(x => x.WorkflowRunId == old.RunId);
+            Assert.Equal(ResourceLeaseStatus.Released.ToString(), lease.Status);
+            Assert.Null(lease.ActiveResourceKey);
+            Assert.Equal(ExperimentJobStatus.Failed.ToString(), (await db.ExperimentJobs.SingleAsync(x => x.JobId == old.JobId)).Status);
+        }
+
+        var next = await CreateImportedAndAdmittedAsync();
+        Assert.NotEqual(old.Prepared.VendorTaskNo, next.Prepared.VendorTaskNo);
+        gateway.SetObservations(
+            (SampleWorkstationDeviceState.Idle, 0, 1, SampleWorkstationTaskState.Waiting),
+            (SampleWorkstationDeviceState.Idle, 0, 1, SampleWorkstationTaskState.Waiting),
+            (SampleWorkstationDeviceState.Running, 1, 3, SampleWorkstationTaskState.Running),
+            (SampleWorkstationDeviceState.Idle, 0, 0, SampleWorkstationTaskState.Completed));
+        await DispatchAsync();
+        await DispatchAsync();
+        Assert.Equal(2, gateway.BarcodeStartCalls);
+        Assert.Equal(next.Prepared.VendorTaskNo, gateway.StartTaskNo);
+        Assert.Equal(0, gateway.InitializeCalls);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<MesDbContext>();
+            Assert.Equal(WorkflowRuntimeStatus.Failed.ToString(), (await db.WorkflowExecutions.SingleAsync(x => x.ExecutionId == old.RunId)).RuntimeStatus);
+            Assert.Equal(WorkflowRuntimeStatus.Completed.ToString(), (await db.WorkflowExecutions.SingleAsync(x => x.ExecutionId == next.RunId)).RuntimeStatus);
+            Assert.Equal(ExperimentJobStatus.Completed.ToString(), (await db.ExperimentJobs.SingleAsync(x => x.JobId == next.JobId)).Status);
+            Assert.Empty(await db.WorkflowResourceLeases.Where(x => x.ActiveResourceKey != null).ToListAsync());
+        }
+    }
+
+    [Fact]
     public async Task Import_rejects_changed_verified_snapshot_before_device_io()
     {
         var gateway = new RecordingWorkstation();
@@ -293,11 +400,14 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Prepared_task_import_is_idempotent_and_closes_with_frozen_task_and_barcodes_once(bool defaultTips)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task Prepared_task_import_is_idempotent_and_closes_with_frozen_task_and_barcodes_once(bool defaultTips, bool milliliters)
     {
-        var gateway = new RecordingWorkstation { DefaultTips = defaultTips };
+        var gateway = new RecordingWorkstation { DefaultTips = defaultTips,
+            FileVolumeUnit = milliliters ? SampleWorkstationTemplateVolumeUnit.Milliliters : SampleWorkstationTemplateVolumeUnit.Microliters };
         using var factory = ConfigureGateway(new PhysicalMesWebApplicationFactory(PhysicalProfile()), gateway);
         using var client = factory.CreateClient();
         var workflow = await PublishWorkflowAsync(client);
@@ -873,8 +983,19 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         public SampleWorkstationTaskBarcodes? StartBarcodes { get; private set; }
         public bool FailBarcodeUpdate { get; init; }
         public bool DefaultTips { get; init; }
+        public SampleWorkstationTemplateVolumeUnit FileVolumeUnit { get; init; }
+        private Queue<(SampleWorkstationDeviceState State, int Raw, int Error, SampleWorkstationTaskState Task)>? _customObservations;
+        private (SampleWorkstationDeviceState State, int Raw, int Error, SampleWorkstationTaskState Task) _lastCustom;
+        public void SetObservations(params (SampleWorkstationDeviceState State, int Raw, int Error, SampleWorkstationTaskState Task)[] observations)
+        {
+            _customObservations = new(observations);
+            _snapshot = null;
+        }
         public List<ConsumedObservation> ConsumedObservations { get; } = [];
-        private (SampleWorkstationDeviceState State, int Raw, int Error, SampleWorkstationTaskState Task) Current => _observation++ switch { 0 => (SampleWorkstationDeviceState.Idle, 0, 0, SampleWorkstationTaskState.Completed), 1 => (SampleWorkstationDeviceState.Running, 1, 3, SampleWorkstationTaskState.Running), _ => (SampleWorkstationDeviceState.Idle, 0, 0, SampleWorkstationTaskState.Completed) };
+        private (SampleWorkstationDeviceState State, int Raw, int Error, SampleWorkstationTaskState Task) Current =>
+            _customObservations is not null
+                ? _customObservations.Count > 0 ? _lastCustom = _customObservations.Dequeue() : _lastCustom
+                : _observation++ switch { 0 => (SampleWorkstationDeviceState.Idle, 0, 0, SampleWorkstationTaskState.Completed), 1 => (SampleWorkstationDeviceState.Running, 1, 3, SampleWorkstationTaskState.Running), _ => (SampleWorkstationDeviceState.Idle, 0, 0, SampleWorkstationTaskState.Completed) };
         private (SampleWorkstationDeviceState State, int Raw, int Error, SampleWorkstationTaskState Task)? _snapshot;
         private (SampleWorkstationDeviceState State, int Raw, int Error, SampleWorkstationTaskState Task) Snapshot => _snapshot ??= Current;
         public Task<SampleWorkstationStatusResponse> GetStatusAsync(string id, CancellationToken ct) { _snapshot = Current; return Task.FromResult(new SampleWorkstationStatusResponse(id, "EQ-01", true, Snapshot.State, Snapshot.Raw, DateTimeOffset.UtcNow)); }
@@ -892,16 +1013,19 @@ public sealed class ExperimentSampleWorkstationBusinessChainTests
         {
             TemplateReadCalls++;
             var template = Template(task);
-            var bytes = SampleWorkstationTemplateFile.Write(template);
-            return Task.FromResult(new SampleWorkstationTemplateResponse(id, task + ".xlsx", bytes, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)), template, DateTimeOffset.UtcNow));
+            var bytes = SampleWorkstationTemplateFile.Write(template, FileVolumeUnit);
+            return Task.FromResult(new SampleWorkstationTemplateResponse(id, task + ".xlsx", bytes, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)), template, DateTimeOffset.UtcNow)
+                { FileVolumeUnit = FileVolumeUnit });
         }
-        public async Task<SampleWorkstationTaskImportResponse> ImportTasksAsync(string id, string fileName, Stream content, CancellationToken ct)
+        public async Task<SampleWorkstationTaskImportResponse> ImportTasksAsync(string id, string fileName, Stream content, CancellationToken ct,
+            SampleWorkstationTemplateVolumeUnit fileVolumeUnit = SampleWorkstationTemplateVolumeUnit.Microliters)
         {
             ImportCalls++;
+            Assert.Equal(FileVolumeUnit, fileVolumeUnit);
             var bytes = await SampleWorkstationTemplateFile.ReadBytesAsync(content, ct);
-            var template = SampleWorkstationTemplateFile.Read(bytes);
+            var template = SampleWorkstationTemplateFile.Read(bytes, fileVolumeUnit);
             return new SampleWorkstationTaskImportResponse(id, [template.TaskNo], DateTimeOffset.UtcNow)
-            { ReadbackVerified = true, FileSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)), Template = template };
+            { FileVolumeUnit = fileVolumeUnit, ReadbackVerified = true, FileSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)), Template = template };
         }
         private SampleWorkstationTaskTemplate Template(string taskNo) => new(taskNo, "Prepared task",
         [

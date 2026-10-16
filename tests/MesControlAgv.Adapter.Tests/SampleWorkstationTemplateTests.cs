@@ -13,6 +13,52 @@ namespace MesControlAgv.Adapter.Tests;
 
 public sealed class SampleWorkstationTemplateTests
 {
+    [Fact]
+    public async Task Long_numeric_import_is_rejected_before_any_vendor_request()
+    {
+        var template = Example() with { TaskNo = "20260924143809983251" };
+        using var handler = new Handler();
+        using var source = new MemoryStream(SampleWorkstationTemplateFile.Write(template));
+        var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+            Driver(handler).ImportTasksAsync("WS-01", "task.xlsx", source, CancellationToken.None));
+        Assert.Contains("15 位", error.Message);
+        Assert.Empty(handler.Calls);
+    }
+
+    [Fact]
+    public async Task Reading_existing_long_numeric_id_is_not_blocked_by_new_import_gate()
+    {
+        var template = Example() with { TaskNo = "20260924143809983251" };
+        using var handler = new Handler(Download(SampleWorkstationTemplateFile.Write(template)));
+        var result = await Driver(handler).GetTaskTemplateAsync("WS-01", template.TaskNo, CancellationToken.None);
+        Assert.Equal(template.TaskNo, result.Template.TaskNo);
+        Assert.Equal(HttpMethod.Get, Assert.Single(handler.Calls).Method);
+    }
+
+    [Fact]
+    public async Task Scientific_notation_is_not_accepted_as_a_rounded_identity_match()
+    {
+        var corrupted = Example() with { TaskNo = "2.0260924143809901E+19" };
+        using var handler = new Handler(Download(SampleWorkstationTemplateFile.Write(corrupted)));
+        var error = await Assert.ThrowsAsync<SampleWorkstationProtocolException>(() =>
+            Driver(handler).GetTaskTemplateAsync("WS-01", "20260924143809983251", CancellationToken.None));
+        Assert.Equal(SampleWorkstationErrorCodes.TemplateMismatch, error.ErrorCode);
+        Assert.Equal(HttpMethod.Get, Assert.Single(handler.Calls).Method);
+    }
+
+    [Fact]
+    public async Task Letter_prefixed_id_import_roundtrips_without_starting_device()
+    {
+        var template = Example() with { TaskNo = WorkstationTaskNumber.Create() };
+        var bytes = SampleWorkstationTemplateFile.Write(template);
+        using var handler = new Handler("{\"Code\":200,\"Data\":\"导入成功\"}", Download(bytes));
+        using var source = new MemoryStream(bytes);
+        var result = await Driver(handler).ImportTasksAsync("WS-01", "task.xlsx", source, CancellationToken.None);
+        Assert.True(result.ReadbackVerified);
+        Assert.Equal(template.TaskNo, result.Template!.TaskNo);
+        Assert.Equal(new[] { "/Service/ImportExperimentalTask", "/Service/GetExperimentalTaskTemplate" }, handler.Calls.Select(call => call.Uri.AbsolutePath));
+    }
+
     private static byte[] Fixture() => File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Fixtures", "workstation-test-001.xlsx"));
     private static SampleWorkstationTaskTemplate Example() => SampleWorkstationTemplateFile.Read(Fixture());
 

@@ -10,6 +10,32 @@ public static class SampleWorkstationEndpointRouteBuilderExtensions
 {
     public static IEndpointRouteBuilder MapSampleWorkstationEndpoints(this IEndpointRouteBuilder endpoints)
     {
+        endpoints.MapGet("/api/workstations/{deviceId}/task-batches/reviews", async (
+            string deviceId, WorkstationBatchImportService service, CancellationToken token) =>
+        {
+            try { return Results.Ok(await service.GetReviewItemsAsync(deviceId, token)); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { detail = ex.Message }); }
+            catch (InvalidOperationException ex) { return Results.Conflict(new { detail = ex.Message }); }
+            catch (IOException) { return Results.Conflict(new { detail = "导入记录正在使用或无法访问，请稍后核对。" }); }
+        });
+        endpoints.MapPost("/api/workstations/{deviceId}/task-batches/{requestId:guid}/reconcile-created", async (
+            string deviceId, Guid requestId, WorkstationBatchReconcileRequest request, WorkstationBatchImportService service, CancellationToken token) =>
+        {
+            try { return Results.Ok(await service.ReconcileCreatedAsync(deviceId, requestId, request, token)); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { detail = ex.Message }); }
+            catch (KeyNotFoundException ex) { return Results.NotFound(new { detail = ex.Message }); }
+            catch (InvalidOperationException ex) { return Results.Conflict(new { detail = ex.Message }); }
+            catch (IOException) { return Results.Conflict(new { detail = "记录正在使用或结案保存未能确认；请刷新核对，不要重复提交。" }); }
+            catch (SampleWorkstationGatewayException ex) { return Results.Problem(ex.Message, statusCode: ex.StatusCode); }
+        });
+        endpoints.MapPost("/api/workstations/{deviceId}/task-batches/import", async (
+            string deviceId, WorkstationBatchRequest request, WorkstationBatchImportService service, CancellationToken cancellationToken) =>
+        {
+            try { return Results.Ok(await service.ImportAsync(deviceId, request, cancellationToken)); }
+            catch (ArgumentException ex) { return Results.BadRequest(new { detail = ex.Message }); }
+            catch (InvalidOperationException ex) { return Results.Conflict(new { detail = ex.Message }); }
+            catch (SampleWorkstationGatewayException ex) { return Results.Problem(ex.Message, statusCode: ex.StatusCode); }
+        });
         endpoints.MapGet("/api/workstations/{deviceId}/tasks/{taskNo}/template", async (
             string deviceId, string taskNo, HttpRequest request, ISampleWorkstationTemplateReader reader,
             CancellationToken cancellationToken) =>
@@ -57,9 +83,8 @@ public static class SampleWorkstationEndpointRouteBuilderExtensions
                 () =>
                 {
                     taskNo = SampleWorkstationTaskRoute.ReadCommandTaskNo(request.HttpContext.Features.Get<IHttpRequestFeature>()?.RawTarget, taskNo);
-                    return barcodes is null
-                        ? controller.StartTaskAsync(deviceId, taskNo, cancellationToken)
-                        : barcodeController.StartTaskAsync(deviceId, taskNo, barcodes, cancellationToken);
+                    return barcodeController.StartTaskAsync(deviceId, taskNo,
+                        SampleWorkstationBarcodeValidation.Normalize(barcodes), cancellationToken);
                 },
                 cancellationToken, isCommand: true));
 

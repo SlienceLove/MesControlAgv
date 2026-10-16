@@ -79,9 +79,12 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
         Readiness = new ReadinessViewModel(_mes, mapLayoutSource);
         AuboArm = new AuboArmControlViewModel(_mes, effectiveRuntimeMode);
         IonChromatography = new IonChromatographyViewModel(_mes);
+        ShineLabControl = new ShineLabControlViewModel(_mes);
         ShineLabDeviceStatus = new ShineLabDeviceStatusViewModel(
             _mes,
-            sampleWorkstationTestControlEnabled: sampleWorkstationTestControlEnabled);
+            sampleWorkstationTestControlEnabled: sampleWorkstationTestControlEnabled,
+            ionTaskRecords: ShineLabControl.TaskItems,
+            ionEquipmentCode: ShineLabControl.EquipmentCode);
         ShineLabTaskDispatch = new ShineLabTaskDispatchViewModel(_mes);
         ShineLabSequenceImport = new ShineLabSequenceImportViewModel(mes: _mes);
         _modules = new ControlCenterViewModel(WorkflowEditor, _mes, ModuleRegistry);
@@ -156,6 +159,7 @@ public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
     public IonChromatographyViewModel IonChromatography { get; }
     public ShineLabDeviceStatusViewModel ShineLabDeviceStatus { get; }
     public ShineLabTaskDispatchViewModel ShineLabTaskDispatch { get; }
+    public ShineLabControlViewModel ShineLabControl { get; }
     public ShineLabSequenceImportViewModel ShineLabSequenceImport { get; }
     public MaterialManagementViewModel Materials { get; }
     public LabReportViewModel LabReports { get; }

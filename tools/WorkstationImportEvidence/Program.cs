@@ -19,7 +19,11 @@ try
         ?? throw new ArgumentException("Missing generated template.");
     if (template.TaskNo != prepared.GetProperty("vendorTaskNo").GetString())
         throw new ArgumentException("Snapshot task numbers disagree.");
-    var bytes = SampleWorkstationTemplateFile.Write(template);
+    var unit = payload.TryGetProperty("fileVolumeUnit", out var unitElement)
+        ? unitElement.Deserialize<SampleWorkstationTemplateVolumeUnit>(new JsonSerializerOptions
+        { Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } })
+        : SampleWorkstationTemplateVolumeUnit.Microliters;
+    var bytes = SampleWorkstationTemplateFile.Write(template, unit);
     var hash = Convert.ToHexString(SHA256.HashData(bytes));
     if (hash != payload.GetProperty("generatedTemplateFileSha256").GetString())
         throw new ArgumentException("Reconstructed file does not match the frozen SHA256; no evidence exported.");
@@ -40,7 +44,7 @@ try
     var manifest = JsonSerializer.Serialize(new
     {
         evidenceOnly = true, taskNo = template.TaskNo, taskNoLength = template.TaskNo.Length,
-        fileName = name, fileSha256 = hash,
+        fileName = name, fileSha256 = hash, fileVolumeUnit = unit.ToString(),
         requestBodySha256 = Convert.ToHexString(SHA256.HashData(frame)),
         contentType = "application/json", transfers = template.Transfers,
         bottleBindings = payload.GetProperty("bottleBindings"),

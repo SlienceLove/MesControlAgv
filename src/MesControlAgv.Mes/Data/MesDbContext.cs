@@ -55,6 +55,10 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
     public DbSet<ShineLabTaskRecord> ShineLabTasks => Set<ShineLabTaskRecord>();
 
     public DbSet<ShineLabTaskEventRecord> ShineLabTaskEvents => Set<ShineLabTaskEventRecord>();
+    public DbSet<ShineLabPushEvidence> ShineLabPushEvidence => Set<ShineLabPushEvidence>();
+    public DbSet<ShineLabTaskSample> ShineLabTaskSamples => Set<ShineLabTaskSample>();
+    public DbSet<ShineLabCommandAttempt> ShineLabCommandAttempts => Set<ShineLabCommandAttempt>();
+    public DbSet<ShineLabCommandReplyEvidence> ShineLabCommandReplies => Set<ShineLabCommandReplyEvidence>();
 
     public DbSet<PhysicalSafetyActionRecord> PhysicalSafetyActions => Set<PhysicalSafetyActionRecord>();
 
@@ -79,6 +83,16 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
     public DbSet<WarehouseLocationRecord> WarehouseLocations => Set<WarehouseLocationRecord>();
 
     public DbSet<SampleMaterialRecord> SampleMaterials => Set<SampleMaterialRecord>();
+
+    public DbSet<SampleBatchDetectionMethodRecord> SampleBatchDetectionMethods => Set<SampleBatchDetectionMethodRecord>();
+
+    public DbSet<DetectionStandardRevisionRecord> DetectionStandardRevisions => Set<DetectionStandardRevisionRecord>();
+
+    public DbSet<DetectionIndicatorRuleRecord> DetectionIndicatorRules => Set<DetectionIndicatorRuleRecord>();
+
+    public DbSet<DetectionAssessmentRecord> DetectionAssessments => Set<DetectionAssessmentRecord>();
+
+    public DbSet<DetectionAssessmentItemRecord> DetectionAssessmentItems => Set<DetectionAssessmentItemRecord>();
 
     public DbSet<MaterialLotRecord> MaterialLots => Set<MaterialLotRecord>();
 
@@ -436,6 +450,32 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
             entity.HasIndex(task => new { task.Status, task.UpdatedAtUtc });
         });
 
+        modelBuilder.Entity<ShineLabPushEvidence>(entity =>
+        {
+            entity.ToTable("ShineLabPushEvidence");
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => item.DeduplicationKey);
+            entity.HasIndex(item => new { item.EquipmentCode, item.ReceivedAtUtcTicks });
+        });
+
+        modelBuilder.Entity<ShineLabTaskSample>(entity =>
+        {
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => item.SampleId).IsUnique();
+            entity.HasIndex(item => new { item.TaskUuid, item.RowNumber }).IsUnique();
+        });
+
+        modelBuilder.Entity<ShineLabCommandAttempt>(entity =>
+        {
+            entity.HasKey(item => item.StrId);
+            entity.HasIndex(item => new { item.TaskUuid, item.PreparedAtUtcTicks });
+        });
+        modelBuilder.Entity<ShineLabCommandReplyEvidence>(entity =>
+        {
+            entity.HasKey(item => item.Id);
+            entity.HasIndex(item => new { item.StrId, item.ReceivedAtUtcTicks });
+        });
+
         modelBuilder.Entity<ShineLabTaskEventRecord>(entity =>
         {
             entity.ToTable("ShineLabTaskEvents");
@@ -502,6 +542,77 @@ public sealed class MesDbContext(DbContextOptions<MesDbContext> options) : DbCon
                 .WithMany()
                 .HasForeignKey(sample => sample.BoundExperimentJobId)
                 .OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<SampleBatchDetectionMethodRecord>(entity =>
+        {
+            entity.ToTable("SampleBatchDetectionMethods");
+            entity.HasKey(item => item.SampleBatchId);
+            entity.Property(item => item.SampleBatchId).HasMaxLength(256).IsRequired();
+            entity.Property(item => item.MethodCode).HasMaxLength(128).IsRequired();
+            entity.Property(item => item.CreatedBy).HasMaxLength(256).IsRequired();
+            entity.HasIndex(item => item.MethodCode);
+            entity.HasOne<MaterialOperationRecord>().WithMany()
+                .HasForeignKey(item => item.RequestId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<DetectionStandardRevisionRecord>(entity =>
+        {
+            entity.ToTable("DetectionStandardRevisions");
+            entity.HasKey(item => item.RevisionId);
+            entity.Property(item => item.MethodCode).HasMaxLength(128).IsRequired();
+            entity.Property(item => item.Name).HasMaxLength(256).IsRequired();
+            entity.Property(item => item.Category).HasMaxLength(128);
+            entity.Property(item => item.CreatedBy).HasMaxLength(256).IsRequired();
+            entity.HasIndex(item => new { item.MethodCode, item.Revision }).IsUnique();
+            entity.HasIndex(item => new { item.MethodCode, item.IsActive });
+            entity.HasMany(item => item.Indicators).WithOne()
+                .HasForeignKey(item => item.RevisionId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<DetectionIndicatorRuleRecord>(entity =>
+        {
+            entity.ToTable("DetectionIndicatorRules");
+            entity.HasKey(item => item.IndicatorId);
+            entity.Property(item => item.Name).HasMaxLength(128).IsRequired();
+            entity.Property(item => item.Unit).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.DetectionLimit).HasPrecision(18, 8);
+            entity.Property(item => item.LowerLimit).HasPrecision(18, 8);
+            entity.Property(item => item.UpperLimit).HasPrecision(18, 8);
+            entity.HasIndex(item => item.RevisionId);
+        });
+
+        modelBuilder.Entity<DetectionAssessmentRecord>(entity =>
+        {
+            entity.ToTable("DetectionAssessments");
+            entity.HasKey(item => item.RequestId);
+            entity.Property(item => item.Fingerprint).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.SampleBarcode).HasMaxLength(256).IsRequired();
+            entity.Property(item => item.MethodCode).HasMaxLength(128).IsRequired();
+            entity.Property(item => item.Actor).HasMaxLength(256).IsRequired();
+            entity.Property(item => item.Verdict).HasMaxLength(32).IsRequired();
+            entity.HasIndex(item => new { item.SampleId, item.AssessedAtUtc });
+            entity.HasOne<SampleMaterialRecord>().WithMany()
+                .HasForeignKey(item => item.SampleId).OnDelete(DeleteBehavior.NoAction);
+            entity.HasOne<DetectionStandardRevisionRecord>().WithMany()
+                .HasForeignKey(item => item.RevisionId).OnDelete(DeleteBehavior.NoAction);
+            entity.HasMany(item => item.Items).WithOne()
+                .HasForeignKey(item => item.RequestId).OnDelete(DeleteBehavior.NoAction);
+        });
+
+        modelBuilder.Entity<DetectionAssessmentItemRecord>(entity =>
+        {
+            entity.ToTable("DetectionAssessmentItems");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Name).HasMaxLength(128).IsRequired();
+            entity.Property(item => item.Unit).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.Value).HasPrecision(18, 8);
+            entity.Property(item => item.DetectionLimit).HasPrecision(18, 8);
+            entity.Property(item => item.LowerLimit).HasPrecision(18, 8);
+            entity.Property(item => item.UpperLimit).HasPrecision(18, 8);
+            entity.Property(item => item.Verdict).HasMaxLength(32).IsRequired();
+            entity.Property(item => item.Reason).HasMaxLength(256).IsRequired();
+            entity.HasIndex(item => item.RequestId);
         });
 
         modelBuilder.Entity<MaterialLotRecord>(entity =>

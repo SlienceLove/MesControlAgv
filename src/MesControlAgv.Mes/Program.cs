@@ -97,12 +97,15 @@ builder.Services.AddHttpClient<IIonChromatographyStatusReader, IonChromatography
 builder.Services.AddOptions<ShineLabTcpOptions>()
     .Bind(builder.Configuration.GetSection(ShineLabTcpOptions.SectionName))
     .Validate(options => options.Port is >= 1 and <= 65535, "ShineLabTcp:Port must be between 1 and 65535.")
+    .Validate(options => Enum.IsDefined(options.PayloadProfile), "ShineLabTcp:PayloadProfile must be Rike, DcSeq or DcSeqSingleChannel.")
+    .Validate(options => Enum.IsDefined(options.CertificationReplyMode), "Unknown ShineLab Certification reply mode.")
     .Validate(options => options.StaleAfterSeconds > 0, "ShineLabTcp:StaleAfterSeconds must be positive.")
     .Validate(options => options.CommandTimeoutMs > 0, "ShineLabTcp:CommandTimeoutMs must be positive.")
     .Validate(options => options.ReadBufferBytes is >= 1024 and <= 1_048_576, "ShineLabTcp:ReadBufferBytes must be between 1024 and 1048576.")
     .ValidateOnStart();
 builder.Services.AddSingleton<ShineLabStatusHub>();
 builder.Services.AddSingleton<ShineLabConnectionManager>();
+builder.Services.AddSingleton<ShineLabCommandJournal>();
 builder.Services.AddSingleton<ShineLabCommandService>();
 builder.Services.AddScoped<ShineLabTaskRepository>();
 builder.Services.AddScoped<ShineLabTaskService>();
@@ -149,6 +152,7 @@ builder.Services.AddScoped<MaterialOperationCoordinator>();
 builder.Services.AddScoped<MaterialManagementService>();
 builder.Services.AddScoped<IMaterialManagementService>(services =>
     services.GetRequiredService<MaterialManagementService>());
+builder.Services.AddScoped<DetectionStandardService>();
 builder.Services.AddScoped<ExperimentRuntimeLeaseLifecycle>();
 builder.Services.AddScoped<ExperimentRuntimeAdmissionService>();
 builder.Services.AddScoped<IExperimentRuntimeAdmissionService>(services =>
@@ -203,6 +207,7 @@ using (var scope = app.Services.CreateScope())
     await EnsureSampleManagementTablesAsync(database);
     await PhysicalSafetyActionService.ReconcilePreparedRecordsAsync(database, CancellationToken.None);
     await EnsureMaterialManagementTablesAsync(database);
+    await EnsureDetectionStandardTablesAsync(database);
 }
 
 app.MapGet("/health", () => Results.Ok(new { service = "mes", status = "ok" }));
@@ -220,6 +225,7 @@ app.MapMesExperimentSchedulingEndpoints();
 app.MapMesExperimentSampleVerificationEndpoints();
 app.MapMesExperimentWorkstationPreparationEndpoints();
 app.MapMaterialManagementEndpoints();
+app.MapDetectionStandardEndpoints();
 
 app.MapPost("/api/field-navigation-acceptances", async (
     CreateFieldNavigationAcceptanceRequest request,
@@ -997,6 +1003,85 @@ static async Task EnsureColumnsAsync(
     }
 }
 
+static async Task EnsureDetectionStandardTablesAsync(MesDbContext database)
+{
+    var connection = database.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) await connection.OpenAsync();
+
+    var statements = new[]
+    {
+        """
+        CREATE TABLE IF NOT EXISTS DetectionStandardRevisions (
+            RevisionId TEXT NOT NULL PRIMARY KEY,
+            MethodCode TEXT NOT NULL,
+            Name TEXT NOT NULL,
+            Category TEXT NULL,
+            Revision INTEGER NOT NULL,
+            IsActive INTEGER NOT NULL,
+            CreatedBy TEXT NOT NULL,
+            CreatedAtUtc TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS DetectionIndicatorRules (
+            IndicatorId TEXT NOT NULL PRIMARY KEY,
+            RevisionId TEXT NOT NULL,
+            Name TEXT NOT NULL,
+            Unit TEXT NOT NULL,
+            DetectionLimit NUMERIC NULL,
+            LowerLimit NUMERIC NULL,
+            UpperLimit NUMERIC NULL,
+            FOREIGN KEY (RevisionId) REFERENCES DetectionStandardRevisions(RevisionId) ON DELETE NO ACTION
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS DetectionAssessments (
+            RequestId TEXT NOT NULL PRIMARY KEY,
+            Fingerprint TEXT NOT NULL,
+            SampleId TEXT NOT NULL,
+            SampleBarcode TEXT NOT NULL,
+            ExperimentJobId TEXT NULL,
+            RevisionId TEXT NOT NULL,
+            MethodCode TEXT NOT NULL,
+            Revision INTEGER NOT NULL,
+            Actor TEXT NOT NULL,
+            AssessedAtUtc TEXT NOT NULL,
+            Verdict TEXT NOT NULL,
+            FOREIGN KEY (SampleId) REFERENCES SampleMaterials(SampleId) ON DELETE NO ACTION,
+            FOREIGN KEY (RevisionId) REFERENCES DetectionStandardRevisions(RevisionId) ON DELETE NO ACTION
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS DetectionAssessmentItems (
+            Id TEXT NOT NULL PRIMARY KEY,
+            RequestId TEXT NOT NULL,
+            IndicatorId TEXT NOT NULL,
+            Name TEXT NOT NULL,
+            Value NUMERIC NOT NULL,
+            Unit TEXT NOT NULL,
+            DetectionLimit NUMERIC NULL,
+            LowerLimit NUMERIC NULL,
+            UpperLimit NUMERIC NULL,
+            Verdict TEXT NOT NULL,
+            Reason TEXT NOT NULL,
+            FOREIGN KEY (RequestId) REFERENCES DetectionAssessments(RequestId) ON DELETE NO ACTION
+        );
+        """,
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_DetectionStandardRevisions_Code_Revision ON DetectionStandardRevisions(MethodCode, Revision);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_DetectionStandardRevisions_Active ON DetectionStandardRevisions(MethodCode) WHERE IsActive = 1;",
+        "CREATE INDEX IF NOT EXISTS IX_DetectionIndicatorRules_RevisionId ON DetectionIndicatorRules(RevisionId);",
+        "CREATE INDEX IF NOT EXISTS IX_DetectionAssessments_Sample_Time ON DetectionAssessments(SampleId, AssessedAtUtc);",
+        "CREATE INDEX IF NOT EXISTS IX_DetectionAssessmentItems_RequestId ON DetectionAssessmentItems(RequestId);"
+    };
+
+    foreach (var statement in statements)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText = statement;
+        await command.ExecuteNonQueryAsync();
+    }
+}
+
 static async Task EnsureMaterialManagementTablesAsync(MesDbContext database)
 {
     var connection = database.Database.GetDbConnection();
@@ -1063,6 +1148,16 @@ static async Task EnsureMaterialManagementTablesAsync(MesDbContext database)
             UpdatedAtUtc TEXT NOT NULL,
             FOREIGN KEY (LocationId) REFERENCES WarehouseLocations(LocationId) ON DELETE NO ACTION,
             FOREIGN KEY (BoundExperimentJobId) REFERENCES ExperimentJobs(JobId) ON DELETE NO ACTION
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS SampleBatchDetectionMethods (
+            SampleBatchId TEXT NOT NULL PRIMARY KEY,
+            MethodCode TEXT NOT NULL,
+            RequestId TEXT NOT NULL,
+            CreatedBy TEXT NOT NULL,
+            CreatedAtUtc TEXT NOT NULL,
+            FOREIGN KEY (RequestId) REFERENCES MaterialOperations(RequestId) ON DELETE NO ACTION
         );
         """,
         """
@@ -1183,6 +1278,7 @@ static async Task EnsureMaterialManagementTablesAsync(MesDbContext database)
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_SampleMaterials_Barcode ON SampleMaterials (Barcode);",
         "CREATE INDEX IF NOT EXISTS IX_SampleMaterials_Status_UpdatedAtUtc ON SampleMaterials (Status, UpdatedAtUtc);",
         "CREATE INDEX IF NOT EXISTS IX_SampleMaterials_BoundExperimentJobId ON SampleMaterials (BoundExperimentJobId);",
+        "CREATE INDEX IF NOT EXISTS IX_SampleBatchDetectionMethods_MethodCode ON SampleBatchDetectionMethods (MethodCode);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_MaterialLots_MaterialCode_LotCode ON MaterialLots (MaterialCode, LotCode);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_MaterialLots_Barcode ON MaterialLots (Barcode);",
         "CREATE INDEX IF NOT EXISTS IX_MaterialLots_Quarantine_Expiry ON MaterialLots (IsQuarantined, ExpiryDateUtc);",
@@ -1516,6 +1612,64 @@ static async Task EnsureShineLabTablesAsync(MesDbContext database)
             OccurredAtUtc TEXT NOT NULL
         );
         """,
+        """
+        CREATE TABLE IF NOT EXISTS ShineLabPushEvidence (
+            Id TEXT NOT NULL PRIMARY KEY,
+            EquipmentCode TEXT NOT NULL,
+            StrId TEXT NOT NULL,
+            Method TEXT NOT NULL,
+            BodyJson TEXT NOT NULL,
+            RawJson TEXT NULL,
+            ConnectionId TEXT NULL,
+            WireFormat TEXT NULL,
+            TaskUuid TEXT NULL,
+            Correlation TEXT NOT NULL,
+            DeduplicationKey TEXT NULL,
+            IsDuplicate INTEGER NOT NULL,
+            ReceivedAtUtcTicks INTEGER NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ShineLabTaskSamples (
+            Id TEXT NOT NULL PRIMARY KEY,
+            TaskUuid TEXT NOT NULL,
+            EquipmentCode TEXT NOT NULL,
+            RowNumber INTEGER NOT NULL,
+            SourceSampleId TEXT NOT NULL,
+            SampleId TEXT NOT NULL,
+            SampleName TEXT NOT NULL,
+            Channel TEXT NOT NULL,
+            ConfigAttempted INTEGER NOT NULL,
+            SampleFinishObserved INTEGER NOT NULL,
+            TaskFinishObserved INTEGER NOT NULL,
+            EndMissionObserved INTEGER NOT NULL,
+            ResultJson TEXT NULL,
+            ResultConflict INTEGER NOT NULL,
+            LastReceivedAtUtcTicks INTEGER NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ShineLabCommandAttempts (
+            StrId TEXT NOT NULL PRIMARY KEY, EquipmentCode TEXT NOT NULL,
+            Method TEXT NOT NULL, TaskUuid TEXT NULL, Action INTEGER NULL,
+            RawJson TEXT NOT NULL, ConnectionId TEXT NOT NULL, WireFormat TEXT NOT NULL,
+            PreparedAtUtcTicks INTEGER NOT NULL, WriteCompletedAtUtcTicks INTEGER NULL,
+            WaitOutcome TEXT NOT NULL, FirstResponseJson TEXT NULL, ResponseConflict INTEGER NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ShineLabCommandReplies (
+            Id TEXT NOT NULL PRIMARY KEY, StrId TEXT NOT NULL, EquipmentCode TEXT NOT NULL,
+            Method TEXT NOT NULL, RawJson TEXT NOT NULL, ConnectionId TEXT NOT NULL,
+            ReceivedAtUtcTicks INTEGER NOT NULL, TaskUuid TEXT NULL, Correlation TEXT NOT NULL
+        );
+        """,
+        "CREATE INDEX IF NOT EXISTS IX_ShineLabCommandAttempts_TaskUuid_PreparedAtUtcTicks ON ShineLabCommandAttempts (TaskUuid, PreparedAtUtcTicks);",
+        "CREATE INDEX IF NOT EXISTS IX_ShineLabCommandReplies_StrId_ReceivedAtUtcTicks ON ShineLabCommandReplies (StrId, ReceivedAtUtcTicks);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ShineLabTaskSamples_SampleId ON ShineLabTaskSamples (SampleId);",
+        "CREATE UNIQUE INDEX IF NOT EXISTS IX_ShineLabTaskSamples_TaskUuid_RowNumber ON ShineLabTaskSamples (TaskUuid, RowNumber);",
+        "CREATE INDEX IF NOT EXISTS IX_ShineLabPushEvidence_DeduplicationKey ON ShineLabPushEvidence (DeduplicationKey);",
+        "CREATE INDEX IF NOT EXISTS IX_ShineLabPushEvidence_EquipmentCode_ReceivedAtUtcTicks ON ShineLabPushEvidence (EquipmentCode, ReceivedAtUtcTicks);",
         "CREATE UNIQUE INDEX IF NOT EXISTS IX_ShineLabTasks_TaskUuid ON ShineLabTasks (TaskUuid);",
         "CREATE INDEX IF NOT EXISTS IX_ShineLabTasks_Status_UpdatedAtUtc ON ShineLabTasks (Status, UpdatedAtUtc);",
         "CREATE INDEX IF NOT EXISTS IX_ShineLabTaskEvents_TaskUuid_OccurredAtUtc ON ShineLabTaskEvents (TaskUuid, OccurredAtUtc);"
@@ -1528,6 +1682,17 @@ static async Task EnsureShineLabTablesAsync(MesDbContext database)
         await command.ExecuteNonQueryAsync();
     }
 
+    await EnsureColumnsAsync(connection, "ShineLabPushEvidence",
+    [
+        ("RawJson", "TEXT NULL"),
+        ("ConnectionId", "TEXT NULL"),
+        ("WireFormat", "TEXT NULL")
+    ]);
+    await EnsureColumnsAsync(connection, "ShineLabTasks",
+    [
+        ("ConfigRequestId", "TEXT NULL"),
+        ("CommandRequestId", "TEXT NULL")
+    ]);
 }
 
 static async Task EnsurePhysicalSafetyActionTablesAsync(MesDbContext database)

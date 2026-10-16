@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO;
+using MesControlAgv.Contracts;
 
 namespace MesControlAgv.Wpf.Services;
 
@@ -41,27 +42,29 @@ public sealed class ShineLabDirectSequenceParser
 
     private static readonly string[] AllowedUnits = ["uL", "μL", "mL"];
 
-    public ShineLabDirectSequenceResult Parse(string filePath)
+    public ShineLabDirectSequenceResult Parse(string filePath, ShineLabPayloadProfile profile = ShineLabPayloadProfile.Rike)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
         using var stream = File.OpenRead(filePath);
-        return Parse(stream, Path.GetFileName(filePath));
+        return Parse(stream, Path.GetFileName(filePath), profile);
     }
 
-    public ShineLabDirectSequenceResult Parse(Stream source, string fileName)
+    public ShineLabDirectSequenceResult Parse(Stream source, string fileName, ShineLabPayloadProfile profile = ShineLabPayloadProfile.Rike)
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentException.ThrowIfNullOrWhiteSpace(fileName);
-        return ParseRows(TabularFileReader.ReadRows(source, fileName));
+        if (!Enum.IsDefined(profile)) throw new ArgumentOutOfRangeException(nameof(profile));
+        return ParseRows(TabularFileReader.ReadRows(source, fileName), profile);
     }
 
-    private static ShineLabDirectSequenceResult ParseRows(IReadOnlyList<IReadOnlyList<string>> rows)
+    private static ShineLabDirectSequenceResult ParseRows(IReadOnlyList<IReadOnlyList<string>> rows, ShineLabPayloadProfile profile)
     {
         var headerIndex = rows.ToList().FindIndex(row => row.Any(value => !string.IsNullOrWhiteSpace(value)));
         if (headerIndex < 0)
             return new([], [new(0, "直连样品表没有表头。")], false);
 
-        var columns = ResolveColumns(rows[headerIndex]);
+        var singleChannel = profile == ShineLabPayloadProfile.DcSeqSingleChannel;
+        var columns = ResolveColumns(rows[headerIndex], singleChannel);
         if (columns.Count == 0)
             return new([], [new(0, "缺少直连样品表字段；需要 sampleID、sampleType、position、mPos、channel、方法和体积列。")], false);
 
@@ -87,7 +90,8 @@ public sealed class ShineLabDirectSequenceParser
             if (!int.TryParse(Get(row, columns, "position"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var position) || position <= 0)
                 errors.Add("position 必须是正整数");
             if (string.IsNullOrWhiteSpace(mPos)) errors.Add("mPos 不能为空");
-            if (channel is not ("A" or "B")) errors.Add("channel 必须是 A 或 B");
+            if (singleChannel && channel.Length != 0) errors.Add("DCSeq 单通道不填写 channel，请移除通道值");
+            if (!singleChannel && channel is not ("A" or "B")) errors.Add("channel 必须是 A 或 B");
             var instrumentMethod = Get(row, columns, "instrumentmethod");
             var processingMethod = Get(row, columns, "processingmethod");
             if (string.IsNullOrWhiteSpace(instrumentMethod)) errors.Add("instrumentMethod 不能为空");
@@ -101,6 +105,8 @@ public sealed class ShineLabDirectSequenceParser
             if (string.IsNullOrWhiteSpace(cycleText)) cycleText = "1";
             if (!int.TryParse(cycleText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var cycleCount) || cycleCount <= 0)
                 errors.Add("cycleCount 必须是正整数");
+            if (singleChannel && cycleCount != 1) errors.Add("当前单条 Config 不下发循环次数，请将 cycleCount 设为 1");
+            if (singleChannel && sampleTypeCode != 0) errors.Add("厂家当前按未知样品处理，请使用 sampleType=0；其他类型须在 AQ 手动确认");
 
             if (errors.Count > 0)
             {
@@ -132,7 +138,7 @@ public sealed class ShineLabDirectSequenceParser
         return new(tasks, issues, true);
     }
 
-    private static Dictionary<string, int> ResolveColumns(IReadOnlyList<string> header)
+    private static Dictionary<string, int> ResolveColumns(IReadOnlyList<string> header, bool singleChannel)
     {
         var normalized = header.Select(TabularFileReader.NormalizeHeader).ToArray();
         var columns = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -144,7 +150,7 @@ public sealed class ShineLabDirectSequenceParser
         }
 
         var required = new[] { "sampleid", "samplename", "sampletype", "position", "mpos", "channel", "instrumentmethod", "processingmethod", "injectionvolume", "injectionvolumeunit" };
-        if (required.Any(key => !columns.ContainsKey(key))) return [];
+        if (required.Where(key => !singleChannel || key != "channel").Any(key => !columns.ContainsKey(key))) return [];
         return columns;
     }
 

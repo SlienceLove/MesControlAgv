@@ -22,7 +22,7 @@ public sealed class MessageBoxWorkflowRuntimeAlertPresenter : IWorkflowRuntimeAl
 
     public void ShowWarning(string title, string message)
     {
-        var application = Application.Current;
+        var application = System.Windows.Application.Current;
         if (application is null) return;
 
         void Show()
