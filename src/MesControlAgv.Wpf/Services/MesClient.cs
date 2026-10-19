@@ -21,6 +21,39 @@ namespace MesControlAgv.Wpf.Services;
 
 public sealed class MesClient(HttpClient client) : IMesClient
 {
+    public async Task<AiPlanningCatalog> GetAiPlanningCatalogAsync(CancellationToken token) =>
+        await client.GetFromJsonAsync<AiPlanningCatalog>("api/ai-planning/catalog", token)
+        ?? throw new InvalidOperationException("未收到流程目录。");
+
+    public Task<AiPlanningResult> ProposeAiPlanAsync(AiPlanningRequest request, CancellationToken token) =>
+        PostAiAsync<AiPlanningRequest, AiPlanningResult>("api/ai-planning/propose", request, token);
+
+    public Task<ExperimentPlan> CreateAiPlanDraftAsync(CreateAiPlanDraftRequest request, CancellationToken token) =>
+        PostAiAsync<CreateAiPlanDraftRequest, ExperimentPlan>("api/ai-planning/drafts", request, token);
+
+    private async Task<TResponse> PostAiAsync<TRequest, TResponse>(string url, TRequest request, CancellationToken token)
+    {
+        using var response = await client.PostAsJsonAsync(url, request, token);
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"MES返回{(int)response.StatusCode}：{await response.Content.ReadAsStringAsync(token)}");
+        return await response.Content.ReadFromJsonAsync<TResponse>(cancellationToken: token)
+            ?? throw new InvalidOperationException("MES未返回AI规划结果。");
+    }
+    public async Task<MesControlAgv.Reporting.ReportSnapshot> GetLabReportAsync(MesControlAgv.Reporting.ReportQuery query, CancellationToken token)
+    {
+        var url = $"api/lab-reports/snapshot?from={Uri.EscapeDataString(query.From.ToString("O"))}&to={Uri.EscapeDataString(query.To.ToString("O"))}&batch={Uri.EscapeDataString(query.Batch ?? "")}";
+        return await client.GetFromJsonAsync<MesControlAgv.Reporting.ReportSnapshot>(url, token)
+            ?? throw new InvalidOperationException("MES 没有返回报表快照。");
+    }
+
+    public async Task<MesControlAgv.Reporting.AiSummary> SummarizeLabReportAsync(MesControlAgv.Reporting.ReportSnapshot snapshot, CancellationToken token)
+    {
+        using var response = await client.PostAsJsonAsync("api/lab-reports/summary", snapshot, token);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<MesControlAgv.Reporting.AiSummary>(cancellationToken: token)
+            ?? throw new InvalidOperationException("MES 没有返回 AI 摘要。");
+    }
+
     public async Task<IReadOnlyList<WorkstationBatchReviewItem>> GetWorkstationBatchReviewsAsync(string deviceId, CancellationToken token)
     {
         using var response = await client.GetAsync($"api/workstations/{Uri.EscapeDataString(deviceId)}/task-batches/reviews", token);

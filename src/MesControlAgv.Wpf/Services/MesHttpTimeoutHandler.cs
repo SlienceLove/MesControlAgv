@@ -51,6 +51,9 @@ internal sealed class MesHttpTimeoutHandler : DelegatingHandler
 
     private TimeSpan SelectTimeout(HttpRequestMessage request)
     {
+        if (request.Method == HttpMethod.Post && request.RequestUri?.AbsolutePath is
+            "/api/lab-reports/summary" or "/api/ai-planning/propose")
+            return TimeSpan.FromSeconds(130);
         if (request.Method == HttpMethod.Post &&
             request.RequestUri?.AbsolutePath.EndsWith("/task-batches/import", StringComparison.OrdinalIgnoreCase) == true)
             return _batchImportTimeout;

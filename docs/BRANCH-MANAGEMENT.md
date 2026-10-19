@@ -17,6 +17,7 @@
 | feature/wpf-ui-layout-optimization | 后续界面优化 | develop |
 | test/offline-closure-audit-20261008 | 从 develop `95c6cf1` 建立；样品/任务/流程离线回归，修复离子色谱超过500条历史后最新任务遗漏；目录 `.worktrees/offline-closure-audit` | 五个测试项目2238项通过，解决方案构建0警告/错误；待集成，未部署；开盖设备已修复，待现场验收 |
 | feature/shinelab-autocurve-validation-20261016 | 从 develop `95c6cf1` 建立；新版 Config.standard 保存/预览、独立 AutoCurve 接口及应答审计；目录 `.worktrees/shinelab-autocurve-validation` | MES812/WPF770通过，构建0警告/错误；新能力默认关闭，未集成/部署，厂家实际行为待验证 |
+| feature/lab-ai-assistant | 用户于2026-10-16授权接管独立.worktrees/lab-ai-assistant；2bc203f保存既有报表实现，同步develop 95c6cf1后开发模板驱动AI流程草稿 | 离线验证后由集成会话汇入develop；不自动发布流程或执行设备 |
 | feature/sample-detection-standards | 从 develop `11f4fad` 建立的独立功能分支；物料管理中的自定义检测标准、样品人工判定、单条录入与批量方法绑定；工作目录 `.worktrees/sample-detection-standards` | 已快进合入本地 develop `09d6e84`；MES 796 项、WPF 770 项及解决方案构建通过，未部署或推送 |
 | fix/workstation-start-barcode-validation | 从develop 7ccff42建立；95d0f27补齐启动前双瓶条码校验及WPF/MES/Adapter联动，独立目录.worktrees/workstation-start-barcode-validation | 已合入develop d1f3c74；完整2072项及集成MES26/WPF72项通过；未部署或启动设备 |
 | feature/workstation-import-reconciliation | 从develop 2d73132建立；6248e3f新增独立人工结案审计、只读核对与WPF异常批次入口，原Unknown日志不改 | 已合入develop 5aa3cad；集成回归MES批次51项、WPF核对11项通过；现场结案须显式确认 |

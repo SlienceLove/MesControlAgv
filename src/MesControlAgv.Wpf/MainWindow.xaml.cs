@@ -226,6 +226,9 @@ public partial class MainWindow : Window
     public void ShowWorkflowRunMonitor() =>
         MainTabs.SelectedItem = FindTab(nameof(WorkflowRunMonitorTab));
 
+    public void ShowExperimentPlans() =>
+        MainTabs.SelectedItem = FindTab(nameof(ExperimentPlansTab));
+
     private void MainTabs_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (PageFrame is not null) Dispatcher.BeginInvoke(new Action(ApplyPageAccess), System.Windows.Threading.DispatcherPriority.Loaded);

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../../../src/MesControlAgv.Reporting/MesControlAgv.Reporting.csproj" /></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../../src/MesControlAgv.Application/MesControlAgv.Application.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
+    <Using Include="Microsoft.Extensions.Configuration" />
+    <Compile Include="../../../src/MesControlAgv.Mes/Services/AiPlanningModel.cs" Link="AiPlanningModel.cs" />
+  </ItemGroup>
+</Project>
