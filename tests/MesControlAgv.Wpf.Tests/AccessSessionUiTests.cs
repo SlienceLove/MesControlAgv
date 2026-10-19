@@ -45,6 +45,36 @@ public sealed class AccessSessionUiTests
         finally { window.Close(); }
     });
 
+    [Theory]
+    [InlineData(AccessRoles.Viewer, false)]
+    [InlineData(AccessRoles.Administrator, true)]
+    public void Session_controls_remain_available_on_the_device_status_page(string role, bool canManageUsers) => Sta(() =>
+    {
+        using var http = Http();
+        var user = new AccessUser(Guid.NewGuid(), role.ToLowerInvariant(), $"{role} 用户", role, true, null);
+        var window = new MainWindow { Width = 1200, Height = 760, WindowState = WindowState.Normal };
+        try
+        {
+            window.SetAccessSession(new AccessClient(http), user, true);
+            window.Show(); Pump();
+            var tabs = Assert.IsType<TabControl>(window.FindName("MainTabs"));
+            tabs.SelectedItem = Assert.IsType<TabItem>(window.FindName("ShineLabDeviceStatusTab"));
+            Pump();
+
+            var currentUser = Assert.IsType<TextBlock>(window.FindName("AccessUserText"));
+            var password = Assert.IsType<Button>(window.FindName("AccessPasswordButton"));
+            var logout = Assert.IsType<Button>(window.FindName("AccessLogoutButton"));
+            Assert.True(currentUser.IsVisible);
+            Assert.True(password.IsVisible); Assert.True(password.IsEnabled);
+            Assert.True(logout.IsVisible); Assert.True(logout.IsEnabled);
+
+            var manage = Assert.IsType<Button>(window.FindName("AccessManageButton"));
+            Assert.Equal(canManageUsers, manage.IsVisible);
+            if (canManageUsers) Assert.True(manage.IsEnabled);
+        }
+        finally { window.Close(); }
+    });
+
     [Fact]
     public void Reauthentication_is_coalesced_and_never_reuses_the_old_shell() => Sta(() =>
     {
@@ -63,6 +93,16 @@ public sealed class AccessSessionUiTests
         }
         finally { window.Close(); }
     });
+
+    [Theory]
+    [InlineData("AiPlanningTab")]
+    [InlineData("LabReportTab")]
+    public void Integrated_ai_pages_match_the_server_admin_only_write_policy(string page)
+    {
+        Assert.True(AccessUiPolicy.CanNavigate(AccessRoles.Administrator, page));
+        Assert.False(AccessUiPolicy.CanNavigate(AccessRoles.Operator, page));
+        Assert.False(AccessUiPolicy.CanNavigate(AccessRoles.Viewer, page));
+    }
 
     [Fact]
     public void Non_demo_login_hides_demo_credentials() => Sta(() =>

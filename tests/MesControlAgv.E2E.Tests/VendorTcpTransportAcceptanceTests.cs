@@ -111,7 +111,8 @@ public sealed class VendorTcpTransportAcceptanceTests
         Assert.Equal(HttpStatusCode.MethodNotAllowed, dispatch.StatusCode);
         Assert.Equal(HttpStatusCode.MethodNotAllowed, command.StatusCode);
 
-        Assert.Equal([1060, 1110, 1101, 1021, 1000, 1300, 1301, 1302, 4011], controller.ApiIds);
+        // Map identity (1302) is verified before loading the station catalogue (1301).
+        Assert.Equal([1060, 1110, 1101, 1021, 1000, 1300, 1302, 1301, 4011], controller.ApiIds);
         Assert.DoesNotContain((ushort)4005, controller.ApiIds);
         Assert.DoesNotContain((ushort)9300, controller.ApiIds);
         Assert.DoesNotContain((ushort)3066, controller.ApiIds);

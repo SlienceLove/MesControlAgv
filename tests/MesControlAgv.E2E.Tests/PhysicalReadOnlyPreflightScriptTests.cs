@@ -66,7 +66,8 @@ public sealed class PhysicalReadOnlyPreflightScriptTests
             Assert.False(root.GetProperty("safetyBoundary").GetProperty("modbusAttempted").GetBoolean());
 
             Assert.Equal(
-                [1060, 1110, 1101, 1021, 1000, 1300, 1301, 1302],
+                // Verify map identity before loading its station catalogue, as in TcpAgvClient.
+                [1060, 1110, 1101, 1021, 1000, 1300, 1302, 1301],
                 controller.StatusApiIds);
             Assert.Equal([4011], controller.ControlApiIds);
             Assert.Empty(controller.CommandApiIds);

@@ -7,7 +7,10 @@ public static class AccessUiPolicy
 {
     private static readonly HashSet<string> ViewerPages = ["KpiDashboardTab", "ExperimentSchedulingTab", "MaterialManagementTab",
         "SampleManagementTab", "ShineLabDeviceStatusTab", "DigitalTwinTab", "WorkflowRunMonitorTab", "MapDashboardTab"];
-    private static readonly HashSet<string> AdminPages = ["StartupDiagnosticsTab", "ReadinessTab", "AgvCommunicationTab", "AuboArmTab"];
+    // AI/report POST routes retain the server's default admin-only write policy.
+    // Do not expose an apparently usable operator page whose main actions return 403.
+    private static readonly HashSet<string> AdminPages = ["StartupDiagnosticsTab", "ReadinessTab", "AgvCommunicationTab", "AuboArmTab",
+        "AiPlanningTab", "LabReportTab"];
     private static readonly HashSet<string> ReadActions = ["刷新", "刷新状态", "刷新任务", "刷新列表", "刷新库存", "查询", "搜索", "筛选", "清除筛选",
         "全屏", "退出全屏", "全屏监控", "退出全屏监控", "全屏展示", "完整场景", "设备区", "地面开关", "地图参照", "路线开关", "聚焦所选", "↻"];
     public static bool CanNavigate(string role, string page) => role switch
