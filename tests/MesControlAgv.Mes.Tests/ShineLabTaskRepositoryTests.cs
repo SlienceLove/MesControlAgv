@@ -1,6 +1,7 @@
 using System.Text.Json;
 using MesControlAgv.Contracts;
 using MesControlAgv.Mes.Data;
+using MesControlAgv.Mes.Entities;
 using MesControlAgv.Mes.Services;
 using Microsoft.EntityFrameworkCore;
 
@@ -8,6 +9,33 @@ namespace MesControlAgv.Mes.Tests;
 
 public sealed class ShineLabTaskRepositoryTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Latest_tasks_are_not_hidden_after_five_hundred_records(bool sqlite)
+    {
+        var options = new DbContextOptionsBuilder<MesDbContext>();
+        if (sqlite) options.UseSqlite("Data Source=:memory:");
+        else options.UseInMemoryDatabase($"task-list-{Guid.NewGuid():N}");
+        await using var database = new MesDbContext(options.Options);
+        if (sqlite) await database.Database.OpenConnectionAsync();
+        await database.Database.EnsureCreatedAsync();
+        var epoch = DateTimeOffset.Parse("2026-10-01T00:00:00Z");
+        database.ShineLabTasks.AddRange(Enumerable.Range(0, 501).Select(index => new ShineLabTaskRecord
+        {
+            TaskUuid = $"task-{index:D4}", EquipmentCode = "STN61_01",
+            CreatedAtUtc = epoch.AddMinutes(index)
+        }));
+        await database.SaveChangesAsync();
+        var repository = new ShineLabTaskRepository(database);
+
+        var latest = await repository.ListAsync(2, default);
+
+        Assert.Equal(new[] { "task-0500", "task-0499" }, latest.Select(task => task.TaskUuid));
+        Assert.Equal(500, (await repository.ListAsync(1000, default)).Count);
+        Assert.Single(await repository.ListAsync(0, default));
+    }
+
     [Fact]
     public async Task Task_uuid_is_idempotent_but_rejects_different_payload()
     {

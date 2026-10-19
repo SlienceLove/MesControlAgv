@@ -82,13 +82,21 @@ public sealed partial class ShineLabTaskRepository(
 
     public async Task<List<ShineLabTaskRecord>> ListAsync(int limit, CancellationToken cancellationToken)
     {
-        var tasks = await database.ShineLabTasks
+        // SQLite cannot order DateTimeOffset directly. Sort lightweight metadata
+        // before limiting, then load only the selected tasks and their payloads.
+        var candidates = await database.ShineLabTasks
             .AsNoTracking()
-            .Take(500)
+            .Select(task => new { task.Id, task.CreatedAtUtc })
             .ToListAsync(cancellationToken);
+        var ids = candidates.OrderByDescending(task => task.CreatedAtUtc)
+            .ThenBy(task => task.Id)
+            .Take(Math.Clamp(limit, 1, 500))
+            .Select(task => task.Id).ToArray();
+        var tasks = await database.ShineLabTasks.AsNoTracking()
+            .Where(task => ids.Contains(task.Id)).ToListAsync(cancellationToken);
         return tasks
             .OrderByDescending(task => task.CreatedAtUtc)
-            .Take(Math.Clamp(limit, 1, 500))
+            .ThenBy(task => task.Id)
             .ToList();
     }
 
