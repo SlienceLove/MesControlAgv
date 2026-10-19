@@ -26,7 +26,8 @@ public sealed partial class ShineLabTaskRepository(
             request.SampleData,
             request.InstrumentMethod,
             request.ProcessingMethod,
-            request.DetectionMethod);
+            request.DetectionMethod,
+            request.Standard);
         var configJson = JsonSerializer.Serialize(config);
         var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(configJson)));
         var existing = await database.ShineLabTasks.SingleOrDefaultAsync(

@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace MesControlAgv.Contracts;
 
 /// <summary>Sample row sent to ShineLab's Config command.</summary>
@@ -19,7 +21,11 @@ public sealed record ShineLabConfigRequest(
     IReadOnlyList<ShineLabSampleData> SampleData,
     string? InstrumentMethod = null,
     string? ProcessingMethod = null,
-    string? DetectionMethod = null);
+    string? DetectionMethod = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Standard = null);
+
+/// <summary>Vendor AutoCurve is a separate method; acceptance does not prove curve completion.</summary>
+public sealed record ShineLabAutoCurveRequest(string? Channel = null);
 
 public sealed record ShineLabCommandRequest(
     string TaskUuid,
@@ -46,7 +52,8 @@ public sealed record ShineLabTaskCreateRequest(
     IReadOnlyList<ShineLabSampleData> SampleData,
     string? InstrumentMethod = null,
     string? ProcessingMethod = null,
-    string? DetectionMethod = null);
+    string? DetectionMethod = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Standard = null);
 
 public sealed record ShineLabTaskResponse(
     Guid Id,

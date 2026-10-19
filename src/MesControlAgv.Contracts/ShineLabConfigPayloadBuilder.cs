@@ -3,9 +3,8 @@ using System.Text.Json;
 namespace MesControlAgv.Contracts;
 
 /// <summary>
-/// Builds the strict Config body confirmed for the Rike ShineLab module.
-/// Task and method metadata remain in MES and are deliberately not serialized
-/// into the device payload.
+/// Builds Rike/DCSeq Config bodies. Only the explicit vendor Standard value is
+/// sent as standard; local task and method metadata are not inferred as aliases.
 /// </summary>
 public static class ShineLabConfigPayloadBuilder
 {
@@ -20,6 +19,9 @@ public static class ShineLabConfigPayloadBuilder
             throw new ArgumentException("TaskUuid is required.", nameof(request));
         if (request.SampleData is null || request.SampleData.Count == 0)
             throw new ArgumentException("At least one sampleData row is required.", nameof(request));
+        if (request.Standard is not null &&
+            (profile == ShineLabPayloadProfile.Rike || string.IsNullOrWhiteSpace(request.Standard)))
+            throw new ArgumentException("standard requires DCSeq and an explicit nonblank vendor value; omit it to preserve existing behavior.", nameof(request));
 
         var firstChannel = request.SampleData[0].Channel;
         var singleChannel = profile == ShineLabPayloadProfile.DcSeqSingleChannel;
@@ -54,9 +56,11 @@ public static class ShineLabConfigPayloadBuilder
                 }).ToArray();
             // Vendor confirmation: for a single instrument omit channel entirely,
             // rather than writing an empty string or a placeholder "A".
-            return singleChannel
-                ? JsonSerializer.SerializeToElement(new { sampleData = samples })
-                : JsonSerializer.SerializeToElement(new { channel = firstChannel, sampleData = samples });
+            var body = new Dictionary<string, object>();
+            if (!singleChannel) body["channel"] = firstChannel;
+            if (request.Standard is not null) body["standard"] = request.Standard;
+            body["sampleData"] = samples;
+            return JsonSerializer.SerializeToElement(body);
         }
 
         return JsonSerializer.SerializeToElement(new

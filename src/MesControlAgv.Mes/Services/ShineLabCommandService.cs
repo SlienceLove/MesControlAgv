@@ -13,7 +13,34 @@ public sealed class ShineLabCommandService(
     ShineLabStatusHub? statusHub = null)
 {
     private readonly ShineLabTcpOptions _options = configuredOptions.Value;
-    private readonly SemaphoreSlim _trayGate = new(1, 1);
+    private readonly SemaphoreSlim _deviceOperationGate = new(1, 1);
+
+    public void ValidateConfigForSend(ShineLabConfigRequest request)
+    {
+        ShineLabConfigPayloadBuilder.Build(request, _options.PayloadProfile);
+        if (request.Standard is not null && !_options.EnableStandardSelection)
+            throw new InvalidOperationException("Vendor standard selection is disabled; preview remains available.");
+    }
+
+    public async Task<ShineLabCommandResponse> SendAutoCurveAsync(
+        string equipmentCode, ShineLabAutoCurveRequest request, CancellationToken cancellationToken)
+    {
+        ValidateEquipment(equipmentCode);
+        var body = ShineLabAutoCurvePayloadBuilder.Build(request, _options.PayloadProfile);
+        if (!_options.EnableAutoCurve)
+            throw new InvalidOperationException("AutoCurve is disabled until the vendor module and execution conditions are confirmed.");
+        if (!await _deviceOperationGate.WaitAsync(0, cancellationToken))
+            throw new InvalidOperationException("Another device operation is awaiting its reply; no AutoCurve was sent.");
+        try
+        {
+            if (statusHub?.HasFreshIdleDeviceStatus(equipmentCode, TimeSpan.FromSeconds(_options.StaleAfterSeconds)) != true)
+                throw new InvalidOperationException("AutoCurve requires a fresh online Idle instrument status.");
+            // Independent of sample tasks. Success is only a command reply, not curve completion.
+            return ToResponse(await connectionManager.SendAsync(equipmentCode, "AutoCurve", body,
+                TimeSpan.FromMilliseconds(_options.CommandTimeoutMs), cancellationToken));
+        }
+        finally { _deviceOperationGate.Release(); }
+    }
 
     public async Task<ShineLabCommandResponse> SendConfigAsync(
         string equipmentCode,
@@ -28,6 +55,7 @@ public sealed class ShineLabCommandService(
         if (request.SampleData is null || request.SampleData.Count == 0)
             throw new ArgumentException("At least one sampleData row is required.", nameof(request));
 
+        ValidateConfigForSend(request);
         var body = ShineLabConfigPayloadBuilder.Build(request, _options.PayloadProfile);
         var result = await connectionManager.SendAsync(
             equipmentCode,
@@ -54,8 +82,8 @@ public sealed class ShineLabCommandService(
                 throw new ArgumentException("Tray motion is a device command, not a sample-task start/stop command.", nameof(request));
             if (!_options.EnableTrayCommands)
                 throw new InvalidOperationException("Tray commands are disabled until the updated vendor module is confirmed.");
-            if (!await _trayGate.WaitAsync(0, cancellationToken))
-                throw new InvalidOperationException("Another tray command is awaiting its reply; no additional command was sent.");
+            if (!await _deviceOperationGate.WaitAsync(0, cancellationToken))
+                throw new InvalidOperationException("Another device operation is awaiting its reply; no additional command was sent.");
         }
         try
         {
@@ -69,7 +97,7 @@ public sealed class ShineLabCommandService(
                 cancellationToken, trackTask ? request.TaskUuid : null, tray ? null : request.Action);
             return ToResponse(result);
         }
-        finally { if (tray) _trayGate.Release(); }
+        finally { if (tray) _deviceOperationGate.Release(); }
     }
 
     private static ShineLabCommandResponse ToResponse(ShineLabCommandResult result) => new(
