@@ -2,6 +2,9 @@
 bin/
 obj/
 
+# Local repository consolidation test results; source reports remain in docs.
+/artifacts/repository-consolidation-20261019/
+
 # Local databases
 *.db
 *.db-shm

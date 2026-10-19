@@ -8,7 +8,31 @@
 
 暂停、历史和归档分支不再继续开发。旧会话或旧分支缺少规则时，应先读取当前 `develop` 中的规则文件，再迁移任务，不能直接覆盖原工作目录。规则是开发约束，不自动授权推送或设备操作。
 
-## 当前职责
+## 2026年10月19日整理后的职责
+
+本节是当前分支分类；后面的历史提交和测试数字只表示对应检查点。用户已指定本次整理会话串行集成，其他会话继续保留各自 worktree，不并行合并主线。完整清单、恢复方式和本轮验证见 [仓库清理与分支整合](REPOSITORY-CONSOLIDATION-2026-10-19.md)。
+
+| 类别 | 分支或目录 | 规则 |
+| --- | --- | --- |
+| 正式基线 | master / `.worktrees/master-baseline` | 仅接收通过验证的 develop，不直接开发 |
+| 唯一集成入口 | develop / `.worktrees/branch-integration` | 本轮四组已提交成果先在独立整理目录合并及验证，再快进到这里 |
+| UI 开发 | feature/wpf-ui-layout-optimization / 仓库主目录 | 验证后同步主线；只做后续 UI 优化 |
+| 本轮整理 | maintenance/repository-consolidation-20261019 | 合并清理记录与回归；完成后作为集成来源保留，不继续承载业务开发 |
+| 视觉补偿开发 | feature/vision-docking-calibration-20261016 | 尚未提交的纯计算和偏移适配保留在原目录；待相机协议与现场验证，不在本轮合入 |
+| 现场流程开发 | feature/visitor-full-demo-20261012 | 最新现场改动尚未提交；已提交 HEAD 缺模板路由及 worker 注册，不能作为完整运行版合入 |
+| 演示来源参考 | feature/visitor-demo-catalog-20261012、feature/visitor-demo-devices-20261012 | 与 full-demo 有重复功能，保留来源，不重复合入或继续叠加新功能 |
+| 仅现场测试 | test/aubo-workstation-tray-actions | 按用户要求不合主线；点位、PRO/Lua 和未提交成果保留 |
+| 暂停预开发 | feature/sample-workstation-http-readonly | 前处理预开发继续暂停，不自动合入 |
+| 已有未提交草稿 | feature/three-device-sequence、worktree-agv-mes-mvp-wpf | 已集成部分不重复合入；未提交部分由所属会话单独处理 |
+| 历史恢复引用 | archive 分支及 archive/20261019 标签 | 只作恢复和追溯，不作为新开发基线 |
+
+本轮整合来源为任务列表修复、AutoCurve 协议、本地登录权限、AI 规划与报表四条已提交分支。来源 worktree 不切换、不清空；已有独立功能分支如需继续开发，应由所属会话核对并同步最新 develop，不能以旧分叉继续累计成果。
+
+本轮验证：解决方案构建 0 警告/错误，九个测试项目最终 2458 项通过、0 失败、5 项既有跳过。整合检查点由 `integration/repository-consolidation-20261019` 标签定位；本地 develop、master、UI 按规则同步此基线，不自动替换现场服务。远端是否推送以本轮用户明确确认及实际推送结果为准，不能从本地同步推断 GitHub 已更新。
+
+清理只删除了确认已包含于 develop、无 worktree 占用的旧本地分支名，并为其保留恢复标签；占用中的工作目录没有删除。禁止以“目录名是 tmp/artifacts”作为批量删除依据。
+
+## 历史职责与检查点
 
 | 分支 | 用途 | 合入方向 |
 | --- | --- | --- |
