@@ -7,6 +7,8 @@ using MesControlAgv.Wpf.Services;
 using MesControlAgv.Wpf.Modules;
 using MesControlAgv.Wpf.ViewModels;
 using MesControlAgv.Wpf.WorkflowCanvas;
+using MesControlAgv.Wpf.Views;
+using MesControlAgv.Contracts;
 
 namespace MesControlAgv.Wpf;
 
@@ -100,59 +102,96 @@ public partial class App : System.Windows.Application
             // and state-changing requests retain their own larger budgets.
             // This keeps an unplugged UI responsive without turning a slow
             // device mutation into an unnecessary unknown outcome.
-            var mesClient = new MesClient(new HttpClient(new MesHttpTimeoutHandler())
+            var mesHttpClient = new HttpClient(new MesHttpTimeoutHandler())
             {
                 BaseAddress = mesUrl,
                 Timeout = Timeout.InfiniteTimeSpan
-            });
-            ISimulatorControlClient? simulatorClient = null;
-            if (isSimulator)
-            {
-                simulatorClient = new SimulatorControlClient(new HttpClient
-                {
-                    BaseAddress = simulatorUrl,
-                    Timeout = TimeSpan.FromSeconds(3)
-                });
-            }
-
-            var moduleRegistry = ControlCenterModuleRegistry.CreateStandard();
-            var mapLayoutSource = new SmapMapLayoutSource(
-                ResolveMapSmapPath,
-                ResolveStationMappingPath);
-            var workflowStorePath = Environment.GetEnvironmentVariable("WPF_WORKFLOW_STORE_PATH");
-            var workflowStore = string.IsNullOrWhiteSpace(workflowStorePath)
-                ? null
-                : new WorkflowStore(workflowStorePath);
-            var sampleWorkstationTestControlEnabled = string.Equals(
-                Environment.GetEnvironmentVariable("WPF_ENABLE_SAMPLE_WORKSTATION_TEST_CONTROL"),
-                "true",
-                StringComparison.OrdinalIgnoreCase);
-            _viewModel = new MainViewModel(
-                mesClient,
-                simulatorClient,
-                moduleRegistry,
-                mapLayoutSource,
-                workflowStore,
-                startupConfiguration,
-                physicalBatchExecutionEnabled: !isSimulator &&
-                    string.Equals(
-                        Environment.GetEnvironmentVariable("WPF_ENABLE_PHYSICAL_BATCH"),
-                        "true",
-                        StringComparison.OrdinalIgnoreCase),
-                sampleWorkstationTestControlEnabled: sampleWorkstationTestControlEnabled);
-            var window = new MainWindow { DataContext = _viewModel };
-            window.Closed += (_, _) =>
-            {
-                _viewModel?.Dispose();
-                _viewModel = null;
             };
-
-            MainWindow = window;
+            var accessClient = new AccessClient(mesHttpClient);
+            var accessMode = await accessClient.GetModeAsync(_startupCancellation.Token);
+            AccessLoginResponse? loginResult = null;
+            if (accessMode.Enabled)
+            {
+                startupWindow.SetStatus("等待用户登录...");
+                var login = new LoginWindow(accessClient, accessMode.Demo);
+                if (login.ShowDialog() != true || login.Result is null)
+                {
+                    _startupCompleted = true;
+                    startupWindow.Close();
+                    Shutdown();
+                    return;
+                }
+                loginResult = login.Result;
+                accessClient.SetSession(loginResult);
+            }
+            // Rebuild every user session, including the HTTP client, page models and selections.
+            // Owned service processes remain alive while only the shell is replaced.
+            void OpenShell(HttpClient http, AccessClient access, AccessLoginResponse? session, WorkflowRunStartupBinding binding)
+            {
+                var shellLifetime = CancellationTokenSource.CreateLinkedTokenSource(_startupCancellation.Token);
+                var simulatorHttp = isSimulator ? new HttpClient { BaseAddress = simulatorUrl, Timeout = TimeSpan.FromSeconds(3) } : null;
+                var workflowPath = Environment.GetEnvironmentVariable("WPF_WORKFLOW_STORE_PATH");
+                var model = new MainViewModel(
+                    new MesClient(http),
+                    simulatorHttp is not null ? new SimulatorControlClient(simulatorHttp) : null,
+                    ControlCenterModuleRegistry.CreateStandard(),
+                    new SmapMapLayoutSource(ResolveMapSmapPath, ResolveStationMappingPath),
+                    string.IsNullOrWhiteSpace(workflowPath) ? null : new WorkflowStore(workflowPath),
+                    startupConfiguration,
+                    physicalBatchExecutionEnabled: !isSimulator && string.Equals(Environment.GetEnvironmentVariable("WPF_ENABLE_PHYSICAL_BATCH"), "true", StringComparison.OrdinalIgnoreCase),
+                    sampleWorkstationTestControlEnabled: string.Equals(Environment.GetEnvironmentVariable("WPF_ENABLE_SAMPLE_WORKSTATION_TEST_CONTROL"), "true", StringComparison.OrdinalIgnoreCase));
+                _viewModel = model;
+                var window = new MainWindow { DataContext = model };
+                if (session is not null)
+                {
+                    model.OperatorName = session.User.Username;
+                    window.SetAccessSession(access, session.User, accessMode.Demo);
+                }
+                window.Closed += (_, _) =>
+                {
+                    shellLifetime.Cancel();
+                    model.Dispose();
+                    http.Dispose();
+                    simulatorHttp?.Dispose();
+                    shellLifetime.Dispose();
+                    if (ReferenceEquals(_viewModel, model)) _viewModel = null;
+                };
+                window.SessionEnded += (_, _) =>
+                {
+                    // Queue after the originating click/dialog/monitor continuation has unwound.
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+                        window.Close();
+                        var nextHttp = new HttpClient(new MesHttpTimeoutHandler()) { BaseAddress = mesUrl, Timeout = Timeout.InfiniteTimeSpan };
+                        try
+                        {
+                            var nextAccess = new AccessClient(nextHttp);
+                            var login = new LoginWindow(nextAccess, accessMode.Demo);
+                            MainWindow = login;
+                            if (login.ShowDialog() == true && login.Result is not null)
+                            {
+                                nextAccess.SetSession(login.Result);
+                                OpenShell(nextHttp, nextAccess, login.Result, new WorkflowRunStartupBinding(null, null));
+                                return;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            MessageBox.Show($"重新登录失败：{ex.Message}", "中控运营中心", MessageBoxButton.OK, MessageBoxImage.Error);
+                        }
+                        nextHttp.Dispose();
+                        Shutdown();
+                    }));
+                };
+                MainWindow = window;
+                ShutdownMode = ShutdownMode.OnMainWindowClose;
+                window.Show();
+                _ = StartMainWindowAsync(window, binding, shellLifetime.Token);
+            }
             _startupCompleted = true;
             startupWindow.Close();
-            ShutdownMode = ShutdownMode.OnMainWindowClose;
-            window.Show();
-            _ = StartMainWindowAsync(window, startupWorkflowBinding);
+            OpenShell(mesHttpClient, accessClient, loginResult, startupWorkflowBinding);
         }
         catch (OperationCanceledException) when (_startupCancellation.IsCancellationRequested)
         {
@@ -183,27 +222,31 @@ public partial class App : System.Windows.Application
 
     private async Task StartMainWindowAsync(
         MainWindow window,
-        WorkflowRunStartupBinding startupWorkflowBinding)
+        WorkflowRunStartupBinding startupWorkflowBinding,
+        CancellationToken shellCancellation)
     {
-        if (_viewModel is null) return;
+        var model = window.DataContext as MainViewModel;
+        if (model is null) return;
         try
         {
-            await _viewModel.StartAsync();
+            await model.StartAsync();
+            if (shellCancellation.IsCancellationRequested) return;
             if (!startupWorkflowBinding.IsSpecified) return;
 
-            if (await _viewModel.BindWorkflowRunAsync(startupWorkflowBinding, _startupCancellation.Token))
+            if (await model.BindWorkflowRunAsync(startupWorkflowBinding, shellCancellation) && !shellCancellation.IsCancellationRequested)
             {
                 window.ShowWorkflowRunMonitor();
             }
         }
-        catch (OperationCanceledException) when (_startupCancellation.IsCancellationRequested)
+        catch (OperationCanceledException) when (shellCancellation.IsCancellationRequested)
         {
         }
         catch (Exception exception)
         {
+            if (shellCancellation.IsCancellationRequested) return;
             // Keep the shell available for a manually verified read-only bind;
             // an invalid external id must not trigger another request.
-            _viewModel.WorkflowRunMonitor.SetStatusMessage(
+            model.WorkflowRunMonitor.SetStatusMessage(
                 $"显式流程绑定失败：{exception.Message}");
         }
     }

@@ -1,5 +1,7 @@
 using MesControlAgv.Contracts.Workflows;
 using Microsoft.Extensions.Options;
+using MesControlAgv.Mes.Access;
+using MesControlAgv.Contracts;
 
 namespace MesControlAgv.Mes.Services;
 
@@ -23,10 +25,14 @@ public interface IWorkflowRunControlAuthorizer
 public sealed class ConfiguredWorkflowRunControlAuthorizer : IWorkflowRunControlAuthorizer
 {
     private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> _permissionsByActor;
+    private readonly IHttpContextAccessor? _context;
+    private readonly AccessSettings? _access;
 
-    public ConfiguredWorkflowRunControlAuthorizer(IOptions<WorkflowRunControlAuthorizationOptions> options)
+    public ConfiguredWorkflowRunControlAuthorizer(IOptions<WorkflowRunControlAuthorizationOptions> options,
+        IHttpContextAccessor? context = null, AccessSettings? access = null)
     {
         ArgumentNullException.ThrowIfNull(options);
+        _context = context; _access = access;
         _permissionsByActor = options.Value.Operators
             .Where(item => !string.IsNullOrWhiteSpace(item.Name))
             .GroupBy(item => item.Name.Trim(), StringComparer.OrdinalIgnoreCase)
@@ -44,6 +50,17 @@ public sealed class ConfiguredWorkflowRunControlAuthorizer : IWorkflowRunControl
 
     public WorkflowRunControlPermissionsSnapshot GetPermissions(string actor)
     {
+        if (_access?.Enabled == true)
+        {
+            var user = _context?.HttpContext?.Items[typeof(AccessUser)] as AccessUser;
+            string[] permissions = user?.Role switch
+            {
+                AccessRoles.Administrator => ["workflow.pause", "workflow.cancel", "workflow.resolve-unknown", "workflow.submit-signal", "workflow.complete-manual-task"],
+                AccessRoles.Operator => ["workflow.pause", "workflow.cancel", "workflow.submit-signal", "workflow.complete-manual-task"],
+                _ => []
+            };
+            return new() { Actor = user?.Username ?? "anonymous", Permissions = permissions };
+        }
         var normalizedActor = NormalizeActor(actor);
         return new WorkflowRunControlPermissionsSnapshot
         {

@@ -1,0 +1,28 @@
+<Window x:Class="MesControlAgv.Wpf.Views.LoginWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="中控运营中心 · 登录" Width="460" Height="540" WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize" Background="#F3F6FB" ShowInTaskbar="True">
+    <Grid Margin="42">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel>
+            <TextBlock Text="中控运营中心" FontSize="28" FontWeight="SemiBold" Foreground="#123158"/>
+            <TextBlock Text="实验室设备协同平台" Margin="0,8,0,0" Foreground="#667085"/>
+            <Border x:Name="DemoBanner" Margin="0,18,0,0" Padding="10" Background="#FFF4E5" CornerRadius="6">
+                <TextBlock Text="客户演示模式 · 使用本地演示账号" Foreground="#9A6700" TextWrapping="Wrap"/>
+            </Border>
+        </StackPanel>
+        <StackPanel Grid.Row="1" VerticalAlignment="Center">
+            <TextBlock Text="账号" Foreground="#344054"/>
+            <TextBox x:Name="Username" Margin="0,7,0,16" Height="38" Padding="10" Text="admin"/>
+            <TextBlock Text="密码" Foreground="#344054"/>
+            <PasswordBox x:Name="Password" Margin="0,7,0,8" Height="38" Padding="10" KeyDown="Password_KeyDown"/>
+            <TextBlock x:Name="Hint" Foreground="#D92D20" TextWrapping="Wrap" MinHeight="38"/>
+            <Button x:Name="LoginButton" Content="登录" Click="Login_Click" Height="42" Background="#1769AA" Foreground="White" FontSize="15"/>
+        </StackPanel>
+        <StackPanel Grid.Row="2" x:Name="DemoCredentials">
+            <TextBlock Text="管理员：admin / DemoAdmin2026" Foreground="#667085" FontSize="11"/>
+            <TextBlock Text="操作员、只读用户：operator 或 viewer / DemoUser2026" Foreground="#667085" FontSize="11" Margin="0,4,0,0"/>
+        </StackPanel>
+    </Grid>
+</Window>

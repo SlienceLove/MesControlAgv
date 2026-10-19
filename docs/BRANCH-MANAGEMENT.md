@@ -28,6 +28,7 @@
 | feature/workstation-ml-template-validation | 开盖分液 mL、条码 POST、手动结束后续跑；9b639cb 已于 2026-09-24 合入本地 develop | 后续任务以更新后的 develop 为起点 |
 | feature/workstation-template-batch | 单任务模板与批量导入；3d80c37 已于 2026-09-24 合入本地 develop | 本轮单位集成修复在 develop，原工作区未被修改 |
 | feature/shinelab-dcseq-protocol | 离子色谱通讯、样品关联、托盘与操作员页面；43fb941 已于 2026-09-24 合入本地 develop | 后续任务以更新后的 develop 为起点 |
+| feature/user-access-management | 本地登录、三角色权限及隔离客户演示；独立 worktree user-access-management | develop |
 | feature/sample-workstation-http-readonly | 已暂停，最终归档源 4fbddc4 | 已集成，后续任务重新从统一基线开始 |
 | feature/material-management | 已集成的物料功能历史 | 保留追溯，不继续分叉 |
 | feature/physical-admission-v2 | 已集成的准入与物料历史 74cfb88 | 保留追溯，不继续分叉 |

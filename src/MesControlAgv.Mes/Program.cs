@@ -10,6 +10,7 @@ using MesControlAgv.Mes.Endpoints;
 using MesControlAgv.Mes.Services;
 using MesControlAgv.Mes;
 using Microsoft.EntityFrameworkCore;
+using MesControlAgv.Mes.Access;
 
 var builder = WebApplication.CreateBuilder(args);
 if (builder.Environment.IsEnvironment(FieldSimulationConfiguration.EnvironmentName))
@@ -27,6 +28,7 @@ else if (builder.Environment.IsEnvironment(PhysicalAcceptanceConfiguration.Envir
         args);
 }
 var connectionString = builder.Configuration.GetConnectionString("Mes") ?? "Data Source=data/mes.db";
+builder.Services.AddLocalAccess(builder.Configuration);
 var profile = BindProfile(builder.Configuration);
 var map = AgvMap.FromProfile(profile.Map);
 var workflowCatalogs = BuiltInWorkflowCatalog.Create();
@@ -191,6 +193,7 @@ builder.Services.AddHostedService<WorkflowSampleWorkstationWorker>();
 builder.Services.AddHostedService<WorkflowLegacySampleWorkstationWorker>();
 
 var app = builder.Build();
+app.UseLocalAccess();
 
 using (var scope = app.Services.CreateScope())
 {
